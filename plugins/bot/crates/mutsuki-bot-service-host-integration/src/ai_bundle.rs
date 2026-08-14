@@ -180,12 +180,11 @@ impl QqAiBotPluginBundle {
                     manifest: loaded_agent_manifest.clone(),
                     runners: Vec::new(),
                     async_handlers: Vec::new(),
-                    host_services: vec![RuntimeBootstrapperService {
-                        service_id: BOT_AGENT_CONFIG_SERVICE_ID.into(),
-                        capability: "bot.agent.config".into(),
-                        service: config_service.clone(),
-                        rebindable: false,
-                    }],
+                    host_services: vec![RuntimeBootstrapperService::new(
+                        BOT_AGENT_CONFIG_SERVICE_ID,
+                        config_service.clone(),
+                        "bot.agent.config",
+                    )],
                     resource_providers: Vec::new(),
                     async_resource_providers: Vec::new(),
                     host_effects: Vec::new(),

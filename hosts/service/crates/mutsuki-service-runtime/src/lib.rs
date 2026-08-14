@@ -86,7 +86,9 @@ type HealthProbe = Arc<dyn Fn() -> Value + Send + Sync>;
 pub trait LoadPlanLifecycleHook: Send + Sync {
     fn validate(&self, plan: &RuntimeLoadPlan) -> Result<(), String>;
     fn activate(&self, plan: &RuntimeLoadPlan);
-    fn deactivate(&self) {}
+    fn deactivate(&self) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 /// Domain-neutral observer for state derived from the complete RuntimeLoadPlan.
@@ -228,6 +230,20 @@ impl PreparedComponentRegistry {
         self.records
             .values()
             .flat_map(|component| component.load_plan_hooks.iter().cloned())
+            .collect()
+    }
+
+    fn owned_load_plan_hooks(&self) -> Vec<(String, Arc<dyn LoadPlanLifecycleHook>)> {
+        self.records
+            .iter()
+            .flat_map(|(component_id, component)| {
+                component
+                    .load_plan_hooks
+                    .iter()
+                    .cloned()
+                    .map(|hook| (component_id.clone(), hook))
+                    .collect::<Vec<_>>()
+            })
             .collect()
     }
 
@@ -560,6 +576,7 @@ pub struct PluginReconfigureGeneration {
 pub struct PluginReconfigureReport {
     pub components: Vec<PluginReconfigureGeneration>,
     pub registry_generation: u64,
+    pub runner_errors: Vec<String>,
 }
 
 /// Product assembly boundary. All manifests, native runners and event sources are frozen at boot.
@@ -639,12 +656,14 @@ struct ServiceRuntimeInner {
     catalog: Mutex<PluginCatalog>,
     host_runtime: Mutex<Option<HostRuntime>>,
     supervisor: RunnerSupervisor,
+    sidecar_effects: Mutex<BTreeMap<String, (String, AttachedEffectHandle)>>,
+    load_plan_hook_effects: Mutex<BTreeMap<String, Vec<AttachedEffectHandle>>>,
     event_sources: EventSourceSupervisor,
-    event_source_effects: Mutex<BTreeMap<String, AttachedEffectHandle>>,
+    event_source_effects: Mutex<BTreeMap<String, (String, AttachedEffectHandle)>>,
     configured_plugins: ConfiguredPluginCatalog,
     components: Mutex<PreparedComponentRegistry>,
     component_generations: Mutex<BTreeMap<String, u64>>,
-    reconfigure_lock: tokio::sync::Mutex<()>,
+    reload_lock: tokio::sync::Mutex<()>,
     runtime_client: Arc<DeferredRuntimeClient>,
     deployment_state: Mutex<PluginDeploymentState>,
     shutdown_tx: Mutex<Option<oneshot::Sender<String>>>,
@@ -654,6 +673,46 @@ struct EventSourceScopeEffect {
     supervisor: EventSourceSupervisor,
     source_id: String,
     graceful: Duration,
+}
+
+struct RunnerSupervisorScopeEffect {
+    supervisor: RunnerSupervisor,
+    runner_id: String,
+    graceful: Duration,
+}
+
+struct LoadPlanHookScopeEffect(Arc<dyn LoadPlanLifecycleHook>);
+
+impl HostEffect for LoadPlanHookScopeEffect {
+    fn dispose(&mut self) -> HostEffectFuture<'_> {
+        let hook = self.0.clone();
+        Box::pin(async move {
+            hook.deactivate().map_err(|detail| {
+                RuntimeFailure::new(RuntimeError::new(
+                    ERR_RUNTIME_HOST_FAILED,
+                    "service.load_plan_hook",
+                    detail,
+                ))
+            })
+        })
+    }
+}
+
+impl HostEffect for RunnerSupervisorScopeEffect {
+    fn dispose(&mut self) -> HostEffectFuture<'_> {
+        Box::pin(async move {
+            self.supervisor
+                .remove(&self.runner_id, self.graceful)
+                .await
+                .map_err(|error| {
+                    RuntimeFailure::new(RuntimeError::new(
+                        ERR_RUNTIME_HOST_FAILED,
+                        "service.runner_supervisor",
+                        error.to_string(),
+                    ))
+                })
+        })
+    }
 }
 
 impl HostEffect for EventSourceScopeEffect {
@@ -1116,6 +1175,7 @@ impl ServiceRuntimeBuilder {
         let configured_runner_limits = components.runner_limits();
         let runner_limit_factories = components.runner_limit_factories();
         let load_plan_hooks = components.load_plan_hooks();
+        let owned_load_plan_hooks = components.owned_load_plan_hooks();
         let load_plan_observers = components.load_plan_observers();
         let event_sources = components.take_event_sources();
         let runner_limits =
@@ -1130,18 +1190,17 @@ impl ServiceRuntimeBuilder {
         let (host_runtime, runtime_lock) = boot_core(
             &config,
             &catalog,
-            &native_runner_factories,
-            &async_handler_factories,
-            &loaded_plugin_factories,
             runtime_client.clone(),
-            &runner_limits,
-            &load_plan_hooks,
-            &load_plan_observers,
+            CoreBootInputs {
+                native_runner_factories: &native_runner_factories,
+                async_handler_factories: &async_handler_factories,
+                loaded_plugin_factories: &loaded_plugin_factories,
+                runner_limits: &runner_limits,
+                load_plan_hooks: &load_plan_hooks,
+                load_plan_observers: &load_plan_observers,
+            },
         )
         .await?;
-        for hook in &load_plan_hooks {
-            hook.activate(&runtime_lock);
-        }
         for observer in &load_plan_observers {
             observer.activate(&runtime_lock);
         }
@@ -1149,7 +1208,7 @@ impl ServiceRuntimeBuilder {
         let resource_gateway = host_runtime.host_context().resource_gateway_ref();
         let resource_registry = host_runtime.host_context().resource_registry_ref();
         runtime_client.bind(task_submitter.clone(), resource_gateway, resource_registry);
-        start_supervised_sidecars(&config, &catalog, &supervisor).await;
+        let sidecars = sidecar_specs(&config, &catalog);
 
         let inner = Arc::new(ServiceRuntimeInner {
             config: config.clone(),
@@ -1158,6 +1217,8 @@ impl ServiceRuntimeBuilder {
             catalog: Mutex::new(catalog),
             host_runtime: Mutex::new(Some(host_runtime)),
             supervisor,
+            sidecar_effects: Mutex::new(BTreeMap::new()),
+            load_plan_hook_effects: Mutex::new(BTreeMap::new()),
             event_sources: event_source_supervisor.clone(),
             event_source_effects: Mutex::new(BTreeMap::new()),
             configured_plugins,
@@ -1171,11 +1232,16 @@ impl ServiceRuntimeBuilder {
                     .collect(),
             ),
             components: Mutex::new(components),
-            reconfigure_lock: tokio::sync::Mutex::new(()),
+            reload_lock: tokio::sync::Mutex::new(()),
             runtime_client,
             deployment_state: Mutex::new(deployment_state),
             shutdown_tx: Mutex::new(Some(shutdown_tx)),
         });
+        for (component_id, hook) in owned_load_plan_hooks {
+            inner.attach_load_plan_hook_effect(&component_id, hook.clone())?;
+            hook.activate(&runtime_lock);
+        }
+        start_supervised_sidecars(&sidecars, &inner).await;
         let ipc_server = mutsuki_service_ipc::start_server(
             &inner.config,
             Arc::new(RuntimeControl {
@@ -1197,9 +1263,9 @@ impl ServiceRuntimeBuilder {
         };
         let graceful = Duration::from_millis(config.runners.graceful_shutdown_ms);
         for source in event_sources {
-            let descriptor = source.descriptor().clone();
-            event_source_supervisor.start(source, task_submitter.clone(), &config, graceful);
-            inner.attach_event_source_effect(&descriptor, graceful)?;
+            inner
+                .start_scoped_event_source(source, task_submitter.clone(), &config, graceful)
+                .await?;
         }
         Ok(ServiceRuntime {
             inner,
@@ -1448,8 +1514,6 @@ impl ServiceRuntime {
             server.shutdown().await;
         }
         let graceful = Duration::from_millis(self.inner.config.runners.graceful_shutdown_ms);
-        self.inner.event_sources.shutdown(graceful).await;
-        self.inner.supervisor.shutdown(graceful).await;
         let host_runtime = self
             .inner
             .host_runtime
@@ -1461,6 +1525,9 @@ impl ServiceRuntime {
             // async, so release the Host-owned executor outside the caller's async context.
             let _ = tokio::task::spawn_blocking(move || drop(host_runtime)).await;
         }
+        // These are recovery sweeps for resources that failed before an effect could be bound.
+        self.inner.event_sources.shutdown(graceful).await;
+        self.inner.supervisor.shutdown(graceful).await;
     }
 
     /// Shared control-plane handler for in-process consumers (e.g. Web overview extension).
@@ -1528,6 +1595,165 @@ impl ControlHandler for RuntimeControl {
 }
 
 impl ServiceRuntimeInner {
+    fn attach_load_plan_hook_effect(
+        &self,
+        component_id: &str,
+        hook: Arc<dyn LoadPlanLifecycleHook>,
+    ) -> ServiceRuntimeResult<()> {
+        let handle = self
+            .host_runtime
+            .lock()
+            .expect("host runtime mutex")
+            .as_ref()
+            .ok_or(ServiceRuntimeError::RuntimeUnavailable)?
+            .attach_application_effect(
+                component_id,
+                HostEffectKind::HostLocal,
+                Box::new(LoadPlanHookScopeEffect(hook)),
+            )?;
+        self.load_plan_hook_effects
+            .lock()
+            .expect("load plan hook effect mutex")
+            .entry(component_id.to_string())
+            .or_default()
+            .push(handle);
+        Ok(())
+    }
+
+    fn retire_load_plan_hook_effects<'a>(
+        &self,
+        component_ids: impl IntoIterator<Item = &'a str>,
+        timeout: Duration,
+    ) -> Vec<String> {
+        let mut effects = self
+            .load_plan_hook_effects
+            .lock()
+            .expect("load plan hook effect mutex");
+        let handles = component_ids
+            .into_iter()
+            .flat_map(|component_id| {
+                effects
+                    .remove(component_id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(move |handle| (component_id.to_string(), handle))
+            })
+            .collect::<Vec<_>>();
+        drop(effects);
+        let runtime = self.host_runtime.lock().expect("host runtime mutex");
+        let Some(runtime) = runtime.as_ref() else {
+            return handles
+                .into_iter()
+                .map(|(component_id, _)| {
+                    format!(
+                        "load-plan hook `{component_id}` could not be retired: runtime unavailable"
+                    )
+                })
+                .collect();
+        };
+        handles
+            .into_iter()
+            .filter_map(|(component_id, handle)| {
+                runtime
+                    .dispose_attached_effect(&handle, timeout)
+                    .err()
+                    .map(|error| format!("load-plan hook `{component_id}`: {error}"))
+            })
+            .collect()
+    }
+
+    fn attach_sidecar_effect(
+        &self,
+        spec: &ManagedRunnerSpec,
+        graceful: Duration,
+    ) -> ServiceRuntimeResult<()> {
+        let handle = self
+            .host_runtime
+            .lock()
+            .expect("host runtime mutex")
+            .as_ref()
+            .ok_or(ServiceRuntimeError::RuntimeUnavailable)?
+            .attach_plugin_effect(
+                &spec.plugin_id,
+                HostEffectKind::BackendInstance,
+                Box::new(RunnerSupervisorScopeEffect {
+                    supervisor: self.supervisor.clone(),
+                    runner_id: spec.runner_id.clone(),
+                    graceful,
+                }),
+            )?;
+        self.sidecar_effects
+            .lock()
+            .expect("sidecar effect mutex")
+            .insert(spec.runner_id.clone(), (spec.plugin_id.clone(), handle));
+        Ok(())
+    }
+
+    fn prune_disposed_sidecar_effects(&self) -> Vec<String> {
+        let runtime = self.host_runtime.lock().expect("host runtime mutex");
+        let Some(runtime) = runtime.as_ref() else {
+            return Vec::new();
+        };
+        let mut effects = self.sidecar_effects.lock().expect("sidecar effect mutex");
+        effects.retain(|_, (_, handle)| runtime.attached_effect_state(handle).is_some());
+        effects.keys().cloned().collect()
+    }
+
+    async fn reconcile_scoped_sidecars(
+        &self,
+        desired: Vec<ManagedRunnerSpec>,
+        graceful: Duration,
+        reloaded_plugins: Option<&BTreeSet<String>>,
+    ) -> Vec<String> {
+        let live = self.prune_disposed_sidecar_effects();
+        let protected = {
+            let effects = self.sidecar_effects.lock().expect("sidecar effect mutex");
+            live.into_iter()
+                .filter(|runner_id| {
+                    reloaded_plugins.is_none_or(|plugins| {
+                        effects
+                            .get(runner_id)
+                            .is_some_and(|(plugin_id, _)| plugins.contains(plugin_id))
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+        if !protected.is_empty() {
+            return protected
+                .into_iter()
+                .map(|runner_id| format!("runner {runner_id} remains owned by a dirty old scope"))
+                .collect();
+        }
+
+        let mut errors =
+            reconcile_supervised_sidecars(desired.clone(), &self.supervisor, graceful).await;
+        let running = self
+            .supervisor
+            .list()
+            .await
+            .into_iter()
+            .filter(|snapshot| matches!(snapshot.state, RunnerProcessState::Running))
+            .map(|snapshot| snapshot.runner_id)
+            .collect::<BTreeSet<_>>();
+        let owned = self
+            .sidecar_effects
+            .lock()
+            .expect("sidecar effect mutex")
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        for spec in desired {
+            if !running.contains(&spec.runner_id) || owned.contains(&spec.runner_id) {
+                continue;
+            }
+            if let Err(error) = self.attach_sidecar_effect(&spec, graceful) {
+                let _ = self.supervisor.remove(&spec.runner_id, graceful).await;
+                errors.push(error.to_string());
+            }
+        }
+        errors
+    }
+
     fn attach_event_source_effect(
         &self,
         descriptor: &HostEventSourceDescriptor,
@@ -1551,34 +1777,84 @@ impl ServiceRuntimeInner {
         self.event_source_effects
             .lock()
             .expect("event source effect mutex")
-            .insert(descriptor.source_id.clone(), handle);
+            .insert(
+                descriptor.source_id.clone(),
+                (descriptor.plugin_id.clone(), handle),
+            );
+        Ok(())
+    }
+
+    async fn start_scoped_event_source(
+        &self,
+        source: Box<dyn HostEventSource>,
+        task_submitter: Arc<dyn TaskSubmitter>,
+        config: &ServiceConfig,
+        graceful: Duration,
+    ) -> ServiceRuntimeResult<()> {
+        let descriptor = source.descriptor().clone();
+        self.event_sources
+            .start(source, task_submitter, config, graceful);
+        if let Err(error) = self.attach_event_source_effect(&descriptor, graceful) {
+            return match self
+                .event_sources
+                .shutdown_source(&descriptor.source_id, graceful)
+                .await
+            {
+                Ok(()) => Err(error),
+                Err(cleanup) => Err(ServiceRuntimeError::EventSource(format!(
+                    "{error}; event source `{}` cleanup failed: {cleanup}",
+                    descriptor.source_id
+                ))),
+            };
+        }
         Ok(())
     }
 
     fn retire_event_source_effects<'a>(
         &self,
-        source_ids: impl IntoIterator<Item = &'a str>,
+        plugin_ids: impl IntoIterator<Item = &'a str>,
         timeout: Duration,
-    ) {
-        let mut effects = self
+    ) -> (BTreeSet<String>, Vec<String>) {
+        let plugin_ids = plugin_ids
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<BTreeSet<_>>();
+        let effects = self
             .event_source_effects
             .lock()
             .expect("event source effect mutex");
-        let handles = source_ids
-            .into_iter()
-            .filter_map(|source_id| effects.remove(source_id))
+        let handles = effects
+            .iter()
+            .filter(|(_, (plugin_id, _))| plugin_ids.contains(plugin_id))
+            .map(|(source_id, (plugin_id, handle))| {
+                (source_id.clone(), plugin_id.clone(), handle.clone())
+            })
             .collect::<Vec<_>>();
         drop(effects);
-        if let Some(runtime) = self
-            .host_runtime
-            .lock()
-            .expect("host runtime mutex")
-            .as_ref()
-        {
-            for handle in handles {
-                let _ = runtime.dispose_attached_effect(&handle, timeout);
+        let runtime = self.host_runtime.lock().expect("host runtime mutex");
+        let Some(runtime) = runtime.as_ref() else {
+            return (
+                plugin_ids,
+                vec!["event sources could not be retired: runtime unavailable".into()],
+            );
+        };
+        let mut failed_plugins = BTreeSet::new();
+        let mut errors = Vec::new();
+        for (source_id, plugin_id, handle) in handles {
+            match runtime.dispose_attached_effect(&handle, timeout) {
+                Ok(()) => {
+                    self.event_source_effects
+                        .lock()
+                        .expect("event source effect mutex")
+                        .remove(&source_id);
+                }
+                Err(error) => {
+                    failed_plugins.insert(plugin_id);
+                    errors.push(format!("event source `{source_id}`: {error}"));
+                }
             }
         }
+        (failed_plugins, errors)
     }
 
     fn current_config(&self) -> ServiceConfig {
@@ -1595,7 +1871,7 @@ impl ServiceRuntimeInner {
         &self,
         candidates: &[ConfiguredPluginSelection],
     ) -> ServiceRuntimeResult<PluginReconfigureReport> {
-        let _reconfigure = self.reconfigure_lock.lock().await;
+        let _reload = self.reload_lock.lock().await;
         let affected = candidates
             .iter()
             .map(|selection| selection.id.trim().to_string())
@@ -1667,6 +1943,7 @@ impl ServiceRuntimeInner {
         }
 
         let candidate_load_plan_hooks = candidate_components.load_plan_hooks();
+        let candidate_owned_load_plan_hooks = candidate_components.owned_load_plan_hooks();
         let new_event_sources = candidate_components.take_event_sources();
         validate_event_sources(&new_event_sources, &candidate_config)?;
         let mut combined_components = self
@@ -1674,11 +1951,6 @@ impl ServiceRuntimeInner {
             .lock()
             .expect("component registry mutex")
             .clone();
-        let old_target_hooks = affected
-            .iter()
-            .filter_map(|plugin_id| combined_components.records.get(plugin_id))
-            .flat_map(|component| component.load_plan_hooks.iter().cloned())
-            .collect::<Vec<_>>();
         let mut runtime_affected = affected.clone();
         for plugin_id in &affected {
             if let Some(component) = combined_components.records.get(plugin_id) {
@@ -1749,30 +2021,6 @@ impl ServiceRuntimeInner {
         let previous_runtime_lock = fs::read(&runtime_lock_path).ok();
         write_runtime_lock(&self.config, &runtime_lock)?;
         let graceful = Duration::from_millis(self.config.runners.graceful_shutdown_ms);
-        let old_event_sources = match self
-            .event_sources
-            .stop_plugins(&runtime_affected, graceful)
-            .await
-        {
-            Ok(sources) => sources,
-            Err(detail) => {
-                let _ = restore_runtime_lock(&runtime_lock_path, previous_runtime_lock);
-                return Err(ServiceRuntimeError::EventSource(detail));
-            }
-        };
-        let old_source_ids = old_event_sources
-            .iter()
-            .map(|source| source.descriptor().source_id.as_str())
-            .collect::<Vec<_>>();
-        self.retire_event_source_effects(old_source_ids, graceful);
-        let task_submitter = self
-            .host_runtime
-            .lock()
-            .expect("host runtime mutex")
-            .as_ref()
-            .ok_or(ServiceRuntimeError::RuntimeUnavailable)?
-            .host_context()
-            .task_submitter_ref();
         let decision = {
             let mut runtime = self.host_runtime.lock().expect("host runtime mutex");
             let runtime = runtime
@@ -1785,12 +2033,6 @@ impl ServiceRuntimeInner {
         };
         if let Err(error) = decision {
             let restore_lock = restore_runtime_lock(&runtime_lock_path, previous_runtime_lock);
-            for source in old_event_sources {
-                let descriptor = source.descriptor().clone();
-                self.event_sources
-                    .start(source, task_submitter.clone(), &self.config, graceful);
-                self.attach_event_source_effect(&descriptor, graceful)?;
-            }
             return match restore_lock {
                 Ok(()) => Err(ServiceRuntimeError::Core(error)),
                 Err(restore) => Err(ServiceRuntimeError::PluginDeploymentState {
@@ -1799,22 +2041,68 @@ impl ServiceRuntimeInner {
                 }),
             };
         }
+        let host_lifecycle_errors = self
+            .host_runtime
+            .lock()
+            .expect("host runtime mutex")
+            .as_mut()
+            .ok_or(ServiceRuntimeError::RuntimeUnavailable)?
+            .take_reload_lifecycle_errors();
 
-        for hook in old_target_hooks {
-            hook.deactivate();
-        }
-        for hook in &candidate_load_plan_hooks {
-            hook.activate(&runtime_lock);
+        let task_submitter = self
+            .host_runtime
+            .lock()
+            .expect("host runtime mutex")
+            .as_ref()
+            .ok_or(ServiceRuntimeError::RuntimeUnavailable)?
+            .host_context()
+            .task_submitter_ref();
+        let (dirty_event_source_plugins, mut lifecycle_errors) =
+            self.retire_event_source_effects(runtime_affected.iter().map(String::as_str), graceful);
+        lifecycle_errors.extend(host_lifecycle_errors);
+        lifecycle_errors.extend(
+            self.retire_load_plan_hook_effects(affected.iter().map(String::as_str), graceful),
+        );
+        for (component_id, hook) in candidate_owned_load_plan_hooks {
+            match self.attach_load_plan_hook_effect(&component_id, hook.clone()) {
+                Ok(()) => hook.activate(&runtime_lock),
+                Err(error) => lifecycle_errors.push(format!(
+                    "load-plan hook `{component_id}` could not be owned after reload: {error}"
+                )),
+            }
         }
         for observer in &load_plan_observers {
             observer.activate(&runtime_lock);
         }
         for source in new_event_sources {
             let descriptor = source.descriptor().clone();
-            self.event_sources
-                .start(source, task_submitter.clone(), &candidate_config, graceful);
-            self.attach_event_source_effect(&descriptor, graceful)?;
+            if dirty_event_source_plugins.contains(&descriptor.plugin_id) {
+                lifecycle_errors.push(format!(
+                    "event source `{}` was not started because plugin `{}` retains a dirty source owner",
+                    descriptor.source_id, descriptor.plugin_id
+                ));
+                continue;
+            }
+            if let Err(error) = self
+                .start_scoped_event_source(
+                    source,
+                    task_submitter.clone(),
+                    &candidate_config,
+                    graceful,
+                )
+                .await
+            {
+                lifecycle_errors.push(error.to_string());
+            }
         }
+        lifecycle_errors.extend(
+            self.reconcile_scoped_sidecars(
+                sidecar_specs(&candidate_config, &new_catalog),
+                graceful,
+                Some(&runtime_affected),
+            )
+            .await,
+        );
         *self.catalog.lock().expect("catalog mutex") = new_catalog;
         *self.components.lock().expect("component registry mutex") = combined_components;
         *self
@@ -1842,6 +2130,7 @@ impl ServiceRuntimeInner {
         Ok(PluginReconfigureReport {
             components,
             registry_generation,
+            runner_errors: lifecycle_errors,
         })
     }
 
@@ -2059,6 +2348,7 @@ impl ServiceRuntimeInner {
     }
 
     async fn plugin_reload(&self) -> ControlResponse {
+        let _reload = self.reload_lock.lock().await;
         let config = self.current_config();
         let state = self
             .deployment_state
@@ -2074,7 +2364,7 @@ impl ServiceRuntimeInner {
             Ok(catalog) => catalog,
             Err(error) => return ControlResponse::err(ControlError::Failed(error.to_string())),
         };
-        self.reload_catalog(new_catalog).await
+        self.reload_catalog_unlocked(new_catalog).await
     }
 
     async fn plugin_deployment_set(&self, param: PluginDeploymentParam) -> ControlResponse {
@@ -2097,6 +2387,7 @@ impl ServiceRuntimeInner {
         deployment: Option<PluginDeploymentKind>,
         result: fn(PluginReloadResponse) -> ControlResult,
     ) -> ControlResponse {
+        let _reload = self.reload_lock.lock().await;
         if !self
             .configured_selections
             .lock()
@@ -2135,7 +2426,7 @@ impl ServiceRuntimeInner {
         if let Err(error) = save_deployment_state(&self.config, &next) {
             return ControlResponse::err(ControlError::Failed(error.to_string()));
         }
-        let response = self.reload_catalog(new_catalog).await;
+        let response = self.reload_catalog_unlocked(new_catalog).await;
         if response.is_ok() {
             *self
                 .deployment_state
@@ -2154,7 +2445,7 @@ impl ServiceRuntimeInner {
         }
     }
 
-    async fn reload_catalog(&self, new_catalog: PluginCatalog) -> ControlResponse {
+    async fn reload_catalog_unlocked(&self, new_catalog: PluginCatalog) -> ControlResponse {
         let previous_generation = {
             let guard = self.host_runtime.lock().expect("host runtime mutex");
             let Some(runtime) = guard.as_ref() else {
@@ -2174,6 +2465,7 @@ impl ServiceRuntimeInner {
         let configured_runner_limits = components.runner_limits();
         let runner_limit_factories = components.runner_limit_factories();
         let load_plan_hooks = components.load_plan_hooks();
+        let owned_load_plan_hooks = components.owned_load_plan_hooks();
         let load_plan_observers = components.load_plan_observers();
         let runner_limits =
             resolve_runner_limits(&configured_runner_limits, &runner_limit_factories);
@@ -2233,21 +2525,42 @@ impl ServiceRuntimeInner {
                 }
             }
         };
+        let host_lifecycle_errors = self
+            .host_runtime
+            .lock()
+            .expect("host runtime mutex")
+            .as_mut()
+            .map(HostRuntime::take_reload_lifecycle_errors)
+            .unwrap_or_default();
 
-        for hook in &load_plan_hooks {
-            hook.activate(&runtime_lock);
+        let graceful = Duration::from_millis(self.config.runners.graceful_shutdown_ms);
+        let old_hook_owners = self
+            .load_plan_hook_effects
+            .lock()
+            .expect("load plan hook effect mutex")
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut lifecycle_errors = self
+            .retire_load_plan_hook_effects(old_hook_owners.iter().map(String::as_str), graceful);
+        lifecycle_errors.extend(host_lifecycle_errors);
+        for (component_id, hook) in owned_load_plan_hooks {
+            match self.attach_load_plan_hook_effect(&component_id, hook.clone()) {
+                Ok(()) => hook.activate(&runtime_lock),
+                Err(error) => lifecycle_errors.push(format!(
+                    "load-plan hook `{component_id}` could not be owned after reload: {error}"
+                )),
+            }
         }
         for observer in &load_plan_observers {
             observer.activate(&runtime_lock);
         }
 
         *self.catalog.lock().expect("catalog mutex") = new_catalog;
-        let runner_errors = reconcile_supervised_sidecars(
-            sidecars,
-            &self.supervisor,
-            Duration::from_millis(self.config.runners.graceful_shutdown_ms),
-        )
-        .await;
+        lifecycle_errors.extend(
+            self.reconcile_scoped_sidecars(sidecars, graceful, None)
+                .await,
+        );
         ControlResponse::ok(ControlResult::PluginReload(PluginReloadResponse {
             previous_generation,
             registry_generation,
@@ -2260,7 +2573,7 @@ impl ServiceRuntimeInner {
                     compatibility: surface_compatibility(change.compatibility),
                 })
                 .collect(),
-            runner_errors,
+            runner_errors: lifecycle_errors,
             event_sources: "kept".into(),
         }))
     }
@@ -2858,23 +3171,27 @@ fn read_log_tail(
     Ok(LogTailResponse { cursor, entries })
 }
 
+struct CoreBootInputs<'a> {
+    native_runner_factories: &'a [NativeRunnerFactory],
+    async_handler_factories: &'a [AsyncHandlerFactory],
+    loaded_plugin_factories: &'a BTreeMap<String, LoadedPluginFactory>,
+    runner_limits: &'a BTreeMap<String, RunnerLimits>,
+    load_plan_hooks: &'a [Arc<dyn LoadPlanLifecycleHook>],
+    load_plan_observers: &'a [Arc<dyn LoadPlanObserver>],
+}
+
 async fn boot_core(
     config: &ServiceConfig,
     catalog: &PluginCatalog,
-    native_runner_factories: &[NativeRunnerFactory],
-    async_handler_factories: &[AsyncHandlerFactory],
-    loaded_plugin_factories: &BTreeMap<String, LoadedPluginFactory>,
     runtime_client: Arc<DeferredRuntimeClient>,
-    runner_limits: &BTreeMap<String, RunnerLimits>,
-    load_plan_hooks: &[Arc<dyn LoadPlanLifecycleHook>],
-    load_plan_observers: &[Arc<dyn LoadPlanObserver>],
+    inputs: CoreBootInputs<'_>,
 ) -> ServiceRuntimeResult<(HostRuntime, RuntimeLoadPlan)> {
     let (bootstrapper, profile) = runtime_bootstrapper(
         config,
         catalog,
-        native_runner_factories,
-        async_handler_factories,
-        loaded_plugin_factories,
+        inputs.native_runner_factories,
+        inputs.async_handler_factories,
+        inputs.loaded_plugin_factories,
         runtime_client,
     )
     .await?;
@@ -2934,7 +3251,7 @@ async fn boot_core(
             .core
             .actor_control_quota
             .unwrap_or_else(|| HostRuntimeConfig::default().actor_control_quota),
-        runner_limits: runner_limits.clone(),
+        runner_limits: inputs.runner_limits.clone(),
         async_executor: Some(Arc::new(TokioAsyncExecutor::new(
             worker_settings.compute_threads.clamp(1, 4),
             worker_settings.queue_capacity,
@@ -2945,11 +3262,11 @@ async fn boot_core(
     };
     let prepared = bootstrapper.prepare_host_runtime_with_config(profile, host_config)?;
     let lock = prepared.load_plan().clone();
-    for hook in load_plan_hooks {
+    for hook in inputs.load_plan_hooks {
         hook.validate(&lock)
             .map_err(ServiceRuntimeError::LoadPlanHook)?;
     }
-    for observer in load_plan_observers {
+    for observer in inputs.load_plan_observers {
         observer
             .validate(&lock)
             .map_err(ServiceRuntimeError::LoadPlanHook)?;
@@ -3205,14 +3522,16 @@ fn register_stdio_runners(
     Ok(())
 }
 
-async fn start_supervised_sidecars(
-    config: &ServiceConfig,
-    catalog: &PluginCatalog,
-    supervisor: &RunnerSupervisor,
-) {
-    for spec in sidecar_specs(config, catalog) {
-        if let Err(error) = supervisor.start(spec).await {
+async fn start_supervised_sidecars(specs: &[ManagedRunnerSpec], inner: &Arc<ServiceRuntimeInner>) {
+    let graceful = Duration::from_millis(inner.config.runners.graceful_shutdown_ms);
+    for spec in specs {
+        if let Err(error) = inner.supervisor.start(spec.clone()).await {
             tracing::error!(error = %error, "failed to start supervised runner");
+            continue;
+        }
+        if let Err(error) = inner.attach_sidecar_effect(spec, graceful) {
+            let _ = inner.supervisor.remove(&spec.runner_id, graceful).await;
+            tracing::error!(error = %error, "failed to bind supervised runner to plugin scope");
         }
     }
 }
@@ -3613,9 +3932,104 @@ mod tests {
     #[derive(Debug)]
     struct GenerationService(u64);
 
+    #[derive(Default)]
+    struct HookLifecycle {
+        activations: AtomicUsize,
+        deactivations: AtomicUsize,
+    }
+
+    struct TrackingLoadPlanHook(Arc<HookLifecycle>);
+
+    type HookLifecycles = Arc<Mutex<BTreeMap<u64, Arc<HookLifecycle>>>>;
+
+    impl LoadPlanLifecycleHook for TrackingLoadPlanHook {
+        fn validate(&self, _plan: &RuntimeLoadPlan) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn activate(&self, _plan: &RuntimeLoadPlan) {
+            self.0.activations.fetch_add(1, Ordering::SeqCst);
+        }
+
+        fn deactivate(&self) -> Result<(), String> {
+            self.0.deactivations.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
     struct GenerationConfiguredFactory {
         plugin_id: &'static str,
         service_id: &'static str,
+        hook_lifecycles: Option<HookLifecycles>,
+    }
+
+    struct CleanupDiagnosticConfiguredFactory {
+        attempts: Arc<AtomicUsize>,
+    }
+
+    struct RetryCleanupEffect {
+        attempts: Arc<AtomicUsize>,
+        fail_once: bool,
+        attempted: bool,
+    }
+
+    impl HostEffect for RetryCleanupEffect {
+        fn dispose(&mut self) -> HostEffectFuture<'_> {
+            self.attempts.fetch_add(1, Ordering::SeqCst);
+            let fail = self.fail_once && !self.attempted;
+            self.attempted = true;
+            Box::pin(async move {
+                if fail {
+                    Err(RuntimeFailure::new(RuntimeError::new(
+                        ERR_RUNTIME_HOST_FAILED,
+                        "test.cleanup_diagnostic",
+                        "injected cleanup failure",
+                    )))
+                } else {
+                    Ok(())
+                }
+            })
+        }
+    }
+
+    impl ConfiguredPluginFactory for CleanupDiagnosticConfiguredFactory {
+        fn plugin_id(&self) -> &str {
+            "test.cleanup-diagnostic"
+        }
+
+        fn prepare(
+            &self,
+            config: &Value,
+            builder: ServiceRuntimeBuilder,
+        ) -> Result<ServiceRuntimeBuilder, String> {
+            let generation = config
+                .get("generation")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| "generation is required".to_string())?;
+            let manifest = minimal_manifest(self.plugin_id());
+            let loaded_manifest = manifest.clone();
+            let attempts = self.attempts.clone();
+            Ok(
+                builder.register_builtin_loaded_plugin_factory(manifest, move || {
+                    Ok::<LoadedPlugin, String>(LoadedPlugin {
+                        manifest: loaded_manifest.clone(),
+                        runners: Vec::new(),
+                        async_handlers: Vec::new(),
+                        host_services: Vec::new(),
+                        resource_providers: Vec::new(),
+                        async_resource_providers: Vec::new(),
+                        host_effects: vec![mutsuki_runtime_sdk::RuntimeBootstrapperEffect {
+                            kind: HostEffectKind::HostLocal,
+                            effect: Box::new(RetryCleanupEffect {
+                                attempts: attempts.clone(),
+                                fail_once: generation == 1,
+                                attempted: false,
+                            }),
+                        }],
+                    })
+                }),
+            )
+        }
     }
 
     impl ConfiguredPluginFactory for GenerationConfiguredFactory {
@@ -3645,24 +4059,34 @@ mod tests {
                 .push(service_capability.clone());
             let loaded_manifest = manifest.clone();
             let service = Arc::new(GenerationService(generation));
-            Ok(
-                builder.register_builtin_loaded_plugin_factory(manifest, move || {
-                    Ok::<LoadedPlugin, String>(LoadedPlugin {
-                        manifest: loaded_manifest.clone(),
-                        runners: Vec::new(),
-                        async_handlers: Vec::new(),
-                        host_services: vec![RuntimeBootstrapperService {
-                            service_id: service_id.clone(),
-                            capability: service_capability.clone(),
-                            service: service.clone(),
-                            rebindable: false,
-                        }],
-                        resource_providers: Vec::new(),
-                        async_resource_providers: Vec::new(),
-                        host_effects: Vec::new(),
-                    })
-                }),
-            )
+            let builder = builder.register_builtin_loaded_plugin_factory(manifest, move || {
+                Ok::<LoadedPlugin, String>(LoadedPlugin {
+                    manifest: loaded_manifest.clone(),
+                    runners: Vec::new(),
+                    async_handlers: Vec::new(),
+                    host_services: vec![RuntimeBootstrapperService::new(
+                        service_id.clone(),
+                        service.clone(),
+                        service_capability.clone(),
+                    )],
+                    resource_providers: Vec::new(),
+                    async_resource_providers: Vec::new(),
+                    host_effects: Vec::new(),
+                })
+            });
+            if let Some(lifecycles) = &self.hook_lifecycles {
+                let lifecycle = Arc::new(HookLifecycle::default());
+                lifecycles
+                    .lock()
+                    .expect("hook lifecycle mutex")
+                    .insert(generation, lifecycle.clone());
+                Ok(builder.register_load_plan_hook(
+                    self.plugin_id,
+                    Arc::new(TrackingLoadPlanHook(lifecycle)),
+                ))
+            } else {
+                Ok(builder)
+            }
         }
     }
 
@@ -3791,17 +4215,20 @@ generation = 7
         config.plugins.dynamic_dirs.clear();
         config.plugins.disabled_dir = root.path().join("disabled");
 
+        let target_hook_lifecycles = Arc::new(Mutex::new(BTreeMap::new()));
         let mut catalog = ConfiguredPluginCatalog::new();
         catalog
             .register(GenerationConfiguredFactory {
                 plugin_id: "test.target",
                 service_id: "service.target",
+                hook_lifecycles: Some(target_hook_lifecycles.clone()),
             })
             .unwrap();
         catalog
             .register(GenerationConfiguredFactory {
                 plugin_id: "test.stable",
                 service_id: "service.stable",
+                hook_lifecycles: None,
             })
             .unwrap();
         let runtime = ServiceRuntimeBuilder::new(config.clone())
@@ -3815,6 +4242,8 @@ generation = 7
         let stable_before = runtime
             .host_service::<GenerationService>("service.stable")
             .unwrap();
+        let target_hook_v1 = target_hook_lifecycles.lock().unwrap()[&1].clone();
+        assert_eq!(target_hook_v1.activations.load(Ordering::SeqCst), 1);
 
         let report = runtime
             .reconfigure_plugins(&[ConfiguredPluginSelection {
@@ -3836,6 +4265,9 @@ generation = 7
         assert!(!Arc::ptr_eq(&target_before, &target_after));
         assert_eq!(stable_after.0, 7);
         assert!(Arc::ptr_eq(&stable_before, &stable_after));
+        let target_hook_v2 = target_hook_lifecycles.lock().unwrap()[&2].clone();
+        assert_eq!(target_hook_v1.deactivations.load(Ordering::SeqCst), 1);
+        assert_eq!(target_hook_v2.activations.load(Ordering::SeqCst), 1);
         assert_eq!(
             report.components,
             vec![PluginReconfigureGeneration {
@@ -3869,6 +4301,127 @@ generation = 7
                 .get("test.target"),
             Some(&2)
         );
+        runtime.shutdown().await;
+        assert_eq!(target_hook_v1.deactivations.load(Ordering::SeqCst), 1);
+        assert_eq!(target_hook_v2.deactivations.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn targeted_reconfigure_reports_post_switch_scope_cleanup_failure() {
+        let root = tempdir().expect("temp dir");
+        let mut config = ServiceConfig::default();
+        config.ipc.enabled = false;
+        config.observe.console = false;
+        config.service.home_dir = root.path().to_path_buf();
+        config.service.data_dir = root.path().join("data");
+        config.service.log_dir = root.path().join("logs");
+        config.service.run_dir = root.path().join("run");
+        config.plugins.dynamic_dirs.clear();
+        config.plugins.disabled_dir = root.path().join("disabled");
+        config.plugins.configured = vec![configured_selection(
+            "test.cleanup-diagnostic",
+            json!({"generation": 1}),
+        )];
+
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let mut catalog = ConfiguredPluginCatalog::new();
+        catalog
+            .register(CleanupDiagnosticConfiguredFactory {
+                attempts: attempts.clone(),
+            })
+            .unwrap();
+        let runtime = ServiceRuntimeBuilder::new(config)
+            .with_configured_plugin_catalog(catalog)
+            .start()
+            .await
+            .expect("runtime starts");
+
+        let report = runtime
+            .reconfigure_plugins(&[ConfiguredPluginSelection {
+                id: "test.cleanup-diagnostic".into(),
+                enabled: true,
+                config: json!({"generation": 2}),
+            }])
+            .await
+            .expect("new generation remains authoritative");
+
+        assert_eq!(report.registry_generation, 2);
+        assert!(report.runner_errors.iter().any(|error| {
+            error.contains("host.reload.post_switch_scope_cleanup_failed")
+                && error.contains("injected cleanup failure")
+        }));
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+
+        runtime.shutdown().await;
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn full_reload_retires_and_reowns_load_plan_hooks() {
+        let root = tempdir().expect("temp dir");
+        let mut config = ServiceConfig::default();
+        config.ipc.enabled = false;
+        config.observe.console = false;
+        config.service.home_dir = root.path().to_path_buf();
+        config.service.data_dir = root.path().join("data");
+        config.service.log_dir = root.path().join("logs");
+        config.service.run_dir = root.path().join("run");
+        config.plugins.dynamic_dirs.clear();
+        config.plugins.disabled_dir = root.path().join("disabled");
+
+        let lifecycle = Arc::new(HookLifecycle::default());
+        let runtime = ServiceRuntimeBuilder::new(config)
+            .register_builtin_plugin(minimal_manifest("test.load-plan-hook"))
+            .register_load_plan_hook(
+                "test.load-plan-hook",
+                Arc::new(TrackingLoadPlanHook(lifecycle.clone())),
+            )
+            .start()
+            .await
+            .expect("runtime starts");
+        assert_eq!(lifecycle.activations.load(Ordering::SeqCst), 1);
+        assert_eq!(lifecycle.deactivations.load(Ordering::SeqCst), 0);
+
+        let response = runtime.inner.plugin_reload().await;
+        let response: PluginReloadResponse = control_result!(response, ControlResult::PluginReload);
+        assert!(response.runner_errors.is_empty());
+        assert_eq!(lifecycle.activations.load(Ordering::SeqCst), 2);
+        assert_eq!(lifecycle.deactivations.load(Ordering::SeqCst), 1);
+
+        runtime.shutdown().await;
+        assert_eq!(lifecycle.deactivations.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn full_reload_waits_for_the_active_reload_transaction() {
+        let root = tempdir().expect("temp dir");
+        let mut config = ServiceConfig::default();
+        config.ipc.enabled = false;
+        config.observe.console = false;
+        config.service.home_dir = root.path().to_path_buf();
+        config.service.data_dir = root.path().join("data");
+        config.service.log_dir = root.path().join("logs");
+        config.service.run_dir = root.path().join("run");
+        config.plugins.dynamic_dirs.clear();
+        config.plugins.disabled_dir = root.path().join("disabled");
+
+        let runtime = ServiceRuntimeBuilder::new(config)
+            .register_builtin_plugin(minimal_manifest("test.serial-reload"))
+            .start()
+            .await
+            .expect("runtime starts");
+        let active_reload = runtime.inner.reload_lock.lock().await;
+        let inner = runtime.inner.clone();
+        let pending = tokio::spawn(async move { inner.plugin_reload().await });
+        tokio::task::yield_now().await;
+        assert!(!pending.is_finished());
+
+        drop(active_reload);
+        let response = pending.await.expect("reload task joins");
+        let response: PluginReloadResponse = control_result!(response, ControlResult::PluginReload);
+        assert_eq!(response.previous_generation, 1);
+        assert_eq!(response.registry_generation, 2);
+
         runtime.shutdown().await;
     }
 
@@ -5429,13 +5982,15 @@ generation = 7
         let (host_runtime, _) = boot_core(
             &config,
             &catalog,
-            &[],
-            &[],
-            &BTreeMap::new(),
             runtime_client.clone(),
-            &BTreeMap::new(),
-            &[],
-            &[],
+            CoreBootInputs {
+                native_runner_factories: &[],
+                async_handler_factories: &[],
+                loaded_plugin_factories: &BTreeMap::new(),
+                runner_limits: &BTreeMap::new(),
+                load_plan_hooks: &[],
+                load_plan_observers: &[],
+            },
         )
         .await
         .expect("core");
@@ -5447,12 +6002,14 @@ generation = 7
             catalog: Mutex::new(catalog),
             host_runtime: Mutex::new(Some(host_runtime)),
             supervisor: RunnerSupervisor::new(),
+            sidecar_effects: Mutex::new(BTreeMap::new()),
+            load_plan_hook_effects: Mutex::new(BTreeMap::new()),
             event_sources: EventSourceSupervisor::default(),
             event_source_effects: Mutex::new(BTreeMap::new()),
             configured_plugins: ConfiguredPluginCatalog::default(),
             components: Mutex::new(components),
             component_generations: Mutex::new(BTreeMap::new()),
-            reconfigure_lock: tokio::sync::Mutex::new(()),
+            reload_lock: tokio::sync::Mutex::new(()),
             runtime_client,
             deployment_state: Mutex::new(PluginDeploymentState {
                 version: deployment_state_version(),

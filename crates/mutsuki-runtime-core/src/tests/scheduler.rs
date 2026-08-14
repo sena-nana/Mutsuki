@@ -247,6 +247,71 @@ fn max_batch_entries_one_still_dispatches_single_entry_work_batch() {
 }
 
 #[test]
+fn sync_runner_does_not_lease_more_work_while_its_only_instance_is_dispatched() {
+    let mut worker = runner_descriptor("worker", "runtime.schedule.input", RunnerPurity::Pure);
+    worker.invocation_mode = InvocationMode::AsyncReentrant;
+    worker.concurrency = RunnerConcurrency::Reentrant {
+        max_inflight_batches: 8,
+        max_inflight_entries: 8,
+    };
+    worker.batch.preferred_batch_size = 1;
+    worker.batch.max_batch_entries = 1;
+    worker.batch.max_entry_concurrency = 1;
+    worker.batch.max_inflight_batches = 8;
+    let plan = load_plan(vec![worker.clone()], Vec::new());
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(completed_runner!(worker));
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+    for index in 1..=2 {
+        runtime
+            .submit_task(Task::new(
+                format!("schedule-{index}"),
+                "runtime.schedule.input",
+                json!({}),
+            ))
+            .unwrap();
+    }
+    let schedule = |_descriptor: &RunnerDescriptor, _load: &RunnerLoad, _step, _generation| {
+        Ok(ScheduleDecision::new(
+            "test.scheduler",
+            8,
+            "test.available-instance",
+        ))
+    };
+
+    let (first_report, mut first_dispatches) =
+        runtime.claim_ready_dispatches(schedule, None).unwrap();
+    assert_eq!(first_report.claimed_tasks, 1);
+    assert_eq!(first_dispatches.len(), 1);
+    assert_eq!(runtime.task_status("schedule-2"), Some(TaskStatus::Ready));
+
+    let (blocked_report, blocked_dispatches) =
+        runtime.claim_ready_dispatches(schedule, None).unwrap();
+    assert_eq!(blocked_report.claimed_tasks, 0);
+    assert!(blocked_dispatches.is_empty());
+    assert_eq!(runtime.task_status("schedule-2"), Some(TaskStatus::Ready));
+
+    let first = first_dispatches.remove(0);
+    let RunnerDispatchTarget::Sync(mut runner) = first.target else {
+        panic!("test expected a synchronous runner dispatch");
+    };
+    let result = runner.run_batch(first.ctx, first.batch.clone());
+    runtime
+        .complete_runner_dispatch(RunnerCompletion {
+            runner: Some(runner),
+            task_leases: first.task_leases,
+            batch_id: first.batch.batch_id.clone(),
+            expected_entries: first.batch.entries.clone(),
+            result,
+        })
+        .unwrap();
+
+    let (second_report, second_dispatches) =
+        runtime.claim_ready_dispatches(schedule, None).unwrap();
+    assert_eq!(second_report.claimed_tasks, 1);
+    assert_eq!(second_dispatches.len(), 1);
+}
+
+#[test]
 fn claim_ready_dispatches_applies_byte_budget_before_batch_build() {
     let mut worker = runner_descriptor("worker", "runtime.schedule.input", RunnerPurity::Pure);
     worker.batch.max_batch_entries = 3;

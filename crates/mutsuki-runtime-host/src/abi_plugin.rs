@@ -8,10 +8,10 @@ use mutsuki_plugin_api::{
 };
 use mutsuki_plugin_host::{PluginLoadRequest, PluginSession};
 use mutsuki_runtime_contracts::{
-    CommandPlan, ExportPlan, PlanReceipt, ReadPlan, ResourceRef, SnapshotDescriptor, StreamPlan,
-    TaskBatch, TaskHandle, TaskOutcome, WritePlan,
+    CommandPlan, CompletionBatch, ExportPlan, PlanReceipt, ReadPlan, ResourceRef, RunnerContext,
+    SnapshotDescriptor, StreamPlan, TaskBatch, TaskHandle, TaskOutcome, WorkBatch, WritePlan,
 };
-use mutsuki_runtime_core::{RuntimeFailure, RuntimeResult};
+use mutsuki_runtime_core::{Runner, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
     HostEffect, HostEffectFuture, HostEffectKind, LoadedPlugin, ResourcePlanGateway,
     RuntimeBootstrapperEffect, RuntimeBootstrapperResourceProvider, TaskSubmitter,
@@ -57,10 +57,10 @@ pub fn load_abi_plugin_v2(request: AbiPluginLoadRequest) -> RuntimeResult<Loaded
     let runners = session
         .runners()
         .map(|runner| {
-            Box::new(TransportRunner::new(
+            Box::new(AbiSessionRunner(TransportRunner::new(
                 runner.descriptor().clone(),
                 transport.clone(),
-            )) as Box<dyn mutsuki_runtime_core::Runner>
+            ))) as Box<dyn Runner>
         })
         .collect();
     let resource_providers = session
@@ -93,9 +93,41 @@ pub fn load_abi_plugin_v2(request: AbiPluginLoadRequest) -> RuntimeResult<Loaded
 
 struct AbiSessionEffect(Arc<PluginSession>);
 
+struct AbiSessionRunner(TransportRunner<SessionTransport>);
+
+impl Runner for AbiSessionRunner {
+    fn descriptor(&self) -> &mutsuki_runtime_contracts::RunnerDescriptor {
+        self.0.descriptor()
+    }
+
+    fn run_batch(
+        &mut self,
+        ctx: RunnerContext,
+        batch: WorkBatch,
+    ) -> RuntimeResult<CompletionBatch> {
+        self.0.run_batch(ctx, batch)
+    }
+
+    fn cancel(&mut self, invocation_id: &str) -> RuntimeResult<()> {
+        self.0.cancel(invocation_id)
+    }
+
+    fn dispose(&mut self) -> RuntimeResult<()> {
+        // The session effect is the unique lifecycle owner and disposes all ABI runners together.
+        Ok(())
+    }
+}
+
 impl HostEffect for AbiSessionEffect {
     fn dispose(&mut self) -> HostEffectFuture<'_> {
-        Box::pin(async move { self.0.dispose().map_err(to_runtime_failure) })
+        let session = self.0.clone();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || session.dispose().map_err(to_runtime_failure))
+                .await
+                .map_err(|error| {
+                    crate::error::host_failure("host.scope.abi_session_join", error.to_string())
+                })?
+        })
     }
 }
 

@@ -476,10 +476,12 @@ pub struct HostRuntime {
     scopes: Vec<PluginScopeSet>,
     application_effects: PluginScopeManager,
     application_effect_root: ScopeId,
+    reload_lifecycle_errors: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AttachedEffectHandle {
+    manager: PluginScopeManager,
     scope_id: ScopeId,
 }
 
@@ -575,6 +577,7 @@ impl HostRuntime {
             scopes: vec![scopes],
             application_effects,
             application_effect_root,
+            reload_lifecycle_errors: Vec::new(),
         })
     }
 
@@ -593,9 +596,29 @@ impl HostRuntime {
             .count()
     }
 
+    pub fn take_reload_lifecycle_errors(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.reload_lifecycle_errors)
+    }
+
     #[cfg(test)]
     pub(crate) fn scope_set_count(&self) -> usize {
         self.scopes.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn scope_reached_state(&self, plugin_id: &str, target: crate::ScopeState) -> bool {
+        self.scopes.iter().any(|scopes| {
+            let Some(scope_id) = scopes.plugin_scope(plugin_id) else {
+                return false;
+            };
+            scopes.manager().events_after(0).iter().any(|event| {
+                event.scope_id == *scope_id
+                    && matches!(
+                        event.kind,
+                        crate::ScopeEventKind::StateChanged { to, .. } if to == target
+                    )
+            })
+        })
     }
 
     pub fn attach_application_effect(
@@ -604,29 +627,84 @@ impl HostRuntime {
         kind: HostEffectKind,
         effect: Box<dyn HostEffect>,
     ) -> RuntimeResult<AttachedEffectHandle> {
-        let scope_id = self.application_effects.create_scope(
-            Some(&self.application_effect_root),
+        Self::attach_effect(
+            &self.application_effects,
+            &self.application_effect_root,
             plugin_id,
             self.context.registry_generation(),
+            kind,
+            effect,
+        )
+    }
+
+    pub fn attach_plugin_effect(
+        &self,
+        plugin_id: &str,
+        kind: HostEffectKind,
+        effect: Box<dyn HostEffect>,
+    ) -> RuntimeResult<AttachedEffectHandle> {
+        let scopes = self
+            .scopes
+            .iter()
+            .rev()
+            .find(|scopes| scopes.plugin_scope(plugin_id).is_some())
+            .ok_or_else(|| host_failure("host.scope.plugin_missing", plugin_id))?;
+        let parent = scopes
+            .plugin_scope(plugin_id)
+            .expect("matched plugin scope");
+        let generation = scopes
+            .manager()
+            .snapshot(parent)
+            .ok_or_else(|| host_failure("host.scope.plugin_missing", plugin_id))?
+            .plugin_generation;
+        Self::attach_effect(
+            scopes.manager(),
+            parent,
+            plugin_id,
+            generation,
+            kind,
+            effect,
+        )
+    }
+
+    fn attach_effect(
+        manager: &PluginScopeManager,
+        parent: &ScopeId,
+        plugin_id: &str,
+        generation: u64,
+        kind: HostEffectKind,
+        effect: Box<dyn HostEffect>,
+    ) -> RuntimeResult<AttachedEffectHandle> {
+        let scope_id = manager.create_scope(
+            Some(parent),
+            plugin_id,
+            generation,
             PluginLifetime::DrainRequired,
         )?;
-        self.application_effects.begin_activation(&scope_id)?;
+        if let Err(error) = manager.begin_activation(&scope_id) {
+            let _ = manager.rollback_activation_blocking(&scope_id, Duration::from_secs(30));
+            return Err(error);
+        }
         let scope_kind = match kind {
             HostEffectKind::HostLocal => EffectKind::HostLocal,
             HostEffectKind::BackendInstance => EffectKind::BackendInstance,
         };
-        if let Err(error) = self.application_effects.register_effect(
+        if let Err(error) = manager.register_effect(
             &scope_id,
             scope_kind,
             Box::new(RuntimeBootstrapperEffect { kind, effect }),
         ) {
-            let _ = self
-                .application_effects
-                .rollback_activation_blocking(&scope_id, Duration::from_secs(30));
+            let _ = manager.rollback_activation_blocking(&scope_id, Duration::from_secs(30));
             return Err(error);
         }
-        self.application_effects.commit_activation(&scope_id)?;
-        Ok(AttachedEffectHandle { scope_id })
+        if let Err(error) = manager.commit_activation(&scope_id) {
+            let _ = manager.rollback_activation_blocking(&scope_id, Duration::from_secs(30));
+            return Err(error);
+        }
+        Ok(AttachedEffectHandle {
+            manager: manager.clone(),
+            scope_id,
+        })
     }
 
     pub fn dispose_attached_effect(
@@ -634,9 +712,21 @@ impl HostRuntime {
         handle: &AttachedEffectHandle,
         timeout: Duration,
     ) -> RuntimeResult<()> {
-        self.application_effects
+        handle
+            .manager
             .dispose_scope_blocking(&handle.scope_id, timeout)
             .map(|_| ())
+    }
+
+    #[must_use]
+    pub fn attached_effect_state(
+        &self,
+        handle: &AttachedEffectHandle,
+    ) -> Option<crate::ScopeState> {
+        handle
+            .manager
+            .snapshot(&handle.scope_id)
+            .map(|scope| scope.state)
     }
 
     pub fn dispatch(&self, command: HostRuntimeCommand) -> RuntimeResult<HostRuntimeReply> {
@@ -655,6 +745,8 @@ impl HostRuntime {
         mut prepared: PreparedRuntimeReload,
         drain_timeout: Duration,
     ) -> RuntimeResult<ReloadDecision> {
+        self.reload_lifecycle_errors.clear();
+        let reload_started = Instant::now();
         let candidate_scopes = prepared.scopes.take().ok_or_else(|| {
             host_failure(
                 "host.reload.scope_candidate_missing",
@@ -662,20 +754,38 @@ impl HostRuntime {
             )
         })?;
         for scopes in &self.scopes {
+            if let Some(affected_plugins) = prepared.affected_plugins.as_ref()
+                && let Err(error) = scopes.validate_reload_domain(affected_plugins)
+            {
+                return Err(rollback_candidate_scopes(
+                    &candidate_scopes,
+                    drain_timeout.saturating_sub(reload_started.elapsed()),
+                    error,
+                ));
+            }
             if let Err(error) = scopes.validate_reload(prepared.affected_plugins.as_ref()) {
                 return Err(rollback_candidate_scopes(
                     &candidate_scopes,
-                    drain_timeout,
+                    drain_timeout.saturating_sub(reload_started.elapsed()),
                     error,
                 ));
             }
         }
         if let Some(affected_plugins) = &prepared.affected_plugins {
-            prepared.services = mutsuki_runtime_sdk::HostServiceRegistry::merge_for_plugins(
+            prepared.services = match mutsuki_runtime_sdk::HostServiceRegistry::merge_for_plugins(
                 self.context.services(),
                 &prepared.services,
                 affected_plugins,
-            )?;
+            ) {
+                Ok(services) => services,
+                Err(error) => {
+                    return Err(rollback_candidate_scopes(
+                        &candidate_scopes,
+                        drain_timeout.saturating_sub(reload_started.elapsed()),
+                        error,
+                    ));
+                }
+            };
         }
         let affected_plugins = prepared.affected_plugins.clone();
         prepared.append_core_kernel();
@@ -683,22 +793,28 @@ impl HostRuntime {
         let services = prepared.services.clone();
         let profile_id = prepared.profile_id.clone();
         let registry_generation = prepared.registry_generation;
+        let core_drain_timeout = drain_timeout.saturating_sub(reload_started.elapsed());
         let reply = self.dispatch(HostRuntimeCommand::Reload {
             prepared,
-            drain_timeout,
+            drain_timeout: core_drain_timeout,
         });
         let reply = match reply {
             Ok(reply) => reply,
             Err(error) => {
                 return Err(rollback_candidate_scopes(
                     &candidate_scopes,
-                    drain_timeout,
+                    drain_timeout.saturating_sub(reload_started.elapsed()),
                     error,
                 ));
             }
         };
         match reply {
             HostRuntimeReply::Reloaded(decision) => {
+                let activation_error = candidate_scopes.commit_activation().err();
+                let mut retirement_errors = Vec::new();
+                if let Some(error) = &activation_error {
+                    candidate_scopes.mark_activation_failed(&error.to_string());
+                }
                 self.capabilities = Arc::new(capabilities);
                 if let Some(affected_plugins) = &affected_plugins {
                     for scopes in &self.scopes {
@@ -706,9 +822,13 @@ impl HostRuntime {
                             let Some(scope_id) = scopes.plugin_scope(plugin_id) else {
                                 continue;
                             };
-                            let _ = scopes
-                                .manager()
-                                .dispose_scope_blocking(scope_id, drain_timeout);
+                            if let Err(error) = retire_scope(
+                                scopes,
+                                scope_id,
+                                drain_timeout.saturating_sub(reload_started.elapsed()),
+                            ) {
+                                retirement_errors.push(error.to_string());
+                            }
                         }
                     }
                     self.scopes.retain(PluginScopeSet::has_live_plugins);
@@ -716,12 +836,16 @@ impl HostRuntime {
                 } else {
                     let previous_scopes = std::mem::take(&mut self.scopes);
                     for scopes in previous_scopes {
-                        if scopes
-                            .manager()
-                            .dispose_scope_blocking(scopes.root_scope(), drain_timeout)
-                            .is_err()
-                        {
-                            self.scopes.push(scopes);
+                        match retire_scope(
+                            &scopes,
+                            scopes.root_scope(),
+                            drain_timeout.saturating_sub(reload_started.elapsed()),
+                        ) {
+                            Ok(()) => {}
+                            Err(error) => {
+                                retirement_errors.push(error.to_string());
+                                self.scopes.push(scopes);
+                            }
                         }
                     }
                     self.scopes.push(candidate_scopes);
@@ -733,6 +857,16 @@ impl HostRuntime {
                     self.scopes.clone(),
                     profile_id,
                     registry_generation,
+                );
+                if let Some(error) = activation_error {
+                    self.reload_lifecycle_errors.push(format!(
+                        "host.reload.post_switch_scope_activation_failed: {error}"
+                    ));
+                }
+                self.reload_lifecycle_errors.extend(
+                    retirement_errors.into_iter().map(|error| {
+                        format!("host.reload.post_switch_scope_cleanup_failed: {error}")
+                    }),
                 );
                 Ok(decision)
             }
@@ -969,6 +1103,34 @@ impl HostRuntime {
     }
 }
 
+fn retire_scope(
+    scopes: &PluginScopeSet,
+    scope_id: &ScopeId,
+    timeout: Duration,
+) -> RuntimeResult<()> {
+    begin_scope_drain(scopes, scope_id)?;
+    scopes
+        .manager()
+        .dispose_scope_blocking(scope_id, timeout)
+        .map(|_| ())
+}
+
+fn begin_scope_drain(scopes: &PluginScopeSet, scope_id: &ScopeId) -> RuntimeResult<()> {
+    let Some(snapshot) = scopes.manager().snapshot(scope_id) else {
+        return Ok(());
+    };
+    for child in snapshot.children {
+        begin_scope_drain(scopes, &child)?;
+    }
+    if matches!(
+        snapshot.state,
+        crate::ScopeState::Active | crate::ScopeState::Suspended
+    ) {
+        scopes.manager().begin_drain(scope_id)?;
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostRuntimeDriveState {
     pub current_step: u64,
@@ -985,13 +1147,22 @@ impl Drop for HostRuntime {
         }
         let cleanup_timeout = Duration::from_secs(30);
         for scopes in self.scopes.drain(..) {
-            let _ = scopes
+            if let Err(error) = scopes
                 .manager()
-                .shutdown_scope_blocking(scopes.root_scope(), cleanup_timeout);
+                .shutdown_scope_blocking(scopes.root_scope(), cleanup_timeout)
+            {
+                eprintln!("Mutsuki Host retained a dirty plugin scope during shutdown: {error}");
+                std::mem::forget(scopes);
+            }
         }
-        let _ = self
-            .application_effects
-            .shutdown_scope_blocking(&self.application_effect_root, cleanup_timeout);
+        let application_effects =
+            std::mem::replace(&mut self.application_effects, PluginScopeManager::new());
+        if let Err(error) = application_effects
+            .shutdown_scope_blocking(&self.application_effect_root, cleanup_timeout)
+        {
+            eprintln!("Mutsuki Host retained dirty application effects during shutdown: {error}");
+            std::mem::forget(application_effects);
+        }
         self.completion_hub.close();
     }
 }

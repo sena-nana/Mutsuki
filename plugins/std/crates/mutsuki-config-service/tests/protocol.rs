@@ -46,6 +46,208 @@ fn derive_schema_round_trips_from_the_protocol_owner() {
     assert_eq!(decoded, schema);
 }
 
+#[test]
+fn owned_provider_registration_cannot_remove_a_newer_owner() {
+    let registry = Arc::new(ConfigProviderRegistry::default());
+    let first = registry
+        .register_owned(Arc::new(MemoryConfigProvider::new(
+            ExampleConfig::schema(),
+            value("first", "safe"),
+            ConfigApplyMode::HotReload,
+        )))
+        .unwrap();
+    let staged = registry
+        .register_owned(Arc::new(MemoryConfigProvider::new(
+            ExampleConfig::schema(),
+            value("staged", "safe"),
+            ConfigApplyMode::HotReload,
+        )))
+        .unwrap();
+    drop(staged);
+    assert_eq!(
+        registry
+            .get("example.settings")
+            .unwrap()
+            .provider
+            .default_value(&ConfigContext::global())
+            .unwrap(),
+        value("first", "safe")
+    );
+    let second = registry
+        .register_owned(Arc::new(MemoryConfigProvider::new(
+            ExampleConfig::schema(),
+            value("second", "safe"),
+            ConfigApplyMode::HotReload,
+        )))
+        .unwrap();
+
+    drop(first);
+    assert_eq!(
+        registry
+            .get("example.settings")
+            .unwrap()
+            .provider
+            .default_value(&ConfigContext::global())
+            .unwrap(),
+        value("second", "safe")
+    );
+    drop(second);
+    assert!(registry.get("example.settings").is_err());
+}
+
+#[test]
+fn staged_provider_stays_hidden_until_the_active_scope_retires() {
+    let registry = Arc::new(ConfigProviderRegistry::default());
+    let active = registry
+        .register_owned(Arc::new(MemoryConfigProvider::new(
+            ExampleConfig::schema(),
+            value("active", "safe"),
+            ConfigApplyMode::HotReload,
+        )))
+        .unwrap();
+    let staged = registry
+        .register_owned_staged(Arc::new(MemoryConfigProvider::new(
+            ExampleConfig::schema(),
+            value("staged", "safe"),
+            ConfigApplyMode::HotReload,
+        )))
+        .unwrap();
+
+    assert_eq!(
+        registry
+            .get("example.settings")
+            .unwrap()
+            .provider
+            .default_value(&ConfigContext::plugin_instance("test"))
+            .unwrap(),
+        value("active", "safe")
+    );
+    drop(active);
+    assert_eq!(
+        registry
+            .get("example.settings")
+            .unwrap()
+            .provider
+            .default_value(&ConfigContext::plugin_instance("test"))
+            .unwrap(),
+        value("staged", "safe")
+    );
+    drop(staged);
+    assert!(registry.get("example.settings").is_err());
+}
+
+#[tokio::test]
+async fn preparing_a_provider_candidate_does_not_publish_it_before_scope_activation() {
+    let registry = Arc::new(ConfigProviderRegistry::default());
+    let _active = registry
+        .register_owned(Arc::new(MemoryConfigProvider::new(
+            ExampleConfig::schema(),
+            value("active", "safe"),
+            ConfigApplyMode::HotReload,
+        )))
+        .unwrap();
+    let lifecycle = Arc::new(RecordingLifecycle {
+        fail_execute: true,
+        observations: Mutex::new(Vec::new()),
+        rollbacks: AtomicUsize::new(0),
+    });
+    let service = ConfigService::new(
+        registry.clone(),
+        Arc::new(InMemoryConfigRepository::default()),
+    )
+    .unwrap()
+    .with_lifecycle(lifecycle.clone());
+    let candidate = Arc::new(MemoryConfigProvider::new(
+        ExampleConfig::schema(),
+        value("candidate", "safe"),
+        ConfigApplyMode::HotReload,
+    ));
+    let context = ConfigContext::plugin_instance("candidate");
+
+    let snapshot = service
+        .prepare_provider_candidate(
+            candidate.clone(),
+            Some(value("seeded", "safe")),
+            context.clone(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(snapshot.value, value("seeded", "safe"));
+    assert!(lifecycle.observations.lock().unwrap().is_empty());
+    assert_eq!(
+        registry
+            .get("example.settings")
+            .unwrap()
+            .provider
+            .default_value(&context)
+            .unwrap(),
+        value("active", "safe")
+    );
+
+    let candidate_registration = service.register_provider_owned(candidate).unwrap();
+    assert_eq!(
+        registry
+            .get("example.settings")
+            .unwrap()
+            .provider
+            .default_value(&context)
+            .unwrap(),
+        value("candidate", "safe")
+    );
+    drop(candidate_registration);
+    assert_eq!(
+        registry
+            .get("example.settings")
+            .unwrap()
+            .provider
+            .default_value(&context)
+            .unwrap(),
+        value("active", "safe")
+    );
+}
+
+#[tokio::test]
+async fn revision_subscription_stops_callbacks_after_dispose() {
+    let service = service(Arc::new(InMemoryConfigRepository::default()));
+    let notifications = Arc::new(AtomicUsize::new(0));
+    let observed = notifications.clone();
+    let mut subscription = service.subscribe_revision_changed(Arc::new(move |_| {
+        observed.fetch_add(1, Ordering::SeqCst);
+    }));
+    let context = ConfigContext::plugin_instance("watch-test");
+    service
+        .apply(
+            "example.settings",
+            ConfigApplyRequest {
+                candidate: value("first", "safe"),
+                expected_revision: ConfigRevision::ABSENT,
+                dry_run: false,
+            },
+            context.clone(),
+            &capabilities(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(notifications.load(Ordering::SeqCst), 1);
+
+    assert!(subscription.dispose());
+    assert!(!subscription.dispose());
+    service
+        .apply(
+            "example.settings",
+            ConfigApplyRequest {
+                candidate: value("second", "safe"),
+                expected_revision: ConfigRevision(1),
+                dry_run: false,
+            },
+            context,
+            &capabilities(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(notifications.load(Ordering::SeqCst), 1);
+}
+
 #[tokio::test]
 async fn documents_have_independent_revisions_and_compare_and_set() {
     let service = service(Arc::new(InMemoryConfigRepository::default()));

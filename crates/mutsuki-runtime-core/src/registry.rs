@@ -292,6 +292,14 @@ impl RunnerRegistry {
         self.runners.get_mut(runner_id)?.pop()
     }
 
+    pub(crate) fn available_dispatch_instances(&self, runner_id: &str) -> usize {
+        if self.async_handlers.contains_key(runner_id) {
+            usize::MAX
+        } else {
+            self.runners.get(runner_id).map_or(0, Vec::len)
+        }
+    }
+
     pub(crate) fn put_runner(&mut self, runner: Box<dyn Runner>) {
         let runner_id = runner.descriptor().runner_id.clone();
         self.runners.entry(runner_id).or_default().push(runner);

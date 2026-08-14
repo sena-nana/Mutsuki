@@ -31,6 +31,7 @@ pub enum WebConsoleError {
 /// Keeps the embedded Web Console alive for the ServiceRuntime lifetime.
 pub struct WebConsoleGuard {
     host: MutsukiWebHost,
+    _config_watch: mutsuki_config_service::ConfigWatchSubscription,
     _assets: ConsoleAssetDirs,
 }
 
@@ -85,9 +86,16 @@ impl WebConsoleGuard {
         )?;
         let mut host = host;
         host.start().await?;
-        attach_revision_changed_bridge(&host, &config_service);
+        let config_watch =
+            attach_revision_changed_bridge(&host, &config_service).ok_or_else(|| {
+                WebConsoleError::Config {
+                    code: "web.console.bridge_unavailable",
+                    message: "started Web Console has no event bridge".into(),
+                }
+            })?;
         Ok(Some(Self {
             host,
+            _config_watch: config_watch,
             _assets: assets,
         }))
     }

@@ -3507,6 +3507,9 @@ name = "mutsuki-agent-plugin-api"
 version = "0.1.0"
 dependencies = [
  "mutsuki-agent-contracts",
+ "mutsuki-runtime-contracts",
+ "mutsuki-runtime-core",
+ "mutsuki-runtime-sdk",
  "serde_json",
 ]
 
@@ -3563,6 +3566,7 @@ dependencies = [
  "mutsuki-runtime-host",
  "mutsuki-runtime-sdk",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]

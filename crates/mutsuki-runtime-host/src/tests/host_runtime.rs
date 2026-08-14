@@ -1359,27 +1359,45 @@ fn failed_host_runtime_reload_disposes_prepared_runners() {
         }
     }
 
+    struct ObservedEffect(Arc<AtomicBool>);
+
+    impl mutsuki_runtime_sdk::HostEffect for ObservedEffect {
+        fn dispose(&mut self) -> mutsuki_runtime_sdk::HostEffectFuture<'_> {
+            let disposed = self.0.clone();
+            Box::pin(async move {
+                disposed.store(true, Ordering::SeqCst);
+                Ok(())
+            })
+        }
+    }
+
     let mut runtime = super::helpers::host_with_echo_runner()
         .into_host_runtime(runtime_profile())
         .unwrap();
     let mut changed_descriptor = descriptor("echo.runner", "raw.input");
     changed_descriptor.input_schema = json!({"changed": true});
     let disposed = Arc::new(Mutex::new(false));
+    let effect_disposed = Arc::new(AtomicBool::new(false));
     let mut reload_host = RuntimeBootstrapper::new();
-    reload_host.register_manifest(runner_manifest(
-        "plugin-a",
-        vec![changed_descriptor.clone()],
-    ));
-    reload_host.register_runner(Box::new(ObservedDisposeRunner {
+    let mut plugin = mutsuki_runtime_sdk::PluginBuilder::new("plugin-a")
+        .host_effect(
+            mutsuki_runtime_sdk::HostEffectKind::HostLocal,
+            Box::new(ObservedEffect(effect_disposed.clone())),
+        )
+        .build();
+    plugin.manifest = runner_manifest("plugin-a", vec![changed_descriptor.clone()]);
+    plugin.runners = vec![Box::new(ObservedDisposeRunner {
         descriptor: changed_descriptor,
         disposed: disposed.clone(),
-    }));
+    })];
+    reload_host.register_loaded_plugin(plugin);
     let mut prepared = reload_host.prepare_reload(runtime_profile(), 2).unwrap();
     prepared.plan.contract_surfaces[0].fingerprint = "sha256:breaking".into();
 
     assert!(runtime.reload(prepared, Duration::from_secs(1)).is_err());
     assert_eq!(runtime.host_context().registry_generation(), 1);
     assert!(*disposed.lock().expect("disposed mutex poisoned"));
+    assert!(effect_disposed.load(Ordering::SeqCst));
 }
 
 #[test]

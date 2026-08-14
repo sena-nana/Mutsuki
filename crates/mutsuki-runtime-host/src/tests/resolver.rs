@@ -78,6 +78,43 @@ fn same_plugin_projects_optional_contributions_without_changing_business_identit
 }
 
 #[test]
+fn optional_extension_namespace_collects_all_active_contributors() {
+    fn contributor(plugin_id: &str, node: &str) -> PluginManifest {
+        let mut manifest = runner_manifest(plugin_id, Vec::new());
+        manifest.provides.extensions = vec![PluginExtensionDescriptor {
+            extension_id: "mutsuki.bot.flow.nodes".into(),
+            version: 1,
+            projection: ExtensionProjection::Optional,
+            payload: json!({"node": node}),
+        }];
+        manifest
+    }
+
+    let first = contributor("flow-a", "a");
+    let second = contributor("flow-b", "b");
+    let mut profile = runtime_profile();
+    profile.enabled_plugins = vec![first.plugin_id.clone(), second.plugin_id.clone()];
+    profile.supported_extensions = vec!["mutsuki.bot.flow.nodes".into()];
+
+    let plan = crate::resolve_load_plan(&[second, first], &profile).unwrap();
+    let contributors = plan
+        .capability_graph
+        .active_capability_providers
+        .iter()
+        .filter(|selection| selection.capability == "plugin_extension:mutsuki.bot.flow.nodes")
+        .map(|selection| selection.provider_plugin_id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(contributors, ["flow-a", "flow-b"]);
+    assert!(
+        plan.contract_surfaces
+            .iter()
+            .filter(|surface| surface.kind == ContractSurfaceKind::PluginExtension)
+            .count()
+            == 2
+    );
+}
+
+#[test]
 fn unsupported_required_contribution_is_a_resolution_error() {
     let mut manifest = runner_manifest("required-extension", Vec::new());
     manifest.provides.extensions = vec![PluginExtensionDescriptor {

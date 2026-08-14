@@ -17,7 +17,12 @@ pub(super) fn claim_runner_work(
     let max_batches = decision
         .budget
         .max_batches
-        .min(descriptor.concurrency.max_inflight_batches());
+        .min(descriptor.concurrency.max_inflight_batches())
+        .min(
+            runtime
+                .registry
+                .available_dispatch_instances(&descriptor.runner_id),
+        );
     let decision = decision
         .clamp_to(
             descriptor

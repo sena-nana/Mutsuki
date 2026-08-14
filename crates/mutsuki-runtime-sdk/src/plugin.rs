@@ -12,16 +12,40 @@ use mutsuki_runtime_contracts::{
 use mutsuki_runtime_core::{AsyncBatchHandler, Runner, RuntimeResult};
 
 use crate::{
-    AsyncResourceProviderGateway, HandlerBindingBuilder, HostService, ProtocolSpec,
-    ResourceKindSpec, ResourceProviderGateway,
+    AsyncResourceProviderGateway, HandlerBindingBuilder, HostService, HostServiceValue,
+    ProtocolSpec, ResourceKindSpec, ResourceProviderGateway,
 };
 
 #[derive(Clone)]
 pub struct RuntimeBootstrapperService {
     pub service_id: String,
     pub capability: String,
-    pub service: Arc<dyn std::any::Any + Send + Sync>,
+    pub(crate) value: HostServiceValue,
     pub rebindable: bool,
+}
+
+impl RuntimeBootstrapperService {
+    pub fn new<T>(
+        service_id: impl Into<String>,
+        service: Arc<T>,
+        capability: impl Into<String>,
+    ) -> Self
+    where
+        T: HostService,
+    {
+        Self {
+            service_id: service_id.into(),
+            capability: capability.into(),
+            value: HostServiceValue::new(service),
+            rebindable: false,
+        }
+    }
+
+    #[must_use]
+    pub fn rebindable(mut self) -> Self {
+        self.rebindable = true;
+        self
+    }
 }
 
 pub struct RuntimeBootstrapperResourceProvider {
@@ -391,12 +415,9 @@ impl PluginBuilder {
         if !self.provides.capabilities.contains(&capability) {
             self.provides.capabilities.push(capability.clone());
         }
-        self.host_services.push(RuntimeBootstrapperService {
-            service_id,
-            capability,
-            service,
-            rebindable,
-        });
+        let mut service = RuntimeBootstrapperService::new(service_id, service, capability);
+        service.rebindable = rebindable;
+        self.host_services.push(service);
     }
 
     pub fn build(mut self) -> LoadedPlugin {

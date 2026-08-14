@@ -4,9 +4,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use mutsuki_runtime_contracts::*;
-use mutsuki_runtime_core::CoreRuntime;
+use mutsuki_runtime_core::{CoreRuntime, Runner, RunnerManagementHandle, RuntimeResult};
 use mutsuki_runtime_sdk::{
-    BuiltinPluginLoader, HostEffect, HostEffectFuture, HostEffectKind, LoadedPlugin, PluginBuilder,
+    BuiltinPluginLoader, HostEffect, HostEffectFuture, HostEffectKind, HostServiceRegistry,
+    LoadedPlugin, PluginBuilder,
 };
 use serde_json::json;
 
@@ -28,6 +29,59 @@ impl HostEffect for CountingEffect {
             disposed.fetch_add(1, Ordering::SeqCst);
             Ok(())
         })
+    }
+}
+
+#[derive(Debug)]
+struct CountingManagement(Arc<AtomicUsize>);
+
+impl RunnerManagementHandle for CountingManagement {
+    fn cancel(&self, _invocation_id: &str) -> RuntimeResult<()> {
+        Ok(())
+    }
+
+    fn dispose(&self) -> RuntimeResult<()> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+struct ManagedDeploymentRunner {
+    descriptor: RunnerDescriptor,
+    management: Arc<CountingManagement>,
+    direct_disposes: Arc<AtomicUsize>,
+}
+
+impl Runner for ManagedDeploymentRunner {
+    fn descriptor(&self) -> &RunnerDescriptor {
+        &self.descriptor
+    }
+
+    fn run_batch(
+        &mut self,
+        _ctx: RunnerContext,
+        batch: WorkBatch,
+    ) -> RuntimeResult<CompletionBatch> {
+        let results = batch
+            .entries
+            .iter()
+            .map(|entry| EntryCompletion {
+                entry_id: entry.entry_id.clone(),
+                task_id: entry.task_id.clone(),
+                result: Some(RunnerResult::completed(entry.task_id.clone())),
+                error: None,
+            })
+            .collect();
+        Ok(CompletionBatch::from_results(&batch, results))
+    }
+
+    fn dispose(&mut self) -> RuntimeResult<()> {
+        self.direct_disposes.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn management_handle(&self) -> Option<Arc<dyn RunnerManagementHandle>> {
+        Some(self.management.clone())
     }
 }
 
@@ -219,6 +273,16 @@ fn host_runtime_reload_preserves_prepared_plugin_services_in_host_context() {
     let prepared = reload_host
         .prepare_reload(host_service_profile("plugin-service"), 2)
         .unwrap();
+    let staged_scopes = prepared.scopes.as_ref().unwrap();
+    let staged_scope = staged_scopes.plugin_scope("plugin-service").unwrap();
+    assert_eq!(
+        staged_scopes
+            .manager()
+            .snapshot(staged_scope)
+            .unwrap()
+            .state,
+        crate::ScopeState::Activating
+    );
     assert_eq!(prepared.load_plan().registry_generation, 2);
     assert!(
         prepared
@@ -258,6 +322,56 @@ fn plugin_effect_is_disposed_by_its_scope_on_runtime_shutdown() {
     assert_eq!(disposed.load(Ordering::SeqCst), 0);
     drop(runtime);
     assert_eq!(disposed.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn runner_deployments_share_one_scope_owned_backend_lifecycle() {
+    let deployments = [
+        (ArtifactType::Native, PluginDeploymentKind::Builtin),
+        (ArtifactType::Abi, PluginDeploymentKind::Abi),
+        (ArtifactType::Process, PluginDeploymentKind::Process),
+        (ArtifactType::Python, PluginDeploymentKind::Python),
+    ];
+
+    for (index, (artifact_type, deployment)) in deployments.into_iter().enumerate() {
+        let plugin_id = format!("plugin-managed-{index}");
+        let mut runner_descriptor = descriptor(
+            &format!("managed.runner.{index}"),
+            &format!("managed.work.{index}"),
+        );
+        runner_descriptor.plugin_id = plugin_id.clone();
+        let manifest = managed_deployment_manifest(
+            &plugin_id,
+            artifact_type,
+            deployment.clone(),
+            runner_descriptor.clone(),
+        );
+        let management_disposes = Arc::new(AtomicUsize::new(0));
+        let direct_disposes = Arc::new(AtomicUsize::new(0));
+        let runner = Box::new(ManagedDeploymentRunner {
+            descriptor: runner_descriptor,
+            management: Arc::new(CountingManagement(management_disposes.clone())),
+            direct_disposes: direct_disposes.clone(),
+        });
+        let mut host = RuntimeBootstrapper::new();
+        host.register_manifest(manifest);
+        match deployment.clone() {
+            PluginDeploymentKind::Builtin => host.register_builtin_runner(runner),
+            PluginDeploymentKind::Abi => host.register_abi_runner(runner),
+            deployment => host.register_external_runner(deployment, runner),
+        }
+
+        let runtime = host
+            .into_host_runtime(runtime_profile_with_deployment(&plugin_id, deployment))
+            .unwrap();
+        assert_eq!(management_disposes.load(Ordering::SeqCst), 0);
+        assert_eq!(direct_disposes.load(Ordering::SeqCst), 0);
+
+        drop(runtime);
+
+        assert_eq!(management_disposes.load(Ordering::SeqCst), 1);
+        assert_eq!(direct_disposes.load(Ordering::SeqCst), 0);
+    }
 }
 
 #[test]
@@ -328,6 +442,7 @@ fn targeted_reload_keeps_unaffected_scope_and_discards_unused_candidate() {
     assert_eq!(old_b.load(Ordering::SeqCst), 0);
     assert_eq!(new_a.load(Ordering::SeqCst), 0);
     assert_eq!(unused_b.load(Ordering::SeqCst), 1);
+    assert!(runtime.scope_reached_state("plugin-a", crate::ScopeState::Draining));
 
     let newest_a = Arc::new(AtomicUsize::new(0));
     let discarded_b = Arc::new(AtomicUsize::new(0));
@@ -350,6 +465,292 @@ fn targeted_reload_keeps_unaffected_scope_and_discards_unused_candidate() {
     drop(runtime);
     assert_eq!(old_b.load(Ordering::SeqCst), 1);
     assert_eq!(newest_a.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn targeted_reload_disposes_only_dynamic_effects_in_the_reloaded_plugin_scope() {
+    fn profile() -> RuntimeProfile {
+        let mut profile = host_service_profile("plugin-a");
+        profile.enabled_plugins.push("plugin-b".into());
+        profile
+    }
+
+    let mut host = RuntimeBootstrapper::new();
+    host.register_loaded_plugin(PluginBuilder::new("plugin-a").build());
+    host.register_loaded_plugin(PluginBuilder::new("plugin-b").build());
+    let mut runtime = host.into_host_runtime(profile()).unwrap();
+    let disposed_a = Arc::new(AtomicUsize::new(0));
+    let disposed_b = Arc::new(AtomicUsize::new(0));
+    runtime
+        .attach_plugin_effect(
+            "plugin-a",
+            HostEffectKind::HostLocal,
+            Box::new(CountingEffect(disposed_a.clone())),
+        )
+        .unwrap();
+    runtime
+        .attach_plugin_effect(
+            "plugin-b",
+            HostEffectKind::HostLocal,
+            Box::new(CountingEffect(disposed_b.clone())),
+        )
+        .unwrap();
+
+    let mut candidate = RuntimeBootstrapper::new();
+    candidate.register_loaded_plugin(PluginBuilder::new("plugin-a").build());
+    candidate.register_loaded_plugin(PluginBuilder::new("plugin-b").build());
+    let prepared = candidate
+        .prepare_targeted_reload_with_runner_limits(
+            profile(),
+            2,
+            Default::default(),
+            ["plugin-a".to_string()].into_iter().collect(),
+        )
+        .unwrap();
+    runtime.reload(prepared, Duration::from_secs(1)).unwrap();
+
+    assert_eq!(disposed_a.load(Ordering::SeqCst), 1);
+    assert_eq!(disposed_b.load(Ordering::SeqCst), 0);
+    drop(runtime);
+    assert_eq!(disposed_b.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn repeated_clean_reloads_keep_scope_sets_bounded() {
+    let disposed = Arc::new(AtomicUsize::new(0));
+    let mut host = RuntimeBootstrapper::new();
+    host.register_loaded_plugin(
+        PluginBuilder::new("plugin-bounded")
+            .host_effect(
+                HostEffectKind::HostLocal,
+                Box::new(CountingEffect(disposed.clone())),
+            )
+            .build(),
+    );
+    let mut runtime = host
+        .into_host_runtime(host_service_profile("plugin-bounded"))
+        .unwrap();
+
+    for generation in 2..=10_001 {
+        let mut candidate = RuntimeBootstrapper::new();
+        candidate.register_loaded_plugin(
+            PluginBuilder::new("plugin-bounded")
+                .host_effect(
+                    HostEffectKind::HostLocal,
+                    Box::new(CountingEffect(disposed.clone())),
+                )
+                .build(),
+        );
+        let prepared = candidate
+            .prepare_reload(host_service_profile("plugin-bounded"), generation)
+            .unwrap();
+        runtime.reload(prepared, Duration::from_secs(1)).unwrap();
+        assert_eq!(runtime.scope_set_count(), 1);
+    }
+
+    assert_eq!(disposed.load(Ordering::SeqCst), 10_000);
+    drop(runtime);
+    assert_eq!(disposed.load(Ordering::SeqCst), 10_001);
+}
+
+#[test]
+fn targeted_reload_expands_the_connected_service_domain() {
+    fn consumer() -> LoadedPlugin {
+        PluginBuilder::new("plugin-consumer")
+            .requires(SurfaceRequirement::service("service.shared"))
+            .build()
+    }
+
+    fn profile() -> RuntimeProfile {
+        let mut profile = host_service_profile("plugin-provider");
+        profile.enabled_plugins.push("plugin-consumer".into());
+        profile
+    }
+
+    let mut host = RuntimeBootstrapper::new();
+    host.register_loaded_plugin(host_service_plugin(
+        "plugin-provider",
+        "service.shared",
+        "provider-v1",
+    ));
+    host.register_loaded_plugin(consumer());
+    let mut runtime = host.into_host_runtime(profile()).unwrap();
+
+    let mut candidate = RuntimeBootstrapper::new();
+    candidate.register_loaded_plugin(host_service_plugin(
+        "plugin-provider",
+        "service.shared",
+        "provider-v2",
+    ));
+    candidate.register_loaded_plugin(consumer());
+    let prepared = candidate
+        .prepare_targeted_reload_with_runner_limits(
+            profile(),
+            2,
+            Default::default(),
+            ["plugin-consumer".to_string()].into_iter().collect(),
+        )
+        .unwrap();
+
+    assert_eq!(
+        prepared.affected_plugins.as_ref().unwrap(),
+        &["plugin-consumer".to_string(), "plugin-provider".to_string(),]
+            .into_iter()
+            .collect()
+    );
+    let scopes = prepared.scopes.as_ref().unwrap();
+    let consumer_scope = scopes.plugin_scope("plugin-consumer").unwrap();
+    let resolved = scopes
+        .manager()
+        .resolve_service::<String>(consumer_scope, crate::ServiceKey::new("service.shared"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(resolved.plugin_generation, 2);
+    assert_eq!(resolved.service.as_str(), "provider-v2");
+
+    runtime.reload(prepared, Duration::from_secs(1)).unwrap();
+    let service = runtime
+        .host_context()
+        .plugin_scope("plugin-consumer")
+        .unwrap()
+        .require_service::<String>("service.shared")
+        .unwrap();
+    assert_eq!(service.as_str(), "provider-v2");
+    assert_eq!(
+        runtime
+            .host_context()
+            .plugin_scope("plugin-provider")
+            .unwrap()
+            .handle()
+            .plugin_generation,
+        2
+    );
+    assert_eq!(
+        runtime
+            .host_context()
+            .plugin_scope("plugin-consumer")
+            .unwrap()
+            .handle()
+            .plugin_generation,
+        2
+    );
+}
+
+#[test]
+fn targeted_reload_rejects_a_domain_split_from_the_active_contract() {
+    fn consumer(requires_service: bool) -> LoadedPlugin {
+        let builder = PluginBuilder::new("plugin-consumer");
+        if requires_service {
+            builder
+                .requires(SurfaceRequirement::service("service.shared"))
+                .build()
+        } else {
+            builder.build()
+        }
+    }
+
+    fn profile() -> RuntimeProfile {
+        let mut profile = host_service_profile("plugin-provider");
+        profile.enabled_plugins.push("plugin-consumer".into());
+        profile
+    }
+
+    let mut host = RuntimeBootstrapper::new();
+    host.register_loaded_plugin(host_service_plugin(
+        "plugin-provider",
+        "service.shared",
+        "provider-v1",
+    ));
+    host.register_loaded_plugin(consumer(true));
+    let mut runtime = host.into_host_runtime(profile()).unwrap();
+
+    let mut candidate = RuntimeBootstrapper::new();
+    candidate.register_loaded_plugin(host_service_plugin(
+        "plugin-provider",
+        "service.shared",
+        "provider-v2",
+    ));
+    candidate.register_loaded_plugin(consumer(false));
+    let prepared = candidate
+        .prepare_targeted_reload_with_runner_limits(
+            profile(),
+            2,
+            Default::default(),
+            ["plugin-provider".to_string()].into_iter().collect(),
+        )
+        .unwrap();
+
+    let error = runtime
+        .reload(prepared, Duration::from_secs(1))
+        .unwrap_err();
+    assert_eq!(error.error().route, "host.scope.reload_domain_incomplete");
+    assert_eq!(runtime.host_context().registry_generation(), 1);
+    let service = runtime
+        .host_context()
+        .plugin_scope("plugin-consumer")
+        .unwrap()
+        .require_service::<String>("service.shared")
+        .unwrap();
+    assert_eq!(service.as_str(), "provider-v1");
+}
+
+#[test]
+fn targeted_reload_does_not_treat_host_services_as_plugin_domain_edges() {
+    fn provider_contract() -> LoadedPlugin {
+        let mut plugin = PluginBuilder::new("host-provider").build();
+        plugin
+            .manifest
+            .provides
+            .services
+            .push("service.host".into());
+        plugin
+    }
+
+    fn consumer() -> LoadedPlugin {
+        PluginBuilder::new("plugin-consumer")
+            .requires(SurfaceRequirement::service("service.host"))
+            .build()
+    }
+
+    fn profile() -> RuntimeProfile {
+        let mut profile = host_service_profile("host-provider");
+        profile.enabled_plugins.push("plugin-consumer".into());
+        profile
+    }
+
+    let services = Arc::new(HostServiceRegistry::new());
+    services
+        .register("service.host", Arc::new(String::from("host-value")))
+        .unwrap();
+    services.freeze();
+
+    let mut host = RuntimeBootstrapper::new();
+    host.use_shared_services(services.clone()).unwrap();
+    host.register_loaded_plugin(provider_contract());
+    host.register_loaded_plugin(consumer());
+    let mut runtime = host.into_host_runtime(profile()).unwrap();
+
+    let mut candidate = RuntimeBootstrapper::new();
+    candidate.use_shared_services(services).unwrap();
+    candidate.register_loaded_plugin(provider_contract());
+    candidate.register_loaded_plugin(consumer());
+    let prepared = candidate
+        .prepare_targeted_reload_with_runner_limits(
+            profile(),
+            2,
+            Default::default(),
+            ["plugin-consumer".to_string()].into_iter().collect(),
+        )
+        .unwrap();
+
+    runtime.reload(prepared, Duration::from_secs(1)).unwrap();
+    let service = runtime
+        .host_context()
+        .plugin_scope("plugin-consumer")
+        .unwrap()
+        .require_service::<String>("service.host")
+        .unwrap();
+    assert_eq!(service.as_str(), "host-value");
 }
 
 #[test]
@@ -385,6 +786,57 @@ fn restart_required_scope_rejects_reload_before_generation_switch() {
     assert!(runtime.reload(prepared, Duration::from_secs(1)).is_err());
     assert_eq!(runtime.host_context().registry_generation(), 1);
     assert_eq!(candidate_disposed.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn post_switch_cleanup_failure_retains_dirty_old_scope() {
+    struct FailingEffect(Arc<AtomicUsize>);
+
+    impl Drop for FailingEffect {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    impl HostEffect for FailingEffect {
+        fn dispose(&mut self) -> HostEffectFuture<'_> {
+            Box::pin(async { Err(crate::error::host_failure("test.scope.cleanup", "injected")) })
+        }
+    }
+
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let mut host = RuntimeBootstrapper::new();
+    host.register_loaded_plugin(
+        PluginBuilder::new("plugin-dirty")
+            .host_effect(
+                HostEffectKind::BackendInstance,
+                Box::new(FailingEffect(dropped.clone())),
+            )
+            .build(),
+    );
+    let mut runtime = host
+        .into_host_runtime(host_service_profile("plugin-dirty"))
+        .unwrap();
+
+    let mut candidate = RuntimeBootstrapper::new();
+    candidate.register_loaded_plugin(PluginBuilder::new("plugin-dirty").build());
+    let prepared = candidate
+        .prepare_reload(host_service_profile("plugin-dirty"), 2)
+        .unwrap();
+
+    runtime.reload(prepared, Duration::from_secs(1)).unwrap();
+    assert!(
+        runtime
+            .take_reload_lifecycle_errors()
+            .iter()
+            .any(|error| { error.starts_with("host.reload.post_switch_scope_cleanup_failed:") })
+    );
+    assert_eq!(runtime.host_context().registry_generation(), 2);
+    assert_eq!(runtime.retained_dirty_scope_sets(), 1);
+    assert!(runtime.scope_reached_state("plugin-dirty", crate::ScopeState::Draining));
+    assert!(runtime.scope_reached_state("plugin-dirty", crate::ScopeState::FailedDirty));
+    drop(runtime);
+    assert_eq!(dropped.load(Ordering::SeqCst), 0);
 }
 
 #[test]
@@ -574,6 +1026,48 @@ fn host_service_profile(plugin_id: &str) -> RuntimeProfile {
         allow_dynamic_registration: false,
         allow_hot_reload: true,
     }
+}
+
+fn managed_deployment_manifest(
+    plugin_id: &str,
+    artifact_type: ArtifactType,
+    deployment: PluginDeploymentKind,
+    runner: RunnerDescriptor,
+) -> PluginManifest {
+    let mut manifest = runner_manifest_with_artifact(
+        plugin_id,
+        PluginArtifact {
+            artifact_type,
+            path: format!("fixture-{plugin_id}"),
+            sha256: format!("sha256:{plugin_id}"),
+            companion_artifacts: Vec::new(),
+        },
+        vec![runner],
+    );
+    if deployment != PluginDeploymentKind::Builtin {
+        manifest
+            .provides
+            .host_extensions
+            .push(HostExtensionDescriptor {
+                extension_id: format!("host.extension.{plugin_id}.backend"),
+                kind: HostExtensionKind::PluginBackend,
+                supported_deployments: vec![deployment.clone()],
+                reload_policy: "drain_and_swap".into(),
+                drain_required: true,
+            });
+        manifest
+            .provides
+            .plugin_backends
+            .push(PluginBackendDescriptor {
+                backend_id: format!("plugin.backend.{plugin_id}"),
+                deployment_kind: deployment,
+                task_client_protocol: "mutsuki.task.v1".into(),
+                resource_client_protocol: "mutsuki.resource-plan.v1".into(),
+                codec_id: None,
+                bridge_id: None,
+            });
+    }
+    manifest
 }
 
 fn host_service_plugin(

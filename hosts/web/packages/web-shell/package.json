@@ -13,7 +13,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "tsc && pnpm build:browser",
-    "build:browser": "esbuild src/runtime.ts --bundle --format=esm --platform=browser --target=es2022 --alias:@mutsuki/web-sdk=./web-sdk.js --external:./web-sdk.js --outfile=browser/web-shell.js"
+    "build:browser": "esbuild src/runtime.ts --bundle --format=esm --platform=browser --target=es2022 --alias:@mutsuki/web-sdk=./web-sdk.js --external:./web-sdk.js --outfile=browser/web-shell.js",
+    "test": "pnpm build && node --test tests/*.test.mjs"
   },
   "dependencies": {
     "@mutsuki/ui": "workspace:*",

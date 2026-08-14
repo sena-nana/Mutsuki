@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -64,7 +64,7 @@ pub struct PluginSession {
     initialized: mutsuki_runtime_wire::InitializedPlugin,
     connection: Arc<PluginConnection>,
     runners: BTreeMap<String, PluginRunnerHandle>,
-    disposed: AtomicBool,
+    disposed: Mutex<bool>,
 }
 
 #[derive(Clone)]
@@ -123,7 +123,7 @@ impl PluginSession {
             initialized,
             connection,
             runners,
-            disposed: AtomicBool::new(false),
+            disposed: Mutex::new(false),
         })
     }
 
@@ -144,7 +144,8 @@ impl PluginSession {
     }
 
     pub fn dispose(&self) -> PluginResult<()> {
-        if self.disposed.swap(true, Ordering::AcqRel) {
+        let mut disposed = self.disposed.lock().expect("plugin dispose mutex");
+        if *disposed {
             return Ok(());
         }
         for runner_id in self.runners.keys() {
@@ -152,6 +153,7 @@ impl PluginSession {
                 runner_id: runner_id.clone(),
             })?;
         }
+        *disposed = true;
         Ok(())
     }
 
@@ -160,7 +162,7 @@ impl PluginSession {
     /// The generic request surface is intentionally kept at the plugin host boundary so
     /// compatibility adapters can reuse the same connection without depending on CoreRuntime.
     pub fn request<R: WireRequest>(&self, request: &R) -> PluginResult<R::Response> {
-        if self.disposed.load(Ordering::Acquire) {
+        if *self.disposed.lock().expect("plugin dispose mutex") {
             return Err(plugin_error(
                 "plugin.session.disposed",
                 "plugin session is disposed",

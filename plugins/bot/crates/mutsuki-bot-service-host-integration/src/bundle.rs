@@ -196,12 +196,11 @@ impl QqBotPluginBundle {
                     manifest: loaded_manifest.clone(),
                     runners: Vec::new(),
                     async_handlers: Vec::new(),
-                    host_services: vec![RuntimeBootstrapperService {
-                        service_id: QQ_MANAGEMENT_SERVICE_ID.into(),
-                        capability: "bot.qq.management".into(),
-                        service: management,
-                        rebindable: false,
-                    }],
+                    host_services: vec![RuntimeBootstrapperService::new(
+                        QQ_MANAGEMENT_SERVICE_ID,
+                        management,
+                        "bot.qq.management",
+                    )],
                     resource_providers: Vec::new(),
                     async_resource_providers: Vec::new(),
                     host_effects: Vec::new(),

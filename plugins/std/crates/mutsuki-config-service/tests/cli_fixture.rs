@@ -46,7 +46,7 @@ async fn cli_and_automation_share_schema_apply_and_revision_watch() {
         ConfigService::new(registry, Arc::new(InMemoryConfigRepository::default())).unwrap();
     let seen = Arc::new(Mutex::new(Vec::new()));
     let seen_watch = seen.clone();
-    service.subscribe_revision_changed(Arc::new(move |event| {
+    let _subscription = service.subscribe_revision_changed(Arc::new(move |event| {
         seen_watch
             .lock()
             .unwrap()

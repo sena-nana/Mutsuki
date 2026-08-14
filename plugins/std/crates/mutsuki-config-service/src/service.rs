@@ -49,13 +49,30 @@ impl ConfigService {
         &self.registry
     }
 
+    pub fn register_provider_owned(
+        &self,
+        provider: Arc<dyn crate::ConfigProvider>,
+    ) -> Result<crate::ConfigProviderRegistration, ConfigError> {
+        self.registry.register_owned(provider)
+    }
+
+    pub fn register_provider_staged(
+        &self,
+        provider: Arc<dyn crate::ConfigProvider>,
+    ) -> Result<crate::ConfigProviderRegistration, ConfigError> {
+        self.registry.register_owned_staged(provider)
+    }
+
     #[must_use]
     pub fn repository(&self) -> &Arc<dyn ConfigRepository> {
         &self.repository
     }
 
-    pub fn subscribe_revision_changed(&self, listener: RevisionChangedListener) {
-        self.watch.subscribe(listener);
+    pub fn subscribe_revision_changed(
+        &self,
+        listener: RevisionChangedListener,
+    ) -> crate::ConfigWatchSubscription {
+        self.watch.subscribe(listener)
     }
 
     pub fn list_providers(&self, caps: &[String]) -> Result<Vec<ConfigProviderId>, ConfigError> {
@@ -123,22 +140,21 @@ impl ConfigService {
         context: ConfigContext,
     ) -> Result<ConfigSnapshot, ConfigError> {
         let entry = self.registry.ensure_scope(provider_id, &context.scope)?;
-        let snapshot = self
-            .repository
-            .read(&ConfigDocumentKey::new(provider_id, context.clone()))?
-            .map(ConfigSnapshot::from)
-            .unwrap_or(ConfigSnapshot {
-                value: entry.provider.default_value(&context)?,
-                revision: ConfigRevision::ABSENT,
-                schema_version: entry.cached_schema.schema_version,
-                value_version: entry.cached_schema.value_version,
-                source: ConfigSource::Default,
-            });
-        entry
-            .provider
-            .restore(snapshot.value.clone(), snapshot.revision, context)
-            .await?;
-        Ok(snapshot)
+        self.restore_entry(provider_id, &entry, context).await
+    }
+
+    pub async fn prepare_provider_candidate(
+        &self,
+        provider: Arc<dyn crate::ConfigProvider>,
+        seed: Option<ConfigValue>,
+        context: ConfigContext,
+    ) -> Result<ConfigSnapshot, ConfigError> {
+        let (provider_id, entry) = self.registry.candidate_entry(provider, &context.scope)?;
+        if let Some(seed) = seed {
+            self.seed_candidate_if_absent(&provider_id, &entry, seed, context.clone())
+                .await?;
+        }
+        self.restore_entry(&provider_id, &entry, context).await
     }
 
     pub async fn create_if_absent(
@@ -147,25 +163,9 @@ impl ConfigService {
         candidate: ConfigValue,
         context: ConfigContext,
     ) -> Result<ConfigSnapshot, ConfigError> {
-        match self
-            .apply_unchecked(
-                provider_id,
-                ConfigApplyRequest {
-                    candidate,
-                    expected_revision: ConfigRevision::ABSENT,
-                    dry_run: false,
-                },
-                context.clone(),
-            )
+        let entry = self.registry.ensure_scope(provider_id, &context.scope)?;
+        self.create_if_absent_entry(provider_id, &entry, candidate, context)
             .await
-        {
-            Ok(result) => self.read_unchecked(provider_id, context, result.revision),
-            Err(ConfigError::RevisionConflict { .. }) => {
-                let snapshot = self.read_unchecked_any(provider_id, context)?;
-                Ok(snapshot)
-            }
-            Err(error) => Err(error),
-        }
     }
 
     pub async fn apply(
@@ -190,8 +190,19 @@ impl ConfigService {
         context: ConfigContext,
     ) -> Result<ConfigApplyResult, ConfigError> {
         let entry = self.registry.ensure_scope(provider_id, &context.scope)?;
+        self.apply_entry_unchecked(provider_id, &entry, request, context)
+            .await
+    }
+
+    async fn apply_entry_unchecked(
+        &self,
+        provider_id: &str,
+        entry: &crate::ProviderEntry,
+        request: ConfigApplyRequest,
+        context: ConfigContext,
+    ) -> Result<ConfigApplyResult, ConfigError> {
         let started = Instant::now();
-        let current = self.read_unchecked_any(provider_id, context.clone())?;
+        let current = self.read_unchecked_any_entry(provider_id, entry, context.clone())?;
         if current.revision != request.expected_revision {
             self.registry.metrics().inc_revision_conflict();
             return Err(ConfigError::RevisionConflict {
@@ -325,12 +336,12 @@ impl ConfigService {
         })
     }
 
-    fn read_unchecked_any(
+    fn read_unchecked_any_entry(
         &self,
         provider_id: &str,
+        entry: &crate::ProviderEntry,
         context: ConfigContext,
     ) -> Result<ConfigSnapshot, ConfigError> {
-        let entry = self.registry.ensure_scope(provider_id, &context.scope)?;
         self.repository
             .read(&ConfigDocumentKey::new(provider_id, context.clone()))?
             .map(ConfigSnapshot::from)
@@ -348,22 +359,94 @@ impl ConfigService {
             )
     }
 
-    fn read_unchecked(
+    async fn create_if_absent_entry(
         &self,
         provider_id: &str,
+        entry: &crate::ProviderEntry,
+        candidate: ConfigValue,
         context: ConfigContext,
-        expected_revision: ConfigRevision,
     ) -> Result<ConfigSnapshot, ConfigError> {
-        let snapshot = self.read_unchecked_any(provider_id, context)?;
-        if snapshot.revision == expected_revision {
-            Ok(snapshot)
-        } else {
-            Err(ConfigError::RevisionConflict {
-                expected: expected_revision.0,
-                current: snapshot.revision.0,
-                diff: None,
-            })
+        match self
+            .apply_entry_unchecked(
+                provider_id,
+                entry,
+                ConfigApplyRequest {
+                    candidate,
+                    expected_revision: ConfigRevision::ABSENT,
+                    dry_run: false,
+                },
+                context.clone(),
+            )
+            .await
+        {
+            Ok(result) => {
+                let snapshot = self.read_unchecked_any_entry(provider_id, entry, context)?;
+                if snapshot.revision == result.revision {
+                    Ok(snapshot)
+                } else {
+                    Err(ConfigError::RevisionConflict {
+                        expected: result.revision.0,
+                        current: snapshot.revision.0,
+                        diff: None,
+                    })
+                }
+            }
+            Err(ConfigError::RevisionConflict { .. }) => {
+                self.read_unchecked_any_entry(provider_id, entry, context)
+            }
+            Err(error) => Err(error),
         }
+    }
+
+    async fn seed_candidate_if_absent(
+        &self,
+        provider_id: &str,
+        entry: &crate::ProviderEntry,
+        seed: ConfigValue,
+        context: ConfigContext,
+    ) -> Result<(), ConfigError> {
+        let key = ConfigDocumentKey::new(provider_id, context.clone());
+        if self.repository.read(&key)?.is_some() {
+            return Ok(());
+        }
+        let validation = entry.provider.validate(seed.clone(), context).await?;
+        if !validation.ok {
+            return Err(ConfigError::ValidationFailed { result: validation });
+        }
+        let mut write = self
+            .repository
+            .prepare_compare_and_set(ConfigCompareAndSetRequest {
+                key,
+                expected_revision: ConfigRevision::ABSENT,
+                value: seed,
+                schema_version: entry.cached_schema.schema_version,
+                value_version: entry.cached_schema.value_version,
+            })?;
+        match write.commit() {
+            Ok(_) => write.finish(),
+            Err(ConfigError::RevisionConflict { .. }) => {
+                write.rollback()?;
+                Ok(())
+            }
+            Err(error) => {
+                let rollback = write.rollback();
+                Err(transaction_error(error, [rollback]))
+            }
+        }
+    }
+
+    async fn restore_entry(
+        &self,
+        provider_id: &str,
+        entry: &crate::ProviderEntry,
+        context: ConfigContext,
+    ) -> Result<ConfigSnapshot, ConfigError> {
+        let snapshot = self.read_unchecked_any_entry(provider_id, entry, context.clone())?;
+        entry
+            .provider
+            .restore(snapshot.value.clone(), snapshot.revision, context)
+            .await?;
+        Ok(snapshot)
     }
 
     #[must_use]

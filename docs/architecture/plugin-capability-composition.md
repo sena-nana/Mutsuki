@@ -52,18 +52,20 @@ Runtime registry declarations are generation-bound effects. A scope may own thei
 declaration, but activation and retirement occur only through `RuntimeLoadPlan` and Core generation
 switch/drain. Service availability must never mutate Core registries directly.
 
-## P0 activation and cleanup inventory
+## Activation and cleanup inventory
 
-| Current path | Current owner/cleanup | Classification | Migration requirement |
+| Path | Scope owner after Issue #172 | Classification | Remaining constraint |
 | --- | --- | --- | --- |
-| `RuntimeBootstrapper` runners/handlers/providers | Core registry calls runner/management `dispose` | generation-bound | stage under scope; Core switches/drains; Host scope disposes backend after drain |
-| SDK `HostServiceRegistry` | flat frozen map plus manual merge by plugin id | Host-local effect | scoped provider, parent lookup/isolation, dependency facts and owner lease |
-| ABI `PluginSession`/dynamic library | per-session flag plus `Drop`; library closes with final `Arc` | backend instance effect | one scope owner, explicit async/bounded dispose, retain library on dirty failure |
-| process/Python binary runners | runner/transport-specific shutdown | backend instance effect | same scope lifecycle and conformance as builtin/ABI |
-| ServiceHost event sources/watch callbacks | independent supervisor and shutdown token | Host-local async effect | scope-owned registration and bounded child-first shutdown |
-| ServiceHost load-plan hooks/observers | manual validate/activate vectors | staged Host-local effect | activation rollback and generation commit ordering under scope transaction |
-| WebExtension RPC/event registration | local `Disposable`; current dispose closure does not remove entries | Host-local effect, leak risk | real scope-owned registration lease; disabling removes callbacks deterministically |
-| Agent service implementations | each service implements its own `dispose` | backend/service effect | bridge service lifetime to one scope; retain domain-specific drain behavior |
+| `RuntimeBootstrapper` runners/handlers/providers | staged plugin scope plus Core prepared reload | generation-bound | Core remains the only active-registry authority; dispose only after drain |
+| SDK `HostServiceRegistry` | plugin scope provision and dependency graph | Host-local effect | typed APIs plus opaque `HostServiceValue`; no public `Any`/downcast or cross-ABI concrete object |
+| ABI `PluginSession`/dynamic library | one backend-instance scope effect | backend instance effect | explicit bounded dispose; retain the session/library after dirty failure |
+| process/Python binary runners | one process-management scope effect | backend instance effect | protocol shutdown is best effort; child termination is authoritative and retryable |
+| ServiceHost event sources | application-scope effect per source | Host-local async effect | targeted reload retires only affected source effects; dirty owners block replacement |
+| ServiceHost load-plan hooks | application-scope effect per hook | staged Host-local effect | activate before publication, retire after switch, report cleanup failure |
+| Config providers/watch callbacks | owned provider/subscription leases | Host-local effect | candidate rollback restores the previous owner; stale leases cannot remove a newer owner |
+| WebExtension RPC/event registration | Web `DisposableScope` owned by one extension setup | Host-local effect | reverse-order retryable cleanup; setup failure rolls back every registration |
+| Agent portable services | generation-bound `AgentServiceRunner` | runner/backend lifetime | service drain/dispose is invoked by Runner disposal; no Agent-specific lifecycle |
+| Agent/Bot configured Host services | loaded-plugin or load-plan effect | backend/service effect | domain-specific drain remains in the service; registration lifetime is scope-owned |
 | stream/subscription/timer occupancy handles | Core `SurfaceOccupancyHandle` | generation-bound fact | keep in Core; scope waits for zero occupancy, never removes by Drop |
 
 The inventory intentionally excludes business Task side effects. Scope cleanup manages long-lived
@@ -128,3 +130,6 @@ PluginBuilder::new("example.repository")
 
 Consumers declare the service in their manifest and use `HostContext::plugin_scope(plugin_id)` plus
 `require_service`. They do not retain a global service reference across a generation change.
+
+The step-by-step author migration is in
+[`../migration/plugin-scope-effects.md`](../migration/plugin-scope-effects.md).

@@ -212,6 +212,36 @@ pub trait HostService: Any + Send + Sync {}
 
 impl<T> HostService for T where T: Any + Send + Sync {}
 
+/// Opaque storage for a Host-only typed service.
+///
+/// Hosts may move this value between registries and plugin scopes, but cannot inspect the erased
+/// implementation. Typed resolution remains inside the SDK-facing service APIs.
+#[derive(Clone)]
+pub struct HostServiceValue(Arc<dyn Any + Send + Sync>);
+
+impl HostServiceValue {
+    #[doc(hidden)]
+    pub fn new<T>(service: Arc<T>) -> Self
+    where
+        T: HostService,
+    {
+        Self(service)
+    }
+
+    #[doc(hidden)]
+    pub fn resolve<T>(&self) -> RuntimeResult<Arc<T>>
+    where
+        T: HostService,
+    {
+        self.0.clone().downcast::<T>().map_err(|_| {
+            sdk_error(
+                mutsuki_runtime_contracts::ERR_REGISTRY_UNAUTHORIZED,
+                "host_service.type_mismatch".into(),
+            )
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PluginScopeHandle {
     pub scope_id: String,
@@ -222,15 +252,15 @@ pub struct PluginScopeHandle {
 pub struct ScopedHostService {
     pub provider_scope_id: String,
     pub plugin_generation: u64,
-    service: Arc<dyn Any + Send + Sync>,
+    service: HostServiceValue,
 }
 
 impl ScopedHostService {
     #[doc(hidden)]
-    pub fn from_erased(
+    pub fn from_value(
         provider_scope_id: impl Into<String>,
         plugin_generation: u64,
-        service: Arc<dyn Any + Send + Sync>,
+        service: HostServiceValue,
     ) -> Self {
         Self {
             provider_scope_id: provider_scope_id.into(),
@@ -239,16 +269,11 @@ impl ScopedHostService {
         }
     }
 
-    pub fn downcast<T>(self) -> RuntimeResult<Arc<T>>
+    fn resolve<T>(self) -> RuntimeResult<Arc<T>>
     where
         T: HostService,
     {
-        self.service.downcast::<T>().map_err(|_| {
-            sdk_error(
-                mutsuki_runtime_contracts::ERR_REGISTRY_UNAUTHORIZED,
-                "host_service.type_mismatch".into(),
-            )
-        })
+        self.service.resolve()
     }
 }
 
@@ -263,7 +288,7 @@ pub trait HostScopeResolver: Send + Sync {
 
 #[derive(Default)]
 pub struct HostServiceRegistry {
-    services: Mutex<BTreeMap<String, Arc<dyn Any + Send + Sync>>>,
+    services: Mutex<BTreeMap<String, HostServiceValue>>,
     owners: Mutex<BTreeMap<String, String>>,
     rebindable: Mutex<BTreeSet<String>>,
     frozen: AtomicBool,
@@ -278,31 +303,33 @@ impl HostServiceRegistry {
     where
         T: HostService,
     {
-        self.register_erased(service_id, service)
+        self.register_value_owned_with_binding(
+            service_id,
+            "",
+            HostServiceValue::new(service),
+            false,
+        )
     }
 
-    pub fn register_erased(
+    #[doc(hidden)]
+    pub fn register_bootstrapper_service(
         &self,
-        service_id: impl Into<String>,
-        service: Arc<dyn Any + Send + Sync>,
+        owner_plugin_id: &str,
+        service: &crate::RuntimeBootstrapperService,
     ) -> RuntimeResult<()> {
-        self.register_erased_owned(service_id, "", service)
+        self.register_value_owned_with_binding(
+            service.service_id.clone(),
+            owner_plugin_id,
+            service.value.clone(),
+            service.rebindable,
+        )
     }
 
-    pub fn register_erased_owned(
+    fn register_value_owned_with_binding(
         &self,
         service_id: impl Into<String>,
         owner_plugin_id: impl Into<String>,
-        service: Arc<dyn Any + Send + Sync>,
-    ) -> RuntimeResult<()> {
-        self.register_erased_owned_with_binding(service_id, owner_plugin_id, service, false)
-    }
-
-    pub fn register_erased_owned_with_binding(
-        &self,
-        service_id: impl Into<String>,
-        owner_plugin_id: impl Into<String>,
-        service: Arc<dyn Any + Send + Sync>,
+        value: HostServiceValue,
         rebindable: bool,
     ) -> RuntimeResult<()> {
         let service_id = service_id.into();
@@ -322,7 +349,7 @@ impl HostServiceRegistry {
                 format!("host_service.duplicate.{service_id}"),
             ));
         }
-        services.insert(service_id.clone(), service);
+        services.insert(service_id.clone(), value);
         self.owners
             .lock()
             .expect("host service owner registry mutex poisoned")
@@ -344,7 +371,7 @@ impl HostServiceRegistry {
         let merged = Arc::new(Self::new());
         for (service_id, owner_plugin_id, service, rebindable) in current.owned_entries() {
             if !affected_plugins.contains(&owner_plugin_id) {
-                merged.register_erased_owned_with_binding(
+                merged.register_value_owned_with_binding(
                     service_id,
                     owner_plugin_id,
                     service,
@@ -354,7 +381,7 @@ impl HostServiceRegistry {
         }
         for (service_id, owner_plugin_id, service, rebindable) in candidate.owned_entries() {
             if affected_plugins.contains(&owner_plugin_id) {
-                merged.register_erased_owned_with_binding(
+                merged.register_value_owned_with_binding(
                     service_id,
                     owner_plugin_id,
                     service,
@@ -367,7 +394,7 @@ impl HostServiceRegistry {
     }
 
     #[doc(hidden)]
-    pub fn owned_entries(&self) -> Vec<(String, String, Arc<dyn Any + Send + Sync>, bool)> {
+    pub fn owned_entries(&self) -> Vec<(String, String, HostServiceValue, bool)> {
         let services = self
             .services
             .lock()
@@ -407,7 +434,7 @@ impl HostServiceRegistry {
                 format!("host_service.missing.{service_id}"),
             ));
         };
-        service.clone().downcast::<T>().map_err(|_| {
+        service.resolve::<T>().map_err(|_| {
             sdk_error(
                 mutsuki_runtime_contracts::ERR_REGISTRY_UNAUTHORIZED,
                 format!("host_service.type_mismatch.{service_id}"),
@@ -717,7 +744,7 @@ impl PluginScopeContext<'_> {
     {
         self.resolver
             .resolve_service(&self.scope, service_id)?
-            .map(ScopedHostService::downcast)
+            .map(ScopedHostService::resolve)
             .transpose()
     }
 

@@ -94,10 +94,10 @@ impl HostScopeResolver for RuntimeScopeResolver {
             .expect("matched plugin scope");
         scopes
             .manager()
-            .resolve_service_erased(scope_id, service_id)
+            .resolve_service_value(scope_id, service_id)
             .map(|resolved| {
                 resolved.map(|(provider, generation, service)| {
-                    ScopedHostService::from_erased(provider.as_str(), generation, service)
+                    ScopedHostService::from_value(provider.as_str(), generation, service)
                 })
             })
     }

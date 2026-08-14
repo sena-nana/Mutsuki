@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { decode, encode } from "@msgpack/msgpack";
 
-import { WebBridgeClient, WebBridgeError } from "../dist/index.js";
+import { DisposableScope, WebBridgeClient, WebBridgeError } from "../dist/index.js";
 
 class FakeWebSocket {
   binaryType = "arraybuffer";
@@ -181,4 +181,25 @@ test("stale generations cannot complete new requests and subscriptions are resto
   subscription.dispose();
   h.client.close();
   assert.equal(h.client.pendingCount, 0);
+});
+
+test("disposable scope retries failed cleanup without repeating completed effects", () => {
+  const scope = new DisposableScope();
+  const disposed = [];
+  let attempts = 0;
+  scope.own({ dispose: () => disposed.push("first") });
+  scope.own({
+    dispose() {
+      attempts += 1;
+      if (attempts === 1) throw new Error("injected cleanup failure");
+      disposed.push("second");
+    },
+  });
+
+  assert.throws(() => scope.dispose(), AggregateError);
+  assert.deepEqual(disposed, ["first"]);
+  scope.dispose();
+  scope.dispose();
+  assert.equal(attempts, 2);
+  assert.deepEqual(disposed, ["first", "second"]);
 });

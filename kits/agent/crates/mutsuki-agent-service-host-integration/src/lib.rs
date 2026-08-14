@@ -24,13 +24,17 @@ use mutsuki_agent_contracts::{
 use mutsuki_config_service::{
     ConfigActivation, ConfigApplyRequest, ConfigConstraints, ConfigContext, ConfigDescriptor,
     ConfigError, ConfigKey, ConfigMutability, ConfigNode, ConfigPresentation, ConfigProvider,
-    ConfigProviderId, ConfigRevision, ConfigScope, ConfigService, ConfigSnapshot, ConfigValue,
-    ConfigValueType, LocalizedText, MapKeyStrategy, PreparedConfigActivation, RestartPolicy,
-    ValidationCode, ValidationIssue, ValidationResult, ValidationSeverity, capability,
+    ConfigProviderId, ConfigProviderRegistration, ConfigRevision, ConfigScope, ConfigService,
+    ConfigSnapshot, ConfigValue, ConfigValueType, LocalizedText, MapKeyStrategy,
+    PreparedConfigActivation, RestartPolicy, ValidationCode, ValidationIssue, ValidationResult,
+    ValidationSeverity, capability,
 };
 use mutsuki_link_core::{ConnectContext, EndpointId, TransportBudget};
 use mutsuki_link_local::{LocalAddress, connect};
-use mutsuki_runtime_sdk::{LoadedPlugin, PluginBuilder, RuntimeBootstrapperService};
+use mutsuki_runtime_sdk::{
+    HostEffect, HostEffectFuture, HostEffectKind, LoadedPlugin, PluginBuilder,
+    RuntimeBootstrapperEffect, RuntimeBootstrapperService,
+};
 use mutsuki_service_config::HostSecretStore;
 use mutsuki_service_runtime::{
     ConfiguredPluginCatalog, ConfiguredPluginFactory, ServiceRuntimeBuilder, ServiceRuntimeResult,
@@ -45,6 +49,17 @@ pub const AGENT_CONNECTION_REGISTRY_SERVICE_ID: &str = "mutsuki.agent.connection
 pub const AGENT_CONNECTION_MANAGEMENT_SERVICE_ID: &str = "mutsuki.agent.connection.management";
 pub const LOCAL_LINK_CONNECTOR_ID: &str = "mutsuki.agent.connector.link.local";
 pub const IN_PROCESS_CONNECTOR_ID: &str = "mutsuki.agent.connector.in-process";
+
+struct ConfigProviderEffect(ConfigProviderRegistration);
+
+impl HostEffect for ConfigProviderEffect {
+    fn dispose(&mut self) -> HostEffectFuture<'_> {
+        Box::pin(async move {
+            let _ = self.0.dispose();
+            Ok(())
+        })
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -810,26 +825,21 @@ impl ConfiguredPluginFactory for ConfiguredAgentConnectionsPlugin {
         let seed: AgentConnectionsConfig =
             serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
         let state = Arc::new(Mutex::new(AgentConnectionsState::default()));
-        self.config_service
-            .registry()
-            .register(Arc::new(AgentConnectionsConfigProvider {
-                registry: self.registry.clone(),
-                connectors: self.connectors.clone(),
-                secrets: builder.host_secret_store(),
-                state: state.clone(),
-            }))
-            .map_err(|error| error.to_string())?;
+        let provider = Arc::new(AgentConnectionsConfigProvider {
+            registry: self.registry.clone(),
+            connectors: self.connectors.clone(),
+            secrets: builder.host_secret_store(),
+            state: state.clone(),
+        });
         let config_service = self.config_service.clone();
+        let candidate_provider = provider.clone();
         block_on_config(async move {
             config_service
-                .create_if_absent(
-                    AGENT_CONNECTIONS_PLUGIN_ID,
-                    agent_connections_config_value(&seed),
+                .prepare_provider_candidate(
+                    candidate_provider,
+                    Some(agent_connections_config_value(&seed)),
                     ConfigContext::global(),
                 )
-                .await?;
-            config_service
-                .restore(AGENT_CONNECTIONS_PLUGIN_ID, ConfigContext::global())
                 .await
         })
         .map_err(|error: ConfigError| error.to_string())?;
@@ -860,29 +870,34 @@ impl ConfiguredPluginFactory for ConfiguredAgentConnectionsPlugin {
         let loaded_manifest = manifest.clone();
         let registry_service = Arc::new(self.registry.clone());
         let management_service = manager;
+        let config_service = self.config_service.clone();
         Ok(
             builder.register_builtin_loaded_plugin_factory(manifest, move || {
+                let registration = config_service
+                    .register_provider_staged(provider.clone())
+                    .map_err(|error| error.to_string())?;
                 Ok::<LoadedPlugin, String>(LoadedPlugin {
                     manifest: loaded_manifest.clone(),
                     runners: Vec::new(),
                     async_handlers: Vec::new(),
                     host_services: vec![
-                        RuntimeBootstrapperService {
-                            service_id: AGENT_CONNECTION_REGISTRY_SERVICE_ID.into(),
-                            capability: "agent.connection.read".into(),
-                            service: registry_service.clone(),
-                            rebindable: false,
-                        },
-                        RuntimeBootstrapperService {
-                            service_id: AGENT_CONNECTION_MANAGEMENT_SERVICE_ID.into(),
-                            capability: "agent.connection.write".into(),
-                            service: management_service.clone(),
-                            rebindable: false,
-                        },
+                        RuntimeBootstrapperService::new(
+                            AGENT_CONNECTION_REGISTRY_SERVICE_ID,
+                            registry_service.clone(),
+                            "agent.connection.read",
+                        ),
+                        RuntimeBootstrapperService::new(
+                            AGENT_CONNECTION_MANAGEMENT_SERVICE_ID,
+                            management_service.clone(),
+                            "agent.connection.write",
+                        ),
                     ],
                     resource_providers: Vec::new(),
                     async_resource_providers: Vec::new(),
-                    host_effects: Vec::new(),
+                    host_effects: vec![RuntimeBootstrapperEffect {
+                        kind: HostEffectKind::HostLocal,
+                        effect: Box::new(ConfigProviderEffect(registration)),
+                    }],
                 })
             }),
         )
@@ -1772,7 +1787,8 @@ mod tests {
             .unwrap(),
         );
         let catalog =
-            configured_agent_plugin_catalog(registry.clone(), connectors, config_service).unwrap();
+            configured_agent_plugin_catalog(registry.clone(), connectors, config_service.clone())
+                .unwrap();
         let runtime = ServiceRuntimeBuilder::new(service)
             .with_configured_plugin_catalog(catalog)
             .start()
@@ -1785,6 +1801,18 @@ mod tests {
             .host_service::<AgentConnectionRegistry>(AGENT_CONNECTION_REGISTRY_SERVICE_ID)
             .unwrap();
         assert!(hosted.is_healthy(&id));
+        assert!(
+            config_service
+                .registry()
+                .get(AGENT_CONNECTIONS_PLUGIN_ID)
+                .is_ok()
+        );
         runtime.shutdown().await;
+        assert!(
+            config_service
+                .registry()
+                .get(AGENT_CONNECTIONS_PLUGIN_ID)
+                .is_err()
+        );
     }
 }

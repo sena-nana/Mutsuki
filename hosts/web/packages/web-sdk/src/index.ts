@@ -14,6 +14,50 @@ export interface Disposable {
   dispose(): void;
 }
 
+/** Owns reversible extension registrations with Scope-compatible lifecycle semantics. */
+export class DisposableScope implements Disposable {
+  private effects: Disposable[] = [];
+  private closed = false;
+  private disposed = false;
+
+  own(effect: Disposable): Disposable {
+    if (this.closed) {
+      effect.dispose();
+      throw new Error("disposable scope is already disposed");
+    }
+    let active = true;
+    const owned = {
+      dispose() {
+        if (!active) return;
+        effect.dispose();
+        active = false;
+      },
+    };
+    this.effects.push(owned);
+    return owned;
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.closed = true;
+    const failures: unknown[] = [];
+    const failedEffects: Disposable[] = [];
+    for (const effect of this.effects.splice(0).reverse()) {
+      try {
+        effect.dispose();
+      } catch (error) {
+        failures.push(error);
+        failedEffects.push(effect);
+      }
+    }
+    this.effects = failedEffects.reverse();
+    this.disposed = failures.length === 0;
+    if (failures.length > 0) {
+      throw new AggregateError(failures, "extension scope disposal failed");
+    }
+  }
+}
+
 export interface PageRegistration {
   id: string;
   path: string;

@@ -179,7 +179,12 @@ pub(crate) struct EventSourceSupervisor {
 struct ManagedSource {
     status: SourceStatus,
     commands: mpsc::Sender<SourceCommand>,
-    task: tokio::task::JoinHandle<Box<dyn HostEventSource>>,
+    task: tokio::task::JoinHandle<SourceExit>,
+}
+
+struct SourceExit {
+    _source: Box<dyn HostEventSource>,
+    cleanup_error: Option<String>,
 }
 
 #[derive(Clone)]
@@ -346,50 +351,20 @@ impl EventSourceSupervisor {
         let _ = source.commands.send(SourceCommand::Shutdown).await;
         let mut task = source.task;
         match tokio::time::timeout(graceful + Duration::from_millis(100), &mut task).await {
-            Ok(Ok(_)) => Ok(()),
+            Ok(Ok(SourceExit {
+                cleanup_error: None,
+                ..
+            })) => Ok(()),
+            Ok(Ok(SourceExit {
+                cleanup_error: Some(error),
+                ..
+            })) => Err(error),
             Ok(Err(error)) => Err(format!("event source lifecycle task failed: {error}")),
             Err(_) => {
                 task.abort();
                 Err(format!("event source {source_id} did not stop in time"))
             }
         }
-    }
-
-    pub(crate) async fn stop_plugins(
-        &self,
-        plugin_ids: &std::collections::BTreeSet<String>,
-        graceful: Duration,
-    ) -> Result<Vec<Box<dyn HostEventSource>>, String> {
-        let managed = {
-            let mut sources = self.sources.lock().expect("event source supervisor mutex");
-            let source_ids = sources
-                .iter()
-                .filter(|(_, source)| plugin_ids.contains(&source.status.snapshot().plugin_id))
-                .map(|(source_id, _)| source_id.clone())
-                .collect::<Vec<_>>();
-            source_ids
-                .into_iter()
-                .filter_map(|source_id| sources.remove(&source_id))
-                .collect::<Vec<_>>()
-        };
-        for source in &managed {
-            let _ = source.commands.send(SourceCommand::Shutdown).await;
-        }
-        let mut stopped = Vec::with_capacity(managed.len());
-        for source in managed {
-            let mut task = source.task;
-            match tokio::time::timeout(graceful + Duration::from_millis(100), &mut task).await {
-                Ok(Ok(source)) => stopped.push(source),
-                Ok(Err(error)) => {
-                    return Err(format!("event source lifecycle task failed: {error}"));
-                }
-                Err(_) => {
-                    task.abort();
-                    return Err("event source lifecycle task did not stop in time".into());
-                }
-            }
-        }
-        Ok(stopped)
     }
 
     pub(crate) fn abort(&self) {
@@ -413,7 +388,7 @@ async fn run_source_actor(
     status: SourceStatus,
     mut commands: mpsc::Receiver<SourceCommand>,
     graceful: Duration,
-) -> Box<dyn HostEventSource> {
+) -> SourceExit {
     loop {
         status.set("starting");
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -433,9 +408,13 @@ async fn run_source_actor(
             Ok(future) => future,
             Err(payload) => {
                 status.fail(panic_message(payload));
-                if !wait_command(&mut commands, &mut source, &status, &shutdown_tx, graceful).await
-                {
-                    return source;
+                let (restart, cleanup_error) =
+                    wait_command(&mut commands, &mut source, &status, &shutdown_tx, graceful).await;
+                if !restart {
+                    return SourceExit {
+                        _source: source,
+                        cleanup_error,
+                    };
                 }
                 continue;
             }
@@ -455,19 +434,35 @@ async fn run_source_actor(
                     break;
                 }
                 command = commands.recv() => {
-                    if handle_command(command, &mut source, &status, &shutdown_tx, graceful).await {
+                    let (restart, cleanup_error) = handle_running_command(
+                        command,
+                        &mut source,
+                        &mut running,
+                        &status,
+                        &shutdown_tx,
+                        graceful,
+                    ).await;
+                    if restart {
                         break;
                     } else {
-                        return source;
+                        return SourceExit {
+                            _source: source,
+                            cleanup_error,
+                        };
                     }
                 }
                 _ = health_tick.tick() => status.update_health(safe_health(source.as_ref())),
             }
         }
-        if status.snapshot().state == "failed"
-            && !wait_command(&mut commands, &mut source, &status, &shutdown_tx, graceful).await
-        {
-            return source;
+        if status.snapshot().state == "failed" {
+            let (restart, cleanup_error) =
+                wait_command(&mut commands, &mut source, &status, &shutdown_tx, graceful).await;
+            if !restart {
+                return SourceExit {
+                    _source: source,
+                    cleanup_error,
+                };
+            }
         }
     }
 }
@@ -478,7 +473,7 @@ async fn wait_command(
     status: &SourceStatus,
     shutdown: &watch::Sender<bool>,
     graceful: Duration,
-) -> bool {
+) -> (bool, Option<String>) {
     handle_command(commands.recv().await, source, status, shutdown, graceful).await
 }
 
@@ -488,21 +483,44 @@ async fn handle_command(
     status: &SourceStatus,
     shutdown: &watch::Sender<bool>,
     graceful: Duration,
-) -> bool {
+) -> (bool, Option<String>) {
     match command {
         Some(SourceCommand::Restart) => {
             status.reconnect();
             let _ = shutdown.send(true);
-            stop_source(source, status, graceful, false).await;
-            true
+            let error = stop_source(source, status, graceful, false).await;
+            (true, error)
         }
         Some(SourceCommand::Shutdown) | None => {
             status.set("stopping");
             let _ = shutdown.send(true);
-            stop_source(source, status, graceful, true).await;
-            false
+            let error = stop_source(source, status, graceful, true).await;
+            (false, error)
         }
     }
+}
+
+async fn handle_running_command(
+    command: Option<SourceCommand>,
+    source: &mut Box<dyn HostEventSource>,
+    running: &mut HostEventSourceFuture,
+    status: &SourceStatus,
+    shutdown: &watch::Sender<bool>,
+    graceful: Duration,
+) -> (bool, Option<String>) {
+    let (restart, terminal) = match command {
+        Some(SourceCommand::Restart) => {
+            status.reconnect();
+            (true, false)
+        }
+        Some(SourceCommand::Shutdown) | None => {
+            status.set("stopping");
+            (false, true)
+        }
+    };
+    let _ = shutdown.send(true);
+    let error = stop_running_source(source, running, status, graceful, terminal).await;
+    (restart, error)
 }
 
 async fn stop_source(
@@ -510,12 +528,13 @@ async fn stop_source(
     status: &SourceStatus,
     graceful: Duration,
     terminal: bool,
-) {
+) -> Option<String> {
     let future = match catch_unwind(AssertUnwindSafe(|| source.shutdown())) {
         Ok(future) => future,
         Err(payload) => {
-            status.fail(panic_message(payload));
-            return;
+            let error = panic_message(payload);
+            status.fail(error.clone());
+            return Some(error);
         }
     };
     match tokio::time::timeout(graceful, AssertUnwindSafe(future).catch_unwind()).await {
@@ -523,20 +542,64 @@ async fn stop_source(
             if terminal {
                 status.set("stopped");
             }
+            None
         }
         Ok(Ok(Err(error))) => {
-            status.fail(error.to_string());
+            let error = error.to_string();
+            status.fail(error.clone());
+            Some(error)
         }
         Ok(Err(payload)) => {
-            status.fail(panic_message(payload));
+            let error = panic_message(payload);
+            status.fail(error.clone());
+            Some(error)
         }
         Err(_) => {
-            status.fail(format!(
-                "shutdown timed out after {} ms",
-                graceful.as_millis()
-            ));
+            let error = format!("shutdown timed out after {} ms", graceful.as_millis());
+            status.fail(error.clone());
+            Some(error)
         }
     }
+}
+
+async fn stop_running_source(
+    source: &mut Box<dyn HostEventSource>,
+    running: &mut HostEventSourceFuture,
+    status: &SourceStatus,
+    graceful: Duration,
+    terminal: bool,
+) -> Option<String> {
+    let shutdown = match catch_unwind(AssertUnwindSafe(|| source.shutdown())) {
+        Ok(future) => future,
+        Err(payload) => {
+            let error = panic_message(payload);
+            status.fail(error.clone());
+            return Some(error);
+        }
+    };
+    let completion = async {
+        tokio::join!(
+            AssertUnwindSafe(running).catch_unwind(),
+            AssertUnwindSafe(shutdown).catch_unwind(),
+        )
+    };
+    let error = match tokio::time::timeout(graceful, completion).await {
+        Ok((Ok(Ok(())), Ok(Ok(())))) => None,
+        Ok((Ok(Err(error)), _)) => Some(error.to_string()),
+        Ok((Err(payload), _)) => Some(panic_message(payload)),
+        Ok((_, Ok(Err(error)))) => Some(error.to_string()),
+        Ok((_, Err(payload))) => Some(panic_message(payload)),
+        Err(_) => Some(format!(
+            "shutdown timed out after {} ms",
+            graceful.as_millis()
+        )),
+    };
+    if let Some(error) = &error {
+        status.fail(error.clone());
+    } else if terminal {
+        status.set("stopped");
+    }
+    error
 }
 
 fn safe_health(source: &dyn HostEventSource) -> HostEventSourceHealth {
@@ -586,6 +649,7 @@ impl TaskSubmitter for SourceTaskSubmitter {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::sync::oneshot;
 
     #[tokio::test]
     async fn source_panic_is_isolated_and_explicit_restart_recovers() {
@@ -675,6 +739,23 @@ mod tests {
 
         wait_for_state(&supervisor, "failed").await;
         supervisor.shutdown(Duration::from_millis(100)).await;
+    }
+
+    #[tokio::test]
+    async fn shutdown_concurrently_drives_the_running_source_and_its_cleanup() {
+        let supervisor = EventSourceSupervisor::default();
+        supervisor.start(
+            Box::new(CoordinatedShutdownSource::new()),
+            Arc::new(NoopSubmitter),
+            &test_config(),
+            Duration::from_millis(100),
+        );
+        wait_for_state(&supervisor, "running").await;
+
+        supervisor
+            .shutdown_source("coordinated", Duration::from_millis(100))
+            .await
+            .expect("running source and shutdown future complete together");
     }
 
     async fn wait_for_state(supervisor: &EventSourceSupervisor, expected: &str) {
@@ -769,6 +850,64 @@ mod tests {
 
         fn shutdown(&mut self) -> HostEventSourceFuture {
             Box::pin(std::future::pending())
+        }
+
+        fn health(&self) -> HostEventSourceHealth {
+            HostEventSourceHealth::Healthy
+        }
+    }
+
+    struct CoordinatedShutdownSource {
+        descriptor: HostEventSourceDescriptor,
+        stop: Arc<Mutex<Option<watch::Sender<bool>>>>,
+        stopped: Arc<Mutex<Option<oneshot::Receiver<()>>>>,
+    }
+
+    impl CoordinatedShutdownSource {
+        fn new() -> Self {
+            Self {
+                descriptor: HostEventSourceDescriptor::new("coordinated", "test.plugin"),
+                stop: Arc::new(Mutex::new(None)),
+                stopped: Arc::new(Mutex::new(None)),
+            }
+        }
+    }
+
+    impl HostEventSource for CoordinatedShutdownSource {
+        fn descriptor(&self) -> &HostEventSourceDescriptor {
+            &self.descriptor
+        }
+
+        fn start(&mut self, _ctx: HostEventSourceContext) -> HostEventSourceFuture {
+            let (stop_tx, mut stop_rx) = watch::channel(false);
+            *self.stop.lock().expect("coordinated stop mutex") = Some(stop_tx);
+            let (stopped_tx, stopped_rx) = oneshot::channel();
+            *self.stopped.lock().expect("coordinated stopped mutex") = Some(stopped_rx);
+            Box::pin(async move {
+                if !*stop_rx.borrow() {
+                    let _ = stop_rx.changed().await;
+                }
+                let _ = stopped_tx.send(());
+                Ok(())
+            })
+        }
+
+        fn shutdown(&mut self) -> HostEventSourceFuture {
+            let stop = self.stop.lock().expect("coordinated stop mutex").take();
+            let stopped = self
+                .stopped
+                .lock()
+                .expect("coordinated stopped mutex")
+                .take();
+            Box::pin(async move {
+                if let Some(stop) = stop {
+                    let _ = stop.send(true);
+                }
+                if let Some(stopped) = stopped {
+                    let _ = stopped.await;
+                }
+                Ok(())
+            })
         }
 
         fn health(&self) -> HostEventSourceHealth {
