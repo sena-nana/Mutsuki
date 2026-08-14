@@ -98,6 +98,10 @@ struct GenerationAwareQqManagement {
 
 #[async_trait]
 impl mutsuki_bot_management::QqBotManagementApi for GenerationAwareQqManagement {
+    fn subscribe_changes(&self) -> Option<mutsuki_bot_management::QqManagementChangeSubscription> {
+        self.service().ok()?.subscribe_changes()
+    }
+
     async fn snapshot(
         &self,
         query: &str,

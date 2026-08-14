@@ -6,6 +6,41 @@
 use async_trait::async_trait;
 use mutsuki_bot_protocol::BotTarget;
 use serde::{Deserialize, Serialize};
+use tokio::sync::broadcast;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BilibiliManagementChangeArea {
+    Status,
+    Login,
+    Subscriptions,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BilibiliManagementChangeEvent {
+    pub revision: u64,
+    pub areas: Vec<BilibiliManagementChangeArea>,
+}
+
+pub struct BilibiliManagementChangeSubscription {
+    pub(crate) receiver: broadcast::Receiver<BilibiliManagementChangeEvent>,
+}
+
+impl BilibiliManagementChangeSubscription {
+    pub fn new(receiver: broadcast::Receiver<BilibiliManagementChangeEvent>) -> Self {
+        Self { receiver }
+    }
+
+    pub async fn changed(&mut self) -> Option<BilibiliManagementChangeEvent> {
+        loop {
+            match self.receiver.recv().await {
+                Ok(event) => return Some(event),
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => return None,
+            }
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -123,6 +158,10 @@ impl std::error::Error for BilibiliManagementError {}
 /// Owner-facing Bilibili management operations used by the console WebExtension.
 #[async_trait]
 pub trait BilibiliManagementApi: Send + Sync {
+    fn subscribe_changes(&self) -> Option<BilibiliManagementChangeSubscription> {
+        None
+    }
+
     fn status(&self) -> BilibiliManagementStatus;
 
     fn login_start_session(

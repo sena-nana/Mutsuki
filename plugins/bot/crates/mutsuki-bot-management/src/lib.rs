@@ -15,6 +15,37 @@ use mutsuki_bot_protocol::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use tokio::sync::broadcast;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QqManagementChangeArea {
+    Snapshot,
+    Deliveries,
+    Interactions,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QqManagementChangeEvent {
+    pub revision: u64,
+    pub areas: Vec<QqManagementChangeArea>,
+}
+
+pub struct QqManagementChangeSubscription {
+    receiver: broadcast::Receiver<QqManagementChangeEvent>,
+}
+
+impl QqManagementChangeSubscription {
+    pub async fn changed(&mut self) -> Option<QqManagementChangeEvent> {
+        loop {
+            match self.receiver.recv().await {
+                Ok(event) => return Some(event),
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => return None,
+            }
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct QqBotManagementSnapshot {
@@ -110,6 +141,10 @@ pub struct QqManagementWriteResult {
 
 #[async_trait]
 pub trait QqBotManagementApi: Send + Sync {
+    fn subscribe_changes(&self) -> Option<QqManagementChangeSubscription> {
+        None
+    }
+
     async fn snapshot(
         &self,
         query: &str,
@@ -396,15 +431,18 @@ pub struct QqBotManagementService {
     write_lock: tokio::sync::Mutex<()>,
     provider: Arc<dyn QqManagementProvider>,
     state: Arc<dyn QqManagementStateStore>,
+    changes: broadcast::Sender<QqManagementChangeEvent>,
 }
 
 impl QqBotManagementService {
     #[must_use]
     pub fn new(provider: Arc<dyn QqManagementProvider>) -> Self {
+        let (changes, _) = broadcast::channel(64);
         Self {
             write_lock: tokio::sync::Mutex::new(()),
             provider,
             state: Arc::new(MemoryQqManagementStateStore::default()),
+            changes,
         }
     }
 
@@ -413,10 +451,12 @@ impl QqBotManagementService {
         provider: Arc<dyn QqManagementProvider>,
         state: Arc<dyn QqManagementStateStore>,
     ) -> Self {
+        let (changes, _) = broadcast::channel(64);
         Self {
             write_lock: tokio::sync::Mutex::new(()),
             provider,
             state,
+            changes,
         }
     }
 
@@ -446,6 +486,12 @@ impl QqBotManagementService {
 
 #[async_trait]
 impl QqBotManagementApi for QqBotManagementService {
+    fn subscribe_changes(&self) -> Option<QqManagementChangeSubscription> {
+        Some(QqManagementChangeSubscription {
+            receiver: self.changes.subscribe(),
+        })
+    }
+
     async fn snapshot(
         &self,
         query: &str,
@@ -507,6 +553,14 @@ impl QqBotManagementApi for QqBotManagementService {
             result.clone(),
             unix_ms(),
         )?;
+        let _ = self.changes.send(QqManagementChangeEvent {
+            revision: audit.revision,
+            areas: vec![
+                QqManagementChangeArea::Snapshot,
+                QqManagementChangeArea::Deliveries,
+                QqManagementChangeArea::Interactions,
+            ],
+        });
         Ok(QqManagementWriteResult {
             revision: audit.revision,
             audit_id: audit.audit_id,
@@ -1061,6 +1115,7 @@ mod tests {
     #[tokio::test]
     async fn revision_fence_audit_and_secret_redaction() {
         let (api, _) = service();
+        let mut changes = api.subscribe_changes().expect("QQ change source");
         let open = api.snapshot("", true).await.unwrap();
         assert_eq!(open.revision, 0);
         assert_eq!(open.accounts[0].credential_status, "configured");
@@ -1095,6 +1150,9 @@ mod tests {
             .unwrap();
         assert_eq!(written.revision, 1);
         assert_eq!(written.audit_id, "audit-1");
+        let changed = changes.changed().await.expect("committed QQ change");
+        assert_eq!(changed.revision, 1);
+        assert!(changed.areas.contains(&QqManagementChangeArea::Snapshot));
         let replayed = api
             .write(
                 "op",

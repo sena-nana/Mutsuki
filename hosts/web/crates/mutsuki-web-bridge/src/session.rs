@@ -1,10 +1,12 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use mutsuki_web_protocol::{
     EventEnvelope, EventSubscription, JsonValue, ProtocolError, ProtocolResult, ResourceBudgets,
 };
 use parking_lot::Mutex;
+use tokio::sync::Notify;
 use uuid::Uuid;
 
 use crate::BridgeMetrics;
@@ -135,6 +137,7 @@ struct SessionState {
     session: BridgeSession,
     subscriptions: HashMap<Uuid, EventSubscription>,
     outbound: std::collections::VecDeque<EventEnvelope>,
+    event_ready: Arc<Notify>,
     sequence: u64,
 }
 
@@ -190,6 +193,7 @@ impl SessionManager {
                 session: session.clone(),
                 subscriptions: HashMap::new(),
                 outbound: std::collections::VecDeque::new(),
+                event_ready: Arc::new(Notify::new()),
                 sequence: 0,
             },
         );
@@ -239,6 +243,7 @@ impl SessionManager {
     ) -> ProtocolResult<u64> {
         let mut sessions = self.sessions.lock();
         let mut delivered = 0u64;
+        let mut ready = Vec::new();
         for state in sessions.values_mut() {
             let matches: Vec<Uuid> = state
                 .subscriptions
@@ -246,6 +251,7 @@ impl SessionManager {
                 .filter(|sub| sub.topic == topic)
                 .map(|sub| sub.subscription_id)
                 .collect();
+            let mut session_delivered = false;
             for subscription_id in matches {
                 if state.outbound.len() >= self.budgets.max_event_queue_depth {
                     metrics.inc_events_dropped();
@@ -259,9 +265,24 @@ impl SessionManager {
                     payload: payload.clone(),
                 });
                 delivered += 1;
+                session_delivered = true;
+            }
+            if session_delivered {
+                ready.push(state.event_ready.clone());
             }
         }
+        drop(sessions);
+        for notifier in ready {
+            notifier.notify_one();
+        }
         Ok(delivered)
+    }
+
+    pub fn event_notifier(&self, session_id: Uuid) -> Option<Arc<Notify>> {
+        self.sessions
+            .lock()
+            .get(&session_id)
+            .map(|state| state.event_ready.clone())
     }
 
     pub fn drain_events(&self, session_id: Uuid) -> Vec<EventEnvelope> {

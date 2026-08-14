@@ -51,6 +51,7 @@ pub struct TaskRecord {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TaskPoolStatistics {
+    pub state_revision: u64,
     pub ready: usize,
     pub running: usize,
     pub waiting: usize,
@@ -74,6 +75,9 @@ impl TaskPoolStatistics {
         from: Option<&TaskStatus>,
         to: Option<&TaskStatus>,
     ) {
+        if from != to {
+            self.state_revision = self.state_revision.saturating_add(1);
+        }
         if let Some(from) = from.filter(|status| **status != TaskStatus::Created) {
             let counter = self.status_counter_mut(from);
             *counter = counter.saturating_sub(1);
@@ -254,6 +258,11 @@ impl TaskPool {
 
     pub fn statistics(&self) -> TaskPoolStatistics {
         self.statistics.clone()
+    }
+
+    /// Monotonic revision of committed TaskPool-visible state transitions.
+    pub fn revision(&self) -> u64 {
+        self.statistics.state_revision
     }
 
     pub(crate) fn record_stale_result_rejection(&mut self) {

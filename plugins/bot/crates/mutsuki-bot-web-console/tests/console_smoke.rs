@@ -62,25 +62,25 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
     let addr = host.listen_addr().unwrap().to_string();
 
     let css = http_get_body(&addr, "/mutsuki-ui.css").await;
-    assert!(css.contains("grid-template-columns: var(--mutsuki-nav-width) minmax(0, 1fr)"));
-    assert!(css.contains(".mutsuki-console.lilia-workspace"));
+    assert!(css.contains(".mutsuki-console--activity-shell"));
+    assert!(css.contains(".console-activity__item.is-active"));
     assert!(!css.contains("@import"));
 
-    let js = http_get_body(&addr, "/index.js").await;
-    assert!(js.contains("mutsuki-console lilia-workspace"));
-    assert!(js.contains("secondary-panel"));
-    assert!(js.contains("page-header"));
-    assert!(js.contains("className = \"card\""));
-    assert!(
-        !js.contains("card--flat"),
-        "overview content groups must use raised Lilia .card, not transparent card--flat"
-    );
-    assert!(js.contains("<ul class=\"kv\">") || js.contains("className = \"kv\""));
-    assert!(js.contains("overview-dashboard"));
-    assert!(js.contains("metric-grid"));
-    assert!(js.contains("mountConfigPanel"));
-    assert!(css.contains(".mutsuki-console .overview-dashboard"));
-    assert!(css.contains(".mutsuki-console .metric-grid"));
+    let shell_js = http_get_body(&addr, "/shared/web-shell.js").await;
+    assert!(shell_js.contains("console-activity"));
+    assert!(shell_js.contains("console-context"));
+    let options: serde_json::Value =
+        serde_json::from_str(&http_get_body(&addr, "/console-options.json").await).unwrap();
+    let extensions = options["extensions"].as_array().unwrap();
+    for id in ["overview", "control"] {
+        let url = extensions
+            .iter()
+            .find(|item| item["id"] == id)
+            .and_then(|item| item["url"].as_str())
+            .expect("enabled extension must have a module URL");
+        let path = url.trim_start_matches('.');
+        assert!(!http_get_body(&addr, path).await.is_empty());
+    }
 
     let html = http_get_body(&addr, "/").await;
     assert!(html.contains("mutsuki-ui.css?v="));
@@ -188,17 +188,10 @@ async fn embedded_console_with_config_shell() {
 
     let addr = host.listen_addr().unwrap().to_string();
     let bootstrap = http_get_body(&addr, "/console-bootstrap.js").await;
-    assert!(
-        bootstrap.contains("mountConsole"),
-        "config-enabled console must stay on the overview shell"
-    );
-    assert!(
-        !bootstrap.contains("page === \"config\""),
-        "config must not remount a separate shell via ?page=config"
-    );
-    let shell_js = http_get_body(&addr, "/index.js").await;
-    let config_path = versioned_module_path(&shell_js, "./config/index.js");
-    let config_js = http_get_body(&addr, &format!("/{config_path}&attempt=1")).await;
+    assert!(bootstrap.contains("mountWebShell"));
+    let options = http_get_body(&addr, "/console-options.json").await;
+    let config_path = versioned_module_path(&options, "./extensions/config/index.js");
+    let config_js = http_get_body(&addr, &format!("/{config_path}")).await;
     assert!(config_js.contains("export function mountConfigPanel"));
 
     host.stop().await.unwrap();
@@ -405,8 +398,8 @@ async fn embedded_console_mounts_qq_management_extension() {
     host.start().await.unwrap();
     let addr = host.listen_addr().unwrap().to_string();
     let options = http_get_body(&addr, "/console-options.json").await;
-    assert!(options.contains("\"includeQq\":true"));
-    let qq_js = http_get_body(&addr, "/qq-bot/index.js").await;
+    let qq_path = versioned_module_path(&options, "./extensions/qq-bot/index.js");
+    let qq_js = http_get_body(&addr, &format!("/{qq_path}")).await;
     assert!(qq_js.contains("mountQqBotPanel"));
     let snap = ws_rpc_params(&addr, "qq-bot", "snapshot", json!({}))
         .await
@@ -418,11 +411,11 @@ async fn embedded_console_mounts_qq_management_extension() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 }
 
-fn versioned_module_path(shell_js: &str, module_path: &str) -> String {
-    let start = shell_js
+fn versioned_module_path(options: &str, module_path: &str) -> String {
+    let start = options
         .find(module_path)
-        .unwrap_or_else(|| panic!("shell does not reference {module_path}"));
-    let path = &shell_js[start + 2..];
+        .unwrap_or_else(|| panic!("console options do not reference {module_path}"));
+    let path = &options[start + 2..];
     let end = path
         .find('"')
         .unwrap_or_else(|| panic!("unterminated module specifier for {module_path}"));

@@ -79,6 +79,7 @@ function actionButton(label, action, state, rpc, refresh, options = {}) {
 
 function accountCard(account, state, rpc, refresh) {
   const card = element("article", "panel nested");
+  card.dataset.accountId = account.account_id;
   card.append(
     element("h3", "", account.account_id),
     element("p", "muted", `${productLabel(account.health)} · ${productLabel(account.connection_state)}`),
@@ -94,6 +95,7 @@ function accountCard(account, state, rpc, refresh) {
   if (!account.capability?.active_message) return card;
   const sendForm = element("div", "toolbar nested");
   const scene = element("select");
+  scene.dataset.draftField = "scene";
   const activeKinds = new Set(account.capability?.active_message_kinds || []);
   [["private", "私聊"], ["group", "群聊"], ["channel", "频道"]]
     .filter(([value]) => activeKinds.has(value))
@@ -104,11 +106,14 @@ function accountCard(account, state, rpc, refresh) {
   });
   if (!scene.options.length) return card;
   const target = element("input");
+  target.dataset.draftField = "target";
   target.placeholder = "用户 OpenID";
   const channel = element("input");
+  channel.dataset.draftField = "channel";
   channel.placeholder = "频道 ID";
   channel.hidden = true;
   const message = element("input");
+  message.dataset.draftField = "message";
   message.placeholder = "测试消息";
   const sendResult = element("span", "muted");
   scene.onchange = () => {
@@ -185,13 +190,15 @@ function withLoadMore(section, cursor, load) {
 }
 
 /** Mount the QQ operations panel into the shared console shell. */
-export function mountQqBotPanel(host, rpc, options = {}) {
+export function mountQqBotPanel(host, rpc, events, options = {}) {
   const state = {
     snapshot: null,
     deliveries: [],
     interactions: [],
     deliveryCursor: null,
     interactionCursor: null,
+    deliveryExpanded: false,
+    interactionExpanded: false,
     actorId: options.actorId || "web-console",
   };
   host.innerHTML = "";
@@ -200,7 +207,11 @@ export function mountQqBotPanel(host, rpc, options = {}) {
   search.type = "search";
   search.placeholder = "搜索账号、会话或投递";
   const status = element("div", "muted", "正在加载…");
-  root.append(search, status);
+  const refreshButton = element("button", "ghost", "刷新");
+  refreshButton.type = "button";
+  const toolbar = element("div", "toolbar row-item");
+  toolbar.append(search, refreshButton, status);
+  root.append(toolbar);
   host.append(root);
 
   state.reportError = (error) => {
@@ -209,8 +220,26 @@ export function mountQqBotPanel(host, rpc, options = {}) {
   };
 
   function render() {
+    const drafts = new Map();
+    root.querySelectorAll("[data-account-id]").forEach((card) => {
+      const values = {};
+      card.querySelectorAll("[data-draft-field]").forEach((field) => {
+        values[field.dataset.draftField] = field.value;
+      });
+      drafts.set(card.dataset.accountId, values);
+    });
     root.querySelectorAll("section, article").forEach((node) => node.remove());
-    state.snapshot.accounts.forEach((account) => root.append(accountCard(account, state, rpc, refresh)));
+    state.snapshot.accounts.forEach((account) => {
+      const card = accountCard(account, state, rpc, refresh);
+      const values = drafts.get(account.account_id);
+      if (values) {
+        card.querySelectorAll("[data-draft-field]").forEach((field) => {
+          if (values[field.dataset.draftField] != null) field.value = values[field.dataset.draftField];
+        });
+        card.querySelector("[data-draft-field='scene']")?.onchange?.();
+      }
+      root.append(card);
+    });
     const deliveries = tableSection("主动投递", state.deliveries, [
       ["投递记录", (row) => row.receipt.delivery_id],
       ["状态", (row) => productLabel(row.receipt.status)],
@@ -249,6 +278,7 @@ export function mountQqBotPanel(host, rpc, options = {}) {
       const page = await rpc.read("qq-bot", "deliveries.list", { query: search.value, after, limit: 50 });
       state.deliveries.push(...page.items);
       state.deliveryCursor = page.next_cursor;
+      state.deliveryExpanded = true;
       render();
     } catch (error) {
       state.reportError(error);
@@ -260,37 +290,141 @@ export function mountQqBotPanel(host, rpc, options = {}) {
       const page = await rpc.read("qq-bot", "interactions.list", { query: search.value, after, limit: 50 });
       state.interactions.push(...page.items);
       state.interactionCursor = page.next_cursor;
+      state.interactionExpanded = true;
       render();
     } catch (error) {
       state.reportError(error);
     }
   }
 
-  async function refresh() {
-    try {
-      const [snapshot, deliveries, interactions] = await Promise.all([
-        rpc.read("qq-bot", "snapshot", { query: search.value }),
-        rpc.read("qq-bot", "deliveries.list", { query: search.value, limit: 50 }),
-        rpc.read("qq-bot", "interactions.list", { query: search.value, limit: 50 }),
-      ]);
-      state.snapshot = snapshot;
-      state.deliveries = deliveries.items;
-      state.deliveryCursor = deliveries.next_cursor;
-      state.interactions = interactions.items;
-      state.interactionCursor = interactions.next_cursor;
-      status.className = "muted";
-      status.textContent = "运营数据已更新";
-      render();
-    } catch (error) {
-      state.reportError(error);
-    }
-  }
-
-  let timer;
-  search.oninput = () => {
-    clearTimeout(timer);
-    timer = setTimeout(refresh, 180);
+  const mergeRows = (fresh, existing, key) => {
+    const seen = new Set(fresh.map(key));
+    return [...fresh, ...existing.filter((item) => !seen.has(key(item)))];
   };
-  refresh();
-  return { refresh, destroy: () => clearTimeout(timer) };
+  let disposed = false;
+  let pollTimer = null;
+  let eventTimer = null;
+  let searchTimer = null;
+  let inFlight = null;
+  let pendingRefresh = null;
+  let lastRevision = 0;
+  let opened = false;
+
+  function schedule() {
+    clearTimeout(pollTimer);
+    if (!disposed && !document.hidden) pollTimer = setTimeout(() => void refresh(true), 60_000);
+  }
+
+  function refresh(merge = true) {
+    if (disposed) return Promise.resolve();
+    if (inFlight) {
+      pendingRefresh = pendingRefresh === false ? false : merge;
+      return inFlight;
+    }
+    const query = search.value;
+    inFlight = (async () => {
+      try {
+      const [snapshot, deliveries, interactions] = await Promise.all([
+        rpc.read("qq-bot", "snapshot", { query }),
+        rpc.read("qq-bot", "deliveries.list", { query, limit: 50 }),
+        rpc.read("qq-bot", "interactions.list", { query, limit: 50 }),
+      ]);
+      if (disposed || query !== search.value) return;
+      state.snapshot = snapshot;
+      state.deliveries = merge && state.deliveryExpanded
+        ? mergeRows(deliveries.items, state.deliveries, (item) => item.receipt.delivery_id)
+        : deliveries.items;
+      state.interactions = merge && state.interactionExpanded
+        ? mergeRows(interactions.items, state.interactions, (item) => item.session_id)
+        : interactions.items;
+      if (!state.deliveryExpanded || !merge) state.deliveryCursor = deliveries.next_cursor;
+      if (!state.interactionExpanded || !merge) state.interactionCursor = interactions.next_cursor;
+      status.className = "muted";
+      if (root.contains(document.activeElement) && document.activeElement?.matches?.("[data-draft-field]")) {
+        status.textContent = "正在编辑，数据将在离开输入框后更新";
+      } else {
+        status.textContent = "";
+        render();
+      }
+      } catch (error) {
+        if (!disposed) state.reportError(error);
+      }
+    })().finally(() => {
+      inFlight = null;
+      if (pendingRefresh !== null) {
+        const mergePending = pendingRefresh;
+        pendingRefresh = null;
+        void refresh(mergePending);
+      } else {
+        schedule();
+      }
+    });
+    return inFlight;
+  }
+
+  search.oninput = () => {
+    state.deliveryExpanded = false;
+    state.interactionExpanded = false;
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      if (inFlight) pendingRefresh = false;
+      else void refresh(false);
+    }, 180);
+  };
+  refreshButton.onclick = () => void refresh(true);
+  root.addEventListener("focusout", (event) => {
+    if (!event.target?.matches?.("[data-draft-field]")) return;
+    setTimeout(() => {
+      if (!disposed && !(root.contains(document.activeElement) && document.activeElement?.matches?.("[data-draft-field]"))) {
+        status.textContent = "";
+        render();
+      }
+    }, 0);
+  });
+  const visibility = () => {
+    clearTimeout(pollTimer);
+    if (!document.hidden) void refresh(true);
+  };
+  const eventSubscription = events.subscribe("qq.changed", (payload) => {
+    const revision = Number(payload?.revision || 0);
+    if (revision <= lastRevision) return;
+    lastRevision = revision;
+    if (document.hidden) return;
+    clearTimeout(eventTimer);
+    eventTimer = setTimeout(() => void refresh(true), 50);
+  }, "bot.read");
+  const connectionSubscription = events.onStateChange?.((connection) => {
+    if (connection !== "open" || document.hidden) return;
+    if (opened) void refresh(true);
+    opened = true;
+  });
+  document.addEventListener("visibilitychange", visibility);
+  void refresh(false);
+  return {
+    refresh,
+    destroy() {
+      disposed = true;
+      clearTimeout(searchTimer);
+      clearTimeout(pollTimer);
+      clearTimeout(eventTimer);
+      eventSubscription.dispose();
+      connectionSubscription?.dispose();
+      document.removeEventListener("visibilitychange", visibility);
+    },
+  };
 }
+
+export default {
+  id: "qq-bot",
+  setup(ctx) {
+    ctx.pages.register({
+      id: "qq-bot.page", path: "/qq-bot", title: "QQ 管理",
+      component: { mount(el) { const panel = mountQqBotPanel(el, ctx.rpc, ctx.events); return { dispose: () => panel.destroy() }; } },
+      requiredCapability: "bot.read",
+    });
+    ctx.navigation.register({
+      id: "qq-bot.nav", activityId: "bot", pageId: "qq-bot.page", label: "QQ 管理", order: 10,
+      requiredCapability: "bot.read",
+    });
+  },
+};

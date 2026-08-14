@@ -11,9 +11,12 @@ use mutsuki_plugin_catalog::{
     check_module_updates, execute_module_upgrade, format_execute_cli_command, load_release_set,
     plan_module_upgrade, upgrade_check_json,
 };
-use mutsuki_web_extension::{ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor};
+use mutsuki_web_extension::{
+    ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, content_hash,
+};
 use mutsuki_web_protocol::{
-    EXTENSION_MANIFEST_VERSION, ExtensionManifest, JsonValue, WEB_PROTOCOL_VERSION,
+    AssetEntry, EXTENSION_MANIFEST_VERSION, ExtensionManifest, JsonValue, WEB_PROTOCOL_VERSION,
+    WebFrontendAssets,
 };
 use serde_json::{Value, json};
 
@@ -22,6 +25,7 @@ pub const PLUGIN_VERSION: &str = "0.1.0";
 
 pub struct UpgradeWebExtension {
     inner: UpgradeRpc,
+    assets_root: Option<PathBuf>,
 }
 
 impl UpgradeWebExtension {
@@ -39,6 +43,7 @@ impl UpgradeWebExtension {
                 release_set_path,
                 remote: Arc::new(ReqwestRemoteHeadProvider::default()),
             },
+            assets_root: None,
         })
     }
 
@@ -46,24 +51,29 @@ impl UpgradeWebExtension {
         self.inner.remote = remote;
         self
     }
+
+    #[must_use]
+    pub fn with_frontend_assets(mut self, root: impl Into<PathBuf>) -> Self {
+        self.assets_root = Some(root.into());
+        self
+    }
 }
 
 impl WebExtension for UpgradeWebExtension {
     fn descriptor(&self) -> WebExtensionDescriptor {
-        ExtensionManifest {
-            manifest_version: EXTENSION_MANIFEST_VERSION,
-            id: PLUGIN_ID.into(),
-            version: PLUGIN_VERSION.into(),
-            entry: String::new(),
-            capabilities: vec![CAPABILITY_RUNTIME_READ.into()],
-            permissions: vec!["pages".into(), "navigation".into()],
-            assets: vec![],
-            protocol_version: WEB_PROTOCOL_VERSION.into(),
-        }
+        manifest(
+            self.frontend_assets()
+                .map(|assets| assets.manifest.assets)
+                .unwrap_or_default(),
+        )
     }
 
-    fn frontend_assets(&self) -> Option<mutsuki_web_protocol::WebFrontendAssets> {
-        None
+    fn frontend_assets(&self) -> Option<WebFrontendAssets> {
+        let root = self.assets_root.as_ref()?;
+        Some(WebFrontendAssets {
+            manifest: load_manifest(root).ok()?,
+            root_dir: root.clone(),
+        })
     }
 
     fn register_rpc(&self, ctx: &mut RpcRegistry) -> Result<(), ExtensionError> {
@@ -223,4 +233,33 @@ fn map_catalog_error(err: mutsuki_plugin_catalog::CatalogError) -> ExtensionErro
 
 pub fn default_release_set_path(repo_root: &Path) -> PathBuf {
     repo_root.join("release.toml")
+}
+
+fn manifest(assets: Vec<AssetEntry>) -> ExtensionManifest {
+    ExtensionManifest {
+        manifest_version: EXTENSION_MANIFEST_VERSION,
+        id: PLUGIN_ID.into(),
+        version: PLUGIN_VERSION.into(),
+        entry: "index.js".into(),
+        capabilities: vec![CAPABILITY_RUNTIME_READ.into()],
+        permissions: vec!["pages".into(), "navigation".into()],
+        assets,
+        protocol_version: WEB_PROTOCOL_VERSION.into(),
+    }
+}
+
+fn load_manifest(root: &Path) -> Result<ExtensionManifest, ExtensionError> {
+    let bytes = std::fs::read(root.join("index.js"))
+        .map_err(|error| ExtensionError::Manifest(error.to_string()))?;
+    Ok(manifest(vec![AssetEntry {
+        path: "index.js".into(),
+        content_hash: content_hash(&bytes),
+        bytes: bytes.len() as u64,
+    }]))
+}
+
+pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::Error> {
+    std::fs::create_dir_all(out_dir)?;
+    std::fs::write(out_dir.join("index.js"), include_str!("../assets/index.js"))?;
+    Ok(out_dir.to_path_buf())
 }

@@ -12,7 +12,10 @@ use std::sync::Arc;
 
 pub use config_demo::demo_config_service;
 pub use secret_status::{SecretKeyResolver, SecretMonitor, SecretStatusWebExtension};
-pub use watch_bridge::attach_revision_changed_bridge;
+pub use watch_bridge::{
+    ControlChangeBridge, ManagementChangeBridge, attach_control_changed_bridge,
+    attach_management_changed_bridges, attach_revision_changed_bridge,
+};
 
 use mutsuki_bot_flow::BotFlowRegistry;
 use mutsuki_bot_management::BilibiliManagementApi;
@@ -24,7 +27,10 @@ use mutsuki_plugin_bot_agent_web::{
 use mutsuki_plugin_bot_bilibili_web::{
     BilibiliWebExtension, materialize_frontend_assets as materialize_bilibili_assets,
 };
-use mutsuki_plugin_bot_control_web::{ControlRpcCaller, ControlWebExtension};
+use mutsuki_plugin_bot_control_web::{
+    ControlRpcCaller, ControlWebExtension,
+    materialize_frontend_assets as materialize_control_assets,
+};
 use mutsuki_plugin_bot_flow_web::{
     BotFlowEditorWebExtension, materialize_frontend_assets as materialize_bot_flow_assets,
 };
@@ -34,7 +40,9 @@ use mutsuki_plugin_bot_overview_web::{
 use mutsuki_plugin_bot_qq_web::{
     QqBotManagementApi, QqBotWebExtension, materialize_frontend_assets as materialize_qq_assets,
 };
-use mutsuki_plugin_bot_upgrade_web::UpgradeWebExtension;
+use mutsuki_plugin_bot_upgrade_web::{
+    UpgradeWebExtension, materialize_frontend_assets as materialize_upgrade_assets,
+};
 use mutsuki_plugin_config_web::{
     ConfigWebExtension, materialize_frontend_assets as materialize_config_assets,
 };
@@ -178,7 +186,9 @@ pub fn build_console_host_with_agent(
     )?;
     let caller = ControlRpcCaller::new(control, control_token);
     let mut builder = base_builder(config, secrets, &asset_dirs);
-    builder = builder.extension(ControlWebExtension::new(caller.clone()));
+    builder = builder.extension(
+        ControlWebExtension::new(caller.clone()).with_frontend_assets(&asset_dirs.control_assets),
+    );
     builder = builder.extension(
         OverviewWebExtension::new(caller.clone()).with_frontend_assets(&asset_dirs.overview_assets),
     );
@@ -193,7 +203,8 @@ pub fn build_console_host_with_agent(
         })?;
         builder = builder.extension(
             UpgradeWebExtension::new(release_set_path)
-                .map_err(|err| mutsuki_web_host::WebHostError::InvalidConfig(err.to_string()))?,
+                .map_err(|err| mutsuki_web_host::WebHostError::InvalidConfig(err.to_string()))?
+                .with_frontend_assets(&asset_dirs.upgrade_assets),
         );
     }
     if config.has_extension("config") {
@@ -291,14 +302,18 @@ pub(crate) fn base_builder(
 /// Temp directories holding materialized frontend assets. Keep alive while host runs.
 pub struct ConsoleAssetDirs {
     pub _overview_dir: tempfile::TempDir,
+    pub _control_dir: tempfile::TempDir,
     pub _config_dir: Option<tempfile::TempDir>,
+    pub _upgrade_dir: Option<tempfile::TempDir>,
     pub _bilibili_dir: Option<tempfile::TempDir>,
     pub _qq_dir: Option<tempfile::TempDir>,
     pub _bot_agent_dir: Option<tempfile::TempDir>,
     pub _bot_flow_dir: Option<tempfile::TempDir>,
     pub _shell_dir: tempfile::TempDir,
     pub overview_assets: PathBuf,
+    pub control_assets: PathBuf,
     pub config_assets: PathBuf,
+    pub upgrade_assets: PathBuf,
     pub bilibili_assets: PathBuf,
     pub qq_assets: PathBuf,
     pub bot_agent_assets: PathBuf,
@@ -319,6 +334,12 @@ impl ConsoleAssetDirs {
             .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
         let overview_assets = materialize_overview_assets(overview_dir.path())
             .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
+        let control_dir = tempfile::tempdir()
+            .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
+        let control_assets = materialize_control_assets(control_dir.path())
+            .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
+        copy_dir(&control_assets, &overview_assets.join("extensions/control"))
+            .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
 
         // Config assets first so shell ?v= stamps match real config/index.js bytes.
         let (config_dir, config_assets) = if include_config {
@@ -326,7 +347,19 @@ impl ConsoleAssetDirs {
                 .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
             let assets = materialize_config_assets(dir.path())
                 .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
-            copy_dir(&assets, &overview_assets.join("config"))
+            copy_dir(&assets, &overview_assets.join("extensions/config"))
+                .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
+            (Some(dir), assets)
+        } else {
+            (None, PathBuf::new())
+        };
+
+        let (upgrade_dir, upgrade_assets) = if include_upgrade {
+            let dir = tempfile::tempdir()
+                .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
+            let assets = materialize_upgrade_assets(dir.path())
+                .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
+            copy_dir(&assets, &overview_assets.join("extensions/upgrade"))
                 .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
             (Some(dir), assets)
         } else {
@@ -338,7 +371,7 @@ impl ConsoleAssetDirs {
                 .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
             let assets = materialize_bilibili_assets(dir.path())
                 .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
-            copy_dir(&assets, &overview_assets.join("bilibili"))
+            copy_dir(&assets, &overview_assets.join("extensions/bilibili"))
                 .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
             (Some(dir), assets)
         } else {
@@ -350,7 +383,7 @@ impl ConsoleAssetDirs {
                 .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
             let assets = materialize_qq_assets(dir.path())
                 .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
-            copy_dir(&assets, &overview_assets.join("qq-bot"))
+            copy_dir(&assets, &overview_assets.join("extensions/qq-bot"))
                 .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
             (Some(dir), assets)
         } else {
@@ -362,7 +395,7 @@ impl ConsoleAssetDirs {
                 .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
             let assets = materialize_bot_agent_assets(dir.path())
                 .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
-            copy_dir(&assets, &overview_assets.join("bot-agent"))
+            copy_dir(&assets, &overview_assets.join("extensions/bot-agent"))
                 .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
             (Some(dir), assets)
         } else {
@@ -374,7 +407,7 @@ impl ConsoleAssetDirs {
                 .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
             let assets = materialize_bot_flow_assets(dir.path())
                 .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
-            copy_dir(&assets, &overview_assets.join("bot-flow"))
+            copy_dir(&assets, &overview_assets.join("extensions/bot-flow"))
                 .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
             (Some(dir), assets)
         } else {
@@ -396,14 +429,18 @@ impl ConsoleAssetDirs {
             .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
         Ok(Self {
             overview_assets: overview_assets.clone(),
+            control_assets,
             config_assets,
+            upgrade_assets,
             bilibili_assets,
             qq_assets,
             bot_agent_assets,
             bot_flow_assets,
             shell_root: shell_dir.path().to_path_buf(),
             _overview_dir: overview_dir,
+            _control_dir: control_dir,
             _config_dir: config_dir,
+            _upgrade_dir: upgrade_dir,
             _bilibili_dir: bilibili_dir,
             _qq_dir: qq_dir,
             _bot_agent_dir: bot_agent_dir,
@@ -422,24 +459,6 @@ fn asset_version_stamp(bytes: &[u8]) -> String {
         .collect()
 }
 
-fn version_panel_module(
-    index_js: &mut String,
-    out_dir: &Path,
-    module_path: &str,
-) -> std::io::Result<()> {
-    let bytes = std::fs::read(out_dir.join(module_path))?;
-    let specifier = format!("\"./{module_path}\"");
-    if !index_js.contains(&specifier) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("console shell does not reference enabled panel module `{module_path}`"),
-        ));
-    }
-    let versioned = format!("\"./{module_path}?v={}\"", asset_version_stamp(&bytes));
-    *index_js = index_js.replace(&specifier, &versioned);
-    Ok(())
-}
-
 pub(crate) fn materialize_console_shell(
     out_dir: &Path,
     include_config: bool,
@@ -449,34 +468,21 @@ pub(crate) fn materialize_console_shell(
     include_agent_connections: bool,
     include_bot_flow: bool,
 ) -> std::io::Result<()> {
-    let index_template = if include_config {
-        include_str!("../assets/console-shell-config.html")
-    } else {
-        include_str!("../assets/console-shell-overview.html")
-    };
+    let index_template = include_str!("../assets/console-shell-overview.html");
     let bootstrap_name = "console-bootstrap.js";
     let bootstrap_template = include_str!("../assets/console-bootstrap.js");
 
     let css = include_str!("../assets/mutsuki-ui.css");
     let css_v = asset_version_stamp(css.as_bytes());
 
-    let mut index_js = std::fs::read_to_string(out_dir.join("index.js"))?;
-    for (module_path, enabled) in [
-        ("config/index.js", include_config),
-        ("bilibili/index.js", include_bilibili),
-        ("qq-bot/index.js", include_qq),
-        ("bot-agent/index.js", include_agent_connections),
-        ("bot-flow/index.js", include_bot_flow),
-    ] {
-        if enabled {
-            version_panel_module(&mut index_js, out_dir, module_path)?;
-        }
-    }
-    let index_v = asset_version_stamp(index_js.as_bytes());
-
+    let overview_js = std::fs::read(out_dir.join("index.js"))?;
+    let overview_dir = out_dir.join("extensions/overview");
+    std::fs::create_dir_all(&overview_dir)?;
+    std::fs::write(overview_dir.join("index.js"), &overview_js)?;
+    let overview_v = asset_version_stamp(&overview_js);
     let bootstrap = bootstrap_template.replace(
-        "from \"./index.js\"",
-        &format!("from \"./index.js?v={index_v}\""),
+        "from \"./extensions/overview/index.js\"",
+        &format!("from \"./extensions/overview/index.js?v={overview_v}\""),
     );
     let bootstrap_v = asset_version_stamp(bootstrap.as_bytes());
     let web_sdk = include_bytes!("../../../../../hosts/web/packages/web-sdk/browser/web-sdk.js");
@@ -491,22 +497,60 @@ pub(crate) fn materialize_console_shell(
         );
 
     std::fs::write(out_dir.join("index.html"), index)?;
-    std::fs::write(out_dir.join("index.js"), index_js)?;
     std::fs::write(out_dir.join(bootstrap_name), bootstrap)?;
     std::fs::write(out_dir.join("mutsuki-ui.css"), css)?;
     std::fs::create_dir_all(out_dir.join("shared"))?;
     std::fs::write(out_dir.join("shared/web-sdk.js"), web_sdk)?;
     std::fs::write(out_dir.join("shared/web-shell.js"), web_shell)?;
+    let control_path = "extensions/control/index.js";
+    let control_v = asset_version_stamp(&std::fs::read(out_dir.join(control_path))?);
+    let mut extensions = vec![
+        json!({
+            "id": "overview",
+            "url": format!("./extensions/overview/index.js?v={overview_v}"),
+        }),
+        json!({
+            "id": "control",
+            "url": format!("./{control_path}?v={control_v}"),
+        }),
+    ];
+    for (id, path, enabled) in [
+        ("config", "extensions/config/index.js", include_config),
+        ("upgrade", "extensions/upgrade/index.js", include_upgrade),
+        ("bilibili", "extensions/bilibili/index.js", include_bilibili),
+        ("qq-bot", "extensions/qq-bot/index.js", include_qq),
+        (
+            "bot-agent",
+            "extensions/bot-agent/index.js",
+            include_agent_connections,
+        ),
+        (
+            "bot-flow-editor",
+            "extensions/bot-flow/index.js",
+            include_bot_flow,
+        ),
+    ] {
+        if enabled {
+            let bytes = std::fs::read(out_dir.join(path))?;
+            extensions.push(json!({
+                "id": id,
+                "url": format!("./{path}?v={}", asset_version_stamp(&bytes)),
+            }));
+        }
+    }
+    let options = json!({
+        "activities": [
+            {"id": "home", "label": "概览", "icon": "home", "order": 0, "position": "top"},
+            {"id": "bot", "label": "Bot", "icon": "bot", "order": 10, "position": "top"},
+            {"id": "automation", "label": "自动化", "icon": "flow", "order": 20, "position": "top"},
+            {"id": "system", "label": "系统", "icon": "system", "order": 30, "position": "top"},
+            {"id": "settings", "label": "设置", "icon": "settings", "order": 100, "position": "bottom"}
+        ],
+        "extensions": extensions,
+    });
     std::fs::write(
         out_dir.join("console-options.json"),
-        serde_json::to_string(&json!({
-            "includeConfig": include_config,
-            "includeUpgrade": include_upgrade,
-            "includeBilibili": include_bilibili,
-            "includeQq": include_qq,
-            "includeAgentConnections": include_agent_connections,
-            "includeBotFlow": include_bot_flow,
-        }))?,
+        serde_json::to_string(&options)?,
     )?;
     Ok(())
 }
@@ -532,34 +576,52 @@ mod owner_console_tests {
     #[test]
     fn owner_pages_are_materialized_only_for_registered_services() {
         let dirs = ConsoleAssetDirs::materialize(false, false, false, false, true, true).unwrap();
-        assert!(dirs.overview_assets.join("bot-agent/index.js").is_file());
-        assert!(dirs.overview_assets.join("bot-flow/index.js").is_file());
+        assert!(
+            dirs.overview_assets
+                .join("extensions/bot-agent/index.js")
+                .is_file()
+        );
+        assert!(
+            dirs.overview_assets
+                .join("extensions/bot-flow/index.js")
+                .is_file()
+        );
         let options: serde_json::Value = serde_json::from_slice(
             &std::fs::read(dirs.overview_assets.join("console-options.json")).unwrap(),
         )
         .unwrap();
-        assert_eq!(options["includeAgentConnections"], true);
-        assert_eq!(options["includeBotFlow"], true);
+        let ids = options["extensions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|item| item["id"].as_str())
+            .collect::<Vec<_>>();
+        assert!(ids.contains(&"bot-agent"));
+        assert!(ids.contains(&"bot-flow-editor"));
 
         let dirs = ConsoleAssetDirs::materialize(false, false, false, false, false, false).unwrap();
-        assert!(!dirs.overview_assets.join("bot-agent").exists());
-        assert!(!dirs.overview_assets.join("bot-flow").exists());
+        assert!(!dirs.overview_assets.join("extensions/bot-agent").exists());
+        assert!(!dirs.overview_assets.join("extensions/bot-flow").exists());
     }
 
     #[test]
     fn enabled_panel_modules_use_their_materialized_content_versions() {
         let dirs = ConsoleAssetDirs::materialize(true, false, true, true, true, true).unwrap();
-        let index = std::fs::read_to_string(dirs.overview_assets.join("index.js")).unwrap();
+        let options =
+            std::fs::read_to_string(dirs.overview_assets.join("console-options.json")).unwrap();
         for module_path in [
-            "config/index.js",
-            "bilibili/index.js",
-            "qq-bot/index.js",
-            "bot-agent/index.js",
-            "bot-flow/index.js",
+            "extensions/config/index.js",
+            "extensions/bilibili/index.js",
+            "extensions/qq-bot/index.js",
+            "extensions/bot-agent/index.js",
+            "extensions/bot-flow/index.js",
         ] {
             let bytes = std::fs::read(dirs.overview_assets.join(module_path)).unwrap();
-            let expected = format!("\"./{module_path}?v={}\"", asset_version_stamp(&bytes));
-            assert!(index.contains(&expected), "missing versioned {module_path}");
+            let expected = format!("./{module_path}?v={}", asset_version_stamp(&bytes));
+            assert!(
+                options.contains(&expected),
+                "missing versioned {module_path}"
+            );
         }
     }
 

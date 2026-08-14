@@ -54,6 +54,10 @@ cargo run -p mutsuki-service-host -- --home .mutsuki-dev --token dev-token stop
 
 If no token is configured, ServiceHost creates and reuses a local token in `<home>/run/control.token`.
 
+Embedded Web consoles receive bounded control-change invalidations from ServiceRuntime and then
+read the existing authenticated snapshot RPC. These events contain only a monotonic revision and
+the changed control domains; they do not create a second control protocol or expose runtime state.
+
 ## Windows Service
 
 ```powershell

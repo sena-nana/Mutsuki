@@ -377,7 +377,9 @@ fn completion_subscription_wakes_and_batch_state_returns_terminal_outcome() {
         )
         .unwrap();
     let completions = runtime.subscribe_task_completions();
+    let changes = runtime.subscribe_task_changes();
     let observed_revision = completions.revision();
+    let observed_change_revision = changes.revision();
     let handle = match runtime
         .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
             "completion-notice",
@@ -394,6 +396,11 @@ fn completion_subscription_wakes_and_batch_state_returns_terminal_outcome() {
         .wait_after(observed_revision)
         .expect("terminal task wakes completion subscription");
     assert!(revision > observed_revision);
+    assert!(
+        changes
+            .wait_after_timeout(observed_change_revision, Duration::from_secs(1))
+            .is_some()
+    );
     let states = runtime.task_states(vec![handle.clone()]).unwrap();
     assert_eq!(states.len(), 1);
     assert_eq!(states[0].handle, handle);

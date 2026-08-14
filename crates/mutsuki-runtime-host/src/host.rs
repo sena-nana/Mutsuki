@@ -48,6 +48,42 @@ pub struct TaskCompletionSubscription {
     inner: Arc<TaskCompletionSubscriptionInner>,
 }
 
+#[derive(Clone, Debug)]
+pub struct TaskChangeSubscription {
+    inner: Arc<TaskCompletionSubscriptionInner>,
+}
+
+impl TaskChangeSubscription {
+    pub fn revision(&self) -> u64 {
+        self.inner
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .revision
+    }
+
+    pub fn wait_after(&self, revision: u64) -> Option<u64> {
+        TaskCompletionSubscription {
+            inner: self.inner.clone(),
+        }
+        .wait_after(revision)
+    }
+
+    pub fn wait_after_timeout(&self, revision: u64, timeout: Duration) -> Option<u64> {
+        TaskCompletionSubscription {
+            inner: self.inner.clone(),
+        }
+        .wait_after_timeout(revision, timeout)
+    }
+
+    pub fn close(&self) {
+        TaskCompletionSubscription {
+            inner: self.inner.clone(),
+        }
+        .close();
+    }
+}
+
 impl TaskCompletionSubscription {
     pub fn revision(&self) -> u64 {
         self.inner
@@ -158,6 +194,8 @@ struct TaskCompletionHubState {
     revision: u64,
     closed: bool,
     subscribers: Vec<TaskCompletionNotifier>,
+    change_revision: u64,
+    change_subscribers: Vec<TaskCompletionNotifier>,
 }
 
 impl TaskCompletionHub {
@@ -177,6 +215,39 @@ impl TaskCompletionHub {
             state.subscribers.push(notifier);
         }
         TaskCompletionSubscription { inner }
+    }
+
+    fn subscribe_changes(&self) -> TaskChangeSubscription {
+        let inner = Arc::new(TaskCompletionSubscriptionInner::default());
+        let notifier = TaskCompletionNotifier {
+            inner: Arc::downgrade(&inner),
+        };
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.closed {
+            notifier.close();
+        } else {
+            let _ = notifier.notify(state.change_revision);
+            state.change_subscribers.push(notifier);
+        }
+        TaskChangeSubscription { inner }
+    }
+
+    pub(crate) fn publish_change(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.closed {
+            return;
+        }
+        state.change_revision = state.change_revision.saturating_add(1);
+        let revision = state.change_revision;
+        state
+            .change_subscribers
+            .retain(|subscriber| subscriber.notify(revision));
     }
 
     pub(crate) fn publish(&self, revision: u64) {
@@ -203,7 +274,11 @@ impl TaskCompletionHub {
         for subscriber in &state.subscribers {
             subscriber.close();
         }
+        for subscriber in &state.change_subscribers {
+            subscriber.close();
+        }
         state.subscribers.clear();
+        state.change_subscribers.clear();
     }
 
     fn notifications(&self) -> u64 {
@@ -917,6 +992,10 @@ impl HostRuntime {
 
     pub fn subscribe_task_completions(&self) -> TaskCompletionSubscription {
         self.completion_hub.subscribe()
+    }
+
+    pub fn subscribe_task_changes(&self) -> TaskChangeSubscription {
+        self.completion_hub.subscribe_changes()
     }
 
     /// Blocks until every handle reaches a terminal outcome, the runtime stops, or `timeout`

@@ -159,8 +159,9 @@ impl WebExtension for QqBotWebExtension {
 
     fn register_events(
         &self,
-        _registry: &mut mutsuki_web_extension::EventRegistry,
+        registry: &mut mutsuki_web_extension::EventRegistry,
     ) -> Result<(), ExtensionError> {
+        registry.register_topic("changed");
         Ok(())
     }
 }

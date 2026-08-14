@@ -4,6 +4,7 @@ use std::future::Future;
 #[cfg(test)]
 use std::io::Write;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::task::Waker;
 use std::time::{Duration, Instant};
@@ -37,8 +38,9 @@ use mutsuki_service_config::{
     LanePolicySection, ServiceConfig, filtered_environment,
 };
 use mutsuki_service_control::{
-    ControlCommand, ControlError, ControlFuture, ControlHandler, ControlRequest, ControlResponse,
-    ControlResult, CoreDrainResponse, CoreRuntimeMetrics, CoreStatus, ExecutionDomainMetrics,
+    ControlChangeDomain, ControlChangeEvent, ControlChangeSubscription, ControlCommand,
+    ControlError, ControlFuture, ControlHandler, ControlRequest, ControlResponse, ControlResult,
+    CoreDrainResponse, CoreRuntimeMetrics, CoreStatus, ExecutionDomainMetrics,
     ExecutionLaneMetrics, HealthReport, HostMetrics, IdParam, LogTailEntry, LogTailParams,
     LogTailResponse, PluginCandidateStatus, PluginDeploymentClearParam, PluginDeploymentParam,
     PluginInventoryDiagnostic, PluginListResponse, PluginReloadChange, PluginReloadResponse,
@@ -667,6 +669,43 @@ struct ServiceRuntimeInner {
     runtime_client: Arc<DeferredRuntimeClient>,
     deployment_state: Mutex<PluginDeploymentState>,
     shutdown_tx: Mutex<Option<oneshot::Sender<String>>>,
+    control_changes: Arc<ControlChangeHub>,
+}
+
+struct ControlChangeHub {
+    revision: AtomicU64,
+    sender: tokio::sync::broadcast::Sender<ControlChangeEvent>,
+}
+
+impl Default for ControlChangeHub {
+    fn default() -> Self {
+        let (sender, _) = tokio::sync::broadcast::channel(128);
+        Self {
+            revision: AtomicU64::new(0),
+            sender,
+        }
+    }
+}
+
+impl ControlChangeHub {
+    fn publish(&self, domains: impl IntoIterator<Item = ControlChangeDomain>) {
+        let domains = domains.into_iter().collect::<BTreeSet<_>>();
+        if domains.is_empty() {
+            return;
+        }
+        let event = ControlChangeEvent {
+            revision: self
+                .revision
+                .fetch_add(1, Ordering::AcqRel)
+                .saturating_add(1),
+            domains: domains.into_iter().collect(),
+        };
+        let _ = self.sender.send(event);
+    }
+
+    fn subscribe(&self) -> ControlChangeSubscription {
+        ControlChangeSubscription::new(self.sender.subscribe())
+    }
 }
 
 struct EventSourceScopeEffect {
@@ -1181,10 +1220,21 @@ impl ServiceRuntimeBuilder {
         let runner_limits =
             resolve_runner_limits(&configured_runner_limits, &runner_limit_factories);
         validate_event_sources(&event_sources, &config)?;
-        let observe = mutsuki_service_observe::init_observe(&config);
+        let control_changes = Arc::new(ControlChangeHub::default());
+        let log_changes = control_changes.clone();
+        let observe = mutsuki_service_observe::init_observe_with_listener(
+            &config,
+            Arc::new(move || log_changes.publish([ControlChangeDomain::Logs])),
+        );
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let supervisor = RunnerSupervisor::new();
-        let event_source_supervisor = EventSourceSupervisor::default();
+        let runner_changes = control_changes.clone();
+        let supervisor = RunnerSupervisor::with_change_listener(Arc::new(move || {
+            runner_changes.publish([ControlChangeDomain::Runners]);
+        }));
+        let event_source_changes = control_changes.clone();
+        let event_source_supervisor = EventSourceSupervisor::new(Arc::new(move || {
+            event_source_changes.publish([ControlChangeDomain::EventSources]);
+        }));
         let deployment_state = load_deployment_state(&config)?;
         let catalog = load_catalog_with_state(&config, &builtin_registry, &deployment_state)?;
         let (host_runtime, runtime_lock) = boot_core(
@@ -1201,6 +1251,7 @@ impl ServiceRuntimeBuilder {
             },
         )
         .await?;
+        let task_change_subscription = host_runtime.subscribe_task_changes();
         for observer in &load_plan_observers {
             observer.activate(&runtime_lock);
         }
@@ -1236,7 +1287,9 @@ impl ServiceRuntimeBuilder {
             runtime_client,
             deployment_state: Mutex::new(deployment_state),
             shutdown_tx: Mutex::new(Some(shutdown_tx)),
+            control_changes,
         });
+        start_task_change_forwarder(&inner, task_change_subscription);
         for (component_id, hook) in owned_load_plan_hooks {
             inner.attach_load_plan_hook_effect(&component_id, hook.clone())?;
             hook.activate(&runtime_lock);
@@ -1537,6 +1590,10 @@ impl ServiceRuntime {
         })
     }
 
+    pub fn subscribe_control_changes(&self) -> ControlChangeSubscription {
+        self.inner.control_changes.subscribe()
+    }
+
     pub fn control_token(&self) -> &str {
         self.inner.config.control_token()
     }
@@ -1562,6 +1619,27 @@ async fn ctrl_c_signal() -> String {
             "ctrl-c-listener-error".to_string()
         }
     }
+}
+
+fn start_task_change_forwarder(
+    runtime: &Arc<ServiceRuntimeInner>,
+    subscription: mutsuki_runtime_host::TaskChangeSubscription,
+) {
+    let runtime = Arc::downgrade(runtime);
+    let _ = std::thread::Builder::new()
+        .name("mutsuki-control-task-changes".into())
+        .spawn(move || {
+            let mut revision = subscription.revision();
+            while let Some(next) = subscription.wait_after(revision) {
+                revision = next;
+                let Some(runtime) = runtime.upgrade() else {
+                    break;
+                };
+                runtime
+                    .control_changes
+                    .publish([ControlChangeDomain::Tasks]);
+            }
+        });
 }
 
 #[cfg(unix)]
@@ -2127,18 +2205,33 @@ impl ServiceRuntimeInner {
                 }
             })
             .collect();
-        Ok(PluginReconfigureReport {
+        let report = PluginReconfigureReport {
             components,
             registry_generation,
             runner_errors: lifecycle_errors,
-        })
+        };
+        self.control_changes.publish([ControlChangeDomain::Plugins]);
+        Ok(report)
     }
 
     async fn handle_request(&self, request: ControlRequest) -> ControlResponse {
         if request.token != self.config.control_token() {
             return ControlResponse::err(ControlError::Unauthorized);
         }
-        match request.command {
+        let change_domain = match &request.command {
+            ControlCommand::PluginReload
+            | ControlCommand::PluginDeploymentSet(_)
+            | ControlCommand::PluginDeploymentClear(_) => Some(ControlChangeDomain::Plugins),
+            ControlCommand::RunnerRestart(_) | ControlCommand::RunnerStop(_) => {
+                Some(ControlChangeDomain::Runners)
+            }
+            ControlCommand::EventSourceRestart(_) => Some(ControlChangeDomain::EventSources),
+            ControlCommand::TaskSubmitBatch(_) | ControlCommand::TaskCancel(_) => {
+                Some(ControlChangeDomain::Tasks)
+            }
+            _ => None,
+        };
+        let response = match request.command {
             ControlCommand::ServiceStatus => self.service_status().await,
             ControlCommand::ServiceShutdown => self.service_shutdown(),
             ControlCommand::CoreStatus => self.core_status(),
@@ -2165,7 +2258,13 @@ impl ServiceRuntimeInner {
             ControlCommand::LogTail(param) => self.log_tail(param),
             ControlCommand::RuntimeStatistics => self.runtime_statistics(),
             ControlCommand::HostMetrics => self.host_metrics(),
+        };
+        if matches!(response, ControlResponse::Ok(_))
+            && let Some(domain) = change_domain
+        {
+            self.control_changes.publish([domain]);
         }
+        response
     }
 
     async fn service_status(&self) -> ControlResponse {
@@ -3838,6 +3937,23 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+
+    #[tokio::test]
+    async fn control_change_hub_publishes_typed_invalidations() {
+        let hub = ControlChangeHub::default();
+        let mut changes = hub.subscribe();
+        hub.publish([
+            ControlChangeDomain::Tasks,
+            ControlChangeDomain::Tasks,
+            ControlChangeDomain::Runners,
+        ]);
+        let event = changes.changed().await.expect("control change");
+        assert_eq!(event.revision, 1);
+        assert_eq!(
+            event.domains,
+            vec![ControlChangeDomain::Tasks, ControlChangeDomain::Runners]
+        );
+    }
 
     macro_rules! control_result {
         ($response:expr, $variant:path) => {{
@@ -6016,6 +6132,7 @@ generation = 7
                 plugins: BTreeMap::new(),
             }),
             shutdown_tx: Mutex::new(None),
+            control_changes: Arc::new(ControlChangeHub::default()),
         }
     }
 

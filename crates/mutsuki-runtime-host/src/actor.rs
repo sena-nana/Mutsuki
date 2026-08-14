@@ -45,6 +45,7 @@ struct CoreActor {
     draining_invocations: BTreeMap<String, DrainingInvocation>,
     driver: DriverState,
     terminal_revision: u64,
+    task_revision: u64,
     control_burst: usize,
     submitted_at: BTreeMap<String, Instant>,
     pending_task_waits: Vec<PendingTaskWait>,
@@ -65,6 +66,7 @@ impl CoreActor {
         completion_hub: Arc<TaskCompletionHub>,
     ) -> Self {
         let terminal_revision = terminal_revision(&core);
+        let task_revision = core.tasks().revision();
         Self {
             core,
             config,
@@ -79,6 +81,7 @@ impl CoreActor {
             draining_invocations: BTreeMap::new(),
             driver: DriverState::default(),
             terminal_revision,
+            task_revision,
             control_burst: 0,
             submitted_at: BTreeMap::new(),
             pending_task_waits: Vec::new(),
@@ -150,6 +153,7 @@ impl CoreActor {
         }
         self.supervise();
         self.publish_terminal_changes();
+        self.publish_task_changes();
         resolve_pending_task_waits(&self.core, &mut self.pending_task_waits, false);
         false
     }
@@ -282,6 +286,7 @@ impl CoreActor {
             }
         };
         self.publish_terminal_changes();
+        self.publish_task_changes();
         let waiter_deadline_reached = self
             .pending_task_waits
             .iter()
@@ -313,6 +318,15 @@ impl CoreActor {
             &self.completion_hub,
             &mut self.pending_task_waits,
         );
+    }
+
+    #[inline(always)]
+    fn publish_task_changes(&mut self) {
+        let revision = self.core.tasks().revision();
+        if revision != self.task_revision {
+            self.task_revision = revision;
+            self.completion_hub.publish_change();
+        }
     }
 }
 

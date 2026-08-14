@@ -157,6 +157,233 @@
   display: none !important;
 }
 
+.mutsuki-console--activity-shell {
+  display: grid;
+  grid-template-columns: 58px 224px minmax(0, 1fr);
+  min-height: 100%;
+  background: var(--lilia-surface-fill-base, var(--bg));
+}
+
+.console-activity {
+  z-index: 30;
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 8px 6px;
+  border-inline-end: 1px solid var(--border-soft);
+  background: var(--lilia-surface-fill-raised, var(--bg-elev));
+}
+
+.console-activity__top,
+.console-activity__bottom {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.console-activity__spacer {
+  flex: 1;
+}
+
+.console-activity__item {
+  position: relative;
+  display: grid;
+  width: 46px;
+  height: 46px;
+  place-items: center;
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+}
+
+.console-activity__item svg {
+  width: 22px;
+  height: 22px;
+}
+
+.console-activity__item:hover,
+.console-activity__item.is-active {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.console-activity__item.is-active::before {
+  position: absolute;
+  inset-block: 10px;
+  inset-inline-start: -6px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+  content: "";
+}
+
+.console-activity__item:focus-visible,
+.console-menu-toggle:focus-visible {
+  outline: 2px solid var(--lilia-state-focus-ring, var(--accent));
+  outline-offset: -2px;
+}
+
+.console-context {
+  z-index: 20;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  border-inline-end: 1px solid var(--border-soft);
+  background: var(--lilia-surface-fill-raised, var(--bg-elev));
+}
+
+.console-context__brand {
+  padding: 16px 16px 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.console-context__title {
+  padding: 8px 16px 12px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.console-context__nav {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 10px 12px;
+  overflow: auto;
+}
+
+.console-context__nav .sb-tree__row {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: start;
+}
+
+.console-context__footer {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 11px 14px;
+  border-block-start: 1px solid var(--border-soft);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.console-connection-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.console-connection-dot[data-state="open"] { background: var(--ok); }
+.console-connection-dot[data-state="connecting"],
+.console-connection-dot[data-state="reconnecting"] { background: var(--warn); }
+.console-connection-dot[data-state="closed"] { background: var(--err); }
+
+.console-extension-retry {
+  margin-inline-start: auto;
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.console-main {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  background: var(--lilia-surface-fill-base, var(--bg));
+}
+
+.console-page-header {
+  display: flex;
+  min-height: 60px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 24px;
+  border-block-end: 1px solid var(--border-soft);
+}
+
+.console-page-header h1 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.console-menu-toggle {
+  display: none;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-sm);
+}
+
+.console-page-content {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  padding: 20px 24px;
+  overflow: auto;
+}
+
+.console-context-mask {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .mutsuki-console--activity-shell {
+    grid-template-columns: 54px minmax(0, 1fr);
+  }
+
+  .console-activity__item {
+    width: 42px;
+    height: 42px;
+  }
+
+  .console-context {
+    position: fixed;
+    inset-block: 0;
+    inset-inline-start: 54px;
+    width: min(272px, calc(100vw - 74px));
+    transform: translateX(-110%);
+    transition: transform 0.2s ease;
+  }
+
+  .console-main {
+    grid-column: 2;
+  }
+
+  .console-menu-toggle {
+    display: grid;
+    place-items: center;
+  }
+
+  .console-context-mask {
+    position: fixed;
+    z-index: 15;
+    inset: 0 0 0 54px;
+    border-radius: 0;
+    background: rgb(0 0 0 / 38%);
+  }
+
+  .mutsuki-console--activity-shell.is-context-open .console-context {
+    transform: translateX(0);
+  }
+
+  .mutsuki-console--activity-shell.is-context-open .console-context-mask {
+    display: block;
+  }
+
+  .console-page-header,
+  .console-page-content {
+    padding-inline: 16px;
+  }
+}
+
 /* Theme workspace only sets display:grid; product owns the two-column template. */
 .mutsuki-console.lilia-workspace {
   display: grid;

@@ -1895,6 +1895,9 @@ function createRegistry() {
   const items = /* @__PURE__ */ new Map();
   return {
     register(item) {
+      if (items.has(item.id)) {
+        throw new Error(`duplicate registration id: ${item.id}`);
+      }
       items.set(item.id, item);
       return {
         dispose() {

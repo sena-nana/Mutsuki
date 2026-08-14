@@ -3323,8 +3323,8 @@ mod tests {
         assert!(repository.cursor("Dynamic:42").unwrap().is_none());
     }
 
-    #[test]
-    fn management_service_web_subscribe_and_clear_never_echo_cookie() {
+    #[tokio::test]
+    async fn management_service_web_subscribe_and_clear_never_echo_cookie() {
         let config = SharedBilibiliConfig::new(managed_config());
         let credential = SharedBilibiliCredential::default();
         credential.set("SESSDATA=secret-cookie".into());
@@ -3343,6 +3343,9 @@ mod tests {
             Arc::new(AlwaysPresentSecrets),
         );
         let status = management.status();
+        let mut changes = management
+            .subscribe_changes()
+            .expect("Bilibili change source");
         assert!(status.available);
         assert!(status.credential_loaded);
         assert!(
@@ -3365,6 +3368,12 @@ mod tests {
         assert_eq!(view.subscription_id, "sub-1");
         assert_eq!(config.snapshot().subscriptions.len(), 1);
         assert_eq!(config_store.0.lock().unwrap().len(), 1);
+        let changed = changes.changed().await.expect("subscription change");
+        assert!(
+            changed
+                .areas
+                .contains(&mutsuki_bot_management::BilibiliManagementChangeArea::Subscriptions)
+        );
 
         management.credential_clear().unwrap();
         assert!(!credential.is_loaded());

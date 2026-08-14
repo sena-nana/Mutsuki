@@ -1,13 +1,16 @@
 //! Structured Bilibili account/subscription management shared by chat commands and Web Console.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use async_trait::async_trait;
 use mutsuki_bot_management::{
     BilibiliBindChallengeResult, BilibiliBindVerifyResult, BilibiliCredentialSecretState,
     BilibiliLoginPollResult, BilibiliLoginSession, BilibiliLoginStartResult, BilibiliManagementApi,
-    BilibiliManagementError, BilibiliManagementStatus, BilibiliNotificationKind,
-    BilibiliPreviewCardView, BilibiliQrLoginStatus, BilibiliSubscriptionView,
+    BilibiliManagementChangeArea, BilibiliManagementChangeEvent,
+    BilibiliManagementChangeSubscription, BilibiliManagementError, BilibiliManagementStatus,
+    BilibiliNotificationKind, BilibiliPreviewCardView, BilibiliQrLoginStatus,
+    BilibiliSubscriptionView,
 };
 use mutsuki_bot_protocol::BotTarget;
 
@@ -36,6 +39,8 @@ pub struct BilibiliManagementService {
     config_store: Arc<dyn BilibiliConfigStore>,
     secret_presence: Arc<dyn BilibiliSecretPresence>,
     qr_renderer: RwLock<Option<Arc<dyn BilibiliQrRenderer>>>,
+    change_revision: AtomicU64,
+    changes: tokio::sync::broadcast::Sender<BilibiliManagementChangeEvent>,
 }
 
 impl BilibiliManagementService {
@@ -48,6 +53,7 @@ impl BilibiliManagementService {
         config_store: Arc<dyn BilibiliConfigStore>,
         secret_presence: Arc<dyn BilibiliSecretPresence>,
     ) -> Self {
+        let (changes, _) = tokio::sync::broadcast::channel(64);
         Self {
             config,
             credential,
@@ -57,7 +63,20 @@ impl BilibiliManagementService {
             config_store,
             secret_presence,
             qr_renderer: RwLock::new(None),
+            change_revision: AtomicU64::new(0),
+            changes,
         }
+    }
+
+    fn publish_change(&self, areas: Vec<BilibiliManagementChangeArea>) {
+        let event = BilibiliManagementChangeEvent {
+            revision: self
+                .change_revision
+                .fetch_add(1, Ordering::AcqRel)
+                .saturating_add(1),
+            areas,
+        };
+        let _ = self.changes.send(event);
     }
 
     pub fn bind_qr_renderer(&self, renderer: Arc<dyn BilibiliQrRenderer>) {
@@ -449,6 +468,12 @@ impl BilibiliManagementService {
 
 #[async_trait]
 impl BilibiliManagementApi for BilibiliManagementService {
+    fn subscribe_changes(&self) -> Option<BilibiliManagementChangeSubscription> {
+        Some(BilibiliManagementChangeSubscription::new(
+            self.changes.subscribe(),
+        ))
+    }
+
     fn status(&self) -> BilibiliManagementStatus {
         self.status_impl()
     }
@@ -457,25 +482,44 @@ impl BilibiliManagementApi for BilibiliManagementService {
         &self,
         actor_id: &str,
     ) -> Result<BilibiliLoginSession, BilibiliManagementError> {
-        self.login_start_session_impl(actor_id).map_err(map_error)
+        let result = self.login_start_session_impl(actor_id).map_err(map_error);
+        if result.is_ok() {
+            self.publish_change(vec![BilibiliManagementChangeArea::Login]);
+        }
+        result
     }
 
     async fn login_start(
         &self,
         actor_id: &str,
     ) -> Result<BilibiliLoginStartResult, BilibiliManagementError> {
-        self.login_start_impl(actor_id).await.map_err(map_error)
+        let result = self.login_start_impl(actor_id).await.map_err(map_error);
+        if result.is_ok() {
+            self.publish_change(vec![BilibiliManagementChangeArea::Login]);
+        }
+        result
     }
 
     fn login_poll(
         &self,
         actor_id: &str,
     ) -> Result<BilibiliLoginPollResult, BilibiliManagementError> {
-        self.login_poll_impl(actor_id).map_err(map_error)
+        let result = self.login_poll_impl(actor_id).map_err(map_error);
+        if result.is_ok() {
+            self.publish_change(vec![
+                BilibiliManagementChangeArea::Login,
+                BilibiliManagementChangeArea::Status,
+            ]);
+        }
+        result
     }
 
     fn credential_clear(&self) -> Result<(), BilibiliManagementError> {
-        self.credential_clear_impl().map_err(map_error)
+        let result = self.credential_clear_impl().map_err(map_error);
+        if result.is_ok() {
+            self.publish_change(vec![BilibiliManagementChangeArea::Status]);
+        }
+        result
     }
 
     fn list(
@@ -494,18 +538,33 @@ impl BilibiliManagementApi for BilibiliManagementService {
         target: BotTarget,
         outbound_binding: String,
     ) -> Result<BilibiliSubscriptionView, BilibiliManagementError> {
-        self.subscribe_impl(
-            subscription_id,
-            uid,
-            notifications,
-            target,
-            outbound_binding,
-        )
-        .map_err(map_error)
+        let result = self
+            .subscribe_impl(
+                subscription_id,
+                uid,
+                notifications,
+                target,
+                outbound_binding,
+            )
+            .map_err(map_error);
+        if result.is_ok() {
+            self.publish_change(vec![
+                BilibiliManagementChangeArea::Subscriptions,
+                BilibiliManagementChangeArea::Status,
+            ]);
+        }
+        result
     }
 
     fn unsubscribe(&self, subscription_id: &str) -> Result<(), BilibiliManagementError> {
-        self.unsubscribe_impl(subscription_id).map_err(map_error)
+        let result = self.unsubscribe_impl(subscription_id).map_err(map_error);
+        if result.is_ok() {
+            self.publish_change(vec![
+                BilibiliManagementChangeArea::Subscriptions,
+                BilibiliManagementChangeArea::Status,
+            ]);
+        }
+        result
     }
 
     fn set_paused(
@@ -515,8 +574,13 @@ impl BilibiliManagementApi for BilibiliManagementService {
         selector: Option<&str>,
         paused: bool,
     ) -> Result<BilibiliSubscriptionView, BilibiliManagementError> {
-        self.set_paused_impl(actor_id, is_admin, selector, paused)
-            .map_err(map_error)
+        let result = self
+            .set_paused_impl(actor_id, is_admin, selector, paused)
+            .map_err(map_error);
+        if result.is_ok() {
+            self.publish_change(vec![BilibiliManagementChangeArea::Subscriptions]);
+        }
+        result
     }
 
     fn preview(
@@ -545,12 +609,27 @@ impl BilibiliManagementApi for BilibiliManagementService {
         platform: &str,
         target: BotTarget,
     ) -> Result<BilibiliBindVerifyResult, BilibiliManagementError> {
-        self.bind_verify_impl(operator_user_id, platform, target)
-            .map_err(map_error)
+        let result = self
+            .bind_verify_impl(operator_user_id, platform, target)
+            .map_err(map_error);
+        if matches!(result, Ok(BilibiliBindVerifyResult::Verified(_))) {
+            self.publish_change(vec![
+                BilibiliManagementChangeArea::Subscriptions,
+                BilibiliManagementChangeArea::Status,
+            ]);
+        }
+        result
     }
 
     fn unbind(&self, operator_user_id: &str) -> Result<bool, BilibiliManagementError> {
-        self.unbind_impl(operator_user_id).map_err(map_error)
+        let result = self.unbind_impl(operator_user_id).map_err(map_error);
+        if matches!(result, Ok(true)) {
+            self.publish_change(vec![
+                BilibiliManagementChangeArea::Subscriptions,
+                BilibiliManagementChangeArea::Status,
+            ]);
+        }
+        result
     }
 }
 

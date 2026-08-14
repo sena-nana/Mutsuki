@@ -5139,6 +5139,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.19",
+ "tokio",
 ]
 
 [[package]]
@@ -5478,6 +5479,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.19",
  "tokio",
+ "tokio-tungstenite 0.30.0",
  "tokio-util",
  "uuid",
 ]
