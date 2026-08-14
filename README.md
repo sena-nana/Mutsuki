@@ -88,6 +88,21 @@ the Console passphrase. Non-interactive startup supplies it through
 `MUTSUKI_SECRET_MUTSUKI_WEB_CONSOLE_TOKEN`. See the
 [Bot product guide](products/bot/README.md) for configuration and acceptance boundaries.
 
+To start an external Bot product, install the Cargo subcommand and use its interactive setup to
+generate a thin shell pinned to one Mutsuki revision:
+
+```bash
+cargo install --locked --path products/bot/crates/mutsuki-create-bot
+cargo create-bot
+cd my-bot
+cargo run
+```
+
+For automation, pass all values directly, for example
+`cargo create-bot my-bot --revision <40-character-commit>`. The command refuses to overwrite an
+existing directory and writes no credentials. The generated project calls the public `mutsuki-bot`
+API rather than copying framework or product implementation.
+
 ## Development
 
 Rust packages share the root `Cargo.toml` and `Cargo.lock`:

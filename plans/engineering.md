@@ -22,7 +22,7 @@ Mutsuki/
   hosts/                        # CLI, service, Tauri, Web, distributed
   kits/                         # AgentKit and Python Runner Kit
   plugins/                      # Bot and standard plugins
-  products/bot/                # first-party Bot product runtime and assembly
+  products/bot/                # first-party Bot runtime, assembly and thin external-product scaffold
   plans/ / docs/ / performance/
 ```
 

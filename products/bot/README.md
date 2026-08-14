@@ -4,6 +4,25 @@
 catalog 并启动 ServiceRuntime；它不实现命令、回复、Agent 流程或业务 Bot。源码、运行入口、
 Issue 和发布基线均位于 Mutsuki 主仓 `products/bot`。
 
+## 创建外部 Bot 产品
+
+先从主仓安装 Cargo 子命令，再交互式生成一个固定 Mutsuki commit 的外部薄产品：
+
+```powershell
+cargo install --locked --path products/bot/crates/mutsuki-create-bot
+cargo create-bot
+cd my-bot
+cargo run
+```
+
+交互过程会询问 package 名、目标目录和固定 revision，并在写入前显示摘要确认。官方 Mutsuki
+仓库由脚手架内建，不需要输入。
+脚本或 CI 可无交互执行
+`cargo create-bot my-bot --output <目录> --revision <40位commit>`。目标目录必须不存在；
+脚手架不会写入 Secret、不会复制 Mutsuki 实现，也不会恢复已退役的独立模板仓库。生成项目
+只调用 `mutsuki-bot` 的公开产品 API。从有未提交修改的主仓构建 CLI 时必须显式传入已发布的
+`--revision`，防止生成项目固定到不包含当前修改的旧 HEAD。
+
 ## 启动
 
 产品只支持一个本地实例，不读取配置路径、profile、namespace 或 `MUTSUKI_BOOTSTRAP`：

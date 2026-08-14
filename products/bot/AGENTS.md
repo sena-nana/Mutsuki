@@ -36,7 +36,7 @@ Issue 是需求线索，不是当前 API 的事实源。存在 `.codegraph/` 时
 | `hosts/web` | Web 运行宿主：HTTP/WS、静态资源、RPC/Event bridge、WebExtension 加载与 Recovery Shell |
 | `hosts/distributed` | 分布式控制面、调度、恢复和资源预算 |
 | 外部业务仓库 | 自己领域的协议、插件、Provider、Runner 或 sidecar |
-| 本目录 | 第一方 Bot 外部配置、catalog 聚合、ServiceRuntime 启动和跨 package 产品验收 |
+| 本目录 | 第一方 Bot 外部配置、catalog 聚合、ServiceRuntime 启动、薄产品脚手架和跨 package 产品验收 |
 
 ## Hard Rules
 
@@ -49,6 +49,8 @@ Issue 是需求线索，不是当前 API 的事实源。存在 `.codegraph/` 时
 7. 缺失 capability、配置、secret、artifact 或 revision 必须结构化失败，禁止假成功和吞错。
 8. 生产入口不接受配置路径、profile 或 namespace；产品显式选择固定 SQLite 配置仓库，但框架不假设路径或存储实现。空仓库只写一次版本化种子，直接启用 Agent Connections、Flow Router 与对应管理页；QQ、Local Agent、Bot Agent 和业务 Flow 仍由保存后的 owner 配置显式启用。Mock 仅限测试。
 9. `sena-nana/MutsukiBotTemplate` 已退出源码和分发职责；不得恢复独立实现、Issue 或发布同步。
+10. `create-bot` 只生成固定统一 revision、调用公开产品 API 的外部薄壳；不得复制第一方产品、
+    Host、Bot、Agent 或插件实现，不得写入 Secret，也不得覆盖已有目录。
 
 ## Git 与验证
 
