@@ -2,6 +2,7 @@
 //!
 //! Registers typed RPC:
 //! - config / providers.list
+//! - config / navigation.list
 //! - config / schema.get
 //! - config / snapshot.read
 //! - config / validate
@@ -14,7 +15,9 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use mutsuki_config_service::{ConfigApplyRequest, ConfigContext, ConfigService, ConfigValue};
+use mutsuki_config_service::{
+    ConfigApplyRequest, ConfigContext, ConfigProviderId, ConfigService, ConfigValue,
+};
 use mutsuki_web_extension::{
     ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, content_hash,
 };
@@ -26,12 +29,27 @@ use mutsuki_web_protocol::{
 pub const PLUGIN_ID: &str = "config";
 pub const PLUGIN_VERSION: &str = "0.1.0";
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct ConfigNavigationItem {
+    pub provider_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct ConfigNavigationGroup {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub items: Vec<ConfigNavigationItem>,
+}
+
 /// Backend WebExtension that fronts a shared ConfigService.
 pub struct ConfigWebExtension {
     service: Arc<ConfigService>,
     assets_root: Option<PathBuf>,
     capabilities: Vec<String>,
     visible_providers: Option<BTreeSet<String>>,
+    navigation_groups: Vec<ConfigNavigationGroup>,
 }
 
 impl ConfigWebExtension {
@@ -48,6 +66,7 @@ impl ConfigWebExtension {
                 mutsuki_config_service::capability::RELOAD.into(),
             ],
             visible_providers: None,
+            navigation_groups: Vec::new(),
         }
     }
 
@@ -62,6 +81,16 @@ impl ConfigWebExtension {
         providers: impl IntoIterator<Item = impl Into<String>>,
     ) -> Self {
         self.visible_providers = Some(providers.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Defines presentation-only provider groups without changing ConfigService ownership.
+    #[must_use]
+    pub fn with_navigation_groups(
+        mut self,
+        groups: impl IntoIterator<Item = ConfigNavigationGroup>,
+    ) -> Self {
+        self.navigation_groups = groups.into_iter().collect();
         self
     }
 
@@ -104,6 +133,7 @@ impl WebExtension for ConfigWebExtension {
     fn register_rpc(&self, ctx: &mut RpcRegistry) -> Result<(), ExtensionError> {
         let service = self.service.clone();
         let visible_providers = self.visible_providers.clone();
+        let navigation_groups = self.navigation_groups.clone();
         ctx.register_contextual("providers.list", {
             let service = service.clone();
             let visible_providers = visible_providers.clone();
@@ -116,6 +146,22 @@ impl WebExtension for ConfigWebExtension {
                     list.retain(|provider| visible.contains(provider.as_str()));
                 }
                 Ok(serde_json::to_value(list).unwrap_or_default())
+            }
+        });
+
+        ctx.register_contextual("navigation.list", {
+            let service = service.clone();
+            let visible_providers = visible_providers.clone();
+            move |context, _params| {
+                context.require(mutsuki_config_service::capability::SCHEMA_READ)?;
+                let mut providers = service
+                    .list_providers(context.capabilities())
+                    .map_err(map_config_error)?;
+                if let Some(visible) = &visible_providers {
+                    providers.retain(|provider| visible.contains(provider.as_str()));
+                }
+                let groups = visible_navigation_groups(&providers, &navigation_groups);
+                Ok(serde_json::to_value(groups).unwrap_or_default())
             }
         });
 
@@ -206,6 +252,66 @@ impl WebExtension for ConfigWebExtension {
         ctx.register_topic("revision_changed");
         Ok(())
     }
+}
+
+fn visible_navigation_groups(
+    providers: &[ConfigProviderId],
+    configured: &[ConfigNavigationGroup],
+) -> Vec<ConfigNavigationGroup> {
+    if providers.is_empty() {
+        return Vec::new();
+    }
+    let available = providers
+        .iter()
+        .map(|provider| provider.as_str().to_owned())
+        .collect::<BTreeSet<_>>();
+    if configured.is_empty() {
+        return vec![ConfigNavigationGroup {
+            label: None,
+            items: providers
+                .iter()
+                .map(|provider| ConfigNavigationItem {
+                    provider_id: provider.as_str().to_owned(),
+                    label: None,
+                })
+                .collect(),
+        }];
+    }
+
+    let mut included = BTreeSet::new();
+    let mut groups = configured
+        .iter()
+        .filter_map(|group| {
+            let items = group
+                .items
+                .iter()
+                .filter(|item| {
+                    available.contains(item.provider_id.as_str())
+                        && included.insert(item.provider_id.clone())
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            (!items.is_empty()).then(|| ConfigNavigationGroup {
+                label: group.label.clone(),
+                items,
+            })
+        })
+        .collect::<Vec<_>>();
+    let remaining = providers
+        .iter()
+        .filter(|provider| !included.contains(provider.as_str()))
+        .map(|provider| ConfigNavigationItem {
+            provider_id: provider.as_str().to_owned(),
+            label: None,
+        })
+        .collect::<Vec<_>>();
+    if !remaining.is_empty() {
+        groups.push(ConfigNavigationGroup {
+            label: None,
+            items: remaining,
+        });
+    }
+    groups
 }
 
 fn require_visible_provider(
@@ -357,4 +463,41 @@ pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::E
         serde_json::to_vec_pretty(&manifest).expect("manifest"),
     )?;
     Ok(out_dir.to_path_buf())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn navigation_groups_keep_explicit_order_and_filter_missing_providers() {
+        let providers = vec![
+            ConfigProviderId::new("mutsuki.product"),
+            ConfigProviderId::new("plugin.qq"),
+        ];
+        let groups = vec![
+            ConfigNavigationGroup {
+                label: None,
+                items: vec![ConfigNavigationItem {
+                    provider_id: "mutsuki.product".into(),
+                    label: Some("Mutsuki".into()),
+                }],
+            },
+            ConfigNavigationGroup {
+                label: Some("插件".into()),
+                items: ["plugin.missing", "plugin.qq"]
+                    .map(|provider_id| ConfigNavigationItem {
+                        provider_id: provider_id.into(),
+                        label: None,
+                    })
+                    .into(),
+            },
+        ];
+
+        let visible = visible_navigation_groups(&providers, &groups);
+        assert_eq!(visible.len(), 2);
+        assert_eq!(visible[0].items[0].label.as_deref(), Some("Mutsuki"));
+        assert_eq!(visible[1].label.as_deref(), Some("插件"));
+        assert_eq!(visible[1].items[0].provider_id, "plugin.qq");
+    }
 }

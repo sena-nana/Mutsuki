@@ -67,6 +67,7 @@ impl WebConsoleGuard {
             auth_token_key: config.auth_token_key,
             extensions: config.extensions,
             config_provider_ids,
+            primary_config_provider_id: Some(PRODUCT_CONFIG_PROVIDER_ID.into()),
             release_set: config.release_set,
         };
         let secrets = resolve_secrets(service, &config)?;

@@ -44,7 +44,8 @@ use mutsuki_plugin_bot_upgrade_web::{
     UpgradeWebExtension, materialize_frontend_assets as materialize_upgrade_assets,
 };
 use mutsuki_plugin_config_web::{
-    ConfigWebExtension, materialize_frontend_assets as materialize_config_assets,
+    ConfigNavigationGroup, ConfigNavigationItem, ConfigWebExtension,
+    materialize_frontend_assets as materialize_config_assets,
 };
 use mutsuki_service_control::ControlHandler;
 use mutsuki_web_extension::content_hash;
@@ -72,6 +73,8 @@ pub struct WebConsoleConfig {
     /// Product-selected Config providers. Empty preserves the generic Config Web default.
     #[serde(default)]
     pub config_provider_ids: Vec<String>,
+    /// Product-owned primary provider shown before plugin configuration.
+    pub primary_config_provider_id: Option<String>,
     /// Relative path to active release set manifest (enables auto-upgrade page).
     pub release_set: Option<String>,
 }
@@ -217,6 +220,30 @@ pub fn build_console_host_with_agent(
             ConfigWebExtension::new(service).with_frontend_assets(&asset_dirs.config_assets);
         if !config.config_provider_ids.is_empty() {
             extension = extension.with_visible_providers(config.config_provider_ids.clone());
+        }
+        if let Some(primary) = &config.primary_config_provider_id {
+            let plugin_items = config
+                .config_provider_ids
+                .iter()
+                .filter(|provider| *provider != primary)
+                .map(|provider| ConfigNavigationItem {
+                    provider_id: provider.clone(),
+                    label: None,
+                })
+                .collect();
+            extension = extension.with_navigation_groups([
+                ConfigNavigationGroup {
+                    label: None,
+                    items: vec![ConfigNavigationItem {
+                        provider_id: primary.clone(),
+                        label: Some("Mutsuki".into()),
+                    }],
+                },
+                ConfigNavigationGroup {
+                    label: Some("插件".into()),
+                    items: plugin_items,
+                },
+            ]);
         }
         builder = builder.extension(extension);
     }
@@ -480,10 +507,7 @@ pub(crate) fn materialize_console_shell(
     std::fs::create_dir_all(&overview_dir)?;
     std::fs::write(overview_dir.join("index.js"), &overview_js)?;
     let overview_v = asset_version_stamp(&overview_js);
-    let bootstrap = bootstrap_template.replace(
-        "from \"./extensions/overview/index.js\"",
-        &format!("from \"./extensions/overview/index.js?v={overview_v}\""),
-    );
+    let bootstrap = bootstrap_template.to_owned();
     let bootstrap_v = asset_version_stamp(bootstrap.as_bytes());
     let web_sdk = include_bytes!("../../../../../hosts/web/packages/web-sdk/browser/web-sdk.js");
     let web_shell =
@@ -538,16 +562,29 @@ pub(crate) fn materialize_console_shell(
             }));
         }
     }
-    let options = json!({
-        "activities": [
-            {"id": "home", "label": "概览", "icon": "home", "order": 0, "position": "top"},
-            {"id": "bot", "label": "Bot", "icon": "bot", "order": 10, "position": "top"},
-            {"id": "automation", "label": "自动化", "icon": "flow", "order": 20, "position": "top"},
-            {"id": "system", "label": "系统", "icon": "system", "order": 30, "position": "top"},
-            {"id": "settings", "label": "设置", "icon": "settings", "order": 100, "position": "bottom"}
-        ],
-        "extensions": extensions,
-    });
+    let mut activities = vec![
+        json!({"id": "home", "label": "概览", "icon": "home", "order": 0, "position": "top"}),
+        json!({"id": "bot", "label": "Bot", "icon": "bot", "order": 10, "position": "top"}),
+        json!({"id": "automation", "label": "自动化", "icon": "flow", "order": 20, "position": "top"}),
+        json!({"id": "system", "label": "系统", "icon": "system", "order": 30, "position": "top"}),
+    ];
+    if include_config {
+        activities.push(json!({
+            "id": "config",
+            "label": "配置",
+            "icon": "config",
+            "order": 40,
+            "position": "top"
+        }));
+    }
+    activities.push(json!({
+        "id": "settings",
+        "label": "设置",
+        "icon": "settings",
+        "order": 100,
+        "position": "bottom"
+    }));
+    let options = json!({ "activities": activities, "extensions": extensions });
     std::fs::write(
         out_dir.join("console-options.json"),
         serde_json::to_string(&options)?,

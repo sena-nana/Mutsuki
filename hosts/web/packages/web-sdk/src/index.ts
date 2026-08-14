@@ -83,6 +83,7 @@ export interface NavigationRegistration {
   activityId: string;
   pageId: string;
   label: string;
+  group?: string;
   order?: number;
   requiredCapability?: string;
 }
