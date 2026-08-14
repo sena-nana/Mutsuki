@@ -25,10 +25,10 @@ pub use persist::{ConfigPersistSink, ConfigPersistTransaction, ConfigSecretMutat
 pub use provider::{
     ConfigActivation, ConfigProvider, ConfigRegistration, PreparedConfigActivation,
 };
-pub use registry::{ConfigProviderRegistry, ProviderEntry};
+pub use registry::{ConfigProviderRegistration, ConfigProviderRegistry, ProviderEntry};
 pub use repository::{ConfigRepository, InMemoryConfigRepository, PreparedConfigWrite};
 pub use service::ConfigService;
 pub use validate::{validate_structure, validate_structure_with_budgets};
-pub use watch::{RevisionChangedEvent, RevisionChangedListener};
+pub use watch::{ConfigWatchSubscription, RevisionChangedEvent, RevisionChangedListener};
 
 pub use mutsuki_config_derive::MutsukiConfig;

@@ -6,8 +6,8 @@ use mutsuki_agent_contracts::{
     ContextProviderResult, PermissionDecision, PermissionRequest, ToolSideEffect,
 };
 use mutsuki_agent_plugin_api::{
-    AgentCommand, AgentHook, AgentPluginRegistrar, AgentService, ContextProvider, PermissionPolicy,
-    ToolProvider,
+    AgentCommand, AgentHook, AgentPluginRegistrar, AgentService, AgentServiceRunner,
+    ContextProvider, PermissionPolicy, ToolProvider,
 };
 use mutsuki_runtime_contracts::{
     ArtifactType, CompletionBatch, PluginArtifact, RunnerContext, RunnerDescriptor, ScalarValue,
@@ -233,7 +233,7 @@ pub fn plugin_builder(
     generation: u64,
     artifact_type: ArtifactType,
 ) -> Result<PluginBuilder, AgentError> {
-    let plugin = ConformancePlugin::new(generation)?;
+    let plugin = std::sync::Arc::new(ConformancePlugin::new(generation)?);
     let descriptor = plugin.agent_descriptor()?;
     let descriptor_json = serde_json::to_string(&descriptor)
         .map_err(|error| AgentError::invalid_input(error.to_string()))?;
@@ -253,6 +253,9 @@ pub fn plugin_builder(
     };
     Ok(PluginBuilder::new(PLUGIN_ID)
         .runner(Box::new(ConformanceRunner::new(generation)))
+        .runner(Box::new(AgentServiceRunner::new(
+            PLUGIN_ID, generation, plugin,
+        )?))
         .artifact(artifact)
         .metadata("agentkit.descriptor", ScalarValue::String(descriptor_json)))
 }

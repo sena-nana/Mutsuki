@@ -42,7 +42,7 @@ pub use descriptor::{
 };
 pub use host::{
     CapabilityBroker, ConfigProvider, EventBridge, HostContext, HostRuntime, HostScopeResolver,
-    HostService, HostServiceRegistry, HostTaskFailureSummary, HostTaskSnapshot,
+    HostService, HostServiceRegistry, HostServiceValue, HostTaskFailureSummary, HostTaskSnapshot,
     ManualShutdownController, NoopEventBridge, PluginScopeContext, PluginScopeHandle,
     RecordingEventBridge, ScopedHostService, ShutdownController, StaticCapabilityBroker,
     StaticConfigProvider, TaskSubmitter, TaskSubmitterRuntimeClient,

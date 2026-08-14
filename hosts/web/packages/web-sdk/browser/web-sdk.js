@@ -1441,6 +1441,46 @@ function decode(buffer, options) {
 }
 
 // src/index.ts
+var DisposableScope = class {
+  effects = [];
+  closed = false;
+  disposed = false;
+  own(effect) {
+    if (this.closed) {
+      effect.dispose();
+      throw new Error("disposable scope is already disposed");
+    }
+    let active = true;
+    const owned = {
+      dispose() {
+        if (!active) return;
+        effect.dispose();
+        active = false;
+      }
+    };
+    this.effects.push(owned);
+    return owned;
+  }
+  dispose() {
+    if (this.disposed) return;
+    this.closed = true;
+    const failures = [];
+    const failedEffects = [];
+    for (const effect of this.effects.splice(0).reverse()) {
+      try {
+        effect.dispose();
+      } catch (error) {
+        failures.push(error);
+        failedEffects.push(effect);
+      }
+    }
+    this.effects = failedEffects.reverse();
+    this.disposed = failures.length === 0;
+    if (failures.length > 0) {
+      throw new AggregateError(failures, "extension scope disposal failed");
+    }
+  }
+};
 var WebBridgeError = class extends Error {
   constructor(code, message) {
     super(message);
@@ -1878,6 +1918,7 @@ function withExtensionBoundary(extensionId, run, onError) {
   }
 }
 export {
+  DisposableScope,
   WebBridgeClient,
   WebBridgeError,
   createRegistry,

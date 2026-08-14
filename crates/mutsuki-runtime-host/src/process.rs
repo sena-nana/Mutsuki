@@ -74,6 +74,41 @@ impl RunnerTerminationHandle for ProcessControl {
     }
 }
 
+impl ProcessControl {
+    fn shutdown(&self) -> RuntimeResult<()> {
+        let mut guard = self
+            .child
+            .lock()
+            .map_err(|_| host_failure("process_runner.dispose", "child lock poisoned"))?;
+        let Some(child) = guard.as_mut() else {
+            return Ok(());
+        };
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                guard.take();
+                Ok(())
+            }
+            Ok(None) => {
+                child
+                    .kill()
+                    .map_err(|error| host_failure("process_runner.dispose", error.to_string()))?;
+                child
+                    .wait()
+                    .map_err(|error| host_failure("process_runner.dispose", error.to_string()))?;
+                guard.take();
+                Ok(())
+            }
+            Err(error) => Err(host_failure("process_runner.dispose", error.to_string())),
+        }
+    }
+}
+
+impl Drop for ProcessControl {
+    fn drop(&mut self) {
+        let _ = self.shutdown();
+    }
+}
+
 type ProcessBinaryRunner = BinaryRunner<BufReader<ChildStdout>, ChildStdin>;
 
 pub struct SpawnedBinaryRunner {
@@ -216,9 +251,9 @@ impl Runner for SpawnedBinaryRunner {
 
     fn dispose(&mut self) -> RuntimeResult<()> {
         if let Some(inner) = self.inner.as_mut() {
-            inner.dispose()?;
+            let _ = inner.dispose();
         }
-        Ok(())
+        self.control.shutdown()
     }
 
     fn isolation(&self) -> RunnerIsolation {
@@ -229,6 +264,12 @@ impl Runner for SpawnedBinaryRunner {
         self.inner
             .as_ref()
             .and_then(|runner| runner.management_handle())
+            .map(|inner| {
+                Arc::new(ProcessManagement {
+                    inner,
+                    control: self.control.clone(),
+                }) as Arc<dyn RunnerManagementHandle>
+            })
     }
 
     fn recover_after_hard_termination(&mut self) -> RuntimeResult<()> {
@@ -236,15 +277,20 @@ impl Runner for SpawnedBinaryRunner {
     }
 }
 
-impl Drop for SpawnedBinaryRunner {
-    fn drop(&mut self) {
-        self.inner.take();
-        if let Ok(mut child) = self.control.child.lock()
-            && let Some(mut child) = child.take()
-        {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
+#[derive(Debug)]
+struct ProcessManagement {
+    inner: Arc<dyn RunnerManagementHandle>,
+    control: Arc<ProcessControl>,
+}
+
+impl RunnerManagementHandle for ProcessManagement {
+    fn cancel(&self, invocation_id: &str) -> RuntimeResult<()> {
+        self.inner.cancel(invocation_id)
+    }
+
+    fn dispose(&self) -> RuntimeResult<()> {
+        let _ = self.inner.dispose();
+        self.control.shutdown()
     }
 }
 
@@ -283,4 +329,42 @@ fn spawn_process(
         child,
         stderr,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug)]
+    struct FailedProtocolDispose;
+
+    impl RunnerManagementHandle for FailedProtocolDispose {
+        fn cancel(&self, _invocation_id: &str) -> RuntimeResult<()> {
+            Ok(())
+        }
+
+        fn dispose(&self) -> RuntimeResult<()> {
+            Err(host_failure("test.process.protocol_dispose", "injected"))
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn process_management_reaps_the_child_even_when_protocol_dispose_fails() {
+        let child = Command::new("sh")
+            .args(["-c", "exec sleep 30"])
+            .spawn()
+            .unwrap();
+        let control = Arc::new(ProcessControl {
+            child: Mutex::new(Some(child)),
+        });
+        let management = ProcessManagement {
+            inner: Arc::new(FailedProtocolDispose),
+            control: control.clone(),
+        };
+
+        management.dispose().unwrap();
+        assert!(control.child.lock().unwrap().is_none());
+        management.dispose().unwrap();
+    }
 }

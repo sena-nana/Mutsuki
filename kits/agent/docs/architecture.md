@@ -48,7 +48,10 @@ tool call 持久为等待点，并以版本绑定的 resolution 继续原 sessio
 
 `mutsuki-agent-plugin-api` 定义 tool、context provider、hook、policy、command 和 service
 贡献。装载、依赖、权限、generation、drain-and-swap 和 service registry 都由 Mutsuki
-插件生命周期兑现。LSP 是共享 service + Plugin 的参考高级实现，Host 不认识 LSP 语义。
+插件生命周期兑现。可移植的 Agent service 通过 `AgentServiceRunner` 进入普通 batch-first
+Task/Runner surface；其 `Runner::dispose` 先 drain 再 dispose，不建立 Agent 专属 loader、
+generation 或 cleanup registry。LSP 是共享 service + Plugin 的参考高级实现，Host 不认识
+LSP 语义。
 
 ## 状态与基础设施
 

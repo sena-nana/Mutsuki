@@ -145,6 +145,16 @@ impl RunnerSupervisor {
         Ok(())
     }
 
+    pub async fn remove(&self, runner_id: &str, graceful: Duration) -> RunnerSupervisorResult<()> {
+        let mut state = self.inner.lock().await;
+        let Some(runner) = state.runners.get_mut(runner_id) else {
+            return Ok(());
+        };
+        stop_child(runner, graceful).await?;
+        state.runners.remove(runner_id);
+        Ok(())
+    }
+
     pub async fn reconcile(
         &self,
         desired: Vec<ManagedRunnerSpec>,
@@ -355,11 +365,15 @@ mod tests {
         assert_eq!(kept[0].runner_id, "sidecar-a");
         assert_eq!(kept[0].restarts, 0);
 
-        let errors = supervisor
-            .reconcile(Vec::new(), Duration::from_millis(500))
-            .await;
-        assert!(errors.is_empty());
+        supervisor
+            .remove("sidecar-a", Duration::from_millis(500))
+            .await
+            .unwrap();
         assert!(supervisor.list().await.is_empty());
+        supervisor
+            .remove("sidecar-a", Duration::from_millis(500))
+            .await
+            .unwrap();
     }
 
     fn sleeping_spec(runner_id: &str) -> ManagedRunnerSpec {

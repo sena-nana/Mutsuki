@@ -113,7 +113,7 @@ async fn run_recovery(
         return Err("reply delivery recovery interval must be greater than zero".into());
     }
     health.lock().expect("reply delivery health mutex").running = true;
-    let mut ticker = tokio::time::interval(interval);
+    let mut ticker = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut inflight: Option<TaskHandle> = None;
     let mut sequence = 0_u64;

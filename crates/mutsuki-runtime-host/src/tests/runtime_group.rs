@@ -1,10 +1,11 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use mutsuki_runtime_contracts::{
     CrossDomainTaskRequest, RuntimeDomainId, Task, TaskOutcome, TaskStatus,
 };
-use mutsuki_runtime_sdk::HostServiceRegistry;
+use mutsuki_runtime_sdk::{HostEffect, HostEffectFuture, HostEffectKind, HostServiceRegistry};
 use serde_json::json;
 
 use crate::{
@@ -13,6 +14,18 @@ use crate::{
 };
 
 use super::helpers::{host_with_echo_runner, runtime_profile};
+
+struct CountingEffect(Arc<AtomicUsize>);
+
+impl HostEffect for CountingEffect {
+    fn dispose(&mut self) -> HostEffectFuture<'_> {
+        let disposed = self.0.clone();
+        Box::pin(async move {
+            disposed.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        })
+    }
+}
 
 fn domain_id(value: &str) -> RuntimeDomainId {
     RuntimeDomainId::new(value).unwrap()
@@ -89,6 +102,56 @@ fn runtime_group_routes_idempotently_and_isolates_domain_abort() {
         .wait_task_states(vec![handle], Duration::from_secs(1))
         .unwrap();
     assert_eq!(states[0].status, Some(TaskStatus::Completed));
+}
+
+#[test]
+fn runtime_group_reload_disposes_only_the_target_domain_scope() {
+    let shared = Arc::new(HostServiceRegistry::new());
+    shared.freeze();
+    let mut group = RuntimeGroupHost::with_defaults(shared.clone());
+    let bot = domain_id("bot-domain");
+    let agent = domain_id("agent-domain");
+    group
+        .insert_domain(bot.clone(), runtime(shared.clone()))
+        .unwrap();
+    group
+        .insert_domain(agent.clone(), runtime(shared.clone()))
+        .unwrap();
+
+    let bot_disposed = Arc::new(AtomicUsize::new(0));
+    let agent_disposed = Arc::new(AtomicUsize::new(0));
+    group
+        .domain_mut(&bot)
+        .unwrap()
+        .attach_plugin_effect(
+            "plugin-a",
+            HostEffectKind::HostLocal,
+            Box::new(CountingEffect(bot_disposed.clone())),
+        )
+        .unwrap();
+    group
+        .domain_mut(&agent)
+        .unwrap()
+        .attach_plugin_effect(
+            "plugin-a",
+            HostEffectKind::HostLocal,
+            Box::new(CountingEffect(agent_disposed.clone())),
+        )
+        .unwrap();
+
+    let prepared = host_with_echo_runner()
+        .prepare_reload(runtime_profile(), 2)
+        .unwrap();
+    group
+        .reload_domain(&agent, prepared, Duration::from_secs(1))
+        .unwrap();
+
+    assert_eq!(agent_disposed.load(Ordering::SeqCst), 1);
+    assert_eq!(bot_disposed.load(Ordering::SeqCst), 0);
+
+    drop(group);
+    assert_eq!(agent_disposed.load(Ordering::SeqCst), 1);
+    assert_eq!(bot_disposed.load(Ordering::SeqCst), 1);
 }
 
 #[test]

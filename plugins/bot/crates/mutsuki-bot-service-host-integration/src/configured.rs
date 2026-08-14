@@ -15,8 +15,9 @@ use mutsuki_bot_state_db::BotStateDbRepository;
 use mutsuki_config_service::{
     ConfigApplyMode, ConfigApplyRequest, ConfigConstraints, ConfigContext, ConfigDescriptor,
     ConfigDocumentKey, ConfigKey, ConfigMutability, ConfigNode, ConfigPresentation,
-    ConfigProviderId, ConfigScope, ConfigService, ConfigValue, ConfigValueType, LocalizedText,
-    MapKeyStrategy, MemoryConfigProvider, RestartPolicy, capability,
+    ConfigProviderId, ConfigProviderRegistration, ConfigScope, ConfigService, ConfigValue,
+    ConfigValueType, LocalizedText, MapKeyStrategy, MemoryConfigProvider, RestartPolicy,
+    capability,
 };
 use mutsuki_plugin_bot_adapter_qqbot::{QQBOT_ADAPTER_PLUGIN_ID, QqBotConfig};
 use mutsuki_plugin_bot_agent::{
@@ -34,7 +35,10 @@ use mutsuki_plugin_bot_event_router::{
 use mutsuki_runtime_contracts::{
     ContractSurfaceKind, PluginManifest, RuntimeLoadPlan, SurfaceRequirement,
 };
-use mutsuki_runtime_sdk::{LoadedPlugin, PluginBuilder, RuntimeBootstrapperService};
+use mutsuki_runtime_sdk::{
+    HostEffect, HostEffectFuture, HostEffectKind, LoadedPlugin, PluginBuilder,
+    RuntimeBootstrapperEffect, RuntimeBootstrapperService,
+};
 use mutsuki_service_config::HostSecretStore;
 use mutsuki_service_runtime::{
     ConfiguredPluginCatalog, ConfiguredPluginFactory, LoadPlanObserver, ServiceRuntimeBuilder,
@@ -64,6 +68,17 @@ use std::time::Duration;
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FlowRouterConfig {}
+
+struct ConfigProviderEffect(ConfigProviderRegistration);
+
+impl HostEffect for ConfigProviderEffect {
+    fn dispose(&mut self) -> HostEffectFuture<'_> {
+        Box::pin(async move {
+            let _ = self.0.dispose();
+            Ok(())
+        })
+    }
+}
 
 pub struct BotFlowRouterConfiguredPlugin {
     config: Arc<ConfigService>,
@@ -177,10 +192,7 @@ impl ConfiguredPluginFactory for BotFlowRouterConfiguredPlugin {
             .registry
             .clone()
             .unwrap_or_else(|| Arc::new(BotFlowRegistry::new(BotNodeCatalog::default())));
-        self.config
-            .registry()
-            .register(Arc::new(BotFlowConfigProvider::new(registry.clone())))
-            .map_err(|error| error.to_string())?;
+        let provider = Arc::new(BotFlowConfigProvider::new(registry.clone()));
         let mut manifest =
             mutsuki_plugin_bot_event_router::flow_router_manifest_for_catalog(&registry.catalog());
         manifest
@@ -192,21 +204,27 @@ impl ConfiguredPluginFactory for BotFlowRouterConfiguredPlugin {
         let ingress_registry = registry.clone();
         let node_registry = registry.clone();
         let service_registry = registry.clone();
+        let config_service = self.config.clone();
         Ok(builder
             .register_builtin_loaded_plugin_factory(manifest, move || {
+                let registration = config_service
+                    .register_provider_staged(provider.clone())
+                    .map_err(|error| error.to_string())?;
                 Ok::<LoadedPlugin, String>(LoadedPlugin {
                     manifest: loaded_manifest.clone(),
                     runners: Vec::new(),
                     async_handlers: Vec::new(),
-                    host_services: vec![RuntimeBootstrapperService {
-                        service_id: BOT_FLOW_REGISTRY_SERVICE_ID.into(),
-                        capability: "bot.flow".into(),
-                        service: service_registry.clone(),
-                        rebindable: false,
-                    }],
+                    host_services: vec![RuntimeBootstrapperService::new(
+                        BOT_FLOW_REGISTRY_SERVICE_ID,
+                        service_registry.clone(),
+                        "bot.flow",
+                    )],
                     resource_providers: Vec::new(),
                     async_resource_providers: Vec::new(),
-                    host_effects: Vec::new(),
+                    host_effects: vec![RuntimeBootstrapperEffect {
+                        kind: HostEffectKind::HostLocal,
+                        effect: Box::new(ConfigProviderEffect(registration)),
+                    }],
                 })
             })
             .register_builtin_runner(move || flow_ingress_runner(ingress_registry.clone()))
@@ -401,12 +419,11 @@ fn register_bot_agent_services(
             manifest: loaded_manifest.clone(),
             runners: Vec::new(),
             async_handlers: Vec::new(),
-            host_services: vec![RuntimeBootstrapperService {
-                service_id: BOT_AGENT_CONFIG_SERVICE_ID.into(),
-                capability: "bot.agent.config".into(),
-                service: config.clone(),
-                rebindable: false,
-            }],
+            host_services: vec![RuntimeBootstrapperService::new(
+                BOT_AGENT_CONFIG_SERVICE_ID,
+                config.clone(),
+                "bot.agent.config",
+            )],
             resource_providers: Vec::new(),
             async_resource_providers: Vec::new(),
             host_effects: Vec::new(),
@@ -610,24 +627,27 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
     ) -> Result<ServiceRuntimeBuilder, String> {
         let mut config: BilibiliConfig =
             serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
-        if let Some(service) = &self.config_service {
-            service
-                .registry()
-                .register(Arc::new(MemoryConfigProvider::new(
+        let config_provider = self.config_service.as_ref().map(|service| {
+            (
+                service.clone(),
+                Arc::new(MemoryConfigProvider::new(
                     bilibili_config_descriptor(),
                     ConfigValue::from_json(
                         &serde_json::to_value(&config).expect("Bilibili config serializes"),
                     ),
                     ConfigApplyMode::HotReload,
-                )))
-                .map_err(|error| error.to_string())?;
+                )),
+            )
+        });
+        if let Some((service, provider)) = &config_provider {
             let service = service.clone();
+            let provider = provider.clone();
             let seed = ConfigValue::from_json(
                 &serde_json::to_value(&config).expect("Bilibili config serializes"),
             );
             let snapshot = block_on_config(async move {
                 service
-                    .create_if_absent(BILIBILI_PLUGIN_ID, seed, ConfigContext::global())
+                    .prepare_provider_candidate(provider, Some(seed), ConfigContext::global())
                     .await
             })
             .map_err(|error| error.to_string())?;
@@ -722,7 +742,7 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
             None
         };
 
-        let builder = if let Some(service) = management_service.clone() {
+        if management_service.is_some() {
             manifest
                 .provides
                 .services
@@ -731,27 +751,47 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
                 .provides
                 .capabilities
                 .push("bot.bilibili.management".into());
-            let loaded_manifest = manifest.clone();
-            let management_api: Arc<dyn BilibiliManagementApi> = service;
-            builder.register_builtin_loaded_plugin_factory(manifest, move || {
-                Ok::<LoadedPlugin, String>(LoadedPlugin {
-                    manifest: loaded_manifest.clone(),
-                    runners: Vec::new(),
-                    async_handlers: Vec::new(),
-                    host_services: vec![RuntimeBootstrapperService {
-                        service_id: BILIBILI_MANAGEMENT_SERVICE_ID.into(),
-                        capability: "bot.bilibili.management".into(),
-                        service: Arc::new(management_api.clone()),
-                        rebindable: false,
-                    }],
-                    resource_providers: Vec::new(),
-                    async_resource_providers: Vec::new(),
-                    host_effects: Vec::new(),
+        }
+        let loaded_manifest = manifest.clone();
+        let management_api = management_service
+            .clone()
+            .map(|service| service as Arc<dyn BilibiliManagementApi>);
+        let builder = builder.register_builtin_loaded_plugin_factory(manifest, move || {
+            let host_services = management_api
+                .as_ref()
+                .map(|management_api| {
+                    RuntimeBootstrapperService::new(
+                        BILIBILI_MANAGEMENT_SERVICE_ID,
+                        Arc::new(management_api.clone()),
+                        "bot.bilibili.management",
+                    )
                 })
+                .into_iter()
+                .collect();
+            let host_effects = config_provider
+                .as_ref()
+                .map(|(service, provider)| {
+                    service
+                        .register_provider_staged(provider.clone())
+                        .map(|registration| RuntimeBootstrapperEffect {
+                            kind: HostEffectKind::HostLocal,
+                            effect: Box::new(ConfigProviderEffect(registration)),
+                        })
+                        .map_err(|error| error.to_string())
+                })
+                .transpose()?
+                .into_iter()
+                .collect();
+            Ok::<LoadedPlugin, String>(LoadedPlugin {
+                manifest: loaded_manifest.clone(),
+                runners: Vec::new(),
+                async_handlers: Vec::new(),
+                host_services,
+                resource_providers: Vec::new(),
+                async_resource_providers: Vec::new(),
+                host_effects,
             })
-        } else {
-            builder.register_builtin_plugin(manifest)
-        };
+        });
 
         Ok(builder
             .register_fallible_runtime_services_runner(move |client, resources| {

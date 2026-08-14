@@ -540,6 +540,24 @@ fn active_capability_providers(
         let matching_requirement = requirements
             .iter()
             .find(|requirement| requirement.capability_key() == *capability);
+        if matching_requirement.is_none()
+            && capability.starts_with("plugin_extension:")
+            && !bindings.contains_key(capability)
+            && let Some(contributors) = providers.get(capability)
+        {
+            selections.extend(
+                contributors
+                    .iter()
+                    .map(|provider| CapabilityProviderSelection {
+                        capability: capability.clone(),
+                        provider_plugin_id: provider.provider_plugin_id.clone(),
+                        provider_version: provider.provider_version.clone(),
+                        surface_id: provider.surface_id.clone(),
+                        reason: "active_contribution".into(),
+                    }),
+            );
+            continue;
+        }
         let provider = if let Some(requirement) = matching_requirement {
             select_provider_for_requirement(capability, requirement, providers, bindings)?
         } else {

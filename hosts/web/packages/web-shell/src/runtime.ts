@@ -1,10 +1,12 @@
 import {
   WebBridgeClient,
+  DisposableScope,
   createRegistry,
   type BridgeConnectionState,
   type BridgeHelloAck,
   type Disposable,
   type ExtensionContext,
+  type Registry,
   type WebBridgeClientOptions,
   type WebExtension,
 } from "@mutsuki/web-sdk";
@@ -43,21 +45,58 @@ export async function loadExtensions(
 ): Promise<Disposable[]> {
   const disposables: Disposable[] = [];
   for (const item of urls) {
+    const scope = new DisposableScope();
     try {
       const mod = (await import(/* @vite-ignore */ item.url)) as {
         default: WebExtension;
       };
-      const result = await mod.default.setup(ctxFactory(state));
-      if (result && typeof result.dispose === "function") disposables.push(result);
+      const result = await mod.default.setup(ownedExtensionContext(ctxFactory(state), scope));
+      if (result && typeof result.dispose === "function") scope.own(result);
+      disposables.push(scope);
       state.extensions.push(item.id);
     } catch (error) {
+      let cleanupError: unknown;
+      try {
+        scope.dispose();
+      } catch (cleanup) {
+        cleanupError = cleanup;
+      }
       state.failures.push({
         extensionId: item.id,
-        message: error instanceof Error ? error.message : String(error),
+        message: [error, cleanupError]
+          .filter((failure) => failure !== undefined)
+          .map((failure) => (failure instanceof Error ? failure.message : String(failure)))
+          .join("; "),
       });
     }
   }
   return disposables;
+}
+
+function ownedRegistry<T>(registry: Registry<T>, scope: DisposableScope): Registry<T> {
+  return {
+    register(item) {
+      return scope.own(registry.register(item));
+    },
+  };
+}
+
+function ownedExtensionContext(
+  context: ExtensionContext,
+  scope: DisposableScope,
+): ExtensionContext {
+  return {
+    pages: ownedRegistry(context.pages, scope),
+    navigation: ownedRegistry(context.navigation, scope),
+    slots: ownedRegistry(context.slots, scope),
+    commands: ownedRegistry(context.commands, scope),
+    rpc: context.rpc,
+    events: {
+      subscribe(topic, handler, requiredCapability) {
+        return scope.own(context.events.subscribe(topic, handler, requiredCapability));
+      },
+    },
+  };
 }
 
 export interface WebShellRuntimeOptions extends WebBridgeClientOptions {

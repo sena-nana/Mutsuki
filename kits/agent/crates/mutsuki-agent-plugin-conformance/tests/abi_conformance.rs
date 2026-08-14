@@ -3,7 +3,7 @@ use std::process::Command;
 use std::sync::Arc;
 
 use mutsuki_agent_plugin_conformance::{
-    PLUGIN_ID, PROTOCOL_ID, dynamic_library_file_name, plugin_builder,
+    PLUGIN_ID, PROTOCOL_ID, SERVICE_ID, dynamic_library_file_name, plugin_builder,
 };
 use mutsuki_runtime_contracts::resource::experimental::{CommandBatch, SagaPlan};
 use mutsuki_runtime_contracts::{
@@ -135,32 +135,49 @@ fn work_batch(task: Task) -> (RunnerContext, WorkBatch) {
     )
 }
 
-fn invoke(runner: &mut dyn Runner) -> Value {
+fn invoke(runner: &mut dyn Runner, protocol_id: &str) -> RuntimeResult<Value> {
     let (context, batch) = work_batch(Task::new(
         "agent-conformance",
-        PROTOCOL_ID,
+        protocol_id,
         json!({"value": "round-trip"}),
     ));
-    runner
-        .run_batch(context, batch)
-        .unwrap()
-        .results
-        .remove(0)
+    let completion = runner.run_batch(context, batch)?.results.remove(0);
+    if let Some(error) = completion.error {
+        return Err(RuntimeFailure::new(error));
+    }
+    Ok(completion
         .result
-        .unwrap()
+        .expect("conformance protocol returns a result")
         .output
-        .unwrap()
+        .expect("conformance protocol returns output"))
 }
 
-#[test]
-fn builtin_and_real_abi_v2_paths_share_manifest_and_runner_semantics() {
+fn runner_for<'a>(runners: &'a mut [Box<dyn Runner>], protocol_id: &str) -> &'a mut dyn Runner {
+    runners
+        .iter_mut()
+        .find(|runner| {
+            runner
+                .descriptor()
+                .accepted_protocol_ids
+                .iter()
+                .any(|accepted| accepted == protocol_id)
+        })
+        .map(Box::as_mut)
+        .expect("conformance runner exists")
+}
+
+#[tokio::test]
+async fn builtin_and_real_abi_v2_paths_share_manifest_service_and_lifecycle_semantics() {
     let mut builtin = plugin_builder(7, ArtifactType::Native).unwrap().build();
     let builtin_descriptor = builtin
         .manifest
         .metadata
         .get("agentkit.descriptor")
         .cloned();
-    let builtin_output = invoke(builtin.runners[0].as_mut());
+    let builtin_output =
+        invoke(runner_for(&mut builtin.runners, PROTOCOL_ID), PROTOCOL_ID).unwrap();
+    let builtin_service_output =
+        invoke(runner_for(&mut builtin.runners, SERVICE_ID), SERVICE_ID).unwrap();
 
     let status = Command::new(env!("CARGO"))
         .args([
@@ -202,5 +219,26 @@ fn builtin_and_real_abi_v2_paths_share_manifest_and_runner_semantics() {
         external.manifest.metadata.get("agentkit.descriptor"),
         builtin_descriptor.as_ref()
     );
-    assert_eq!(invoke(external.runners[0].as_mut()), builtin_output);
+    assert_eq!(
+        invoke(runner_for(&mut external.runners, PROTOCOL_ID), PROTOCOL_ID).unwrap(),
+        builtin_output
+    );
+    assert_eq!(
+        invoke(runner_for(&mut external.runners, SERVICE_ID), SERVICE_ID).unwrap(),
+        builtin_service_output
+    );
+
+    runner_for(&mut builtin.runners, SERVICE_ID)
+        .dispose()
+        .unwrap();
+    assert_eq!(
+        invoke(runner_for(&mut builtin.runners, SERVICE_ID), SERVICE_ID)
+            .unwrap_err()
+            .error()
+            .code,
+        "agent.plugin.disposed"
+    );
+
+    external.host_effects[0].effect.dispose().await.unwrap();
+    assert!(invoke(runner_for(&mut external.runners, SERVICE_ID), SERVICE_ID).is_err());
 }

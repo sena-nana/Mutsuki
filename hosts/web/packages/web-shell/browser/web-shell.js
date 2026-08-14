@@ -1,6 +1,7 @@
 // src/runtime.ts
 import {
   WebBridgeClient,
+  DisposableScope,
   createRegistry
 } from "./web-sdk.js";
 function createShellState() {
@@ -16,22 +17,51 @@ function createShellState() {
 async function loadExtensions(state, urls, ctxFactory) {
   const disposables = [];
   for (const item of urls) {
+    const scope = new DisposableScope();
     try {
       const mod = await import(
         /* @vite-ignore */
         item.url
       );
-      const result = await mod.default.setup(ctxFactory(state));
-      if (result && typeof result.dispose === "function") disposables.push(result);
+      const result = await mod.default.setup(ownedExtensionContext(ctxFactory(state), scope));
+      if (result && typeof result.dispose === "function") scope.own(result);
+      disposables.push(scope);
       state.extensions.push(item.id);
     } catch (error) {
+      let cleanupError;
+      try {
+        scope.dispose();
+      } catch (cleanup) {
+        cleanupError = cleanup;
+      }
       state.failures.push({
         extensionId: item.id,
-        message: error instanceof Error ? error.message : String(error)
+        message: [error, cleanupError].filter((failure) => failure !== void 0).map((failure) => failure instanceof Error ? failure.message : String(failure)).join("; ")
       });
     }
   }
   return disposables;
+}
+function ownedRegistry(registry, scope) {
+  return {
+    register(item) {
+      return scope.own(registry.register(item));
+    }
+  };
+}
+function ownedExtensionContext(context, scope) {
+  return {
+    pages: ownedRegistry(context.pages, scope),
+    navigation: ownedRegistry(context.navigation, scope),
+    slots: ownedRegistry(context.slots, scope),
+    commands: ownedRegistry(context.commands, scope),
+    rpc: context.rpc,
+    events: {
+      subscribe(topic, handler, requiredCapability) {
+        return scope.own(context.events.subscribe(topic, handler, requiredCapability));
+      }
+    }
+  };
 }
 var WebShellRuntime = class {
   state = createShellState();

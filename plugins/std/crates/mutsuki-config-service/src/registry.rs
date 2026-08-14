@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use parking_lot::RwLock;
 
@@ -15,12 +16,14 @@ use crate::{
 pub struct ProviderEntry {
     pub provider: Arc<dyn ConfigProvider>,
     pub cached_schema: Arc<ConfigDescriptor>,
+    registration_id: u64,
 }
 
 pub struct ConfigProviderRegistry {
     budgets: ConfigBudgets,
-    providers: RwLock<HashMap<String, ProviderEntry>>,
+    providers: RwLock<HashMap<String, Vec<ProviderEntry>>>,
     metrics: ConfigMetrics,
+    next_registration_id: AtomicU64,
 }
 
 impl Default for ConfigProviderRegistry {
@@ -35,6 +38,7 @@ impl ConfigProviderRegistry {
             budgets,
             providers: RwLock::new(HashMap::new()),
             metrics: ConfigMetrics::default(),
+            next_registration_id: AtomicU64::new(1),
         }
     }
 
@@ -47,6 +51,98 @@ impl ConfigProviderRegistry {
     }
 
     pub fn register(&self, provider: Arc<dyn ConfigProvider>) -> Result<(), ConfigError> {
+        self.register_entry(provider, false, false).map(|_| ())
+    }
+
+    pub fn register_owned(
+        self: &Arc<Self>,
+        provider: Arc<dyn ConfigProvider>,
+    ) -> Result<ConfigProviderRegistration, ConfigError> {
+        let (provider_id, registration_id) = self.register_entry(provider, true, false)?;
+        Ok(ConfigProviderRegistration {
+            registry: self.clone(),
+            provider_id,
+            registration_id,
+            disposed: false,
+        })
+    }
+
+    pub fn register_owned_staged(
+        self: &Arc<Self>,
+        provider: Arc<dyn ConfigProvider>,
+    ) -> Result<ConfigProviderRegistration, ConfigError> {
+        let (provider_id, registration_id) = self.register_entry(provider, true, true)?;
+        Ok(ConfigProviderRegistration {
+            registry: self.clone(),
+            provider_id,
+            registration_id,
+            disposed: false,
+        })
+    }
+
+    fn register_entry(
+        &self,
+        provider: Arc<dyn ConfigProvider>,
+        owned: bool,
+        staged: bool,
+    ) -> Result<(String, u64), ConfigError> {
+        let (id, descriptor) = self.validate_provider(&provider)?;
+        let mut guard = self.providers.write();
+        if guard.len() >= self.budgets.max_providers && !guard.contains_key(&id) {
+            return Err(ConfigError::BudgetExceeded {
+                reason: format!("max_providers={}", self.budgets.max_providers),
+            });
+        }
+        let registration_id = self.next_registration_id.fetch_add(1, Ordering::Relaxed);
+        let entry = ProviderEntry {
+            provider,
+            cached_schema: descriptor,
+            registration_id,
+        };
+        if owned && staged {
+            let entries = guard.entry(id.clone()).or_default();
+            let before_active = entries.len().saturating_sub(1);
+            entries.insert(before_active, entry);
+        } else if owned {
+            guard.entry(id.clone()).or_default().push(entry);
+        } else {
+            guard.insert(id.clone(), vec![entry]);
+        }
+        self.metrics.set_provider_count(guard.len() as u64);
+        Ok((id, registration_id))
+    }
+
+    pub(crate) fn candidate_entry(
+        &self,
+        provider: Arc<dyn ConfigProvider>,
+        scope: &ConfigScope,
+    ) -> Result<(String, ProviderEntry), ConfigError> {
+        let (id, descriptor) = self.validate_provider(&provider)?;
+        if !descriptor.supports_scope(scope) {
+            return Err(ConfigError::ScopeUnsupported {
+                reason: format!("provider `{id}` does not support scope {scope:?}"),
+            });
+        }
+        let guard = self.providers.read();
+        if guard.len() >= self.budgets.max_providers && !guard.contains_key(&id) {
+            return Err(ConfigError::BudgetExceeded {
+                reason: format!("max_providers={}", self.budgets.max_providers),
+            });
+        }
+        Ok((
+            id,
+            ProviderEntry {
+                provider,
+                cached_schema: descriptor,
+                registration_id: 0,
+            },
+        ))
+    }
+
+    fn validate_provider(
+        &self,
+        provider: &Arc<dyn ConfigProvider>,
+    ) -> Result<(String, Arc<ConfigDescriptor>), ConfigError> {
         let descriptor = provider.descriptor();
         descriptor.validate_budgets(&self.budgets)?;
         let id = descriptor.provider_id.0.clone();
@@ -55,26 +151,29 @@ impl ConfigProviderRegistry {
                 reason: format!("provider id exceeds {}", self.budgets.max_id_bytes),
             });
         }
-        let mut guard = self.providers.write();
-        if guard.len() >= self.budgets.max_providers && !guard.contains_key(&id) {
-            return Err(ConfigError::BudgetExceeded {
-                reason: format!("max_providers={}", self.budgets.max_providers),
-            });
-        }
-        guard.insert(
-            id,
-            ProviderEntry {
-                provider,
-                cached_schema: Arc::new(descriptor),
-            },
-        );
-        self.metrics.set_provider_count(guard.len() as u64);
-        Ok(())
+        Ok((id, Arc::new(descriptor)))
     }
 
     pub fn unregister(&self, provider_id: &str) -> bool {
         let mut guard = self.providers.write();
         let removed = guard.remove(provider_id).is_some();
+        self.metrics.set_provider_count(guard.len() as u64);
+        removed
+    }
+
+    fn unregister_registration(&self, provider_id: &str, registration_id: u64) -> bool {
+        let mut guard = self.providers.write();
+        let mut removed = false;
+        let mut empty = false;
+        if let Some(entries) = guard.get_mut(provider_id) {
+            let previous_len = entries.len();
+            entries.retain(|entry| entry.registration_id != registration_id);
+            removed = entries.len() != previous_len;
+            empty = entries.is_empty();
+        }
+        if empty {
+            guard.remove(provider_id);
+        }
         self.metrics.set_provider_count(guard.len() as u64);
         removed
     }
@@ -92,7 +191,7 @@ impl ConfigProviderRegistry {
         self.providers
             .read()
             .get(provider_id)
-            .cloned()
+            .and_then(|entries| entries.last().cloned())
             .ok_or(ConfigError::ProviderUnavailable)
     }
 
@@ -114,5 +213,29 @@ impl ConfigProviderRegistry {
             });
         }
         Ok(entry)
+    }
+}
+
+pub struct ConfigProviderRegistration {
+    registry: Arc<ConfigProviderRegistry>,
+    provider_id: String,
+    registration_id: u64,
+    disposed: bool,
+}
+
+impl ConfigProviderRegistration {
+    pub fn dispose(&mut self) -> bool {
+        if self.disposed {
+            return false;
+        }
+        self.disposed = true;
+        self.registry
+            .unregister_registration(&self.provider_id, self.registration_id)
+    }
+}
+
+impl Drop for ConfigProviderRegistration {
+    fn drop(&mut self) {
+        let _ = self.dispose();
     }
 }

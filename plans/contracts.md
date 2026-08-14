@@ -599,12 +599,18 @@ platform 与 deployment support，不基于 `ApplicationId`。`PluginBusinessSur
 应用或领域专用能力使用独立、versioned `PluginExtensionDescriptor` contribution surface。
 每个 contribution 必须明确 required/optional：未知 optional extension 允许忽略，未知或不可用
 required extension 返回结构化 resolution failure。Profile 只选择 contribution projection，
-不能修改 plugin identity 或跳过 scope/generation lifecycle。
+不能修改 plugin identity 或跳过 scope/generation lifecycle。同一 optional extension namespace
+允许多个插件贡献可叠加 payload；未声明 consumer requirement 或 provider binding 时，resolver
+记录所有 active contributors，不把它们误判成互斥 provider。required contribution 仍按明确
+requirement、版本和 binding 选择并校验 provider。
 
 Host-only scoped service dependency 明确区分 `Required`/`Optional` 与
 `StaticAtActivation`/`Rebindable`。默认是 required static；只有 provider 与 consumer 均声明
 可重绑定时，availability change 才能触发 suspend/re-resolve/reactivate。lookup 结果包含
 provider scope 与 plugin generation；这些 Host composition facts 不进入公共 plugin ABI/wire。
+SDK 内部可以为 typed Host service 做类型擦除，但跨 crate 搬运的只能是不可检查的
+`HostServiceValue`；公共注册/解析面不得暴露 `Arc<dyn Any>`、`downcast` 或任意 concrete Host
+object。可移植业务 service 必须使用 Task/Resource/capability contract。
 
 Runtime surface（runner、handler binding、protocol、resource provider generation、permission/
 occupancy contract）是 generation-bound declaration，不是普通 disposable registration。

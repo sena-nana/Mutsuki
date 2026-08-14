@@ -26,5 +26,18 @@ description: Change PluginScope, scoped Host services, reversible effects, backe
 - Builtin keeps typed in-process service/runner paths. ABI, process, WASM and Python must preserve
   the same business contract and lifecycle semantics without forcing local serialization.
 
+## Decision flow
+
+1. Define the business capability first. Keep it universal unless an application contribution is
+   genuinely optional or explicitly required; never select it by application name.
+2. Classify every side effect: generation-bound runtime work belongs to Core, reversible
+   Host-local/backend work is a `HostEffect`, and request/job work remains a business task.
+3. Put each long-lived resource under the one plugin scope that owns its transaction. Do not add a
+   parallel cleanup list, stop loop or fallback owner.
+4. Adapt builtin, ABI, process, Python or a future real WASM executor to the same capability
+   surface and scope lifecycle. Preserve the builtin typed direct path.
+5. Reload by preparing the complete candidate scope, switching through Core, rolling the candidate
+   back only before the switch, then retiring old scopes after the new generation is authoritative.
+
 Test activation rollback, reverse cleanup, timeout/dirty retry, dependency loss/rebind, targeted
 reload isolation, service projection, 10k repeated lifecycle bounds and cross-deployment behavior.

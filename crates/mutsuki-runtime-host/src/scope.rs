@@ -1,4 +1,3 @@
-use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::future::Future;
 use std::marker::PhantomData;
@@ -7,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use mutsuki_runtime_core::{RuntimeFailure, RuntimeResult};
-use mutsuki_runtime_sdk::RuntimeBootstrapperEffect;
+use mutsuki_runtime_sdk::{HostService, HostServiceValue, RuntimeBootstrapperEffect};
 
 use crate::error::host_failure;
 
@@ -257,14 +256,14 @@ pub struct ResolvedService<T> {
     pub service: Arc<T>,
 }
 
-type ErasedResolvedService = (ScopeId, u64, Arc<dyn Any + Send + Sync>);
+type ResolvedServiceValue = (ScopeId, u64, HostServiceValue);
 
 struct ServiceEntry {
     provider_scope: ScopeId,
     generation: u64,
     rebindable: bool,
     available: bool,
-    value: Arc<dyn Any + Send + Sync>,
+    value: HostServiceValue,
 }
 
 #[derive(Clone)]
@@ -308,6 +307,23 @@ struct ScopeManagerState {
 pub struct PluginScopeManager {
     inner: Arc<Mutex<ScopeManagerState>>,
 }
+
+impl std::fmt::Debug for PluginScopeManager {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_tuple("PluginScopeManager")
+            .field(&Arc::as_ptr(&self.inner))
+            .finish()
+    }
+}
+
+impl PartialEq for PluginScopeManager {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+}
+
+impl Eq for PluginScopeManager {}
 
 #[derive(Clone, Copy)]
 enum CleanupMode {
@@ -486,7 +502,7 @@ impl PluginScopeManager {
         rebindable: bool,
     ) -> RuntimeResult<()>
     where
-        T: Any + Send + Sync,
+        T: HostService,
     {
         self.publish_service(scope_id, scope_id, key, service, rebindable)
     }
@@ -500,13 +516,13 @@ impl PluginScopeManager {
         rebindable: bool,
     ) -> RuntimeResult<()>
     where
-        T: Any + Send + Sync,
+        T: HostService,
     {
-        self.insert_service_erased(
+        self.insert_service_value(
             owner_scope,
             visibility_scope,
             key.id(),
-            service,
+            HostServiceValue::new(service),
             rebindable,
             ScopeState::Activating,
         )
@@ -520,7 +536,7 @@ impl PluginScopeManager {
         rebindable: bool,
     ) -> RuntimeResult<()>
     where
-        T: Any + Send + Sync,
+        T: HostService,
     {
         self.stage_published_service(scope_id, scope_id, key, service, rebindable)
     }
@@ -534,27 +550,27 @@ impl PluginScopeManager {
         rebindable: bool,
     ) -> RuntimeResult<()>
     where
-        T: Any + Send + Sync,
+        T: HostService,
     {
-        self.insert_service_erased(
+        self.insert_service_value(
             owner_scope,
             visibility_scope,
             key.id(),
-            service,
+            HostServiceValue::new(service),
             rebindable,
             ScopeState::Created,
         )
     }
 
-    pub(crate) fn stage_published_service_erased(
+    pub(crate) fn stage_published_service_value(
         &self,
         owner_scope: &ScopeId,
         visibility_scope: &ScopeId,
         service_id: &str,
-        service: Arc<dyn Any + Send + Sync>,
+        service: HostServiceValue,
         rebindable: bool,
     ) -> RuntimeResult<()> {
-        self.insert_service_erased(
+        self.insert_service_value(
             owner_scope,
             visibility_scope,
             service_id,
@@ -564,12 +580,12 @@ impl PluginScopeManager {
         )
     }
 
-    fn insert_service_erased(
+    fn insert_service_value(
         &self,
         owner_scope: &ScopeId,
         visibility_scope: &ScopeId,
         service_id: &str,
-        service: Arc<dyn Any + Send + Sync>,
+        service: HostServiceValue,
         rebindable: bool,
         required_state: ScopeState,
     ) -> RuntimeResult<()> {
@@ -652,15 +668,15 @@ impl PluginScopeManager {
         key: ServiceKey<T>,
     ) -> RuntimeResult<Option<ResolvedService<T>>>
     where
-        T: Any + Send + Sync,
+        T: HostService,
     {
         let Some((provider_scope, plugin_generation, service)) =
-            self.resolve_service_erased(scope_id, key.id())?
+            self.resolve_service_value(scope_id, key.id())?
         else {
             return Ok(None);
         };
         let service = service
-            .downcast::<T>()
+            .resolve::<T>()
             .map_err(|_| scope_failure("host.scope.service_type_mismatch", key.id()))?;
         Ok(Some(ResolvedService {
             provider_scope,
@@ -669,11 +685,11 @@ impl PluginScopeManager {
         }))
     }
 
-    pub(crate) fn resolve_service_erased(
+    pub(crate) fn resolve_service_value(
         &self,
         scope_id: &ScopeId,
         service_id: &str,
-    ) -> RuntimeResult<Option<ErasedResolvedService>> {
+    ) -> RuntimeResult<Option<ResolvedServiceValue>> {
         let state = self.lock();
         let scope = state
             .scopes
@@ -682,9 +698,7 @@ impl PluginScopeManager {
         if !matches!(scope.state, ScopeState::Activating | ScopeState::Active) {
             return Err(invalid_state(scope_id, scope.state, "resolve_service"));
         }
-        let provider_scope = if find_service_entry(&state, scope_id, service_id)
-            .is_some_and(|(_, entry)| entry.provider_scope == *scope_id)
-        {
+        let provider_scope = if service_entry_for_provider(&state, scope_id, service_id).is_some() {
             Some(scope_id.clone())
         } else if scope.dependencies.contains_key(service_id) {
             scope.resolved_services.get(service_id).cloned()
@@ -694,9 +708,7 @@ impl PluginScopeManager {
         let Some(provider_scope) = provider_scope else {
             return Ok(None);
         };
-        let entry = find_service_entry(&state, scope_id, service_id)
-            .map(|(_, entry)| entry)
-            .filter(|entry| entry.provider_scope == provider_scope)
+        let entry = service_entry_for_provider(&state, &provider_scope, service_id)
             .ok_or_else(|| scope_failure("host.scope.service_stale", service_id))?;
         if scope.state == ScopeState::Active && !entry.available {
             return Err(scope_failure("host.scope.service_staged", service_id));
@@ -1297,7 +1309,7 @@ impl PluginScopeManager {
         service: Arc<T>,
     ) -> RuntimeResult<ServiceChange>
     where
-        T: Any + Send + Sync,
+        T: HostService,
     {
         let service_id = key.id().to_string();
         let mut state = self.lock();
@@ -1343,7 +1355,7 @@ impl PluginScopeManager {
                     generation,
                     rebindable: true,
                     available: true,
-                    value: service,
+                    value: HostServiceValue::new(service),
                 },
             );
         invalidate_resolution_cache(&mut state, &service_id);
@@ -1407,6 +1419,19 @@ impl PluginScopeManager {
             .filter(|event| event.sequence > sequence)
             .cloned()
             .collect()
+    }
+
+    pub(crate) fn mark_scope_failed_dirty(
+        &self,
+        scope_id: &ScopeId,
+        detail: impl Into<String>,
+    ) -> RuntimeResult<()> {
+        let mut state = self.lock();
+        mutable_scope(&mut state, scope_id)?
+            .dirty_failures
+            .push(detail.into());
+        mark_failed_dirty(&mut state, scope_id);
+        Ok(())
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, ScopeManagerState> {
@@ -1483,6 +1508,24 @@ fn find_service_provider(
     None
 }
 
+fn service_entry_for_provider<'a>(
+    state: &'a ScopeManagerState,
+    provider_scope: &ScopeId,
+    service_id: &str,
+) -> Option<&'a ServiceEntry> {
+    let publication = state
+        .scopes
+        .get(provider_scope)?
+        .service_publications
+        .get(service_id)?;
+    state
+        .scopes
+        .get(&publication.visibility_scope)?
+        .services
+        .get(service_id)
+        .filter(|entry| entry.provider_scope == *provider_scope)
+}
+
 fn is_ancestor_or_same(
     state: &ScopeManagerState,
     ancestor: &ScopeId,
@@ -1499,25 +1542,6 @@ fn is_ancestor_or_same(
             .and_then(|scope| scope.parent.clone());
     }
     false
-}
-
-fn find_service_entry<'a>(
-    state: &'a ScopeManagerState,
-    origin: &ScopeId,
-    service_id: &str,
-) -> Option<(ScopeId, &'a ServiceEntry)> {
-    let mut current = Some(origin.clone());
-    while let Some(scope_id) = current {
-        let scope = state.scopes.get(&scope_id)?;
-        if let Some(service) = scope.services.get(service_id) {
-            return Some((scope_id, service));
-        }
-        if scope.isolated_services.contains(service_id) {
-            return None;
-        }
-        current = scope.parent.clone();
-    }
-    None
 }
 
 fn validate_required_dependency_cycles(
@@ -1852,6 +1876,100 @@ mod tests {
             .unwrap();
         assert!(cleaned.load(Ordering::Acquire));
         assert!(manager.snapshot(&scope).is_none());
+    }
+
+    #[tokio::test]
+    async fn activation_failure_after_each_registration_rolls_back_completed_effects() {
+        for completed in 0..=3 {
+            let manager = PluginScopeManager::new();
+            let order = Arc::new(Mutex::new(Vec::new()));
+            let scope = manager
+                .create_scope(None, "staged", 2, PluginLifetime::DrainRequired)
+                .unwrap();
+            manager.begin_activation(&scope).unwrap();
+            for index in 0..completed {
+                let order = order.clone();
+                manager
+                    .register_effect(
+                        &scope,
+                        EffectKind::HostLocal,
+                        Box::new(AsyncEffect::new(move || {
+                            let order = order.clone();
+                            async move {
+                                order.lock().unwrap().push(index);
+                                Ok(())
+                            }
+                        })),
+                    )
+                    .unwrap();
+            }
+
+            manager
+                .rollback_activation(&scope, Duration::from_secs(1))
+                .await
+                .unwrap();
+
+            assert_eq!(
+                *order.lock().unwrap(),
+                (0..completed).rev().collect::<Vec<_>>()
+            );
+            assert!(manager.snapshot(&scope).is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn failure_at_each_dispose_step_is_dirty_and_retryable_without_repeating_successes() {
+        for failing_index in 0..3 {
+            let manager = PluginScopeManager::new();
+            let order = Arc::new(Mutex::new(Vec::new()));
+            let scope = manager
+                .create_scope(None, "dirty", 7, PluginLifetime::DrainRequired)
+                .unwrap();
+            manager.begin_activation(&scope).unwrap();
+            for index in 0..3 {
+                let order = order.clone();
+                let fail_once = Arc::new(AtomicBool::new(index == failing_index));
+                manager
+                    .register_effect(
+                        &scope,
+                        EffectKind::BackendInstance,
+                        Box::new(AsyncEffect::new(move || {
+                            let order = order.clone();
+                            let fail = fail_once.swap(false, Ordering::AcqRel);
+                            async move {
+                                order.lock().unwrap().push(index);
+                                if fail {
+                                    Err(scope_failure("test.cleanup", "injected"))
+                                } else {
+                                    Ok(())
+                                }
+                            }
+                        })),
+                    )
+                    .unwrap();
+            }
+            manager.commit_activation(&scope).unwrap();
+
+            assert!(
+                manager
+                    .dispose_scope(&scope, Duration::from_secs(1))
+                    .await
+                    .is_err()
+            );
+            assert_eq!(
+                manager.snapshot(&scope).unwrap().state,
+                ScopeState::FailedDirty
+            );
+            manager
+                .dispose_scope(&scope, Duration::from_secs(1))
+                .await
+                .unwrap();
+
+            let mut expected = (failing_index..3).rev().collect::<Vec<_>>();
+            expected.extend((0..=failing_index).rev());
+            assert_eq!(*order.lock().unwrap(), expected);
+            assert!(manager.snapshot(&scope).is_none());
+        }
     }
 
     #[tokio::test]

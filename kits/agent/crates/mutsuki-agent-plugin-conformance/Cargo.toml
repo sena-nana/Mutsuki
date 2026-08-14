@@ -17,3 +17,4 @@ serde_json.workspace = true
 
 [dev-dependencies]
 mutsuki-runtime-host.workspace = true
+tokio.workspace = true

@@ -32,6 +32,7 @@ pub struct PluginScopeSet {
     manager: PluginScopeManager,
     root_scope: ScopeId,
     plugin_scopes: BTreeMap<String, ScopeId>,
+    activation_order: Vec<ScopeId>,
 }
 
 impl PluginScopeSet {
@@ -54,6 +55,25 @@ impl PluginScopeSet {
         self.plugin_scopes
             .values()
             .any(|scope_id| self.manager.snapshot(scope_id).is_some())
+    }
+
+    pub(crate) fn commit_activation(&self) -> RuntimeResult<()> {
+        self.manager.commit_activation(&self.root_scope)?;
+        for scope_id in &self.activation_order {
+            self.manager.commit_activation(scope_id)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn mark_activation_failed(&self, detail: &str) {
+        let _ = self
+            .manager
+            .mark_scope_failed_dirty(&self.root_scope, detail.to_string());
+        for scope_id in &self.activation_order {
+            let _ = self
+                .manager
+                .mark_scope_failed_dirty(scope_id, detail.to_string());
+        }
     }
 
     pub(crate) fn has_dirty_scope(&self) -> bool {
@@ -83,6 +103,46 @@ impl PluginScopeSet {
                     "host.scope.reload_requires_restart",
                     plugin_id,
                 ));
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate_reload_domain(
+        &self,
+        affected_plugins: &BTreeSet<String>,
+    ) -> RuntimeResult<()> {
+        let snapshots = self.manager.snapshots();
+        let providers = snapshots
+            .iter()
+            .filter(|scope| self.plugin_scopes.contains_key(&scope.plugin_id))
+            .flat_map(|scope| {
+                scope
+                    .provided_services
+                    .iter()
+                    .map(move |service_id| (service_id.as_str(), scope.plugin_id.as_str()))
+            })
+            .collect::<BTreeMap<_, _>>();
+
+        for consumer in snapshots
+            .iter()
+            .filter(|scope| self.plugin_scopes.contains_key(&scope.plugin_id))
+        {
+            for dependency in &consumer.dependencies {
+                let Some(provider) = providers.get(dependency.service_id.as_str()) else {
+                    continue;
+                };
+                if affected_plugins.contains(&consumer.plugin_id)
+                    != affected_plugins.contains(*provider)
+                {
+                    return Err(crate::error::host_failure(
+                        "host.scope.reload_domain_incomplete",
+                        format!(
+                            "{}:{}:{}",
+                            consumer.plugin_id, dependency.service_id, provider
+                        ),
+                    ));
+                }
             }
         }
         Ok(())
@@ -414,6 +474,9 @@ impl RuntimeBootstrapper {
             })
             .collect();
         prepared.registry_generation = registry_generation;
+        let affected_plugins = affected_plugins.map(|requested| {
+            expand_service_reload_domain(&prepared.plan, &prepared.services, requested)
+        });
         let scopes = build_plugin_scopes(
             &prepared.plan,
             &prepared.services,
@@ -548,6 +611,18 @@ fn boot_prepared_runtime(mut prepared: PreparedRuntime) -> RuntimeResult<BootedR
             return Err(error);
         }
     };
+    if let Err(error) = scopes.commit_activation() {
+        if let Err(cleanup_error) = scopes
+            .manager()
+            .rollback_activation_blocking(scopes.root_scope(), Duration::from_secs(30))
+        {
+            return Err(crate::error::host_failure(
+                "host.scope.boot_activation_rollback_failed",
+                format!("activation failed: {error}; scope rollback failed: {cleanup_error}"),
+            ));
+        }
+        return Err(error);
+    }
     Ok(BootedRuntime {
         core,
         capabilities: prepared.capabilities,
@@ -631,12 +706,7 @@ fn build_host_service_registry(
 ) -> RuntimeResult<Arc<HostServiceRegistry>> {
     let registry = Arc::new(HostServiceRegistry::new());
     for registered in host_services {
-        registry.register_erased_owned_with_binding(
-            registered.service.service_id.clone(),
-            registered.owner_plugin_id.clone(),
-            registered.service.service.clone(),
-            registered.service.rebindable,
-        )?;
+        registry.register_bootstrapper_service(&registered.owner_plugin_id, &registered.service)?;
     }
     registry.freeze();
     Ok(registry)
@@ -675,7 +745,7 @@ fn build_plugin_scopes(
         PluginLifetime::DrainRequired,
     )?;
 
-    let activation = (|| -> RuntimeResult<()> {
+    let activation = (|| -> RuntimeResult<Vec<ScopeId>> {
         for registered in host_effects {
             let owner_scope = plugin_scopes
                 .get(&registered.owner_plugin_id)
@@ -720,12 +790,22 @@ fn build_plugin_scopes(
         }
 
         for (service_id, owner_plugin_id, service, rebindable) in host_services.owned_entries() {
+            if affected_plugins.is_some_and(|affected| {
+                !owner_plugin_id.is_empty() && !affected.contains(&owner_plugin_id)
+            }) {
+                continue;
+            }
             let owner_scope = if owner_plugin_id.is_empty() {
                 &root_scope
             } else {
-                plugin_scopes.get(&owner_plugin_id).unwrap_or(&root_scope)
+                plugin_scopes.get(&owner_plugin_id).ok_or_else(|| {
+                    crate::error::host_failure(
+                        "host.scope.service_owner_missing",
+                        format!("{service_id}:{owner_plugin_id}"),
+                    )
+                })?
             };
-            manager.stage_published_service_erased(
+            manager.stage_published_service_value(
                 owner_scope,
                 &root_scope,
                 &service_id,
@@ -735,37 +815,72 @@ fn build_plugin_scopes(
         }
 
         manager.begin_activation(&root_scope)?;
-        manager.commit_activation(&root_scope)?;
+        let mut activation_order = Vec::new();
         for plugin_id in &plan.load_order {
             if let Some(scope) = plugin_scopes.get(plugin_id) {
                 manager.begin_activation(scope)?;
+                activation_order.push(scope.clone());
             }
         }
         manager.rollback_activation_blocking(&discarded_scope, Duration::from_secs(30))?;
-        for plugin_id in &plan.load_order {
-            if let Some(scope) = plugin_scopes.get(plugin_id) {
-                manager.commit_activation(scope)?;
-            }
-        }
-        Ok(())
+        Ok(activation_order)
     })();
-    if let Err(error) = activation {
-        if let Err(cleanup_error) =
-            manager.rollback_activation_blocking(&root_scope, Duration::from_secs(30))
-        {
-            return Err(crate::error::host_failure(
-                "host.scope.activation_rollback_failed",
-                format!("activation failed: {error}; scope rollback failed: {cleanup_error}"),
-            ));
+    let activation_order = match activation {
+        Ok(activation_order) => activation_order,
+        Err(error) => {
+            if let Err(cleanup_error) =
+                manager.rollback_activation_blocking(&root_scope, Duration::from_secs(30))
+            {
+                return Err(crate::error::host_failure(
+                    "host.scope.activation_rollback_failed",
+                    format!("activation failed: {error}; scope rollback failed: {cleanup_error}"),
+                ));
+            }
+            return Err(error);
         }
-        return Err(error);
-    }
+    };
 
     Ok(PluginScopeSet {
         manager,
         root_scope,
         plugin_scopes,
+        activation_order,
     })
+}
+
+fn expand_service_reload_domain(
+    plan: &RuntimeLoadPlan,
+    host_services: &HostServiceRegistry,
+    mut affected: BTreeSet<String>,
+) -> BTreeSet<String> {
+    let owners = host_services
+        .owned_entries()
+        .into_iter()
+        .filter_map(|(service_id, owner_plugin_id, _, _)| {
+            (!owner_plugin_id.is_empty()).then_some((service_id, owner_plugin_id))
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    loop {
+        let mut changed = false;
+        for manifest in &plan.plugins {
+            for requirement in &manifest.requires {
+                if requirement.kind != ContractSurfaceKind::Service {
+                    continue;
+                }
+                let Some(provider) = owners.get(&requirement.surface_id) else {
+                    continue;
+                };
+                if affected.contains(&manifest.plugin_id) || affected.contains(provider) {
+                    changed |= affected.insert(manifest.plugin_id.clone());
+                    changed |= affected.insert(provider.clone());
+                }
+            }
+        }
+        if !changed {
+            return affected;
+        }
+    }
 }
 
 struct ScopeOwnedRunner {
@@ -864,7 +979,13 @@ struct ManagementHandleEffect(Arc<dyn RunnerManagementHandle>);
 impl HostEffect for ManagementHandleEffect {
     fn dispose(&mut self) -> mutsuki_runtime_sdk::HostEffectFuture<'_> {
         let management = self.0.clone();
-        Box::pin(async move { management.dispose() })
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || management.dispose())
+                .await
+                .map_err(|error| {
+                    crate::error::host_failure("host.scope.management_join", error.to_string())
+                })?
+        })
     }
 }
 

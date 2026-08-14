@@ -1322,11 +1322,12 @@ impl LoadPlanLifecycleHook for LocalConnectionHook {
         }
     }
 
-    fn deactivate(&self) {
+    fn deactivate(&self) -> Result<(), String> {
         let connection_id = LOCAL_AGENT_CONNECTION_ID
             .parse()
             .expect("fixed local Agent connection id is valid");
         self.registry.remove_internal(&connection_id);
+        Ok(())
     }
 }
 
@@ -1392,18 +1393,16 @@ impl ConfiguredPluginFactory for ConfiguredLocalAgentPlugin {
                     runners: Vec::new(),
                     async_handlers: Vec::new(),
                     host_services: vec![
-                        RuntimeBootstrapperService {
-                            service_id: LOCAL_AGENT_SERVICE_ID.into(),
-                            capability: "agent.runtime.local".into(),
-                            service: runtime_service.clone(),
-                            rebindable: false,
-                        },
-                        RuntimeBootstrapperService {
-                            service_id: LOCAL_AGENT_MANAGEMENT_SERVICE_ID.into(),
-                            capability: "agent.session.manage".into(),
-                            service: management.clone(),
-                            rebindable: false,
-                        },
+                        RuntimeBootstrapperService::new(
+                            LOCAL_AGENT_SERVICE_ID,
+                            runtime_service.clone(),
+                            "agent.runtime.local",
+                        ),
+                        RuntimeBootstrapperService::new(
+                            LOCAL_AGENT_MANAGEMENT_SERVICE_ID,
+                            management.clone(),
+                            "agent.session.manage",
+                        ),
                     ],
                     resource_providers: Vec::new(),
                     async_resource_providers: Vec::new(),

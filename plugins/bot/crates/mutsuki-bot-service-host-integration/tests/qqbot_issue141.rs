@@ -226,12 +226,11 @@ async fn fake_gateway_delivers_private_group_channel_and_distinct_delete_once() 
                 manifest: loaded_flow_manifest.clone(),
                 runners: Vec::new(),
                 async_handlers: Vec::new(),
-                host_services: vec![mutsuki_runtime_sdk::RuntimeBootstrapperService {
-                    service_id: BOT_FLOW_REGISTRY_SERVICE_ID.into(),
-                    capability: "bot.flow".into(),
-                    service: service_registry.clone(),
-                    rebindable: false,
-                }],
+                host_services: vec![mutsuki_runtime_sdk::RuntimeBootstrapperService::new(
+                    BOT_FLOW_REGISTRY_SERVICE_ID,
+                    service_registry.clone(),
+                    "bot.flow",
+                )],
                 resource_providers: Vec::new(),
                 async_resource_providers: Vec::new(),
                 host_effects: Vec::new(),
