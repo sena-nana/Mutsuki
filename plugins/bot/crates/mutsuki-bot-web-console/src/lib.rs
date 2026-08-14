@@ -422,6 +422,24 @@ fn asset_version_stamp(bytes: &[u8]) -> String {
         .collect()
 }
 
+fn version_panel_module(
+    index_js: &mut String,
+    out_dir: &Path,
+    module_path: &str,
+) -> std::io::Result<()> {
+    let bytes = std::fs::read(out_dir.join(module_path))?;
+    let specifier = format!("\"./{module_path}\"");
+    if !index_js.contains(&specifier) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("console shell does not reference enabled panel module `{module_path}`"),
+        ));
+    }
+    let versioned = format!("\"./{module_path}?v={}\"", asset_version_stamp(&bytes));
+    *index_js = index_js.replace(&specifier, &versioned);
+    Ok(())
+}
+
 pub(crate) fn materialize_console_shell(
     out_dir: &Path,
     include_config: bool,
@@ -442,20 +460,24 @@ pub(crate) fn materialize_console_shell(
     let css = include_str!("../assets/mutsuki-ui.css");
     let css_v = asset_version_stamp(css.as_bytes());
 
-    let index_js = std::fs::read(out_dir.join("index.js")).unwrap_or_default();
-    let index_v = asset_version_stamp(&index_js);
-    let config_js = std::fs::read(out_dir.join("config").join("index.js")).unwrap_or_default();
-    let config_v = asset_version_stamp(&config_js);
+    let mut index_js = std::fs::read_to_string(out_dir.join("index.js"))?;
+    for (module_path, enabled) in [
+        ("config/index.js", include_config),
+        ("bilibili/index.js", include_bilibili),
+        ("qq-bot/index.js", include_qq),
+        ("bot-agent/index.js", include_agent_connections),
+        ("bot-flow/index.js", include_bot_flow),
+    ] {
+        if enabled {
+            version_panel_module(&mut index_js, out_dir, module_path)?;
+        }
+    }
+    let index_v = asset_version_stamp(index_js.as_bytes());
 
-    let bootstrap = bootstrap_template
-        .replace(
-            "from \"./index.js\"",
-            &format!("from \"./index.js?v={index_v}\""),
-        )
-        .replace(
-            "import(\"./config/index.js\")",
-            &format!("import(\"./config/index.js?v={config_v}\")"),
-        );
+    let bootstrap = bootstrap_template.replace(
+        "from \"./index.js\"",
+        &format!("from \"./index.js?v={index_v}\""),
+    );
     let bootstrap_v = asset_version_stamp(bootstrap.as_bytes());
     let web_sdk = include_bytes!("../../../../../hosts/web/packages/web-sdk/browser/web-sdk.js");
     let web_shell =
@@ -469,6 +491,7 @@ pub(crate) fn materialize_console_shell(
         );
 
     std::fs::write(out_dir.join("index.html"), index)?;
+    std::fs::write(out_dir.join("index.js"), index_js)?;
     std::fs::write(out_dir.join(bootstrap_name), bootstrap)?;
     std::fs::write(out_dir.join("mutsuki-ui.css"), css)?;
     std::fs::create_dir_all(out_dir.join("shared"))?;
@@ -521,5 +544,31 @@ mod owner_console_tests {
         let dirs = ConsoleAssetDirs::materialize(false, false, false, false, false, false).unwrap();
         assert!(!dirs.overview_assets.join("bot-agent").exists());
         assert!(!dirs.overview_assets.join("bot-flow").exists());
+    }
+
+    #[test]
+    fn enabled_panel_modules_use_their_materialized_content_versions() {
+        let dirs = ConsoleAssetDirs::materialize(true, false, true, true, true, true).unwrap();
+        let index = std::fs::read_to_string(dirs.overview_assets.join("index.js")).unwrap();
+        for module_path in [
+            "config/index.js",
+            "bilibili/index.js",
+            "qq-bot/index.js",
+            "bot-agent/index.js",
+            "bot-flow/index.js",
+        ] {
+            let bytes = std::fs::read(dirs.overview_assets.join(module_path)).unwrap();
+            let expected = format!("\"./{module_path}?v={}\"", asset_version_stamp(&bytes));
+            assert!(index.contains(&expected), "missing versioned {module_path}");
+        }
+    }
+
+    #[test]
+    fn enabled_panel_with_missing_assets_fails_materialization() {
+        let root = tempfile::tempdir().unwrap();
+        materialize_overview_assets(root.path()).unwrap();
+        let error = materialize_console_shell(root.path(), true, false, false, false, false, false)
+            .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
     }
 }

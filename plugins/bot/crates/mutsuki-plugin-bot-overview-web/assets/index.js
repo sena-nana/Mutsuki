@@ -620,22 +620,41 @@ async function renderOps(content, rpc, app, state, go) {
   else await renderLifecycle(body, rpc, app);
 }
 
+const panelModules = new Map();
+const panelModuleAttempts = new Map();
+
+async function loadPanelModule(panelId, specifier) {
+  const cached = panelModules.get(panelId);
+  if (cached) return cached;
+
+  const attempt = (panelModuleAttempts.get(panelId) || 0) + 1;
+  panelModuleAttempts.set(panelId, attempt);
+  const separator = specifier.includes("?") ? "&" : "?";
+  const request = import(`${specifier}${separator}attempt=${attempt}`).catch((error) => {
+    if (panelModules.get(panelId) === request) panelModules.delete(panelId);
+    throw error;
+  });
+  panelModules.set(panelId, request);
+  return request;
+}
+
 async function renderConfig(content, rpc) {
   try {
-    const mod = await import("./config/index.js");
+    const mod = await loadPanelModule("config", "./config/index.js");
     if (typeof mod.mountConfigPanel !== "function") {
       content.appendChild(emptyBlock("配置页面暂时不可用，请刷新后重试。"));
       return;
     }
     mod.mountConfigPanel(content, rpc);
   } catch (err) {
+    console.error("Config panel failed to load", err);
     content.innerHTML = `<div class="error-banner"><strong>配置页不可用</strong><div class="muted">请刷新后重试。</div></div>`;
   }
 }
 
 async function renderBilibili(content, rpc) {
   try {
-    const mod = await import("./bilibili/index.js");
+    const mod = await loadPanelModule("bilibili", "./bilibili/index.js");
     if (typeof mod.mountBilibiliPanel !== "function") {
       content.appendChild(
         emptyBlock("B站推送扩展未提供 mountBilibiliPanel；请确认 bilibili 插件已装配。"),
@@ -644,45 +663,49 @@ async function renderBilibili(content, rpc) {
     }
     mod.mountBilibiliPanel(content, rpc);
   } catch (err) {
-    content.innerHTML = `<div class="error-banner"><strong>B站推送页不可用</strong><div class="muted">${escapeHtml(formatRpcError(err))}</div></div>`;
+    console.error("Bilibili panel failed to load", err);
+    content.innerHTML = `<div class="error-banner"><strong>B站推送页不可用</strong><div class="muted">请刷新后重试。</div></div>`;
   }
 }
 
 async function renderQqBot(content, rpc) {
   try {
-    const mod = await import("./qq-bot/index.js");
+    const mod = await loadPanelModule("qq-bot", "./qq-bot/index.js");
     if (typeof mod.mountQqBotPanel !== "function") {
       content.appendChild(emptyBlock("QQ 管理页面暂时不可用，请刷新后重试。"));
       return;
     }
     mod.mountQqBotPanel(content, rpc);
   } catch (err) {
+    console.error("QQ management panel failed to load", err);
     content.innerHTML = `<div class="error-banner"><strong>QQ 管理页不可用</strong><div class="muted">请刷新后重试。</div></div>`;
   }
 }
 
 async function renderAgentConnections(content, rpc) {
   try {
-    const mod = await import("./bot-agent/index.js");
+    const mod = await loadPanelModule("bot-agent", "./bot-agent/index.js");
     if (typeof mod.mountAgentConnectionsPanel !== "function") {
       content.appendChild(emptyBlock("Agent 管理页面暂时不可用，请刷新后重试。"));
       return;
     }
     await mod.mountAgentConnectionsPanel(content, rpc);
   } catch (err) {
+    console.error("Agent management panel failed to load", err);
     content.innerHTML = `<div class="error-banner"><strong>Agent 管理页不可用</strong><div class="muted">请刷新后重试。</div></div>`;
   }
 }
 
 async function renderBotFlow(content, rpc) {
   try {
-    const mod = await import("./bot-flow/index.js");
+    const mod = await loadPanelModule("bot-flow", "./bot-flow/index.js");
     if (typeof mod.mountBotFlowEditor !== "function") {
       content.appendChild(emptyBlock("流程编排页面暂时不可用，请刷新后重试。"));
       return;
     }
     await mod.mountBotFlowEditor(content, rpc);
   } catch (err) {
+    console.error("Bot Flow panel failed to load", err);
     content.innerHTML = `<div class="error-banner"><strong>流程编排页不可用</strong><div class="muted">请刷新后重试。</div></div>`;
   }
 }

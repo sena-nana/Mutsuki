@@ -196,7 +196,9 @@ async fn embedded_console_with_config_shell() {
         !bootstrap.contains("page === \"config\""),
         "config must not remount a separate shell via ?page=config"
     );
-    let config_js = http_get_body(&addr, "/config/index.js").await;
+    let shell_js = http_get_body(&addr, "/index.js").await;
+    let config_path = versioned_module_path(&shell_js, "./config/index.js");
+    let config_js = http_get_body(&addr, &format!("/{config_path}&attempt=1")).await;
     assert!(config_js.contains("export function mountConfigPanel"));
 
     host.stop().await.unwrap();
@@ -414,6 +416,19 @@ async fn embedded_console_mounts_qq_management_extension() {
     assert!(!dirs.qq_assets.as_os_str().is_empty());
     host.stop().await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
+}
+
+fn versioned_module_path(shell_js: &str, module_path: &str) -> String {
+    let start = shell_js
+        .find(module_path)
+        .unwrap_or_else(|| panic!("shell does not reference {module_path}"));
+    let path = &shell_js[start + 2..];
+    let end = path
+        .find('"')
+        .unwrap_or_else(|| panic!("unterminated module specifier for {module_path}"));
+    let path = &path[..end];
+    assert!(path.contains("?v="), "module path is not versioned: {path}");
+    path.to_string()
 }
 
 async fn http_get_body(addr: &str, path: &str) -> String {
