@@ -2,6 +2,9 @@
 
 [简体中文](README.zh-CN.md)
 
+> **AI implementation notice:** This project was implemented entirely by AI from start to finish
+> and contains no human-written components.
+
 Mutsuki is a domain-neutral meta-framework for **spatiotemporal composition** and
 **provenance-aware execution**. It defines how capability-bearing systems are assembled, evolved,
 executed, and inspected without binding their business semantics to one application, language, or
