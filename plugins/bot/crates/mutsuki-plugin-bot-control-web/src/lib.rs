@@ -3,6 +3,7 @@
 //! Read-only methods require the `runtime.read` capability; mutating ops require
 //! `runtime.write` from the WebHost-authenticated RPC context.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use mutsuki_runtime_contracts::{CancelPolicy, TaskHandle};
@@ -14,8 +15,13 @@ use mutsuki_service_control::{
     RuntimeStatisticsView, ServiceStatus, TaskEventPage, TaskEventsAfterParam, TaskSnapshot,
     TaskSubmitBatchParam, TaskSubmitBatchResponse,
 };
-use mutsuki_web_extension::{ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor};
-use mutsuki_web_protocol::{EXTENSION_MANIFEST_VERSION, ExtensionManifest, WEB_PROTOCOL_VERSION};
+use mutsuki_web_extension::{
+    ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, content_hash,
+};
+use mutsuki_web_protocol::{
+    AssetEntry, EXTENSION_MANIFEST_VERSION, ExtensionManifest, WEB_PROTOCOL_VERSION,
+    WebFrontendAssets,
+};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -227,25 +233,43 @@ impl ControlRpcCaller {
 
 pub struct ControlWebExtension {
     caller: ControlRpcCaller,
+    assets_root: Option<PathBuf>,
 }
 
 impl ControlWebExtension {
     pub fn new(caller: ControlRpcCaller) -> Self {
-        Self { caller }
+        Self {
+            caller,
+            assets_root: None,
+        }
     }
 
     pub fn from_handler(control: Arc<dyn ControlHandler>, token: impl Into<String>) -> Self {
         Self::new(ControlRpcCaller::new(control, token))
     }
+
+    #[must_use]
+    pub fn with_frontend_assets(mut self, root: impl Into<PathBuf>) -> Self {
+        self.assets_root = Some(root.into());
+        self
+    }
 }
 
 impl WebExtension for ControlWebExtension {
     fn descriptor(&self) -> WebExtensionDescriptor {
-        manifest()
+        manifest(
+            self.frontend_assets()
+                .map(|assets| assets.manifest.assets)
+                .unwrap_or_default(),
+        )
     }
 
-    fn frontend_assets(&self) -> Option<mutsuki_web_protocol::WebFrontendAssets> {
-        None
+    fn frontend_assets(&self) -> Option<WebFrontendAssets> {
+        let root = self.assets_root.as_ref()?;
+        Some(WebFrontendAssets {
+            manifest: load_manifest(root).ok()?,
+            root_dir: root.clone(),
+        })
     }
 
     fn register_rpc(&self, ctx: &mut RpcRegistry) -> Result<(), ExtensionError> {
@@ -402,8 +426,9 @@ impl WebExtension for ControlWebExtension {
 
     fn register_events(
         &self,
-        _ctx: &mut mutsuki_web_extension::EventRegistry,
+        ctx: &mut mutsuki_web_extension::EventRegistry,
     ) -> Result<(), ExtensionError> {
+        ctx.register_topic("changed");
         Ok(())
     }
 }
@@ -418,20 +443,36 @@ fn encode_web<T: Serialize>(value: T) -> Result<Value, ExtensionError> {
         .map_err(|error| ExtensionError::Registration(format!("encode control response: {error}")))
 }
 
-fn manifest() -> ExtensionManifest {
+fn manifest(assets: Vec<AssetEntry>) -> ExtensionManifest {
     ExtensionManifest {
         manifest_version: EXTENSION_MANIFEST_VERSION,
         id: PLUGIN_ID.into(),
         version: PLUGIN_VERSION.into(),
-        entry: String::new(),
+        entry: "index.js".into(),
         capabilities: vec![
             CAPABILITY_RUNTIME_READ.into(),
             CAPABILITY_RUNTIME_WRITE.into(),
         ],
-        permissions: vec![],
-        assets: vec![],
+        permissions: vec!["pages".into(), "navigation".into()],
+        assets,
         protocol_version: WEB_PROTOCOL_VERSION.into(),
     }
+}
+
+fn load_manifest(root: &Path) -> Result<ExtensionManifest, ExtensionError> {
+    let bytes = std::fs::read(root.join("index.js"))
+        .map_err(|error| ExtensionError::Manifest(error.to_string()))?;
+    Ok(manifest(vec![AssetEntry {
+        path: "index.js".into(),
+        content_hash: content_hash(&bytes),
+        bytes: bytes.len() as u64,
+    }]))
+}
+
+pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::Error> {
+    std::fs::create_dir_all(out_dir)?;
+    std::fs::write(out_dir.join("index.js"), include_str!("../assets/index.js"))?;
+    Ok(out_dir.to_path_buf())
 }
 
 fn run_control_future<F>(future: F) -> ControlResponse
@@ -479,6 +520,8 @@ fn unexpected_control_result(expected: &str, actual: &ControlResult) -> ControlR
 pub struct FixtureControlHandler {
     pub fail_statistics: bool,
     pub mutations: Arc<std::sync::Mutex<Vec<String>>>,
+    pub uptime_ms: Arc<std::sync::atomic::AtomicU64>,
+    pub service_status_calls: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl Default for FixtureControlHandler {
@@ -486,6 +529,8 @@ impl Default for FixtureControlHandler {
         Self {
             fail_statistics: false,
             mutations: Arc::new(std::sync::Mutex::new(Vec::new())),
+            uptime_ms: Arc::new(std::sync::atomic::AtomicU64::new(12_345)),
+            service_status_calls: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 }
@@ -514,6 +559,8 @@ impl ControlHandler for FixtureControlHandler {
         let ok = request.token == "local-dev" || request.token == "fixture";
         let command = request.command;
         let fail_statistics = self.fail_statistics;
+        let uptime_ms = self.uptime_ms.clone();
+        let service_status_calls = self.service_status_calls.clone();
         let fixture = self.clone();
         Box::pin(async move {
             if !ok {
@@ -521,10 +568,11 @@ impl ControlHandler for FixtureControlHandler {
             }
             match command {
                 ControlCommand::ServiceStatus => {
+                    service_status_calls.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
                     ControlResponse::ok(ControlResult::ServiceStatus(ServiceStatus {
                         instance_id: "demo".into(),
                         profile: "dev".into(),
-                        uptime_ms: 12_345,
+                        uptime_ms: u128::from(uptime_ms.load(std::sync::atomic::Ordering::Acquire)),
                         ipc_endpoint: "local://demo".into(),
                         core_running: true,
                         plugin_count: 2,

@@ -62,14 +62,27 @@ export interface PageRegistration {
   id: string;
   path: string;
   title: string;
-  component: unknown;
+  component: PageComponent;
   requiredCapability?: string;
+}
+
+export interface PageComponent {
+  mount(element: HTMLElement): void | Disposable | Promise<void | Disposable>;
+}
+
+export interface ActivityRegistration {
+  id: string;
+  label: string;
+  icon: string;
+  order?: number;
+  position?: "top" | "bottom";
 }
 
 export interface NavigationRegistration {
   id: string;
+  activityId: string;
+  pageId: string;
   label: string;
-  path: string;
   order?: number;
   requiredCapability?: string;
 }
@@ -89,6 +102,7 @@ export interface CommandRegistration {
 }
 
 export interface ExtensionContext {
+  activities: Registry<ActivityRegistration>;
   pages: Registry<PageRegistration>;
   navigation: Registry<NavigationRegistration>;
   slots: Registry<SlotRegistration>;
@@ -661,6 +675,9 @@ export function createRegistry<T extends { id: string }>(): Registry<T> & {
   const items = new Map<string, T>();
   return {
     register(item) {
+      if (items.has(item.id)) {
+        throw new Error(`duplicate registration id: ${item.id}`);
+      }
       items.set(item.id, item);
       return {
         dispose() {

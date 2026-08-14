@@ -97,6 +97,11 @@ stale descriptor 和未授权 surface 必须结构化失败。v1 不因此声明
 
 ## 3. Task 与 Runner 接口
 
+ServiceHost 的 Web 控制台通过 owner revision 做快照失效，不复制运行时状态协议：
+`ControlChangeEvent` 只携带单调 revision 与受影响的 Tasks、Runners、EventSources、Plugins
+或 Logs 域，消费者随后调用既有受鉴权 control RPC 读取权威快照。Task change revision
+覆盖 TaskPool 可见状态迁移；终态等待继续使用独立的 completion subscription，二者语义不得混用。
+
 `Task.protocol_id` 是当前调度事实源。wire shape 不包含额外 task kind 兼容字段。
 
 ```text

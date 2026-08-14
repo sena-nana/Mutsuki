@@ -8,9 +8,10 @@ use mutsuki_bot_service_host_integration::{
     LocalAgentConsoleBridge, QqConsoleBridge,
 };
 use mutsuki_bot_web_console::{
-    BotAgentConsoleServices, ConsoleAssetDirs, SecretKeyResolver, SecretMonitor, WebConsoleConfig,
-    WebConsolePaths, WebConsoleSecrets, attach_revision_changed_bridge,
-    build_console_host_with_agent,
+    BotAgentConsoleServices, ConsoleAssetDirs, ControlChangeBridge, ManagementChangeBridge,
+    SecretKeyResolver, SecretMonitor, WebConsoleConfig, WebConsolePaths, WebConsoleSecrets,
+    attach_control_changed_bridge, attach_management_changed_bridges,
+    attach_revision_changed_bridge, build_console_host_with_agent,
 };
 use mutsuki_plugin_bot_adapter_qqbot::QQBOT_ADAPTER_PLUGIN_ID;
 use mutsuki_plugin_bot_agent::BOT_AGENT_BRIDGE_PLUGIN_ID;
@@ -32,6 +33,8 @@ pub enum WebConsoleError {
 pub struct WebConsoleGuard {
     host: MutsukiWebHost,
     _config_watch: mutsuki_config_service::ConfigWatchSubscription,
+    _control_changes: ControlChangeBridge,
+    _management_changes: ManagementChangeBridge,
     _assets: ConsoleAssetDirs,
 }
 
@@ -68,6 +71,8 @@ impl WebConsoleGuard {
         };
         let secrets = resolve_secrets(service, &config)?;
         let secret_monitor = build_secret_monitor(service, &config);
+        let bilibili = BilibiliConsoleBridge::get(runtime);
+        let qq = QqConsoleBridge::get(runtime);
         let (host, assets) = build_console_host_with_agent(
             &config,
             &secrets,
@@ -76,8 +81,8 @@ impl WebConsoleGuard {
             Some(config_service.clone()),
             secret_monitor,
             &WebConsolePaths::resolve(product_root, &config),
-            BilibiliConsoleBridge::get(runtime),
-            QqConsoleBridge::get(runtime),
+            bilibili.clone(),
+            qq.clone(),
             BotAgentConsoleServices {
                 connections: AgentConnectionConsoleBridge::get(runtime),
                 sessions: LocalAgentConsoleBridge::get(runtime),
@@ -93,9 +98,25 @@ impl WebConsoleGuard {
                     message: "started Web Console has no event bridge".into(),
                 }
             })?;
+        let control_changes =
+            attach_control_changed_bridge(&host, runtime.subscribe_control_changes()).ok_or_else(
+                || WebConsoleError::Config {
+                    code: "web.console.bridge_unavailable",
+                    message: "started Web Console has no event bridge".into(),
+                },
+            )?;
+        let management_changes =
+            attach_management_changed_bridges(&host, qq.as_ref(), bilibili.as_ref()).ok_or_else(
+                || WebConsoleError::Config {
+                    code: "web.console.bridge_unavailable",
+                    message: "started Web Console has no event bridge".into(),
+                },
+            )?;
         Ok(Some(Self {
             host,
             _config_watch: config_watch,
+            _control_changes: control_changes,
+            _management_changes: management_changes,
             _assets: assets,
         }))
     }

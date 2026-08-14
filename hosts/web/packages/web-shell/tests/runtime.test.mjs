@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createShellState, loadExtensions } from "../dist/runtime.js";
+import { createShellState, loadExtensions, validateShellState } from "../dist/runtime.js";
 
 function registry(label, disposed) {
   return {
@@ -13,6 +13,7 @@ function registry(label, disposed) {
 
 function context(disposed) {
   return {
+    activities: registry("activity", disposed),
     pages: registry("page", disposed),
     navigation: registry("navigation", disposed),
     slots: registry("slot", disposed),
@@ -65,4 +66,31 @@ test("extension scope rolls back setup failure and disposes successful effects i
 
   delete globalThis.__mutsukiSuccessfulExtension;
   delete globalThis.__mutsukiFailingExtension;
+});
+
+test("shell contract rejects dangling navigation and duplicate page paths", () => {
+  const state = createShellState();
+  state.activities.register({ id: "home", label: "Home", icon: "home" });
+  state.pages.register({
+    id: "one",
+    path: "/one",
+    title: "One",
+    component: { mount() {} },
+  });
+  state.navigation.register({
+    id: "one.nav",
+    activityId: "home",
+    pageId: "missing",
+    label: "Missing",
+  });
+  assert.throws(() => validateShellState(state), /missing page/);
+
+  state.navigation.clear();
+  state.pages.register({
+    id: "two",
+    path: "/one",
+    title: "Two",
+    component: { mount() {} },
+  });
+  assert.throws(() => validateShellState(state), /duplicate page path/);
 });

@@ -425,7 +425,7 @@ function buildForm(schema, draft, onChange) {
 }
 
 /** Embeddable config panel (no outer console shell). Used by the unified overview shell. */
-export function mountConfigPanel(host, rpc) {
+export function mountConfigPanel(host, rpc, events) {
   const state = {
     providers: [],
     selected: null,
@@ -613,8 +613,7 @@ export function mountConfigPanel(host, rpc) {
     }
   }
 
-  if (typeof rpc.subscribe === "function") {
-    rpc.subscribe("config.revision_changed", (payload) => {
+  const revisionSubscription = events?.subscribe("config.revision_changed", (payload) => {
       if (!state.selected) return;
       const provider = payload?.provider_id?.value || payload?.provider_id;
       if (provider && provider !== state.selected) return;
@@ -629,10 +628,13 @@ export function mountConfigPanel(host, rpc) {
         state.message = "检测到配置已在其他页面更新";
         render();
       }
-    });
-  }
+    }, "config.schema.read");
 
-  refreshProviders();
+  refreshProviders().catch(() => {
+    state.message = "配置加载失败，请稍后重试";
+    render();
+  });
+  root.destroy = () => revisionSubscription?.dispose();
   return root;
 }
 
@@ -719,8 +721,9 @@ export default {
     });
     ctx.navigation.register({
       id: "config.nav",
+      activityId: "settings",
+      pageId: "config.page",
       label: "配置",
-      path: "/config",
       order: 10,
       requiredCapability: "config.schema.read",
     });
@@ -730,7 +733,8 @@ export default {
       title: "配置",
       component: {
         mount(el) {
-          mountConfigConsole(el, ctx.rpc);
+          const panel = mountConfigPanel(el, ctx.rpc, ctx.events);
+          return { dispose: () => panel?.destroy?.() };
         },
       },
       requiredCapability: "config.schema.read",

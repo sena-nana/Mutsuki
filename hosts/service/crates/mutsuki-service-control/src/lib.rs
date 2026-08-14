@@ -4,6 +4,7 @@ use std::pin::Pin;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::sync::broadcast;
 
 use mutsuki_runtime_contracts::{RuntimeEvent, ScalarValue, TaskBatch, TaskHandle};
 
@@ -11,6 +12,48 @@ pub type ControlFuture = Pin<Box<dyn Future<Output = ControlResponse> + Send>>;
 
 pub trait ControlHandler: Send + Sync + 'static {
     fn handle(&self, request: ControlRequest) -> ControlFuture;
+}
+
+/// Authoritative Service control-plane projections invalidated by a committed owner change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlChangeDomain {
+    Tasks,
+    Runners,
+    EventSources,
+    Plugins,
+    Logs,
+}
+
+/// Lightweight invalidation event. Consumers must read the existing control RPC for the snapshot.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ControlChangeEvent {
+    pub revision: u64,
+    pub domains: Vec<ControlChangeDomain>,
+}
+
+/// Bounded, cancellable subscription to control-plane invalidations.
+///
+/// A lagged consumer receives the newest available event and must perform a full snapshot read;
+/// no business state is carried by this channel.
+pub struct ControlChangeSubscription {
+    receiver: broadcast::Receiver<ControlChangeEvent>,
+}
+
+impl ControlChangeSubscription {
+    pub fn new(receiver: broadcast::Receiver<ControlChangeEvent>) -> Self {
+        Self { receiver }
+    }
+
+    pub async fn changed(&mut self) -> Option<ControlChangeEvent> {
+        loop {
+            match self.receiver.recv().await {
+                Ok(event) => return Some(event),
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => return None,
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

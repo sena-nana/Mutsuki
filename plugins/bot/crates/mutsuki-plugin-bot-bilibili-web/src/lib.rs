@@ -245,8 +245,9 @@ impl WebExtension for BilibiliWebExtension {
 
     fn register_events(
         &self,
-        _ctx: &mut mutsuki_web_extension::EventRegistry,
+        ctx: &mut mutsuki_web_extension::EventRegistry,
     ) -> Result<(), ExtensionError> {
+        ctx.register_topic("changed");
         Ok(())
     }
 }

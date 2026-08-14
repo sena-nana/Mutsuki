@@ -171,9 +171,25 @@ pub trait HostEventSource: Send + 'static {
     fn health(&self) -> HostEventSourceHealth;
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct EventSourceSupervisor {
     sources: Arc<Mutex<BTreeMap<String, ManagedSource>>>,
+    changed: Arc<dyn Fn() + Send + Sync>,
+}
+
+impl Default for EventSourceSupervisor {
+    fn default() -> Self {
+        Self::new(Arc::new(|| {}))
+    }
+}
+
+impl EventSourceSupervisor {
+    pub(crate) fn new(changed: Arc<dyn Fn() + Send + Sync>) -> Self {
+        Self {
+            sources: Arc::new(Mutex::new(BTreeMap::new())),
+            changed,
+        }
+    }
 }
 
 struct ManagedSource {
@@ -188,58 +204,81 @@ struct SourceExit {
 }
 
 #[derive(Clone)]
-struct SourceStatus(Arc<Mutex<EventSourceStatus>>);
+struct SourceStatus {
+    value: Arc<Mutex<EventSourceStatus>>,
+    changed: Arc<dyn Fn() + Send + Sync>,
+}
 
 impl SourceStatus {
-    fn new(descriptor: &HostEventSourceDescriptor) -> Self {
-        Self(Arc::new(Mutex::new(EventSourceStatus {
-            source_id: descriptor.source_id.clone(),
-            plugin_id: descriptor.plugin_id.clone(),
-            instance_id: descriptor.instance_id.clone(),
-            state: "starting".into(),
-            health: "unknown".into(),
-            last_error: None,
-            reconnects: 0,
-            last_event_unix_ms: None,
-            started_at_unix_ms: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .ok()
-                .map(|duration| duration.as_millis()),
-        })))
+    fn new(descriptor: &HostEventSourceDescriptor, changed: Arc<dyn Fn() + Send + Sync>) -> Self {
+        Self {
+            value: Arc::new(Mutex::new(EventSourceStatus {
+                source_id: descriptor.source_id.clone(),
+                plugin_id: descriptor.plugin_id.clone(),
+                instance_id: descriptor.instance_id.clone(),
+                state: "starting".into(),
+                health: "unknown".into(),
+                last_error: None,
+                reconnects: 0,
+                last_event_unix_ms: None,
+                started_at_unix_ms: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .ok()
+                    .map(|duration| duration.as_millis()),
+            })),
+            changed,
+        }
     }
 
     fn snapshot(&self) -> EventSourceStatus {
-        self.0.lock().expect("event source status mutex").clone()
+        self.value
+            .lock()
+            .expect("event source status mutex")
+            .clone()
     }
 
     fn set(&self, state: &str) {
-        self.0.lock().expect("event source status mutex").state = state.into();
+        let mut status = self.value.lock().expect("event source status mutex");
+        if status.state != state {
+            status.state = state.into();
+            drop(status);
+            (self.changed)();
+        }
     }
 
     fn fail(&self, error: String) {
-        let mut status = self.0.lock().expect("event source status mutex");
+        let mut status = self.value.lock().expect("event source status mutex");
         status.state = "failed".into();
         status.last_error = Some(error);
+        drop(status);
+        (self.changed)();
     }
 
     fn update_health(&self, health: HostEventSourceHealth) {
-        let mut status = self.0.lock().expect("event source status mutex");
+        let mut status = self.value.lock().expect("event source status mutex");
+        let before = (status.health.clone(), status.last_error.clone());
         status.health = health.label().into();
         if let HostEventSourceHealth::Degraded(error) | HostEventSourceHealth::Unhealthy(error) =
             health
         {
             status.last_error = Some(error);
         }
+        if before != (status.health.clone(), status.last_error.clone()) {
+            drop(status);
+            (self.changed)();
+        }
     }
 
     fn reconnect(&self) {
-        let mut status = self.0.lock().expect("event source status mutex");
+        let mut status = self.value.lock().expect("event source status mutex");
         status.reconnects = status.reconnects.saturating_add(1);
         status.state = "restarting".into();
+        drop(status);
+        (self.changed)();
     }
 
     fn submitted(&self, correlation_ids: &[Option<String>]) {
-        let mut status = self.0.lock().expect("event source status mutex");
+        let mut status = self.value.lock().expect("event source status mutex");
         status.last_event_unix_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .ok()
@@ -252,6 +291,8 @@ impl SourceStatus {
                 "event source submitted task"
             );
         }
+        drop(status);
+        (self.changed)();
     }
 }
 
@@ -270,7 +311,7 @@ impl EventSourceSupervisor {
     ) {
         let descriptor = source.descriptor().clone();
         let mut sources = self.sources.lock().expect("event source supervisor mutex");
-        let status = SourceStatus::new(&descriptor);
+        let status = SourceStatus::new(&descriptor, self.changed.clone());
         let (tx, rx) = mpsc::channel(4);
         let source_config = HostEventSourceConfig::from_service(config);
         let logger = HostEventSourceLogger {

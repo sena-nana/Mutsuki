@@ -273,4 +273,17 @@ export async function mountBotFlowEditor(el, rpc) {
   await refresh();
 }
 
-export default { id: "bot-flow-editor" };
+export default {
+  id: "bot-flow-editor",
+  setup(ctx) {
+    ctx.pages.register({
+      id: "bot-flow.page", path: "/flows", title: "流程编排",
+      component: { mount: (el) => mountBotFlowEditor(el, ctx.rpc) },
+      requiredCapability: "bot.flow.read",
+    });
+    ctx.navigation.register({
+      id: "bot-flow.nav", activityId: "automation", pageId: "bot-flow.page", label: "流程编排", order: 10,
+      requiredCapability: "bot.flow.read",
+    });
+  },
+};

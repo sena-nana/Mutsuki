@@ -7,8 +7,10 @@ function escapeHtml(value) {
 }
 
 function formatError(err) {
-  if (err && typeof err === "object" && err.message) return err.message;
-  return String(err ?? "unknown error");
+  const message = err && typeof err === "object" && err.message ? String(err.message) : "";
+  return message.startsWith("extension ") || message.includes("rpc ")
+    ? "操作失败，请稍后重试"
+    : message || "操作失败，请稍后重试";
 }
 
 function kv(label, value) {
@@ -56,7 +58,7 @@ function textInput(placeholder = "", value = "") {
  * @param {HTMLElement} host
  * @param {{ read: Function, write: Function }} rpc
  */
-export function mountBilibiliPanel(host, rpc) {
+export function mountBilibiliPanel(host, rpc, events) {
   host.innerHTML = "";
   const root = document.createElement("div");
   root.className = "bilibili-panel stack";
@@ -69,9 +71,21 @@ export function mountBilibiliPanel(host, rpc) {
   const bindBox = section("自助绑定");
   const msg = document.createElement("div");
   msg.className = "muted";
-  root.append(statusBox, qrBox, listBox, addBox, bindBox, msg);
+  const refreshButton = button("刷新", "ghost");
+  const toolbar = document.createElement("div");
+  toolbar.className = "toolbar";
+  toolbar.append(refreshButton, msg);
+  root.append(toolbar, statusBox, qrBox, listBox, addBox, bindBox);
 
-  let pollTimer = null;
+  let loginPollTimer = null;
+  let refreshTimer = null;
+  let eventTimer = null;
+  let refreshInFlight = null;
+  let pendingRefresh = false;
+  let lastRevision = 0;
+  let opened = false;
+  let disposed = false;
+  let formsBuilt = false;
   let status = null;
 
   function setMessage(text, isError = false) {
@@ -225,26 +239,26 @@ export function mountBilibiliPanel(host, rpc) {
     const startBtn = button("开始扫码登录", "");
     startBtn.onclick = async () => {
       try {
-        if (pollTimer) clearInterval(pollTimer);
+        if (loginPollTimer) clearInterval(loginPollTimer);
         const started = await rpc.write("bilibili", "login.start");
         img.src = `data:image/png;base64,${started.qr_png_base64}`;
         img.hidden = false;
         state.textContent = "等待扫码…";
-        pollTimer = setInterval(async () => {
+        loginPollTimer = setInterval(async () => {
           try {
             const polled = await rpc.read("bilibili", "login.poll");
             state.textContent = polled.message || polled.status;
             if (polled.status === "confirmed" || polled.status === "expired") {
-              clearInterval(pollTimer);
-              pollTimer = null;
+              clearInterval(loginPollTimer);
+              loginPollTimer = null;
               if (polled.status === "confirmed") {
                 img.hidden = true;
                 await refreshAll();
               }
             }
           } catch (err) {
-            clearInterval(pollTimer);
-            pollTimer = null;
+            clearInterval(loginPollTimer);
+            loginPollTimer = null;
             setMessage(formatError(err), true);
           }
         }, 2000);
@@ -360,19 +374,73 @@ export function mountBilibiliPanel(host, rpc) {
     bindBox.appendChild(form);
   }
 
-  async function refreshAll() {
-    setMessage("");
+  async function loadData() {
     await refreshStatus();
-    buildQrUi();
-    buildAddForm();
-    buildBindForm();
+    if (!formsBuilt) {
+      buildQrUi();
+      buildAddForm();
+      buildBindForm();
+      formsBuilt = true;
+    }
     await refreshList();
   }
 
-  refreshAll().catch((err) => setMessage(formatError(err), true));
+  function scheduleRefresh() {
+    clearTimeout(refreshTimer);
+    if (!disposed && !document.hidden) refreshTimer = setTimeout(() => void refreshAll(), 60_000);
+  }
+
+  function refreshAll() {
+    if (disposed) return Promise.resolve();
+    if (refreshInFlight) {
+      pendingRefresh = true;
+      return refreshInFlight;
+    }
+    refreshInFlight = loadData()
+      .catch((err) => {
+        if (!disposed) setMessage(formatError(err), true);
+      })
+      .finally(() => {
+        refreshInFlight = null;
+        if (pendingRefresh) {
+          pendingRefresh = false;
+          void refreshAll();
+        } else {
+          scheduleRefresh();
+        }
+      });
+    return refreshInFlight;
+  }
+
+  const visibility = () => {
+    clearTimeout(refreshTimer);
+    if (!document.hidden) void refreshAll();
+  };
+  const eventSubscription = events.subscribe("bilibili.changed", (payload) => {
+    const revision = Number(payload?.revision || 0);
+    if (revision <= lastRevision) return;
+    lastRevision = revision;
+    if (document.hidden) return;
+    clearTimeout(eventTimer);
+    eventTimer = setTimeout(() => void refreshAll(), 50);
+  }, "runtime.read");
+  const connectionSubscription = events.onStateChange?.((connection) => {
+    if (connection !== "open" || document.hidden) return;
+    if (opened) void refreshAll();
+    opened = true;
+  });
+  refreshButton.onclick = () => void refreshAll();
+  document.addEventListener("visibilitychange", visibility);
+  void refreshAll();
   return {
     destroy() {
-      if (pollTimer) clearInterval(pollTimer);
+      disposed = true;
+      if (loginPollTimer) clearInterval(loginPollTimer);
+      clearTimeout(refreshTimer);
+      clearTimeout(eventTimer);
+      eventSubscription.dispose();
+      connectionSubscription?.dispose();
+      document.removeEventListener("visibilitychange", visibility);
     },
   };
 }
@@ -382,8 +450,9 @@ export default {
   setup(ctx) {
     ctx.navigation.register({
       id: "bilibili.nav",
+      activityId: "bot",
+      pageId: "bilibili.page",
       label: "B站推送",
-      path: "/bilibili",
       order: 8,
       requiredCapability: "runtime.read",
     });
@@ -393,7 +462,8 @@ export default {
       title: "B站推送",
       component: {
         mount(el) {
-          mountBilibiliPanel(el, ctx.rpc);
+          const panel = mountBilibiliPanel(el, ctx.rpc, ctx.events);
+          return { dispose: () => panel?.destroy?.() };
         },
       },
       requiredCapability: "runtime.read",

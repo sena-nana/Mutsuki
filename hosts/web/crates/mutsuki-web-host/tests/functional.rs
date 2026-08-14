@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use futures::{SinkExt, StreamExt};
 use mutsuki_web_extension::content_hash;
 use mutsuki_web_extension::{
     EventRegistry, ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor,
@@ -13,6 +14,7 @@ use mutsuki_web_protocol::{
 };
 use tempfile::tempdir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio_tungstenite::tungstenite::Message as WsMessage;
 use uuid::Uuid;
 
 struct ExampleExtension {
@@ -231,6 +233,85 @@ async fn loads_extension_and_answers_rpc_over_bridge() {
 
     host.stop().await.unwrap();
     std::mem::forget(dir);
+}
+
+#[tokio::test]
+async fn subscribed_idle_socket_receives_event_without_follow_up_request() {
+    let dir = tempdir().unwrap();
+    let extension = ExampleExtension::ok(dir.path());
+    let mut host = start_host(false, Some(extension)).await;
+    let addr = host.listen_addr().unwrap();
+    let bridge = host.bridge().cloned().expect("bridge");
+    let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws"))
+        .await
+        .expect("connect websocket");
+
+    socket
+        .send(WsMessage::Binary(
+            mutsuki_web_protocol::WireMessage::Hello {
+                protocol_version: WEB_PROTOCOL_VERSION.into(),
+                capabilities: vec![],
+                auth_token: Some("test-token".into()),
+            }
+            .encode()
+            .unwrap()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let hello = socket.next().await.unwrap().unwrap().into_data();
+    assert!(matches!(
+        mutsuki_web_protocol::WireMessage::decode(&hello).unwrap(),
+        mutsuki_web_protocol::WireMessage::HelloAck { .. }
+    ));
+
+    let subscription_id = Uuid::new_v4();
+    socket
+        .send(WsMessage::Binary(
+            mutsuki_web_protocol::WireMessage::Subscribe(mutsuki_web_protocol::EventSubscription {
+                subscription_id,
+                topic: "ticks".into(),
+                required_capability: None,
+            })
+            .encode()
+            .unwrap()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    socket
+        .send(WsMessage::Binary(
+            mutsuki_web_protocol::WireMessage::Ping
+                .encode()
+                .unwrap()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    let pong = socket.next().await.unwrap().unwrap().into_data();
+    assert!(matches!(
+        mutsuki_web_protocol::WireMessage::decode(&pong).unwrap(),
+        mutsuki_web_protocol::WireMessage::Pong
+    ));
+
+    bridge
+        .publish_event("ticks", serde_json::json!({ "value": 7 }))
+        .unwrap();
+    let event = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .expect("idle socket must receive event")
+        .unwrap()
+        .unwrap()
+        .into_data();
+    match mutsuki_web_protocol::WireMessage::decode(&event).unwrap() {
+        mutsuki_web_protocol::WireMessage::Event(event) => {
+            assert_eq!(event.subscription_id, subscription_id);
+            assert_eq!(event.payload, serde_json::json!({ "value": 7 }));
+        }
+        other => panic!("expected event, got {other:?}"),
+    }
+
+    host.stop().await.unwrap();
 }
 
 #[tokio::test]

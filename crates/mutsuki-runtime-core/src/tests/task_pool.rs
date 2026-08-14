@@ -4,6 +4,29 @@ use serde_json::json;
 use crate::*;
 
 use super::fixtures::*;
+
+#[test]
+fn task_pool_revision_tracks_committed_state_not_reads() {
+    let descriptor = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
+    let mut pool = TaskPool::default();
+    let initial = pool.revision();
+    let _ = pool.statistics();
+    assert_eq!(pool.revision(), initial);
+
+    pool.enqueue(Task::new("revision-task", "sim.work", json!({})))
+        .unwrap();
+    let submitted = pool.revision();
+    assert!(submitted > initial);
+    let lease = pool
+        .claim_ready_for_executor(&descriptor, "executor", 1, 0, 1)
+        .remove(0)
+        .0;
+    let claimed = pool.revision();
+    assert!(claimed > submitted);
+    pool.complete(&lease, 1).unwrap();
+    assert!(pool.revision() > claimed);
+}
+
 #[test]
 fn task_pool_claims_ready_tasks_in_deterministic_order() {
     let descriptor = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);

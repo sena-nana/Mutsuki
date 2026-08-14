@@ -1,10 +1,17 @@
-import { createWebShellRuntime } from "./shared/web-shell.js";
-import { mountConsole, loadConsoleOptions, applyConsoleTheme } from "./index.js";
+import { createWebShellRuntime, mountWebShell } from "./shared/web-shell.js";
+import { applyConsoleTheme } from "./extensions/overview/index.js";
 
 applyConsoleTheme();
 const protocol = location.protocol === "https:" ? "wss" : "ws";
 const app = document.getElementById("app");
 let activeShell = null;
+let activeMount = null;
+
+async function loadConsoleOptions() {
+  const response = await fetch("./console-options.json", { cache: "no-store" });
+  if (!response.ok) throw new Error(`console options unavailable (${response.status})`);
+  return response.json();
+}
 
 async function authenticate(authToken) {
   const shell = createWebShellRuntime({
@@ -13,13 +20,21 @@ async function authenticate(authToken) {
   });
   try {
     await shell.connect();
-    const options = await loadConsoleOptions();
-    activeShell = shell;
-    app.replaceChildren();
-    mountConsole(app, shell.bridge, options);
   } catch (error) {
     shell.dispose();
-    throw error;
+    throw new Error("auth_failed", { cause: error });
+  }
+  try {
+    const options = await loadConsoleOptions();
+    shell.configureActivities(options.activities);
+    await shell.load(options.extensions);
+    activeShell = shell;
+    app.replaceChildren();
+    activeMount = mountWebShell(app, shell, { brand: "Mutsuki", homePageId: "overview.page" });
+  } catch (error) {
+    shell.dispose();
+    console.error("console setup failed", error);
+    throw new Error("setup_failed", { cause: error });
   }
 }
 
@@ -66,11 +81,14 @@ function mountLogin(message = "") {
     button.textContent = "正在登录…";
     try {
       await authenticate(token);
-    } catch (_error) {
-      mountLogin("访问令牌无效，请重试。");
+    } catch (error) {
+      mountLogin(error?.message === "auth_failed" ? "访问令牌无效，请重试。" : "控制台加载失败，请重试。");
     }
   });
 }
 
 mountLogin();
-window.addEventListener("pagehide", () => activeShell?.dispose(), { once: true });
+window.addEventListener("pagehide", () => {
+  activeMount?.dispose();
+  activeShell?.dispose();
+}, { once: true });

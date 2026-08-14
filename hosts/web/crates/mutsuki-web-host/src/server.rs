@@ -192,8 +192,24 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Resp
 async fn handle_socket(socket: WebSocket, state: AppState) {
     let (mut sender, mut receiver) = socket.split();
     let mut session_id: Option<Uuid> = None;
+    let mut event_ready: Option<Arc<tokio::sync::Notify>> = None;
 
-    while let Some(message) = receiver.next().await {
+    loop {
+        let message = if let Some(notifier) = event_ready.as_ref() {
+            tokio::select! {
+                message = receiver.next() => message,
+                _ = notifier.notified() => {
+                    let Some(sid) = session_id else { continue };
+                    if !send_queued_events(&mut sender, &state, sid).await {
+                        break;
+                    }
+                    continue;
+                }
+            }
+        } else {
+            receiver.next().await
+        };
+        let Some(message) = message else { break };
         let Ok(message) = message else {
             break;
         };
@@ -229,6 +245,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             Ok(HandleOutcome::Reply(reply)) => {
                 if let WireMessage::HelloAck { session, .. } = &reply {
                     session_id = Some(session.session_id);
+                    event_ready = state.bridge.session_event_notifier(session.session_id);
                 }
                 if let Ok(bytes) = reply.encode()
                     && sender.send(Message::Binary(bytes.into())).await.is_err()
@@ -244,16 +261,9 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             }
         }
 
-        // Event delivery is pull-on-activity (pong/rpc), never a busy poll loop.
         if let Some(sid) = session_id {
-            let events = state.bridge.take_events(sid);
-            state.bridge.set_ws_queue_depth(events.len() as u64);
-            for event in events {
-                if let Ok(bytes) = WireMessage::Event(event).encode()
-                    && sender.send(Message::Binary(bytes.into())).await.is_err()
-                {
-                    break;
-                }
+            if !send_queued_events(&mut sender, &state, sid).await {
+                break;
             }
         }
     }
@@ -265,6 +275,23 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     state
         .bridge
         .set_connections(state.connections.load(Ordering::Relaxed));
+}
+
+async fn send_queued_events(
+    sender: &mut futures::stream::SplitSink<WebSocket, Message>,
+    state: &AppState,
+    session_id: Uuid,
+) -> bool {
+    let events = state.bridge.take_events(session_id);
+    state.bridge.set_ws_queue_depth(events.len() as u64);
+    for event in events {
+        if let Ok(bytes) = WireMessage::Event(event).encode()
+            && sender.send(Message::Binary(bytes.into())).await.is_err()
+        {
+            return false;
+        }
+    }
+    true
 }
 
 fn binary_error(code: &str, message: &str) -> Message {

@@ -212,6 +212,15 @@ impl WebBridge {
         self.inner.sessions.drain_events(session_id)
     }
 
+    /// Returns the wake signal for events queued to one authenticated session.
+    ///
+    /// The signal is only a readiness hint. Callers must drain the bounded
+    /// session queue after every wake and may also drain after inbound traffic
+    /// to cover publish/receive races.
+    pub fn session_event_notifier(&self, session_id: Uuid) -> Option<Arc<tokio::sync::Notify>> {
+        self.inner.sessions.event_notifier(session_id)
+    }
+
     pub fn close_session(&self, session_id: Uuid) {
         self.inner.sessions.close(session_id);
         self.inner.metrics.dec_sessions();
@@ -451,7 +460,8 @@ fn rpc_error(id: Uuid, code: &str, message: String) -> RpcResponse {
 mod tests {
     use super::*;
     use mutsuki_web_extension::ExtensionRegistry;
-    use mutsuki_web_protocol::DEFAULT_BUDGETS;
+    use mutsuki_web_protocol::{DEFAULT_BUDGETS, EventSubscription};
+    use std::time::Duration;
 
     #[test]
     fn capability_is_enforced_server_side() {
@@ -544,5 +554,91 @@ mod tests {
             )
             .unwrap_err();
         assert!(matches!(err, ProtocolError::PayloadTooLarge { .. }));
+    }
+
+    #[tokio::test]
+    async fn event_publish_wakes_only_matching_session_and_preserves_order() {
+        let bridge = WebBridge::new(
+            DEFAULT_BUDGETS,
+            ExtensionRegistry::new(DEFAULT_BUDGETS),
+            AuthPolicy::allow_local(vec!["host.read".into()]),
+            false,
+        );
+        let open_session = || match bridge
+            .handle_message(
+                None,
+                WireMessage::Hello {
+                    protocol_version: WEB_PROTOCOL_VERSION.into(),
+                    capabilities: vec![],
+                    auth_token: Some("local-dev".into()),
+                },
+            )
+            .unwrap()
+        {
+            HandleOutcome::Reply(WireMessage::HelloAck { session, .. }) => session.session_id,
+            _ => panic!("expected hello ack"),
+        };
+        let subscribed = open_session();
+        let idle = open_session();
+        let subscription_id = Uuid::new_v4();
+        bridge
+            .handle_message(
+                Some(subscribed),
+                WireMessage::Subscribe(EventSubscription {
+                    subscription_id,
+                    topic: "config.revision_changed".into(),
+                    required_capability: None,
+                }),
+            )
+            .unwrap();
+
+        let subscribed_ready = bridge.session_event_notifier(subscribed).unwrap();
+        let idle_ready = bridge.session_event_notifier(idle).unwrap();
+        bridge
+            .publish_event(
+                "config.revision_changed",
+                serde_json::json!({ "revision": 1 }),
+            )
+            .unwrap();
+        bridge
+            .publish_event(
+                "config.revision_changed",
+                serde_json::json!({ "revision": 2 }),
+            )
+            .unwrap();
+
+        tokio::time::timeout(Duration::from_millis(100), subscribed_ready.notified())
+            .await
+            .expect("matching session must wake");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), idle_ready.notified())
+                .await
+                .is_err(),
+            "unmatched session must stay idle"
+        );
+        let events = bridge.take_events(subscribed);
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].sequence, 1);
+        assert_eq!(events[1].sequence, 2);
+
+        bridge
+            .handle_message(
+                Some(subscribed),
+                WireMessage::Unsubscribe { subscription_id },
+            )
+            .unwrap();
+        bridge
+            .publish_event(
+                "config.revision_changed",
+                serde_json::json!({ "revision": 3 }),
+            )
+            .unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), subscribed_ready.notified())
+                .await
+                .is_err(),
+            "unsubscribed session must stay idle"
+        );
+        assert!(bridge.take_events(subscribed).is_empty());
     }
 }

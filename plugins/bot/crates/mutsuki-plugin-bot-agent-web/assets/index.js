@@ -141,4 +141,17 @@ export async function mountAgentConnectionsPanel(el, rpc) {
   await Promise.all([refresh(), refreshSessions()]);
 }
 
-export default { id: "bot-agent" };
+export default {
+  id: "bot-agent",
+  setup(ctx) {
+    ctx.pages.register({
+      id: "bot-agent.page", path: "/agent", title: "Agent",
+      component: { mount: (el) => mountAgentConnectionsPanel(el, ctx.rpc) },
+      requiredCapability: "runtime.read",
+    });
+    ctx.navigation.register({
+      id: "bot-agent.nav", activityId: "bot", pageId: "bot-agent.page", label: "Agent", order: 30,
+      requiredCapability: "runtime.read",
+    });
+  },
+};
