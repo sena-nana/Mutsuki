@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createShellState, loadExtensions, validateShellState } from "../dist/runtime.js";
+import {
+  createShellState,
+  createWebUiThemeController,
+  groupNavigationItems,
+  loadExtensions,
+  validateShellState,
+} from "../dist/runtime.js";
 
 function registry(label, disposed) {
   return {
@@ -93,4 +99,56 @@ test("shell contract rejects dangling navigation and duplicate page paths", () =
     component: { mount() {} },
   });
   assert.throws(() => validateShellState(state), /duplicate page path/);
+});
+
+test("navigation grouping preserves ungrouped entries and contiguous sections", () => {
+  const items = [
+    { id: "primary", label: "Mutsuki" },
+    { id: "qq", label: "QQ", group: "插件" },
+    { id: "agent", label: "Agent", group: "插件" },
+  ];
+  assert.deepEqual(
+    groupNavigationItems(items).map((section) => ({
+      group: section.group,
+      ids: section.items.map((item) => item.id),
+    })),
+    [
+      { group: undefined, ids: ["primary"] },
+      { group: "插件", ids: ["qq", "agent"] },
+    ],
+  );
+});
+
+test("theme controller persists preference, follows system, and releases listener", () => {
+  const values = new Map();
+  const storage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+  };
+  let mediaListener;
+  const media = {
+    matches: false,
+    addEventListener: (_event, listener) => { mediaListener = listener; },
+    removeEventListener: (_event, listener) => {
+      assert.equal(listener, mediaListener);
+      mediaListener = undefined;
+    },
+  };
+  const root = { dataset: {}, style: {} };
+  globalThis.document = { documentElement: root };
+
+  const controller = createWebUiThemeController({ storage, media, storageKey: "test.theme" });
+  assert.equal(controller.preference, "system");
+  assert.equal(root.style.colorScheme, "dark");
+  media.matches = true;
+  mediaListener();
+  assert.equal(root.style.colorScheme, "light");
+  controller.setPreference("dark");
+  assert.equal(values.get("test.theme"), "dark");
+  media.matches = true;
+  mediaListener();
+  assert.equal(root.style.colorScheme, "dark");
+  controller.dispose();
+  assert.equal(mediaListener, undefined);
+  delete globalThis.document;
 });

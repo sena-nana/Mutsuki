@@ -425,7 +425,7 @@ function buildForm(schema, draft, onChange) {
 }
 
 /** Embeddable config panel (no outer console shell). Used by the unified overview shell. */
-export function mountConfigPanel(host, rpc, events) {
+export function mountConfigPanel(host, rpc, events, fixedProviderId = null) {
   const state = {
     providers: [],
     selected: null,
@@ -444,6 +444,18 @@ export function mountConfigPanel(host, rpc, events) {
   host.appendChild(root);
 
   async function refreshProviders() {
+    if (fixedProviderId) {
+      const schema = await rpc.call("config", "schema.get", { provider_id: fixedProviderId });
+      const provider = {
+        id: fixedProviderId,
+        title: schema?.title?.default || "配置",
+        description: schema?.description?.default || "",
+        schema,
+      };
+      state.providers = [provider];
+      await openProvider(provider);
+      return;
+    }
     const list = await rpc.call("config", "providers.list", {});
     const ids = normalizeProviders(list);
     state.providers = await Promise.all(ids.map(async (id) => {
@@ -592,13 +604,16 @@ export function mountConfigPanel(host, rpc, events) {
         renderMessage();
       }
     };
-    const backBtn = document.createElement("button");
-    backBtn.textContent = "返回";
-    backBtn.onclick = () => {
-      state.selected = null;
-      render();
-    };
-    actions.append(backBtn, validateBtn, applyBtn);
+    if (!fixedProviderId) {
+      const backBtn = document.createElement("button");
+      backBtn.textContent = "返回";
+      backBtn.onclick = () => {
+        state.selected = null;
+        render();
+      };
+      actions.appendChild(backBtn);
+    }
+    actions.append(validateBtn, applyBtn);
     card.appendChild(actions);
     const msg = document.createElement("div");
     msg.id = "message";
@@ -672,18 +687,6 @@ function createConsoleApp(rpc) {
   return app;
 }
 
-export function applyConsoleTheme(preferred) {
-  const theme =
-    preferred === "light" || preferred === "dark"
-      ? preferred
-      : document.documentElement.dataset.theme === "light"
-        ? "light"
-        : "dark";
-  if (theme === "light") document.documentElement.dataset.theme = "light";
-  else delete document.documentElement.dataset.theme;
-  document.documentElement.style.colorScheme = theme;
-}
-
 function ensureMutsukiUiStylesheet() {
   if (document.querySelector('link[href$="mutsuki-ui.css"]')) return;
   const link = document.createElement("link");
@@ -694,14 +697,19 @@ function ensureMutsukiUiStylesheet() {
 
 export function mountConfigConsole(el, rpc) {
   el.innerHTML = "";
-  applyConsoleTheme();
   ensureMutsukiUiStylesheet();
   el.appendChild(createConsoleApp(rpc));
 }
 
+function encodeProviderRoute(providerId) {
+  return [...new TextEncoder().encode(providerId)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 export default {
   id: "config",
-  setup(ctx) {
+  async setup(ctx) {
     ctx.config = ctx.config || {};
     ctx.config.renderers = {
       register(entry) {
@@ -719,25 +727,46 @@ export default {
         host.appendChild(input);
       },
     });
-    ctx.navigation.register({
-      id: "config.nav",
-      activityId: "settings",
-      pageId: "config.page",
-      label: "配置",
-      order: 10,
-      requiredCapability: "config.schema.read",
-    });
-    ctx.pages.register({
-      id: "config.page",
-      path: "/config",
-      title: "配置",
-      component: {
-        mount(el) {
-          const panel = mountConfigPanel(el, ctx.rpc, ctx.events);
-          return { dispose: () => panel?.destroy?.() };
+    const groups = await ctx.rpc.call("config", "navigation.list", {});
+    const entries = (groups || []).flatMap((group) =>
+      (group.items || []).map((item) => ({ group, item })),
+    );
+    const providers = (await Promise.all(
+      entries.map(async ({ group, item }) => {
+        const schema = await ctx.rpc.call("config", "schema.get", {
+          provider_id: item.provider_id,
+        });
+        return { group, item, schema };
+      }),
+    ));
+    providers.forEach((provider, order) => {
+      const { group, item, schema } = provider;
+      const providerId = item.provider_id;
+      const title = item.label || schema?.title?.default || "配置";
+      const routeId = encodeProviderRoute(providerId);
+      const pageId = order === 0 ? "config.page" : `config.provider.${routeId}`;
+      const path = order === 0 ? "/config" : `/config/${routeId}`;
+      ctx.pages.register({
+        id: pageId,
+        path,
+        title,
+        component: {
+          mount(el) {
+            const panel = mountConfigPanel(el, ctx.rpc, ctx.events, providerId);
+            return { dispose: () => panel?.destroy?.() };
+          },
         },
-      },
-      requiredCapability: "config.schema.read",
+        requiredCapability: "config.schema.read",
+      });
+      ctx.navigation.register({
+        id: `${pageId}.nav`,
+        activityId: "config",
+        pageId,
+        label: title,
+        group: group.label || undefined,
+        order,
+        requiredCapability: "config.schema.read",
+      });
     });
   },
 };

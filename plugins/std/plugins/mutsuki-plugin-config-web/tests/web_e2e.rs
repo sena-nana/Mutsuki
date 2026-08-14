@@ -186,6 +186,8 @@ async fn config_rpc_list_schema_read_validate_apply() {
 
     let providers = ws_rpc(&addr, "config", "providers.list", json!({})).await;
     assert!(providers.to_string().contains("demo"));
+    let navigation = ws_rpc(&addr, "config", "navigation.list", json!({})).await;
+    assert_eq!(navigation[0]["items"][0]["provider_id"], "demo");
 
     let schema = ws_rpc(&addr, "config", "schema.get", json!({"provider_id":"demo"})).await;
     assert_eq!(schema["provider_id"], "demo");
@@ -251,6 +253,8 @@ async fn product_visibility_policy_filters_discovery_and_direct_access() {
 
     let providers = ws_rpc(&addr, "config", "providers.list", json!({})).await;
     assert_eq!(providers, json!([]));
+    let navigation = ws_rpc(&addr, "config", "navigation.list", json!({})).await;
+    assert_eq!(navigation, json!([]));
     assert!(
         ws_rpc_result(&addr, "config", "schema.get", json!({"provider_id":"demo"}),)
             .await

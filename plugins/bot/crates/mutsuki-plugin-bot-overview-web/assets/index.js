@@ -147,18 +147,6 @@ function mountOverview(host, rpc, events) {
   };
 }
 
-export function applyConsoleTheme(preferred) {
-  const theme =
-    preferred === "light" || preferred === "dark"
-      ? preferred
-      : document.documentElement.dataset.theme === "light"
-        ? "light"
-        : "dark";
-  if (theme === "light") document.documentElement.dataset.theme = "light";
-  else delete document.documentElement.dataset.theme;
-  document.documentElement.style.colorScheme = theme;
-}
-
 export default {
   id: "overview",
   setup(ctx) {

@@ -71,6 +71,13 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
     assert!(shell_js.contains("console-context"));
     let options: serde_json::Value =
         serde_json::from_str(&http_get_body(&addr, "/console-options.json").await).unwrap();
+    let activities = options["activities"].as_array().unwrap();
+    assert!(!activities.iter().any(|item| item["id"] == "config"));
+    assert!(
+        activities
+            .iter()
+            .any(|item| item["id"] == "settings" && item["position"] == "bottom")
+    );
     let extensions = options["extensions"].as_array().unwrap();
     for id in ["overview", "control"] {
         let url = extensions
@@ -87,8 +94,8 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
     assert!(html.contains("console-bootstrap.js?v="));
 
     let bootstrap = http_get_body(&addr, "/console-bootstrap.js").await;
-    assert!(bootstrap.contains("index.js?v="));
     assert!(bootstrap.contains("createWebShellRuntime"));
+    assert!(bootstrap.contains("createWebUiThemeController"));
     assert!(!bootstrap.contains("new WebSocket"));
     assert!(!bootstrap.contains("JSON.stringify"));
     assert!(
@@ -159,6 +166,8 @@ async fn embedded_console_with_config_shell() {
         listen: "127.0.0.1:0".into(),
         auth_token_key: None,
         extensions: vec!["config".into()],
+        config_provider_ids: vec!["product".into()],
+        primary_config_provider_id: Some("product".into()),
         ..Default::default()
     };
     let secrets = WebConsoleSecrets {
@@ -190,6 +199,14 @@ async fn embedded_console_with_config_shell() {
     let bootstrap = http_get_body(&addr, "/console-bootstrap.js").await;
     assert!(bootstrap.contains("mountWebShell"));
     let options = http_get_body(&addr, "/console-options.json").await;
+    let parsed: serde_json::Value = serde_json::from_str(&options).unwrap();
+    assert!(
+        parsed["activities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| { item["id"] == "config" && item["position"] == "top" })
+    );
     let config_path = versioned_module_path(&options, "./extensions/config/index.js");
     let config_js = http_get_body(&addr, &format!("/{config_path}")).await;
     assert!(config_js.contains("export function mountConfigPanel"));
@@ -205,6 +222,8 @@ async fn embedded_console_demo_config_provider_is_usable() {
         listen: "127.0.0.1:0".into(),
         auth_token_key: None,
         extensions: vec!["config".into()],
+        config_provider_ids: vec!["product".into()],
+        primary_config_provider_id: Some("product".into()),
         ..Default::default()
     };
     let secrets = WebConsoleSecrets {
@@ -231,6 +250,14 @@ async fn embedded_console_demo_config_provider_is_usable() {
     .await
     .unwrap();
     assert_eq!(providers.as_array().unwrap(), &vec![json!("product")]);
+    let navigation = ws_rpc(
+        &host.listen_addr().unwrap().to_string(),
+        "config",
+        "navigation.list",
+    )
+    .await
+    .unwrap();
+    assert_eq!(navigation[0]["items"][0]["label"], "Mutsuki");
     host.stop().await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 }
@@ -248,6 +275,7 @@ async fn embedded_console_starts_upgrade_extension_when_release_set_configured()
         auth_token_key: None,
         extensions: vec!["upgrade".into()],
         config_provider_ids: Vec::new(),
+        primary_config_provider_id: None,
         release_set: Some(root.join("release-set.toml").to_string_lossy().into()),
     };
     let secrets = WebConsoleSecrets {

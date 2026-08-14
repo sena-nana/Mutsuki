@@ -1,7 +1,10 @@
-import { createWebShellRuntime, mountWebShell } from "./shared/web-shell.js";
-import { applyConsoleTheme } from "./extensions/overview/index.js";
+import {
+  createWebShellRuntime,
+  createWebUiThemeController,
+  mountWebShell,
+} from "./shared/web-shell.js";
 
-applyConsoleTheme();
+const theme = createWebUiThemeController();
 const protocol = location.protocol === "https:" ? "wss" : "ws";
 const app = document.getElementById("app");
 let activeShell = null;
@@ -27,7 +30,11 @@ async function authenticate(authToken) {
   try {
     const options = await loadConsoleOptions();
     shell.configureActivities(options.activities);
+    shell.configureWebUiSettings(theme);
     await shell.load(options.extensions);
+    if (location.hash === "#/settings/config.page") {
+      history.replaceState({}, "", "#/config/config.page");
+    }
     activeShell = shell;
     app.replaceChildren();
     activeMount = mountWebShell(app, shell, { brand: "Mutsuki", homePageId: "overview.page" });
@@ -91,4 +98,5 @@ mountLogin();
 window.addEventListener("pagehide", () => {
   activeMount?.dispose();
   activeShell?.dispose();
+  theme.dispose();
 }, { once: true });

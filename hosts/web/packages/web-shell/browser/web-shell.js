@@ -4,6 +4,67 @@ import {
   DisposableScope,
   createRegistry
 } from "./web-sdk.js";
+
+// ../ui/dist/theme.js
+function applyTheme(theme = "dark") {
+  const root = document.documentElement;
+  if (theme === "light") {
+    root.dataset.theme = "light";
+  } else {
+    delete root.dataset.theme;
+  }
+  root.style.colorScheme = theme;
+}
+
+// src/runtime.ts
+var WEB_UI_THEME_STORAGE_KEY = "mutsuki.webui.theme";
+function createWebUiThemeController(options = {}) {
+  const storage = options.storage ?? globalThis.localStorage;
+  const media = options.media ?? globalThis.matchMedia?.("(prefers-color-scheme: light)");
+  const storageKey = options.storageKey ?? WEB_UI_THEME_STORAGE_KEY;
+  const stored = storage?.getItem(storageKey);
+  let preference = isThemePreference(stored) ? stored : "system";
+  let disposed = false;
+  const apply = () => applyTheme(
+    preference === "system" ? media?.matches ? "light" : "dark" : preference
+  );
+  const mediaListener = () => {
+    if (!disposed && preference === "system") apply();
+  };
+  media?.addEventListener("change", mediaListener);
+  apply();
+  return {
+    get preference() {
+      return preference;
+    },
+    setPreference(next) {
+      if (disposed || next === preference) return;
+      preference = next;
+      storage?.setItem(storageKey, next);
+      apply();
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      media?.removeEventListener("change", mediaListener);
+    }
+  };
+}
+function isThemePreference(value) {
+  return value === "system" || value === "light" || value === "dark";
+}
+function groupNavigationItems(items) {
+  const sections = [];
+  for (const item of items) {
+    const last = sections.at(-1);
+    if (!last || last.group !== item.group) {
+      sections.push({ group: item.group, items: [item] });
+    } else {
+      last.items.push(item);
+    }
+  }
+  return sections;
+}
 function createShellState() {
   return {
     extensions: [],
@@ -93,6 +154,21 @@ var WebShellRuntime = class {
   }
   configureActivities(activities) {
     for (const activity of activities) this.state.activities.register(activity);
+  }
+  configureWebUiSettings(theme, activityId = "settings") {
+    this.state.pages.register({
+      id: "webui.settings",
+      path: "/settings",
+      title: "\u5916\u89C2",
+      component: { mount: (element) => mountWebUiSettings(element, theme) }
+    });
+    this.state.navigation.register({
+      id: "webui.settings.nav",
+      activityId,
+      pageId: "webui.settings",
+      label: "\u5916\u89C2",
+      order: 10
+    });
   }
   async load(urls) {
     const loaded = await loadExtensions(
@@ -237,17 +313,25 @@ function mountWebShell(root, runtime, options = {}) {
     const activity = activities.find((item) => item.id === activeActivityId);
     contextTitle.textContent = activity?.label ?? "";
     contextNav.replaceChildren();
-    for (const item of navByActivity.get(activeActivityId) ?? []) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = `sb-tree__row lilia-interactive-item${item.pageId === activePageId ? " is-active" : ""}`;
-      button.textContent = item.label;
-      if (item.pageId === activePageId) button.setAttribute("aria-current", "page");
-      button.onclick = () => {
-        location.hash = routeFor(activeActivityId, item.pageId).slice(1);
-        closeContext();
-      };
-      contextNav.append(button);
+    for (const section of groupNavigationItems(navByActivity.get(activeActivityId) ?? [])) {
+      if (section.group) {
+        const heading = document.createElement("div");
+        heading.className = "console-context__group";
+        heading.textContent = section.group;
+        contextNav.append(heading);
+      }
+      for (const item of section.items) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = `sb-tree__row lilia-interactive-item${item.pageId === activePageId ? " is-active" : ""}`;
+        button.textContent = item.label;
+        if (item.pageId === activePageId) button.setAttribute("aria-current", "page");
+        button.onclick = () => {
+          location.hash = routeFor(activeActivityId, item.pageId).slice(1);
+          closeContext();
+        };
+        contextNav.append(button);
+      }
     }
   };
   const renderRoute = async () => {
@@ -323,12 +407,47 @@ function mountWebShell(root, runtime, options = {}) {
     }
   };
 }
+function mountWebUiSettings(host, theme) {
+  host.className = "page-body settings-page";
+  host.innerHTML = `<section class="card">
+    <h2>\u5916\u89C2</h2>
+    <div class="settings-row">
+      <div class="settings-row__label">
+        <strong>\u4E3B\u9898</strong>
+        <div class="settings-row__hint">\u9009\u62E9 WebUI \u7684\u663E\u793A\u4E3B\u9898\u3002</div>
+      </div>
+      <div class="settings-row__control segmented" role="group" aria-label="\u4E3B\u9898">
+        <button type="button" data-theme="system">\u8DDF\u968F\u7CFB\u7EDF</button>
+        <button type="button" data-theme="light">\u6D45\u8272</button>
+        <button type="button" data-theme="dark">\u6DF1\u8272</button>
+      </div>
+    </div>
+  </section>`;
+  const draw = () => {
+    for (const button of host.querySelectorAll("[data-theme]")) {
+      const active = button.dataset.theme === theme.preference;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", String(active));
+    }
+  };
+  for (const button of host.querySelectorAll("[data-theme]")) {
+    button.onclick = () => {
+      const value = button.dataset.theme;
+      if (isThemePreference(value)) {
+        theme.setPreference(value);
+        draw();
+      }
+    };
+  }
+  draw();
+}
 function iconMarkup(icon, label) {
   const paths = {
     home: '<path d="M3 11.5 12 4l9 7.5V21h-6v-6H9v6H3z"/>',
     bot: '<path d="M7 8h10a4 4 0 0 1 4 4v5a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4v-5a4 4 0 0 1 4-4Zm2 5v2m6-2v2M12 8V4m-2 0h4"/>',
     flow: '<path d="M5 4h5v5H5zM14 15h5v5h-5zM7.5 9v3a5 5 0 0 0 5 5H14M14 4h5v5h-5z"/>',
     system: '<path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1m0-12.8-2.1 2.1m-8.6 8.6-2.1 2.1M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/>',
+    config: '<path d="M5 4h14v5H5zM5 13h14v7H5zM8 6.5h4M8 16h8"/>',
     settings: '<path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm8 4 2-1-2-3-2 .4-1.4-1.4.4-2-3-2-1 2h-2l-1-2-3 2 .4 2L6 8.4 4 8l-2 3 2 1v2l-2 1 2 3 2-.4L7.4 19 7 21l3 2 1-2h2l1 2 3-2-.4-2 1.4-1.4 2 .4 2-3-2-1Z"/>'
   };
   const path = paths[icon];
@@ -351,6 +470,8 @@ export {
   createExtensionContext,
   createShellState,
   createWebShellRuntime,
+  createWebUiThemeController,
+  groupNavigationItems,
   loadExtensions,
   mountWebShell,
   validateShellState
