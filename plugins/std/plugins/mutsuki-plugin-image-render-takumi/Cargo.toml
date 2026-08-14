@@ -14,7 +14,12 @@ mutsuki-runtime-sdk.workspace = true
 qrcode.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-takumi = { version = "2.5.7", features = ["from-html"] }
+takumi = { version = "=2.5.7", features = ["from-html"] }
+# Takumi 2.5.7 publishes broad subcrate ranges whose latest releases are not mutually compatible.
+# Keep the owner package independently resolvable instead of relying on the monorepo lockfile.
+takumi-core = "=0.14.0"
+takumi-html = "=0.1.20"
+takumi-raster = "=0.4.8"
 
 [dev-dependencies]
 mutsuki-plugin-resource-memory = { path = "../mutsuki-plugin-resource-memory" }

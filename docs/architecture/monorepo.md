@@ -72,10 +72,12 @@ Workspace locks and remain scoped to their JavaScript build boundaries.
 ## First-party Bot product
 
 `products/bot` is the repository's runnable Bot product. It owns external bootstrap configuration,
-owner catalog aggregation, ServiceRuntime startup and cross-package product acceptance. Runtime
-Core remains domain-neutral, ServiceHost keeps process lifecycle ownership, and Bot, Agent and Std
-packages keep their protocol and implementation ownership. The product does not introduce a
-`BotHost`, duplicate owner implementations or an all-capability facade crate.
+owner catalog aggregation, ServiceRuntime startup, the thin external-product `create-bot` scaffold
+and cross-package product acceptance. Runtime Core remains domain-neutral, ServiceHost keeps process
+lifecycle ownership, and Bot, Agent and Std packages keep their protocol and implementation
+ownership. The product does not introduce a `BotHost`, duplicate owner implementations or an
+all-capability facade crate. Generated projects pin one immutable Mutsuki revision and call the
+public product API; they are not an exported copy of the first-party product.
 
 ## History and retired repositories
 

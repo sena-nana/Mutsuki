@@ -13,7 +13,7 @@
 | `kits/python-runner/` | Python Runner SDK, wire mirror, transport and conformance |
 | `plugins/bot/` | Bot protocols, SDK, adapters, routing, integration and testkit |
 | `plugins/std/` | Domain-neutral protocols, resource/effect/workflow plugins and providers |
-| `products/bot/` | First-party Bot product configuration, runtime assembly and acceptance |
+| `products/bot/` | First-party Bot product configuration, runtime assembly, thin external-product scaffold and acceptance |
 
 Dependency direction:
 

@@ -22,6 +22,8 @@ framework repositories is unsupported.
 
 The release does not publish a separate Bot template repository or lockfile. Users who run the
 first-party Bot use `products/bot` from the same release revision and root compatibility lock.
+`mutsuki-create-bot` may generate an external consumer shell, but that shell contains no copied
+Mutsuki implementation and pins the exact release revision selected at creation time.
 
 ## Package selection
 

@@ -77,6 +77,17 @@ cargo run --locked -p mutsuki-bot
 `MUTSUKI_SECRET_MUTSUKI_WEB_CONSOLE_TOKEN` 提供该口令。配置与验收边界见
 [Bot 产品说明](products/bot/README.md)。
 
+创建外部 Bot 产品时，先安装 Cargo 子命令，再按提示选择 package 名、目录和固定 revision；
+官方 Mutsuki 仓库由脚手架内建，无需输入：
+
+```bash
+cargo install --locked --path products/bot/crates/mutsuki-create-bot
+cargo create-bot
+```
+
+脚本或 CI 可直接执行
+`cargo create-bot my-bot --output <目录> --revision <40位commit>`，全程不进入交互。
+
 ## 开发
 
 Rust package 共享根 `Cargo.toml` 和 `Cargo.lock`：

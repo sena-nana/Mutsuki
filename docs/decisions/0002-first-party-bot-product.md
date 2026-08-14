@@ -17,6 +17,9 @@ provided an ownership boundary.
 - Keep Runtime Core domain-neutral and preserve ServiceHost, Bot, Agent and Std package ownership.
 - Do not add a `BotHost`, root facade crate or product-specific behavior to Core.
 - Stop exporting or publishing an independent Bot template repository.
+- Provide `mutsuki-create-bot` under `products/bot` for generating thin external product shells.
+  Generated projects call the public `mutsuki-bot` product API and pin one immutable Mutsuki
+  revision; they do not copy product, Host, Agent, Bot or plugin implementations.
 - Redirect and archive `sena-nana/MutsukiBotTemplate` after the in-tree migration is published.
 - Keep other business products in their own repositories pinned to one Mutsuki release revision.
 
@@ -26,3 +29,7 @@ Bot runtime changes, owner packages, configuration, tests and release compatibil
 atomically. Users build the first-party Bot directly from Mutsuki instead of resolving a second
 Workspace and generated lockfile. The repository has both framework and product responsibilities,
 while package dependency rules continue to prevent the product from entering Core.
+
+External business Bot shells remain independent consumers rather than a second first-party product
+source. Their generated lockfile belongs to that consumer, while every Mutsuki dependency resolves
+from the single revision selected by the scaffold.

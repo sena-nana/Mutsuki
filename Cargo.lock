@@ -4071,6 +4071,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mutsuki-create-bot"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "tempfile",
+ "thiserror 2.0.19",
+ "toml 1.1.4+spec-1.1.0",
+]
+
+[[package]]
 name = "mutsuki-distributed-benchmarks"
 version = "0.1.0"
 dependencies = [
@@ -4795,6 +4805,9 @@ dependencies = [
  "serde",
  "serde_json",
  "takumi",
+ "takumi-core",
+ "takumi-html",
+ "takumi-raster",
  "tempfile",
 ]
 
