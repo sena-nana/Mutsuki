@@ -1,35 +1,92 @@
 # Mutsuki
 
-Mutsuki is a monorepo that contains a domain-neutral, batch-first runtime framework and the
-first-party Mutsuki Bot product. The repository also contains independently consumable Link and
-Host packages, Agent and Python kits, Bot and standard plugins, integration tests, performance
-models, and one release compatibility baseline. Product ownership does not enter Runtime Core.
+[简体中文](README.zh-CN.md)
 
-Repository consolidation does not create an all-in-one crate. Products depend only on the packages
-they need:
+Mutsuki is a domain-neutral meta-framework for **spatiotemporal composition** and
+**provenance-aware execution**. It defines how capability-bearing systems are assembled, evolved,
+executed, and inspected without binding their business semantics to one application, language, or
+deployment topology.
 
-```toml
-[dependencies]
-mutsuki-runtime-core = { git = "https://github.com/sena-nana/Mutsuki.git", tag = "v0.1.0" }
-mutsuki-link = { git = "https://github.com/sena-nana/Mutsuki.git", tag = "v0.1.0" }
-mutsuki-tauri-host = { git = "https://github.com/sena-nana/Mutsuki.git", tag = "v0.1.0" }
+Runtime Core provides a small set of neutral execution laws. Hosts, plugins, domain kits, and
+products build their own frameworks above them while retaining explicit ownership boundaries.
+
+## Conceptual model
+
+```text
+Capability space        Runtime time           Execution provenance
+what can participate  x which world is active -> what happened, why, and from which facts
 ```
 
-## Package groups
+### Task-System architecture
 
-| Path | Packages |
+Mutsuki borrows the data/system separation of architectures such as ECS, but it is not an
+Entity/Component store. A **Task** is an explicit work fact, a **Runner** supplies behavior, and an
+**Executor** supplies the physical execution location. The same capability can therefore run
+in-process, across an ABI, in another language, or behind a remote adapter without changing its
+business contract. All paths retain the same batch-first execution model.
+
+### Capability-oriented spatial composition
+
+Applications compose capability graphs rather than hard-coded plugin lists. Capability identity is
+independent of scope, application projection, implementation generation, and deployment adapter.
+Scopes own service dependencies and reversible lifecycle effects; required capabilities fail during
+composition, while unsupported optional contributions remain outside the active projection.
+
+### Generational temporal composition
+
+Mutsuki evolves a running system by preparing a new generation instead of mutating the active world
+in place. Registries freeze after activation, state and resources carry versions, and execution
+attempts are fenced by the generation that authorized them. Reload prepares and validates a
+candidate world, switches authority, then drains the old one; stale work cannot silently commit into
+the new generation.
+
+### Controlled effects and provenance
+
+Ordinary computation describes outcomes rather than directly rewriting authoritative state or
+hiding external side effects. State changes, events, derived work, and effect requests return as
+explicit facts through controlled commit boundaries. Task state, resource lineage, ordered events,
+and traces then explain which generation accepted work, which attempt ran it, and what it produced.
+
+The default Core is not a permanent event store. Runtime history may be bounded and process-local;
+durable audit, portable tasks, checkpoints, and recovery are optional Host/provider capabilities.
+External effects retain their real idempotency and compensation limits rather than claiming magical
+exactly-once execution.
+
+## Architecture boundaries
+
+This repository is one compatibility baseline, not one package or global feature matrix:
+
+| Path | Ownership |
 | --- | --- |
-| `crates/mutsuki-runtime-*` | Contracts, wire, CoreRuntime, Host helpers, Rust SDK and benchmarks |
-| `crates/link/` | Link protocol, discovery, pairing, Local/TCP/QUIC and runtime adapters |
-| `hosts/` | CLI, service, Tauri, Web and optional distributed Hosts |
+| `crates/mutsuki-runtime-*` | Neutral contracts, wire, Task runtime, Host helpers, and SDK |
+| `crates/link/` | Link protocols, transports, discovery, and runtime adapters |
+| `hosts/` | Service, CLI, desktop, Web, and optional distributed lifecycle containers |
 | `kits/` | AgentKit and Python Runner Kit |
-| `plugins/` | Bot packages and domain-neutral standard protocols/plugins |
-| `products/bot/` | First-party Bot configuration, runtime assembly and product acceptance |
+| `plugins/std/` | Domain-neutral resource, effect, workflow, configuration, and observation capabilities |
+| `plugins/bot/` | Bot protocols, SDK, routing, platform adapters, and Host integration |
+| `products/bot/` | First-party Bot configuration, assembly, and product acceptance |
 
-The full ownership and dependency map is in
-[Monorepo architecture](docs/architecture/monorepo.md). Public runtime contracts remain
-batch-first and preserve TaskPool, TaskLease, TaskHandle, ResourceRef, LoadPlan and structured
-failure boundaries.
+Core owns neutral execution facts. Hosts own physical execution, lifecycle, supervision, and
+configuration. Plugins own domain capabilities. Products select packages without absorbing their
+implementations. External products depend only on the packages they need and pin one release
+revision.
+
+## Bot reference product
+
+The repository includes a real Bot framework and a runnable first-party product so Mutsuki can be
+reviewed end to end rather than only through isolated runtime examples. `plugins/bot` owns reusable
+Bot capabilities; `products/bot` only selects configuration and owner catalogs, assembles the
+ServiceRuntime, starts the product, and hosts cross-package acceptance. Bot behavior does not enter
+Runtime Core.
+
+```bash
+cargo run --locked -p mutsuki-bot
+```
+
+The first interactive startup creates an executable-adjacent `.mutsuki-bot/` instance and asks for
+the Console passphrase. Non-interactive startup supplies it through
+`MUTSUKI_SECRET_MUTSUKI_WEB_CONSOLE_TOKEN`. See the
+[Bot product guide](products/bot/README.md) for configuration and acceptance boundaries.
 
 ## Development
 
@@ -44,87 +101,36 @@ cargo test --workspace --all-targets --locked
 bash scripts/check-distributed-boundary.sh
 ```
 
-Python Runner Kit:
+Python Runner Kit retains its own environment:
 
 ```bash
-cd kits/python-runner
-uv run ruff check src tests
-uv run pyright src tests
-uv run pytest
+uv run --directory kits/python-runner ruff check src tests
+uv run --directory kits/python-runner pyright src tests
+uv run --directory kits/python-runner pytest
 ```
 
-Web and Tauri frontend packages retain their package-level scripts and lockfiles under
-`hosts/web` and `hosts/tauri`. Run their typecheck/build commands when those surfaces change.
+Root performance smoke is `cargo bench-smoke`; see the
+[performance model](performance/README.md) for owner baselines and acceptance rules.
 
-## Run the Bot product
+## References and acknowledgements
 
-The first-party Bot runs directly from this repository and shares the root compatibility lock:
+Mutsuki's idea of **spatiotemporal composability** was directly inspired by
+[Cordis](https://github.com/cordiverse/cordis) and its reversible plugin model. Cordis provided the
+conceptual starting point: temporal composition lets code be loaded together while its effects
+remain disposable, and spatial composition makes dependencies explicit and isolatable.
 
-```bash
-cargo run --locked -p mutsuki-bot
-```
+Mutsuki develops that idea independently for a domain-neutral Task runtime, generational execution,
+resource facts, and provenance. It does not reuse Cordis APIs or implementation, and does not claim
+runtime compatibility with Cordis.
 
-The product owns one configuration beside the executable under `.mutsuki-bot/`. On first
-interactive startup it asks for the Console passphrase and creates SQLite, secret and runtime
-directories automatically. Non-interactive startup supplies the passphrase through
-`MUTSUKI_SECRET_MUTSUKI_WEB_CONSOLE_TOKEN`.
+## Further reading
 
-## Performance
-
-Each owner boundary retains its workload, raw samples and anomaly analysis. Root Core smoke:
-
-```bash
-cargo bench-smoke
-```
-
-Owner smoke entrypoints:
-
-```bash
-python3 crates/link/scripts/run-performance-model.py \
-  --mode smoke --output target/mutsuki-benchmarks/link-smoke.json
-python3 hosts/service/crates/mutsuki-service-benchmarks/scripts/run-reference.py \
-  --mode smoke --warmup 0 --samples 1 \
-  --output target/mutsuki-benchmarks/service-host-smoke.json
-python3 hosts/tauri/crates/mutsuki-tauri-benchmarks/scripts/run-reference.py \
-  --mode smoke --warmup 0 --samples 1 \
-  --output target/mutsuki-benchmarks/tauri-smoke.json
-python3 hosts/distributed/scripts/run-performance-model.py \
-  --mode smoke --service-binary target/release/mutsuki-benchmark-service \
-  --output target/mutsuki-benchmarks/distributed-smoke.json
-python3 kits/agent/scripts/run-performance-model.py \
-  --mode smoke --output target/mutsuki-benchmarks/agent-smoke.json
-python3 plugins/bot/scripts/run-performance-model.py \
-  --mode smoke --output target/mutsuki-benchmarks/bot-smoke.json
-python3 plugins/std/scripts/run-performance-model.py \
-  --mode smoke --output target/mutsuki-benchmarks/std-smoke.json
-uv run --directory kits/python-runner python benchmarks/performance_model.py \
-  --mode smoke --output ../../target/mutsuki-benchmarks/python-runner-smoke.json
-```
-
-Local/public runs are environment-specific evidence. A release baseline requires an explicit
-approval whose report hash, revision snapshot and environment fingerprint match. See
-[performance/README.md](performance/README.md) and
-[Epic #35 acceptance](docs/issue35-acceptance.md).
-
-## Release and migration
-
+- [Monorepo architecture](docs/architecture/monorepo.md)
+- [Runtime architecture](plans/architecture.md)
+- [Runtime contracts](plans/contracts.md)
+- [Plugin composition](docs/architecture/plugin-capability-composition.md)
 - [Release train](docs/release-train.md)
-- [v0.1.0 compatibility matrix](docs/compatibility/v0.1.0.md)
-- [Issue #44 migration ledger](docs/migration/issue-44-ledger.md)
-- [Monorepo decision](docs/decisions/0001-mutsuki-monorepo.md)
-- [First-party Bot product decision](docs/decisions/0002-first-party-bot-product.md)
-
-Business products such as Lilia and Nana remain in their own repositories and pin this repository
-at a tag or commit. `mutsuki-bot` is the first-party product maintained and run from
-`products/bot`; the former `MutsukiBotTemplate` repository is retired.
-
-## Reading order
-
-1. [AGENTS.md](AGENTS.md)
-2. [plans/roadmap.md](plans/roadmap.md)
-3. [plans/architecture.md](plans/architecture.md)
-4. [plans/engineering.md](plans/engineering.md)
-5. [plans/contracts.md](plans/contracts.md)
+- [First-party Bot decision](docs/decisions/0002-first-party-bot-product.md)
 
 ## License
 
