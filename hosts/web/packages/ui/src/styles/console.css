@@ -6,6 +6,153 @@
   min-height: 0;
 }
 
+/* Product authentication entry. It intentionally sits outside ConsoleShell. */
+.console-login {
+  display: grid;
+  place-items: center;
+  min-height: 100%;
+  min-height: 100dvh;
+  padding: clamp(24px, 6vw, 64px);
+  overflow: auto;
+  background:
+    radial-gradient(circle at 50% -10%, var(--accent-soft), transparent 34rem),
+    var(--lilia-surface-fill-base, var(--bg));
+}
+
+.console-login__card {
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 408px);
+  padding: clamp(28px, 5vw, 38px);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg);
+  background: var(--lilia-surface-fill-raised, var(--bg-elev));
+  box-shadow: var(--shadow-lg);
+}
+
+.console-login__brand {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.console-login__brand-mark {
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid color-mix(in oklch, var(--accent) 34%, var(--border));
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+}
+
+.console-login__brand-mark::after {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--accent);
+  box-shadow: 7px 7px 0 color-mix(in oklch, var(--accent) 44%, transparent);
+  content: "";
+  transform: translate(-3px, -3px);
+}
+
+.console-login__card h1 {
+  margin: 32px 0 0;
+  font-size: clamp(24px, 4vw, 28px);
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+}
+
+.console-login__description {
+  margin: 10px 0 0;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.console-login__field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 28px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.console-login__field input {
+  width: 100%;
+  height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.console-login__field input:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.console-login__field input:focus-visible {
+  border-color: var(--accent);
+  outline: 2px solid var(--lilia-state-focus-ring, var(--accent));
+  outline-offset: 1px;
+}
+
+.console-login__field input[aria-invalid="true"] {
+  border-color: var(--err);
+}
+
+.console-login__error {
+  margin: 10px 0 0;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in oklch, var(--err) 28%, var(--border));
+  border-radius: var(--radius-sm);
+  background: var(--err-soft);
+  color: var(--err);
+  font-size: 12px;
+}
+
+.console-login__error:empty {
+  display: none;
+}
+
+.console-login__submit {
+  width: 100%;
+  height: 42px;
+  margin-top: 20px;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.console-login__submit:hover:not(:disabled) {
+  background: var(--accent-strong);
+}
+
+.console-login__submit:focus-visible {
+  outline: 2px solid var(--lilia-state-focus-ring, var(--accent));
+  outline-offset: 2px;
+}
+
+.console-login :is(input, button):disabled {
+  cursor: wait;
+  opacity: 0.56;
+}
+
+@media (max-width: 520px) {
+  .console-login {
+    padding: 20px;
+  }
+
+  .console-login__card {
+    padding: 28px 24px;
+  }
+}
+
 .mutsuki-console [hidden] {
   display: none !important;
 }
