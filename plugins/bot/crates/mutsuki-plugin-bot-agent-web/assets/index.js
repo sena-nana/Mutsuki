@@ -1,3 +1,14 @@
+import {
+  EVENT_PAGE_LIMIT,
+  EVENT_WINDOW_LIMIT,
+  asEventPage,
+  mergeBySequence,
+  projectAgentEvents,
+  sequenceOf,
+  trimWindow,
+} from "./trajectory-model.js";
+import { mountTrajectoryView } from "./trajectory-view.js";
+
 function esc(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -48,27 +59,88 @@ export async function mountAgentConnectionsPanel(el, rpc) {
     });
   }
 
+  async function fetchSessionPage(sessionId, afterSequence) {
+    const body = await rpc.call("bot-agent", "sessions.events", {
+      session_id: sessionId,
+      after_sequence: afterSequence,
+      limit: EVENT_PAGE_LIMIT,
+    });
+    return asEventPage(body);
+  }
+
   async function showSession(sessionId) {
     try {
-      const [sessionBody, stateBody, eventBody] = await Promise.all([
+      const [sessionBody, stateBody] = await Promise.all([
         rpc.call("bot-agent", "sessions.get", { session_id: sessionId }),
         rpc.call("bot-agent", "sessions.state", { session_id: sessionId }),
-        rpc.call("bot-agent", "sessions.events", { session_id: sessionId, after_sequence: 0, limit: 100 }),
       ]);
       const session = sessionBody.session || sessionBody;
       const state = stateBody.session_state || stateBody;
-      const events = eventBody.events || eventBody;
+      const nextSeq = Number(session.next_event_sequence || 0);
+      const tailAfter = Math.max(0, nextSeq - EVENT_PAGE_LIMIT);
+      let pageMeta = { lost: 0, truncated: false };
+      let events = [];
+      const firstPage = await fetchSessionPage(sessionId, tailAfter);
+      events = firstPage.events;
+      pageMeta = firstPage;
       const messages = (session.messages || []).map((message) => `<div class="tree-item"><strong>${message.role === "user" ? "用户" : message.role === "assistant" ? "助手" : esc(message.role)}</strong><div>${esc(message.content)}</div></div>`).join("");
-      const eventLabels = { session_state: "会话", turn_state: "处理", user_message: "用户消息", step_state: "步骤", model_delta: "回复生成", reasoning_delta: "思考", tool_call: "工具调用", tool_result: "工具结果", tool_call_started: "工具开始", tool_call_completed: "工具完成", approval_request: "等待批准", interaction_request: "等待回答", usage: "用量", warning: "提醒", error: "错误" };
-      const eventRows = (events || []).map((entry) => {
-        const event = entry.event || {};
-        const detailText = event.content || event.text || event.summary || event.name || event.status || event.message || "";
-        return `<div class="tree-item row-item"><span>${esc(eventLabels[event.type] || "进度")}</span><span class="muted">${esc(detailText)}</span></div>`;
-      }).join("");
       const approvals = (state.pending_approvals || []).map((item) => `<div class="tree-item row-item"><div>${esc(item.request.summary || item.request.tool)}</div><div class="row-actions"><button data-approve="${esc(item.request.action_id)}">批准</button><button class="ghost" data-reject="${esc(item.request.action_id)}">拒绝</button></div></div>`).join("");
       const interactions = (state.pending_interactions || []).map((item) => `<div class="tree-item"><div>${esc(item.prompt)}</div><div class="toolbar nested"><input data-answer="${esc(item.interaction_id)}" placeholder="输入回答"><button data-interact="${esc(item.interaction_id)}">回答</button></div></div>`).join("");
       const activeTurn = (state.turns || []).find((turn) => ["collecting_context", "generating", "running_tools"].includes(turn.status));
-      detail.innerHTML = `<div class="subsection"><h3>${esc(session.title || session.session_id)}</h3><div class="muted">${esc(session.turn_count)} 轮 · ${esc(state.usage?.total_tokens || 0)} tokens</div><h4>消息</h4>${messages || `<div class="muted">暂无消息</div>`}${approvals}${interactions}<h4>运行记录</h4>${eventRows || `<div class="muted">暂无运行记录</div>`}<div class="toolbar nested">${activeTurn ? `<button id="agent-cancel-turn">停止当前回复</button>` : `<button class="ghost" id="agent-close-session">关闭会话</button>`}</div></div>`;
+      detail.innerHTML = `<div class="subsection"><h3>${esc(session.title || session.session_id)}</h3><div class="muted">${esc(session.turn_count)} 轮 · ${esc(state.usage?.total_tokens || 0)} tokens</div><h4>消息</h4>${messages || `<div class="muted">暂无消息</div>`}${approvals}${interactions}<h4>时间线</h4><div id="agent-trajectory" class="trajectory"></div><div class="toolbar nested">${activeTurn ? `<button id="agent-cancel-turn">停止当前回复</button>` : `<button class="ghost" id="agent-close-session">关闭会话</button>`}</div></div>`;
+      const trajHost = detail.querySelector("#agent-trajectory");
+      const traj = mountTrajectoryView(trajHost, trajectoryOptions());
+
+      function firstSequence() {
+        const values = events.map(sequenceOf).filter((value) => value != null);
+        return values.length ? Math.min(...values) : 1;
+      }
+
+      function trajectoryOptions(loadingOlder = false) {
+        const projected = projectAgentEvents(events);
+        return {
+          records: projected.records,
+          groups: projected.groups,
+          hasOlder: firstSequence() > 1 || !!pageMeta.truncated,
+          loadingOlder,
+          lost: pageMeta.lost,
+          truncated: pageMeta.truncated,
+          emptyText: "暂无时间线记录",
+          onInspect: async (record) => {
+            const sequences = (record.sequences || []).slice(0, 8);
+            const details = [];
+            for (const sequence of sequences) {
+              const body = await rpc.call("bot-agent", "sessions.event_get", {
+                session_id: sessionId,
+                sequence,
+              });
+              details.push(body.event ? body : body);
+            }
+            return details;
+          },
+          onLoadOlder: async () => {
+            const first = firstSequence();
+            if (first <= 1 && !pageMeta.truncated) return;
+            traj.update(trajectoryOptions(true));
+            try {
+              const olderAfter = Math.max(0, first - EVENT_PAGE_LIMIT - 1);
+              const olderPage = await fetchSessionPage(sessionId, olderAfter);
+              const older = olderPage.events.filter((event) => {
+                const seq = sequenceOf(event);
+                return seq != null && seq < first;
+              });
+              events = trimWindow(mergeBySequence(events, older), EVENT_WINDOW_LIMIT, "older");
+              pageMeta = {
+                lost: Number(olderPage.lost || 0),
+                truncated: !!olderPage.truncated,
+              };
+              traj.update(trajectoryOptions(false));
+            } catch (error) {
+              traj.update({ ...trajectoryOptions(false), emptyText: errorText(error) });
+            }
+          },
+        };
+      }
       detail.querySelectorAll("[data-approve]").forEach((button) => button.onclick = async () => {
         const item = state.pending_approvals.find((entry) => entry.request.action_id === button.dataset.approve);
         await rpc.call("bot-agent", "sessions.approve", { decision: { session_id: item.request.session_id, turn_id: item.request.turn_id, action_id: item.request.action_id, version: item.request.version, decision: "approved" } });
