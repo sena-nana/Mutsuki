@@ -366,6 +366,7 @@ async fn embedded_console_mounts_qq_management_extension() {
     let local = LocalQqManagementProvider::new();
     local.upsert_account(account_view_from_config(QqAccountViewInput {
         account_id: "main".into(),
+        app_id: "app".into(),
         credential_reference: "QQBOT_CLIENT_SECRET".into(),
         credential_present: true,
         capability: QqBotCapabilityMatrix {
@@ -397,6 +398,7 @@ async fn embedded_console_mounts_qq_management_extension() {
         identified: true,
         last_heartbeat_unix_ms: Some(1),
         last_error: None,
+        reconnect_count: 0,
     }));
     let api: Arc<dyn QqBotManagementApi> = Arc::new(QqBotManagementService::local(local));
     let config = WebConsoleConfig {
@@ -427,6 +429,7 @@ async fn embedded_console_mounts_qq_management_extension() {
     assert!(options.contains("\"includeQq\":true"));
     let qq_js = http_get_body(&addr, "/qq-bot/index.js").await;
     assert!(qq_js.contains("mountQqBotPanel"));
+    assert!(qq_js.contains("QQ 登录"));
     let snap = ws_rpc_params(&addr, "qq-bot", "snapshot", json!({}))
         .await
         .unwrap();

@@ -5,6 +5,7 @@ use mutsuki_config_service::{
     ConfigApplyRequest, ConfigCompareAndSetRequest, ConfigContext, ConfigDocumentKey, ConfigValue,
     capability,
 };
+use mutsuki_plugin_bot_adapter_qqbot::QQBOT_ADAPTER_PLUGIN_ID;
 
 const TEST_ADMIN_PASSPHRASE: &str = "test-admin-passphrase";
 
@@ -181,4 +182,27 @@ async fn legacy_bootstrap_files_are_not_imported() {
         product.service.secret(CONSOLE_AUTH_TOKEN_KEY).as_deref(),
         Some(TEST_ADMIN_PASSPHRASE)
     );
+}
+
+#[tokio::test]
+async fn seeded_qq_login_document_uses_receive_switches() {
+    let root = tempfile::tempdir().unwrap();
+    let product = load_single_instance_product_for_test(root.path(), TEST_ADMIN_PASSPHRASE)
+        .await
+        .unwrap();
+    let snapshot = product
+        .config
+        .read(
+            QQBOT_ADAPTER_PLUGIN_ID,
+            ConfigContext::global(),
+            &[capability::VALUE_READ.into()],
+        )
+        .await
+        .unwrap();
+    let value = snapshot.value.to_json();
+    assert_eq!(value["enabled"], false);
+    assert!(value.get("receive_private_and_group").is_some());
+    assert!(value.get("receive_guild").is_some());
+    assert!(value.get("gateway_intents").is_none());
+    assert!(value.get("shard_index").is_none());
 }

@@ -281,6 +281,7 @@ impl OwnerBackedQqManagementProvider {
         let snapshot = self.health.snapshot();
         let mut account = account_view_from_config(QqAccountViewInput {
             account_id: self.config.account_id.clone(),
+            app_id: self.config.app_id.clone(),
             credential_reference: self.config.client_secret_key.clone(),
             credential_present: self.credentials.is_configured(),
             capability: self.config.capability_matrix(),
@@ -292,6 +293,7 @@ impl OwnerBackedQqManagementProvider {
                 .last_heartbeat_unix_ms
                 .map(|value| u64::try_from(value).unwrap_or(u64::MAX)),
             last_error: snapshot.last_error,
+            reconnect_count: snapshot.reconnect_count,
         });
         if !include_secret_status {
             account.credential_reference.clear();
