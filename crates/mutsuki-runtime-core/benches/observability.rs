@@ -45,8 +45,8 @@ fn enabled_trace_path() -> Duration {
     for decision in 0..ITERATIONS {
         let span = traces.record_with(|sequence| TraceSpan {
             sequence,
-            trace_id: format!("trace-scheduler-{}", decision % 8),
-            span_id: format!("span-{sequence}"),
+            trace_id: format!("trace-scheduler-{}", decision % 8).into(),
+            span_id: format!("span-{sequence}").into(),
             parent_span_id: None,
             name: "scheduler.decision".into(),
             start: sequence as f64,

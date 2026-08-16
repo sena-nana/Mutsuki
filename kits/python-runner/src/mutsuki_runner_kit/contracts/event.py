@@ -16,9 +16,11 @@ from mutsuki_runner_kit.contracts.codec import (
     as_scalar_dict,
     as_str,
     field_value,
+    optional_id,
     optional_str,
 )
 from mutsuki_runner_kit.contracts.errors import RuntimeError
+from mutsuki_runner_kit.contracts.ids import SpanId, TraceId
 
 
 class RuntimeEventKind(StrEnum):
@@ -82,9 +84,9 @@ class RuntimeEvent:
 @dataclass(frozen=True)
 class TraceSpan:
     sequence: int
-    trace_id: str
-    span_id: str
-    parent_span_id: str | None
+    trace_id: TraceId
+    span_id: SpanId
+    parent_span_id: SpanId | None
     name: str
     start: float
     end: float | None
@@ -98,9 +100,11 @@ class TraceSpan:
         end = field_value(raw, "end")
         return cls(
             sequence=as_int(field_value(raw, "sequence"), "sequence"),
-            trace_id=as_str(field_value(raw, "trace_id"), "trace_id"),
-            span_id=as_str(field_value(raw, "span_id"), "span_id"),
-            parent_span_id=optional_str(field_value(raw, "parent_span_id"), "parent_span_id"),
+            trace_id=TraceId(as_str(field_value(raw, "trace_id"), "trace_id")),
+            span_id=SpanId(as_str(field_value(raw, "span_id"), "span_id")),
+            parent_span_id=optional_id(
+                SpanId, field_value(raw, "parent_span_id"), "parent_span_id"
+            ),
             name=as_str(field_value(raw, "name"), "name"),
             start=float(as_scalar(start, "start")),
             end=None if end is None else float(as_scalar(end, "end")),

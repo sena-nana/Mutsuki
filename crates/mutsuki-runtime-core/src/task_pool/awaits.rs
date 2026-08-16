@@ -49,18 +49,19 @@ pub(super) fn wait_on_task(
     Ok(())
 }
 
-pub(super) fn awaits_for_parent(task_pool: &TaskPool, task_id: &str) -> Vec<TaskAwait> {
+pub(super) fn awaits_for_parent(task_pool: &TaskPool, task_id: impl AsRef<str>) -> Vec<TaskAwait> {
     task_pool
         .waits_by_parent
-        .get(task_id)
+        .get(task_id.as_ref())
         .cloned()
         .unwrap_or_default()
 }
 
 pub(super) fn take_waits_for_child(
     task_pool: &mut TaskPool,
-    child_task_id: &str,
+    child_task_id: impl AsRef<str>,
 ) -> Vec<TaskAwait> {
+    let child_task_id = child_task_id.as_ref();
     let waits = task_pool
         .waits_by_child
         .remove(child_task_id)
@@ -82,7 +83,8 @@ pub(super) fn take_waits_for_child(
     waits
 }
 
-pub(super) fn remove_waits_for_parent(task_pool: &mut TaskPool, parent_task_id: &str) {
+pub(super) fn remove_waits_for_parent(task_pool: &mut TaskPool, parent_task_id: impl AsRef<str>) {
+    let parent_task_id = parent_task_id.as_ref();
     let waits = task_pool
         .waits_by_parent
         .remove(parent_task_id)

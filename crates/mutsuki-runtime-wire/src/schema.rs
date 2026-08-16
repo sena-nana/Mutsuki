@@ -108,7 +108,7 @@ pub fn generated_fixtures_value() -> Value {
         7,
         11,
         "executor:fixture",
-        Some("lease-wire-1".into()),
+        Some("lease-wire-1"),
         "invocation-wire-1",
     )
     .with_batch(batch.batch_id.clone(), 1);

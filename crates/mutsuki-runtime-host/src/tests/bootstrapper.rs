@@ -339,7 +339,7 @@ fn runner_deployments_share_one_scope_owned_backend_lifecycle() {
             &format!("managed.runner.{index}"),
             &format!("managed.work.{index}"),
         );
-        runner_descriptor.plugin_id = plugin_id.clone();
+        runner_descriptor.plugin_id = plugin_id.as_str().into();
         let manifest = managed_deployment_manifest(
             &plugin_id,
             artifact_type,
@@ -594,7 +594,7 @@ fn targeted_reload_expands_the_connected_service_domain() {
 
     assert_eq!(
         prepared.affected_plugins.as_ref().unwrap(),
-        &["plugin-consumer".to_string(), "plugin-provider".to_string(),]
+        &["plugin-consumer".into(), "plugin-provider".into()]
             .into_iter()
             .collect()
     );

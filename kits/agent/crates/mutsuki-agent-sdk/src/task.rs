@@ -1,6 +1,6 @@
 //! Thin helpers over RuntimeClient / TaskHandle. No local scheduler.
 
-use mutsuki_runtime_sdk::contracts::Task;
+use mutsuki_runtime_sdk::contracts::{Task, TraceId};
 
 /// Attach `trace_id` / `correlation_id` before submit via RuntimeClient / TaskSubmitter.
 pub fn with_trace(
@@ -8,14 +8,14 @@ pub fn with_trace(
     trace_id: Option<String>,
     correlation_id: Option<String>,
 ) -> Task {
-    task.trace_id = trace_id;
+    task.trace_id = trace_id.map(TraceId::from);
     task.correlation_id = correlation_id;
     task
 }
 
 #[cfg(test)]
 mod tests {
-    use mutsuki_runtime_sdk::contracts::Task;
+    use mutsuki_runtime_sdk::contracts::{Task, TraceId};
 
     use super::with_trace;
 
@@ -26,7 +26,7 @@ mod tests {
             Some("tr".into()),
             Some("co".into()),
         );
-        assert_eq!(task.trace_id.as_deref(), Some("tr"));
+        assert_eq!(task.trace_id.as_ref().map(TraceId::as_str), Some("tr"));
         assert_eq!(task.correlation_id.as_deref(), Some("co"));
     }
 }

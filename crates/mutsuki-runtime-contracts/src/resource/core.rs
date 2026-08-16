@@ -138,7 +138,7 @@ pub struct ExclusiveWriteLease {
 pub struct ResourceCellRef {
     pub cell_id: ResourceCellId,
     pub resource_kind: String,
-    pub owner_plugin_id: String,
+    pub owner_plugin_id: crate::PluginId,
     pub schema: String,
     pub generation: u64,
     pub health: String,

@@ -17,7 +17,7 @@ impl AgentToolContext {
     }
 
     /// Nested calls inherit `trace_id` / `correlation_id` from the runner context.
-    pub fn call<P>(&self, input: impl Serialize) -> CallFuture
+    pub fn call<P>(&self, input: impl Serialize) -> CallFuture<P>
     where
         P: mutsuki_runtime_sdk::SdkProtocol,
     {
@@ -26,9 +26,9 @@ impl AgentToolContext {
 
     pub fn call_raw(
         &self,
-        protocol_id: impl Into<String>,
+        protocol_id: impl Into<mutsuki_runtime_sdk::contracts::ProtocolId>,
         payload: serde_json::Value,
-    ) -> CallFuture {
+    ) -> CallFuture<()> {
         self.ctx.call_raw(protocol_id, payload)
     }
 }

@@ -90,8 +90,8 @@ fn observability_case(state: &str, iterations: u64, capacity: usize) -> Result<C
         );
         black_box(traces.record_with(|sequence| TraceSpan {
             sequence,
-            trace_id: format!("trace-{}", index % 8),
-            span_id: format!("span-{sequence}"),
+            trace_id: format!("trace-{}", index % 8).into(),
+            span_id: format!("span-{sequence}").into(),
             parent_span_id: None,
             name: "scheduler.decision".into(),
             start: sequence as f64,

@@ -353,8 +353,8 @@ fn fs_result(task: &Task) -> Result<RunnerResult, RuntimeError> {
     let mut result = RunnerResult::completed(task.task_id.clone());
     result.events.push(DomainEvent {
         event_id: format!("event:{}:{}", task.protocol_id, task.task_id),
-        kind: public_protocol_for(&task.protocol_id)
-            .unwrap_or(&task.protocol_id)
+        kind: public_protocol_for(task.protocol_id.as_str())
+            .unwrap_or_else(|| task.protocol_id.as_str())
             .to_string(),
         payload,
     });
@@ -422,9 +422,10 @@ fn atomic_write(path: &Path, content: &str) -> std::io::Result<()> {
 
 fn fs_error(task: &Task, code: impl Into<String>, message: impl Into<String>) -> RuntimeError {
     let mut error = RuntimeError::new(code, "runtime.io_fs", message);
-    error
-        .evidence
-        .insert("task_id".into(), ScalarValue::String(task.task_id.clone()));
+    error.evidence.insert(
+        "task_id".into(),
+        ScalarValue::String(task.task_id.to_string()),
+    );
     error
 }
 
@@ -444,11 +445,11 @@ mod tests {
 
     fn work_batch(runner_id: &str, task: Task) -> WorkBatch {
         WorkBatch {
-            batch_id: format!("batch-{}", task.task_id),
+            batch_id: format!("batch-{}", task.task_id).into(),
             tick_id: "tick-1".into(),
             batch_key: runner_id.into(),
             entries: vec![BatchEntry {
-                entry_id: task.task_id.clone(),
+                entry_id: task.task_id.as_str().into(),
                 task_id: task.task_id.clone(),
                 trace_id: None,
                 parent_id: None,
@@ -467,7 +468,13 @@ mod tests {
     }
 
     fn ctx() -> RunnerContext {
-        RunnerContext::new(1, 1, "executor-1", None, "invoke-1")
+        RunnerContext::new(
+            1,
+            1,
+            "executor-1",
+            None::<mutsuki_runtime_contracts::TaskLeaseId>,
+            "invoke-1",
+        )
     }
 
     #[test]

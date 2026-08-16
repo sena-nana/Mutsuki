@@ -7,6 +7,7 @@ from mutsuki_runner_kit.contracts.event import (
     SpanStatus,
     TraceSpan,
 )
+from mutsuki_runner_kit.contracts.ids import SpanId, TraceId
 from mutsuki_runner_kit.contracts.observability import (
     ObservabilityOutletProfile,
     ObservabilityOverflowPolicy,
@@ -37,8 +38,8 @@ def test_error_event_and_trace_contracts_roundtrip() -> None:
 
     span = TraceSpan(
         sequence=1,
-        trace_id="trace-1",
-        span_id="span-1",
+        trace_id=TraceId("trace-1"),
+        span_id=SpanId("span-1"),
         parent_span_id=None,
         name="runner.run_batch",
         start=1.0,

@@ -373,8 +373,11 @@ async fn run_node(
     fan_out(&task, flow, &execution, outputs)
 }
 
-fn decode_node_result(task: &Task, outcome: TaskOutcome) -> RuntimeResult<BotNodeResult> {
-    match outcome {
+fn decode_node_result(
+    task: &Task,
+    outcome: impl Into<TaskOutcome>,
+) -> RuntimeResult<BotNodeResult> {
+    match outcome.into() {
         TaskOutcome::Completed {
             output: Some(output),
             ..
@@ -452,7 +455,7 @@ fn downstream_task(
     task.runner_hint = Some(BOT_FLOW_NODE_RUNNER_ID.into());
     task.trace_id = parent.trace_id.clone();
     task.correlation_id = parent.correlation_id.clone();
-    task.idempotency_key = Some(task.task_id.clone());
+    task.idempotency_key = Some(task.task_id.to_string());
     task.registry_generation = registry_generation;
     Ok(task)
 }
@@ -623,7 +626,7 @@ mod tests {
         .unwrap();
 
         assert_ne!(left.task_id, right.task_id);
-        assert!(left.task_id.contains("graph:1:flow:flow.left"));
-        assert!(right.task_id.contains("graph:1:flow:flow.right"));
+        assert!(left.task_id.as_str().contains("graph:1:flow:flow.left"));
+        assert!(right.task_id.as_str().contains("graph:1:flow:flow.right"));
     }
 }

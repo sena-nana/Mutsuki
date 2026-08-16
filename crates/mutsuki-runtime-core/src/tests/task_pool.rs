@@ -67,7 +67,7 @@ fn task_pool_claims_single_task_with_executor_lease() {
     assert_eq!(lease.runner_id, "worker");
     assert_eq!(lease.executor_id, "executor-1");
     assert_eq!(lease.expires_at_step, Some(2));
-    assert_eq!(task.lease_id.as_deref(), Some(lease.lease_id.as_str()));
+    assert_eq!(task.lease_id.as_ref(), Some(&lease.lease_id));
     assert_eq!(pool.running_count(), 1);
     assert_eq!(
         pool.get("task-1").unwrap().lease.as_ref().unwrap().lease_id,
@@ -657,7 +657,7 @@ fn enqueue_random_task(
     }
     if next_random(seed).is_multiple_of(5) {
         task.expected_versions.push(VersionExpectation {
-            ref_id: format!("state-{}", next_random(seed) % 4),
+            ref_id: format!("state-{}", next_random(seed) % 4).into(),
             expected_version: next_random(seed) % 3,
         });
     }
@@ -697,7 +697,7 @@ fn transition_random_running_task(pool: &mut TaskPool, seed: &mut u64, current_s
     }
 }
 
-fn random_non_terminal_task(pool: &TaskPool, seed: &mut u64) -> Option<String> {
+fn random_non_terminal_task(pool: &TaskPool, seed: &mut u64) -> Option<TaskId> {
     let candidates = pool
         .records()
         .into_iter()
@@ -720,7 +720,7 @@ fn random_task_with_status(
     pool: &TaskPool,
     seed: &mut u64,
     statuses: &[TaskStatus],
-) -> Option<String> {
+) -> Option<TaskId> {
     let candidates = pool
         .records()
         .into_iter()
@@ -730,7 +730,7 @@ fn random_task_with_status(
     choose_random(candidates, seed)
 }
 
-fn choose_random(candidates: Vec<String>, seed: &mut u64) -> Option<String> {
+fn choose_random(candidates: Vec<TaskId>, seed: &mut u64) -> Option<TaskId> {
     if candidates.is_empty() {
         None
     } else {

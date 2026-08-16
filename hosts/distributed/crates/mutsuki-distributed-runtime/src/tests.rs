@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 #[derive(Default)]
 struct FakeHost {
     submitted: Mutex<Vec<Task>>,
-    cancelled: Mutex<Vec<String>>,
+    cancelled: Mutex<Vec<mutsuki_runtime_contracts::TaskId>>,
     draining: AtomicBool,
 }
 
@@ -56,7 +56,7 @@ impl HostAdapter for FakeHost {
                     protocol_id: task.protocol_id.clone(),
                     status: "ready".into(),
                     registry_generation: task.registry_generation,
-                    runner_id: task.runner_hint.clone(),
+                    runner_id: task.runner_hint.clone().map(Into::into),
                     lease_id: None,
                 })
                 .collect())

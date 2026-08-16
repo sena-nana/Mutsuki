@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use mutsuki_runtime_contracts::{
-    ExecutionClass, ObservabilityProfile, RunnerDescriptor, RunnerPurity, RuntimeProfile,
+    ExecutionClass, ObservabilityProfile, RunnerDescriptor, RunnerId, RunnerPurity, RuntimeProfile,
     RuntimeProfileMode,
 };
 use mutsuki_runtime_host::{NativeRunner, RuntimeBootstrapper, runner_manifest};
@@ -11,7 +11,7 @@ pub const BENCH_PLUGIN_ID: &str = "mutsuki.bench.runtime";
 pub const BENCH_PROTOCOL_ID: &str = "bench.work";
 
 pub fn runner_descriptor(
-    runner_id: impl Into<String>,
+    runner_id: impl Into<RunnerId>,
     protocols: Vec<String>,
     batch_size: usize,
 ) -> RunnerDescriptor {
@@ -20,7 +20,7 @@ pub fn runner_descriptor(
         runner_id: runner_id.clone(),
         plugin_id: BENCH_PLUGIN_ID.into(),
         plugin_generation: 1,
-        accepted_protocol_ids: protocols,
+        accepted_protocol_ids: protocols.into_iter().map(Into::into).collect(),
         purity: RunnerPurity::Pure,
         execution_class: ExecutionClass::Cpu,
         invocation_mode: Default::default(),
@@ -33,7 +33,7 @@ pub fn runner_descriptor(
         ordering: Default::default(),
         control: Default::default(),
         metadata: BTreeMap::new(),
-        contract_surfaces: vec![format!("runner:{runner_id}")],
+        contract_surfaces: vec![format!("runner:{runner_id}").into()],
     };
     descriptor.batch.preferred_batch_size = batch_size;
     descriptor.batch.max_batch_entries = batch_size;

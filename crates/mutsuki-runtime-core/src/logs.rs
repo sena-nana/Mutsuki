@@ -282,16 +282,16 @@ impl TraceLog {
 
     pub fn record(
         &mut self,
-        trace_id: impl Into<String>,
+        trace_id: impl Into<mutsuki_runtime_contracts::TraceId>,
         name: impl Into<String>,
-        parent_span_id: Option<String>,
+        parent_span_id: Option<mutsuki_runtime_contracts::SpanId>,
         status: SpanStatus,
         attributes: BTreeMap<String, ScalarValue>,
     ) -> Option<TraceSpan> {
         self.record_with(|sequence| TraceSpan {
             sequence,
             trace_id: trace_id.into(),
-            span_id: format!("span-{sequence}"),
+            span_id: format!("span-{sequence}").into(),
             parent_span_id,
             name: name.into(),
             start: sequence as f64,
@@ -468,7 +468,7 @@ mod tests {
             TraceSpan {
                 sequence,
                 trace_id: "disabled".into(),
-                span_id: format!("span-{sequence}"),
+                span_id: format!("span-{sequence}").into(),
                 parent_span_id: None,
                 name: "disabled".into(),
                 start: sequence as f64,

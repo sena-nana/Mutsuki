@@ -41,7 +41,7 @@ fn stale_runner_completion_is_rejected_after_lease_reclaim() {
     assert!(runtime.task_events("task-1").iter().any(|event| {
         event.name == "task.lease.expired"
             && event.attributes.get("lease_id")
-                == Some(&ScalarValue::String(stale_lease_id.clone()))
+                == Some(&ScalarValue::String(stale_lease_id.to_string()))
     }));
 
     let dispatch = dispatches.pop().unwrap();

@@ -5,7 +5,10 @@ use std::pin::Pin;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use mutsuki_runtime_contracts::{RuntimeEvent, ScalarValue, TaskBatch, TaskHandle};
+use mutsuki_runtime_contracts::{
+    BindingId, ProtocolId, RefId, RunnerId, RuntimeEvent, ScalarValue, SurfaceId, TaskBatch,
+    TaskHandle, TaskId, TaskLeaseId, TraceId,
+};
 
 pub type ControlFuture = Pin<Box<dyn Future<Output = ControlResponse> + Send>>;
 
@@ -493,7 +496,7 @@ pub struct PluginReloadResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PluginReloadChange {
-    pub surface_id: String,
+    pub surface_id: SurfaceId,
     pub compatibility: String,
 }
 
@@ -561,12 +564,12 @@ pub struct TaskFailureSummary {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskOutcomeView {
-    pub task_id: String,
+    pub task_id: TaskId,
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output_ref: Option<String>,
+    pub output_ref: Option<RefId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -577,24 +580,24 @@ pub struct TaskOutcomeView {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskSnapshot {
-    pub task_id: String,
-    pub protocol_id: String,
+    pub task_id: TaskId,
+    pub protocol_id: ProtocolId,
     pub status: String,
     pub priority: i64,
     pub ready_at_step: Option<u64>,
     pub created_sequence: u64,
     pub registry_generation: u64,
-    pub target_binding_id: Option<String>,
+    pub target_binding_id: Option<BindingId>,
     pub runner_hint: Option<String>,
-    pub claimed_by: Option<String>,
-    pub owner_runner: Option<String>,
-    pub lease_id: Option<String>,
-    pub trace_id: Option<String>,
+    pub claimed_by: Option<RunnerId>,
+    pub owner_runner: Option<RunnerId>,
+    pub lease_id: Option<TaskLeaseId>,
+    pub trace_id: Option<TraceId>,
     pub correlation_id: Option<String>,
-    pub input_refs: Vec<String>,
-    pub output_ref: Option<String>,
-    pub continuation_ref: Option<String>,
-    pub required_surfaces: Vec<String>,
+    pub input_refs: Vec<RefId>,
+    pub output_ref: Option<RefId>,
+    pub continuation_ref: Option<RefId>,
+    pub required_surfaces: Vec<SurfaceId>,
     pub failure: Option<TaskFailureSummary>,
 }
 

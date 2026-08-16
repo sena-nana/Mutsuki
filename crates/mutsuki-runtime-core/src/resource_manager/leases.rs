@@ -10,12 +10,14 @@ use super::{ResourceCellEntry, ResourceManager};
 impl ResourceManager {
     pub fn create_resource_cell(
         &mut self,
-        cell_id: &str,
+        cell_id: impl AsRef<str>,
         resource_kind: &str,
-        owner_plugin_id: &str,
+        owner_plugin_id: impl AsRef<str>,
         schema: &str,
         reload_policy: &str,
     ) -> ResourceCellRef {
+        let cell_id = cell_id.as_ref();
+        let owner_plugin_id = owner_plugin_id.as_ref();
         let descriptor = ResourceCellRef {
             cell_id: cell_id.into(),
             resource_kind: resource_kind.into(),
@@ -34,12 +36,15 @@ impl ResourceManager {
 
     pub fn acquire_resource_lease(
         &mut self,
-        cell_id: &str,
-        borrower_task_id: &str,
-        borrower_executor_id: &str,
+        cell_id: impl AsRef<str>,
+        borrower_task_id: impl AsRef<str>,
+        borrower_executor_id: impl AsRef<str>,
         mode: &str,
         expires_at_step: Option<u64>,
     ) -> RuntimeResult<ResourceLease> {
+        let cell_id = cell_id.as_ref();
+        let borrower_task_id = borrower_task_id.as_ref();
+        let borrower_executor_id = borrower_executor_id.as_ref();
         let cell = self.resource_cells.get_mut(cell_id).ok_or_else(|| {
             crate::runtime_failure(
                 ERR_RESOURCE_NOT_FOUND,
@@ -74,7 +79,7 @@ impl ResourceManager {
             ));
         }
         let lease = ResourceLease {
-            lease_id: self.id_source.next_id("resource-lease"),
+            lease_id: self.id_source.next_id("resource-lease").into(),
             cell_id: cell_id.into(),
             borrower_task_id: borrower_task_id.into(),
             borrower_executor_id: borrower_executor_id.into(),
@@ -137,7 +142,8 @@ impl ResourceManager {
         reclaimed
     }
 
-    pub fn active_mutable_lease_routes_for_task(&self, task_id: &str) -> Vec<String> {
+    pub fn active_mutable_lease_routes_for_task(&self, task_id: impl AsRef<str>) -> Vec<String> {
+        let task_id = task_id.as_ref();
         let mut routes = Vec::new();
         for cell in self.resource_cells.values() {
             for lease in cell.active_leases.values() {
@@ -159,10 +165,11 @@ impl ResourceManager {
 
     pub fn acquire_write_lease(
         &mut self,
-        ref_id: &str,
+        ref_id: impl AsRef<str>,
         owner: &str,
         expires_at_step: Option<u64>,
     ) -> RuntimeResult<ExclusiveWriteLease> {
+        let ref_id = ref_id.as_ref();
         let entry = self.hub.get_mut(ref_id).ok_or_else(|| {
             crate::runtime_failure(
                 ERR_RESOURCE_NOT_FOUND,

@@ -7,9 +7,10 @@ use mutsuki_agent_plugin_conformance::{
 };
 use mutsuki_runtime_contracts::resource::experimental::{CommandBatch, SagaPlan};
 use mutsuki_runtime_contracts::{
-    ArtifactType, BatchEntry, BatchPayload, CancelPolicy, CommandPlan, DispatchLane, ExportPlan,
-    OrderingRequirement, PlanReceipt, ReadPlan, RunnerContext, SnapshotDescriptor, StreamPlan,
-    Task, TaskBatch, TaskHandle, TaskLease, TaskOutcome, WorkBatch, WorkResourcePlan, WritePlan,
+    ArtifactType, BatchEntry, BatchPayload, CancelPolicy, CommandPlan, DispatchLane, EntryId,
+    ExportPlan, OrderingRequirement, PlanReceipt, ReadPlan, RunnerContext, SnapshotDescriptor,
+    StreamPlan, Task, TaskBatch, TaskHandle, TaskLease, TaskOutcome, WorkBatch, WorkResourcePlan,
+    WritePlan,
 };
 use mutsuki_runtime_core::{Runner, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_host::{AbiPluginLoadRequest, load_abi_plugin_v2};
@@ -99,7 +100,7 @@ fn work_batch(task: Task) -> (RunnerContext, WorkBatch) {
             1,
             1,
             "executor:conformance",
-            Some(lease_id.clone()),
+            Some(lease_id.as_str()),
             "invocation:conformance",
         ),
         WorkBatch {
@@ -107,7 +108,7 @@ fn work_batch(task: Task) -> (RunnerContext, WorkBatch) {
             tick_id: "tick:conformance".into(),
             batch_key: "agent.conformance".into(),
             entries: vec![BatchEntry {
-                entry_id: task_id.clone(),
+                entry_id: EntryId::from(task_id.as_str()),
                 task_id: task_id.clone(),
                 trace_id: None,
                 parent_id: None,
@@ -122,7 +123,7 @@ fn work_batch(task: Task) -> (RunnerContext, WorkBatch) {
             payload: BatchPayload::from_local_tasks(vec![task]),
             resource_plan: WorkResourcePlan::empty(),
             task_leases: vec![TaskLease {
-                lease_id,
+                lease_id: lease_id.into(),
                 task_id,
                 attempt_generation: 1,
                 runner_id: "agent.conformance.runner".into(),

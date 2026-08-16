@@ -73,7 +73,7 @@ impl Runner for EchoRunner {
 fn echo_result(task: &Task) -> RunnerResult {
     let mut result = RunnerResult::completed(task.task_id.clone());
     result.values.push(mutsuki_runtime_contracts::ValueRef {
-        ref_id: format!("value:{}", result.task_id),
+        ref_id: format!("value:{}", result.task_id).into(),
         provider_id: "mutsuki.tauri.echo".into(),
         schema: "application/json".into(),
         version: 1,
@@ -109,6 +109,6 @@ pub fn echo_descriptor() -> RunnerDescriptor {
         ordering: Default::default(),
         control: Default::default(),
         metadata: BTreeMap::new(),
-        contract_surfaces: vec![format!("task_protocol:{ECHO_PROTOCOL_ID}")],
+        contract_surfaces: vec![format!("task_protocol:{ECHO_PROTOCOL_ID}").into()],
     }
 }

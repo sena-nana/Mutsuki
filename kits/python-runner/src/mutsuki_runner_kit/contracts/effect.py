@@ -15,18 +15,19 @@ from mutsuki_runner_kit.contracts.codec import (
     optional_str,
     tuple_from_json,
 )
+from mutsuki_runner_kit.contracts.ids import RefId
 
 
 @dataclass(frozen=True)
 class EffectPrecondition:
-    ref_id: str
+    ref_id: RefId
     expected_version: int
 
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = as_mapping(data, "EffectPrecondition")
         return cls(
-            ref_id=as_str(field_value(raw, "ref_id"), "ref_id"),
+            ref_id=RefId(as_str(field_value(raw, "ref_id"), "ref_id")),
             expected_version=as_int(field_value(raw, "expected_version"), "expected_version"),
         )
 

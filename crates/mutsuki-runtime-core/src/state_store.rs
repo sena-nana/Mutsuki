@@ -1,13 +1,15 @@
 use std::collections::BTreeMap;
 
-use mutsuki_runtime_contracts::{ERR_STATE_CONFLICT, ScalarValue, StateDelta, VersionExpectation};
+use mutsuki_runtime_contracts::{
+    ERR_STATE_CONFLICT, RefId, ScalarValue, StateDelta, VersionExpectation,
+};
 use serde_json::Value;
 
 use crate::RuntimeResult;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct StateStore {
-    values: BTreeMap<String, (u64, Value)>,
+    values: BTreeMap<RefId, (u64, Value)>,
 }
 
 impl StateStore {
@@ -27,8 +29,8 @@ impl StateStore {
         Ok(())
     }
 
-    pub(crate) fn get(&self, ref_id: &str) -> Option<&(u64, Value)> {
-        self.values.get(ref_id)
+    pub(crate) fn get(&self, ref_id: impl AsRef<str>) -> Option<&(u64, Value)> {
+        self.values.get(ref_id.as_ref())
     }
 
     pub(crate) fn validate_expectations(
@@ -44,7 +46,7 @@ impl StateStore {
                     crate::runtime_error(ERR_STATE_CONFLICT, "runtime.state_store", route.clone());
                 error.evidence.insert(
                     "ref_id".into(),
-                    ScalarValue::String(expectation.ref_id.clone()),
+                    ScalarValue::String(expectation.ref_id.to_string()),
                 );
                 error.evidence.insert(
                     "expected_version".into(),
@@ -60,7 +62,8 @@ impl StateStore {
         Ok(())
     }
 
-    fn current_version(&self, ref_id: &str) -> u64 {
+    fn current_version(&self, ref_id: impl AsRef<str>) -> u64 {
+        let ref_id = ref_id.as_ref();
         self.values
             .get(ref_id)
             .map(|(version, _)| *version)

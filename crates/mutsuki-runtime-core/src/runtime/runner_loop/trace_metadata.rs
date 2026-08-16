@@ -9,11 +9,11 @@ pub(super) fn runner_attrs(
     let mut attrs = BTreeMap::new();
     attrs.insert(
         "runner_id".into(),
-        ScalarValue::String(runner.runner_id.clone()),
+        ScalarValue::String(runner.runner_id.to_string()),
     );
     attrs.insert(
         "plugin_id".into(),
-        ScalarValue::String(runner.plugin_id.clone()),
+        ScalarValue::String(runner.plugin_id.to_string()),
     );
     attrs.insert(
         "plugin_generation".into(),
@@ -47,9 +47,12 @@ pub(super) fn trace_attrs(
     let mut attrs = BTreeMap::new();
     attrs.insert(
         "trace_id".into(),
-        ScalarValue::String(span.trace_id.clone()),
+        ScalarValue::String(span.trace_id.to_string()),
     );
-    attrs.insert("span_id".into(), ScalarValue::String(span.span_id.clone()));
+    attrs.insert(
+        "span_id".into(),
+        ScalarValue::String(span.span_id.to_string()),
+    );
     attrs.insert("span_name".into(), ScalarValue::String(span.name.clone()));
     attrs
 }
@@ -60,7 +63,12 @@ fn descriptor_fingerprint(runner: &RunnerDescriptor) -> String {
         runner.runner_id,
         runner.plugin_id,
         runner.plugin_generation,
-        runner.accepted_protocol_ids.join(",")
+        runner
+            .accepted_protocol_ids
+            .iter()
+            .map(mutsuki_runtime_contracts::ProtocolId::as_str)
+            .collect::<Vec<_>>()
+            .join(",")
     )
 }
 

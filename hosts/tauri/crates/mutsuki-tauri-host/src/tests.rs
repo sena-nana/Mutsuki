@@ -278,7 +278,7 @@ fn run_tauri_agent(host: &MutsukiTauriHost, task_id: &str) {
             ))
             .expect("request serializes"),
             task_id: Some(task_id.into()),
-            trace_id: Some(format!("trace:{task_id}")),
+            trace_id: Some(format!("trace:{task_id}").into()),
             correlation_id: None,
             idempotency_key: None,
             target_binding_id: None,
@@ -494,8 +494,8 @@ fn waiting_tasks_are_completion_driven_without_periodic_actor_queries() {
         let waiting = snapshots
             .iter()
             .filter(|snapshot| {
-                snapshot.task_id.starts_with("waiting-parent:")
-                    && !snapshot.task_id.ends_with(":child")
+                snapshot.task_id.as_str().starts_with("waiting-parent:")
+                    && !snapshot.task_id.as_str().ends_with(":child")
                     && snapshot.status == TaskStatus::Waiting
             })
             .count();
@@ -506,7 +506,7 @@ fn waiting_tasks_are_completion_driven_without_periodic_actor_queries() {
             let mut statuses = BTreeMap::new();
             for snapshot in snapshots
                 .iter()
-                .filter(|snapshot| snapshot.task_id.starts_with("waiting-parent:"))
+                .filter(|snapshot| snapshot.task_id.as_str().starts_with("waiting-parent:"))
             {
                 *statuses
                     .entry(format!("{:?}", snapshot.status))
@@ -588,7 +588,7 @@ fn task_pump_restarts_after_all_previous_tasks_finish() {
             .call(FrontendTaskRequest {
                 protocol_id: ECHO_PROTOCOL_ID.into(),
                 payload: json!({ "index": index }),
-                task_id: Some(format!("task:pump-restart:{index}")),
+                task_id: Some(format!("task:pump-restart:{index}").into()),
                 trace_id: None,
                 correlation_id: None,
                 idempotency_key: None,
@@ -952,7 +952,7 @@ fn legacy_approval_request_generates_fallback_trace_and_preserves_context() {
         context.clone(),
     );
 
-    assert!(request.trace_id.starts_with("approval-trace:"));
+    assert!(request.trace_id.as_str().starts_with("approval-trace:"));
     assert!(request.correlation_id.starts_with("approval-correlation:"));
     assert_eq!(request.context, context);
 }
@@ -1356,7 +1356,10 @@ fn streaming_task_can_be_cancelled_while_runner_is_still_running() {
         .cancel_task_handle(handle.clone())
         .expect("task cancels while runner is running");
     assert_eq!(cancelled_task.task_id, "stream-cancel");
-    assert_eq!(host.task_status(&handle.task_id), Some(TaskStatus::Running));
+    assert_eq!(
+        host.task_status(handle.task_id.as_str()),
+        Some(TaskStatus::Running)
+    );
     assert!(
         cancelled
             .lock()
@@ -1445,7 +1448,7 @@ impl Runner for WaitingRunner {
                 let mut child = Task::new(&child_id, WAITING_PROTOCOL_ID, json!({}));
                 child.ready_at_step = Some(u64::MAX / 4);
                 let child_handle = TaskHandle {
-                    task_id: child_id.clone(),
+                    task_id: child_id.clone().into(),
                     protocol_id: WAITING_PROTOCOL_ID.into(),
                     target_binding_id: None,
                     cancel_policy: CancelPolicy::Cascade,
@@ -1467,7 +1470,7 @@ impl Runner for WaitingRunner {
                         child: child_handle,
                         continuation: TaskStepContinuation {
                             continuation: ResourceRef {
-                                ref_id: continuation_ref.clone(),
+                                ref_id: continuation_ref.clone().into(),
                                 resource_id: ResourceId {
                                     kind_id: "continuation".into(),
                                     slot_id: continuation_ref,
@@ -1715,7 +1718,7 @@ fn runner_descriptor(runner_id: &str, protocol_id: &str) -> RunnerDescriptor {
         ordering: Default::default(),
         control: Default::default(),
         metadata: BTreeMap::new(),
-        contract_surfaces: vec![format!("task_protocol:{protocol_id}")],
+        contract_surfaces: vec![format!("task_protocol:{protocol_id}").into()],
     }
 }
 
@@ -1801,11 +1804,11 @@ async fn resource_store_round_trips_written_bytes() {
         .await
         .expect("resource created");
 
-    host.write_resource_bytes(&resource.ref_id, b"after".to_vec())
+    host.write_resource_bytes(resource.ref_id.as_str(), b"after".to_vec())
         .await
         .expect("resource updated");
     let text = host
-        .read_resource_text(&resource.ref_id)
+        .read_resource_text(resource.ref_id.as_str())
         .await
         .expect("resource text readable");
 
@@ -1829,22 +1832,34 @@ async fn large_resources_use_bounded_chunks_and_revocable_preview_handles() {
         .await
         .expect("resource created");
 
-    assert!(host.read_resource_bytes(&resource.ref_id).await.is_err());
+    assert!(
+        host.read_resource_bytes(resource.ref_id.as_str())
+            .await
+            .is_err()
+    );
     let first = host
-        .read_resource_chunk(&resource.ref_id, 0, crate::MAX_RESOURCE_INVOKE_BYTES)
+        .read_resource_chunk(
+            resource.ref_id.as_str(),
+            0,
+            crate::MAX_RESOURCE_INVOKE_BYTES,
+        )
         .await
         .expect("first chunk");
     assert_eq!(first.bytes, bytes[..crate::MAX_RESOURCE_INVOKE_BYTES]);
     assert!(!first.eof);
     assert_eq!(first.total_bytes, bytes.len() as u64);
     assert!(
-        host.read_resource_chunk(&resource.ref_id, 0, crate::MAX_RESOURCE_INVOKE_BYTES + 1)
-            .await
-            .is_err()
+        host.read_resource_chunk(
+            resource.ref_id.as_str(),
+            0,
+            crate::MAX_RESOURCE_INVOKE_BYTES + 1,
+        )
+        .await
+        .is_err()
     );
 
     let preview = host
-        .create_preview_handle(&resource.ref_id)
+        .create_preview_handle(resource.ref_id.as_str())
         .expect("preview handle");
     let (preview_bytes, media_type) = host
         .resource_store()
@@ -1879,7 +1894,7 @@ async fn host_resource_provider_id_matches_registered_gateway() {
     assert_eq!(resource.provider_id, mutsuki_tauri_resource::PROVIDER_ID);
 
     let preview = host
-        .create_preview_handle(&resource.ref_id)
+        .create_preview_handle(resource.ref_id.as_str())
         .expect("preview handle created");
     assert!(preview.url.starts_with("mutsuki-resource://"));
     assert_eq!(preview.ref_id, resource.ref_id);

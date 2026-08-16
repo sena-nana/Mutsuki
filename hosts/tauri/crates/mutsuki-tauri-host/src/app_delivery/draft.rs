@@ -1,5 +1,7 @@
 use super::types::AppId;
-use mutsuki_runtime_contracts::{CapabilityDescriptor, CapabilityRequestEnvelope};
+use mutsuki_runtime_contracts::{
+    CapabilityDescriptor, CapabilityPeerId, CapabilityRequestEnvelope, CapabilityRequestId,
+};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -12,9 +14,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Failure-recovery draft. Presence means delivery did not complete; never treat as delivered.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DeliveryDraft {
-    pub request_id: String,
-    pub source_app: String,
-    pub target_app: String,
+    pub request_id: CapabilityRequestId,
+    pub source_app: CapabilityPeerId,
+    pub target_app: CapabilityPeerId,
     pub capability: CapabilityDescriptor,
     pub payload: Value,
     pub saved_at_unix_ms: u64,
@@ -37,7 +39,7 @@ impl DeliveryDraft {
 
 #[derive(Clone, Default)]
 pub struct DeliveryDraftStore {
-    inner: Arc<RwLock<BTreeMap<String, DeliveryDraft>>>,
+    inner: Arc<RwLock<BTreeMap<CapabilityRequestId, DeliveryDraft>>>,
     directory: Option<PathBuf>,
 }
 

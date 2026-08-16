@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use mutsuki_runtime_contracts::resource::experimental::{CommandBatch, SagaPlan};
 use mutsuki_runtime_contracts::{
     CommandPlan, ERR_RESOURCE_GENERATION_MISMATCH, ERR_RESOURCE_UNSUPPORTED,
-    ERR_RUNTIME_HOST_FAILED, ExportPlan, PlanReceipt, ReadPlan, ResourceRef, ResourceSemantic,
-    SnapshotDescriptor, StreamPlan, WritePlan,
+    ERR_RUNTIME_HOST_FAILED, ExportPlan, PlanReceipt, ReadPlan, RefId, ResourceRef,
+    ResourceSemantic, SnapshotDescriptor, StreamPlan, WritePlan,
 };
 use mutsuki_runtime_core::RuntimeResult;
 use mutsuki_runtime_sdk::{ResourcePlanGateway, ResourceProviderGateway};
@@ -68,7 +68,7 @@ struct SharedMemoryResourceEntry {
 #[derive(Default)]
 struct SharedMemoryResourceState {
     next_slot: u64,
-    resources: BTreeMap<String, SharedMemoryResourceEntry>,
+    resources: BTreeMap<RefId, SharedMemoryResourceEntry>,
     retired: VecDeque<SharedMemoryResourceEntry>,
 }
 
@@ -425,7 +425,7 @@ impl ResourcePlanGateway for SharedMemoryResourceProvider {
             sealed: false,
         }
         .resource_ref(
-            &plan.resource.ref_id,
+            plan.resource.ref_id.as_str(),
             &plan.resource.resource_id.slot_id,
             &mapping_name,
             bytes.len() as u64,

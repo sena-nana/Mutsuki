@@ -7,11 +7,13 @@ from typing import Self
 
 from mutsuki_runner_kit.contracts.codec import (
     JsonDict,
+    as_id,
     as_mapping,
     as_str,
     field_value,
     optional_int,
 )
+from mutsuki_runner_kit.contracts.ids import RefId
 
 
 class DispatchLane(StrEnum):
@@ -38,7 +40,7 @@ class PayloadLayout(StrEnum):
 @dataclass(frozen=True)
 class OrderingRequirement:
     type: str
-    ref_id: str | None = None
+    ref_id: RefId | None = None
     sequence_id: str | None = None
 
     @classmethod
@@ -51,7 +53,7 @@ class OrderingRequirement:
 
     @classmethod
     def same_resource_order(cls, ref_id: str) -> Self:
-        return cls(type="same_resource_order", ref_id=ref_id)
+        return cls(type="same_resource_order", ref_id=RefId(ref_id))
 
     @classmethod
     def strict_sequence(cls, sequence_id: str) -> Self:
@@ -66,7 +68,7 @@ class OrderingRequirement:
         if kind == "preserve_submit_order":
             return cls.preserve_submit_order()
         if kind == "same_resource_order":
-            return cls.same_resource_order(as_str(field_value(raw, "ref_id"), "ref_id"))
+            return cls.same_resource_order(as_id(RefId, field_value(raw, "ref_id"), "ref_id"))
         if kind == "strict_sequence":
             return cls.strict_sequence(as_str(field_value(raw, "sequence_id"), "sequence_id"))
         raise TypeError(f"unknown OrderingRequirement type: {kind}")
@@ -89,7 +91,7 @@ class OrderingRequirement:
 
 @dataclass(frozen=True)
 class ResourceRequirement:
-    ref_id: str
+    ref_id: RefId
     mode: ResourceAccessMode
     expected_version: int | None = None
 
@@ -97,7 +99,7 @@ class ResourceRequirement:
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = as_mapping(data, "ResourceRequirement")
         return cls(
-            ref_id=as_str(field_value(raw, "ref_id"), "ref_id"),
+            ref_id=RefId(as_str(field_value(raw, "ref_id"), "ref_id")),
             mode=ResourceAccessMode(as_str(field_value(raw, "mode"), "mode")),
             expected_version=optional_int(field_value(raw, "expected_version"), "expected_version"),
         )

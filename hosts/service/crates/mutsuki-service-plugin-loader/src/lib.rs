@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use mutsuki_runtime_contracts::{ArtifactType, PluginDeploymentKind, PluginManifest};
+use mutsuki_runtime_contracts::{ArtifactType, PluginDeploymentKind, PluginId, PluginManifest};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -25,41 +25,41 @@ pub enum PluginLoaderError {
     },
     #[error("plugin {plugin_id} uses unsupported api version {api_version}")]
     UnsupportedApiVersion {
-        plugin_id: String,
+        plugin_id: PluginId,
         api_version: String,
     },
     #[error("plugin {plugin_id} deployment {deployment:?} does not match artifact {artifact:?}")]
     DeploymentMismatch {
-        plugin_id: String,
+        plugin_id: PluginId,
         deployment: PluginDeploymentKind,
         artifact: ArtifactType,
     },
     #[error(
         "plugin {plugin_id} runtime env contains secret-like key {key}; pass secrets by host backend or environment references"
     )]
-    SecretInManifest { plugin_id: String, key: String },
+    SecretInManifest { plugin_id: PluginId, key: String },
     #[error("requested builtin plugin {0} is not linked into this ServiceHost build")]
-    BuiltinUnavailable(String),
+    BuiltinUnavailable(PluginId),
     #[error("dynamic plugin {0} declares a native artifact that is not linked into this build")]
-    DynamicNative(String),
+    DynamicNative(PluginId),
     #[error("duplicate plugin id {0} in builtin or dynamic catalogs")]
-    DuplicatePlugin(String),
+    DuplicatePlugin(PluginId),
     #[error("ABI artifact path for plugin {plugin_id} is invalid: {detail}")]
-    InvalidArtifactPath { plugin_id: String, detail: String },
+    InvalidArtifactPath { plugin_id: PluginId, detail: String },
     #[error("ABI artifact for plugin {plugin_id} is missing: {path}")]
-    MissingArtifact { plugin_id: String, path: PathBuf },
+    MissingArtifact { plugin_id: PluginId, path: PathBuf },
     #[error("ABI artifact for plugin {plugin_id} has an invalid platform extension: {path}")]
-    InvalidArtifactExtension { plugin_id: String, path: PathBuf },
+    InvalidArtifactExtension { plugin_id: PluginId, path: PathBuf },
     #[error("ABI artifact hash for plugin {plugin_id} must be sha256:<64 lowercase hex>")]
-    InvalidArtifactHash { plugin_id: String },
+    InvalidArtifactHash { plugin_id: PluginId },
     #[error("ABI artifact hash mismatch for plugin {plugin_id}: expected {expected}, got {actual}")]
     ArtifactHashMismatch {
-        plugin_id: String,
+        plugin_id: PluginId,
         expected: String,
         actual: String,
     },
     #[error("plugin {plugin_id} ABI contract invalid: {detail}")]
-    AbiContractInvalid { plugin_id: String, detail: String },
+    AbiContractInvalid { plugin_id: PluginId, detail: String },
     #[error("failed to read ABI artifact {path}: {source}")]
     ReadArtifact {
         path: PathBuf,
@@ -135,14 +135,14 @@ impl PluginCatalog {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PluginDiagnostic {
     pub manifest_path: PathBuf,
-    pub plugin_id: Option<String>,
+    pub plugin_id: Option<PluginId>,
     pub deployment: Option<PluginDeploymentKind>,
     pub detail: String,
 }
 
 #[derive(Clone, Default)]
 pub struct BuiltinRegistry {
-    manifests: BTreeMap<String, PluginManifest>,
+    manifests: BTreeMap<PluginId, PluginManifest>,
 }
 
 #[derive(Clone, Default)]
@@ -308,7 +308,7 @@ impl PluginInventory {
     }
 }
 
-fn candidate_key(record: &PluginRecord) -> (String, String) {
+fn candidate_key(record: &PluginRecord) -> (PluginId, String) {
     (
         record.manifest.plugin_id.clone(),
         format!(
@@ -504,14 +504,14 @@ fn validate_manifest(
     Ok(())
 }
 
-fn disabled_plugins(disabled_dir: &Path) -> BTreeSet<String> {
+fn disabled_plugins(disabled_dir: &Path) -> BTreeSet<PluginId> {
     let mut disabled = BTreeSet::new();
     let Ok(entries) = fs::read_dir(disabled_dir) else {
         return disabled;
     };
     for entry in entries.flatten() {
         if let Some(name) = entry.file_name().to_str() {
-            disabled.insert(name.trim_end_matches(".disabled").to_string());
+            disabled.insert(PluginId::from(name.trim_end_matches(".disabled")));
         }
     }
     disabled

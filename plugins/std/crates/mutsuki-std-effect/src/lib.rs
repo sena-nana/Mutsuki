@@ -106,7 +106,8 @@ pub fn derive_effect_task(
     options: EffectDeriveOptions,
 ) -> RunnerResult {
     let effect_task_id = format!("{}:effect", source.task_id);
-    let mut effect_task = source.derive_with_protocol(effect_task_id.clone(), effect_protocol);
+    let mut effect_task =
+        source.derive_with_protocol(effect_task_id.clone(), effect_protocol.into());
     effect_task.runner_hint = Some(runner_hint.into());
 
     let mut result = RunnerResult::completed(source.task_id.clone());
@@ -129,7 +130,7 @@ pub fn derive_effect_from_pair(
     observation: EffectObservation,
 ) -> Result<RunnerResult, String> {
     let pair = table
-        .pair_for_public(&source.protocol_id)
+        .pair_for_public(source.protocol_id.as_str())
         .ok_or_else(|| format!("unsupported public protocol `{}`", source.protocol_id))?;
     Ok(derive_effect_task(
         source,

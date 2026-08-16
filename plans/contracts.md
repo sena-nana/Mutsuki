@@ -17,6 +17,19 @@ artifact 统一从该 crate 导出。`mutsuki-runtime-contracts` 仍拥有 Task�
 - 禁止跨 runtime 边界传 callable、socket、SDK client、数据库连接、Python object、
   Rust pointer、Arc、Vec 本体或真实 handle。
 
+Identity 字段是 branded 类型，不是 typestate，也不编码 generation / lease 生命周期：
+
+- Rust / Python 使用 `TaskId`、`RefId`、`ProtocolId`、`RunnerId`、`PluginId`、
+  `ExecutorId`、`BindingId`、`TaskLeaseId`、`ResourceLeaseId`、`ResourceCellId`、
+  `TickId`、`BatchId`、`EntryId`、`BatchKey`、`SurfaceId`、`SpanId`、`TraceId`、
+  `CapabilityRequestId`、`CapabilityPeerId`。
+- JSON / wire 仍是普通 JSON string；`serde(transparent)`，roundtrip 形状不变。
+- 这些类型不实现 `Deref`。取值用 `as_str()`，构造用 `From<&str>` / `From<String>`，
+  打印用 `Display`，与字面量比较用 `PartialEq<str>`。
+- 以这些 identity 为键的 map / set 使用 branded 类型，不再用 `String` 冒充。
+- `TaskLease` / `ResourceLease` 仍是独立 descriptor；ID brand 不表示租约状态或
+  generation fence。
+
 ## 2. 核心对象
 
 | 对象 | 语义 |
@@ -189,10 +202,13 @@ Rust SDK；Python runner kit 位于 `kits/python-runner`。JS/TS SDK 只作为�
 新增占位包。
 
 ```text
-Rust SDK: ctx.call::<Protocol>(input).await -> TaskOutcome
-Rust SDK raw: ctx.call_raw(protocol_id, payload).await -> TaskOutcome
+Rust SDK: ctx.call::<Protocol>(input).await -> TypedTaskOutcome<P>
+Rust SDK raw: ctx.call_raw(protocol_id, payload).await -> TypedTaskOutcome
 Python runner kit: await ctx.call_raw(protocol_id, payload) -> TaskOutcome
 JS/TS SDK: future package 可包装同一 TaskHandle / TaskOutcome wire shape
+
+`TypedTaskOutcome` 可用 `.into_outcome()` 或 `impl Into<TaskOutcome>` 读成
+`TaskOutcome`；wire 形状不变。
 ```
 
 任务持久化、重放、checkpoint 与内容寻址使用独立可选 contracts，不扩展 task execute ABI。

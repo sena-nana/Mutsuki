@@ -324,8 +324,8 @@ fn command_node_descriptor(plugin_generation: u64) -> RunnerDescriptor {
             ScalarValue::String("Bot Flow command match node".into()),
         )]),
         contract_surfaces: vec![
-            format!("runner:{BOT_COMMAND_RUNNER_ID}"),
-            format!("task_protocol:{BOT_COMMAND_PARSE_PROTOCOL_ID}"),
+            format!("runner:{BOT_COMMAND_RUNNER_ID}").into(),
+            format!("task_protocol:{BOT_COMMAND_PARSE_PROTOCOL_ID}").into(),
         ],
     }
 }
@@ -551,7 +551,7 @@ mod tests {
             .iter()
             .enumerate()
             .map(|(index, task)| BatchEntry {
-                entry_id: format!("entry-{index}"),
+                entry_id: format!("entry-{index}").into(),
                 task_id: task.task_id.clone(),
                 trace_id: None,
                 parent_id: None,
@@ -571,7 +571,7 @@ mod tests {
             registry_generation,
             1,
             "executor:command",
-            Vec::<String>::new(),
+            None::<&str>,
             "batch:command",
         )
         .with_batch("batch:command", entry_count)

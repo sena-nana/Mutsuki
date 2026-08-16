@@ -55,7 +55,8 @@ impl Runner for FixtureRunner {
         batch: WorkBatch,
     ) -> RuntimeResult<CompletionBatch> {
         map_work_batch_entries(&batch, |task| {
-            let mut result = mutsuki_runtime_contracts::RunnerResult::completed(&task.task_id);
+            let mut result =
+                mutsuki_runtime_contracts::RunnerResult::completed(task.task_id.clone());
             result.output = Some(json!({ "echo": task.payload }));
             Ok(result)
         })

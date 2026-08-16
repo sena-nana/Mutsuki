@@ -258,7 +258,7 @@ fn wait_running(
         let status = reference
             .group()
             .domain(&handle.domain_id)
-            .and_then(|runtime| runtime.task_status(&handle.task.task_id));
+            .and_then(|runtime| runtime.task_status(handle.task.task_id.as_str()));
         if status == Some(TaskStatus::Running) {
             return Ok(());
         }

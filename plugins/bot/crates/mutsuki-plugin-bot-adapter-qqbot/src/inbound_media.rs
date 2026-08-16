@@ -204,7 +204,7 @@ async fn map_task_with_media(
         BOT_FLOW_INGRESS_PROTOCOL_ID,
         mutsuki_runtime_contracts::TaskPayload::from_local(flow_envelope(
             event,
-            task.trace_id.clone(),
+            task.trace_id.clone().map(Into::into),
             task.correlation_id.clone(),
         )?),
     );
@@ -600,7 +600,8 @@ mod tests {
     }
 
     fn context() -> RunnerContext {
-        RunnerContext::new(1, 1, "executor:test", None, "invocation:test").with_batch("batch", 1)
+        RunnerContext::new(1, 1, "executor:test", None::<&str>, "invocation:test")
+            .with_batch("batch", 1)
     }
 
     fn batch(task: &Task) -> WorkBatch {
@@ -686,7 +687,7 @@ mod tests {
             let size = bytes.len() as u64;
             self.created.lock().unwrap().push(bytes);
             Ok(ResourceRef {
-                ref_id: format!("ref-{digest}"),
+                ref_id: format!("ref-{digest}").into(),
                 resource_id: ResourceId {
                     kind_id: "blob".into(),
                     slot_id: digest.clone(),

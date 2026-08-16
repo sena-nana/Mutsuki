@@ -25,7 +25,7 @@ fn run_case(entries: usize) -> Result<CaseResult, String> {
         .map_err(|error| error.to_string())?;
     runtime
         .submit_batch(TaskBatch {
-            batch_id: format!("local-dispatch-{entries}"),
+            batch_id: format!("local-dispatch-{entries}").into(),
             tick_id: None,
             tasks: (0..entries)
                 .map(|index| {

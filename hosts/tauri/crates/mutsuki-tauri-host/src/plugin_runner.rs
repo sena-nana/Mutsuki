@@ -5,8 +5,8 @@ use crate::plugin_abi::{DeferredPluginHost, connect_packaged_plugin};
 use crate::plugin_package::{PluginPackageRecord, scan_momoplug_packages};
 use mutsuki_runtime_contracts::{
     ArtifactType, CompletionBatch, HostExtensionDescriptor, HostExtensionKind,
-    PluginBackendDescriptor, PluginDeploymentKind, PluginManifest, PluginProvides, ProtocolClass,
-    RunnerDescriptor, RuntimeError, ScalarValue, WorkBatch,
+    PluginBackendDescriptor, PluginDeploymentKind, PluginId, PluginManifest, PluginProvides,
+    ProtocolClass, ProtocolId, RunnerDescriptor, RunnerId, RuntimeError, ScalarValue, WorkBatch,
 };
 use mutsuki_runtime_core::{
     AsyncBatchHandler, Runner, RunnerContext, RuntimeFailure, RuntimeResult,
@@ -41,9 +41,9 @@ pub(crate) struct PluginRunnerLoad {
 }
 
 pub(crate) struct DiscoveredPluginState {
-    pub(crate) enabled_plugins: BTreeSet<String>,
-    pub(crate) plugin_deployments: BTreeMap<String, PluginDeploymentKind>,
-    pub(crate) active_protocols: BTreeSet<String>,
+    pub(crate) enabled_plugins: BTreeSet<PluginId>,
+    pub(crate) plugin_deployments: BTreeMap<PluginId, PluginDeploymentKind>,
+    pub(crate) active_protocols: BTreeSet<ProtocolId>,
 }
 
 pub(crate) type BuiltinRunnerFactory = Arc<dyn Fn() -> Box<dyn Runner> + Send + Sync + 'static>;
@@ -84,8 +84,8 @@ pub(crate) fn scan_plugin_runners(
 
     let mut plugins = Vec::new();
     let mut runners = Vec::new();
-    let mut manifests_by_id = BTreeMap::new();
-    let mut seen_plugin_ids = BTreeSet::new();
+    let mut manifests_by_id = BTreeMap::<PluginId, (PluginManifest, PathBuf)>::new();
+    let mut seen_plugin_ids = BTreeSet::<PluginId>::new();
     let packages = scan_momoplug_packages(config)?;
     let mut loaded_plugins = Vec::new();
     for package in &packages {
@@ -101,7 +101,7 @@ pub(crate) fn scan_plugin_runners(
         if !package.executable {
             continue;
         }
-        if !seen_plugin_ids.insert(package.plugin_id.clone()) {
+        if !seen_plugin_ids.insert(PluginId::from(package.plugin_id.as_str())) {
             plugins.push(failed_plugin_with_deployment(
                 package.plugin_id.clone(),
                 package.version.clone(),
@@ -166,11 +166,11 @@ pub(crate) fn scan_plugin_runners(
         }
     }
 
-    let mut specs_by_runner_id = BTreeMap::new();
-    let mut seen_runner_ids = BTreeSet::new();
+    let mut specs_by_runner_id = BTreeMap::<RunnerId, LocatedRunnerSpec>::new();
+    let mut seen_runner_ids = BTreeSet::<RunnerId>::new();
     for path in runner_files {
         match read_runner_spec(&path) {
-            Ok(spec) if !seen_runner_ids.insert(spec.runner_id.clone()) => {
+            Ok(spec) if !seen_runner_ids.insert(RunnerId::from(spec.runner_id.as_str())) => {
                 runners.push(failed_runner(
                     spec.runner_id,
                     spec.plugin_id,
@@ -180,7 +180,7 @@ pub(crate) fn scan_plugin_runners(
             }
             Ok(spec) => {
                 specs_by_runner_id.insert(
-                    spec.runner_id.clone(),
+                    RunnerId::from(spec.runner_id.as_str()),
                     LocatedRunnerSpec { spec, source: path },
                 );
             }
@@ -193,7 +193,7 @@ pub(crate) fn scan_plugin_runners(
         }
     }
 
-    let mut claimed_runner_specs = BTreeSet::new();
+    let mut claimed_runner_specs = BTreeSet::<RunnerId>::new();
     let mut load = PluginRunnerLoad {
         manifests: Vec::new(),
         loaded_plugins,
@@ -379,8 +379,7 @@ pub(crate) fn declared_permission_grant_manifest(
     let provides = PluginProvides {
         protocol_classes: effects
             .iter()
-            .cloned()
-            .map(|effect| (effect, ProtocolClass::Effect))
+            .map(|effect| (ProtocolId::from(effect.as_str()), ProtocolClass::Effect))
             .collect(),
         effects: effects.into_iter().collect(),
         ..PluginProvides::default()
@@ -416,7 +415,7 @@ pub(crate) fn register_builtin_runtime(
     async_handlers: Vec<Arc<dyn AsyncBatchHandler>>,
     state: &mut DiscoveredPluginState,
 ) -> HostResult<()> {
-    let mut plugin_runners: BTreeMap<String, Vec<_>> = BTreeMap::new();
+    let mut plugin_runners: BTreeMap<PluginId, Vec<_>> = BTreeMap::new();
     for descriptor in runners
         .iter()
         .map(|runner| runner.descriptor().clone())
@@ -437,7 +436,7 @@ pub(crate) fn register_builtin_runtime(
                 "builtin runner plugin id conflicts with discovered plugin: {plugin_id}"
             )));
         }
-        let manifest = runner_manifest(&plugin_id, descriptors.clone());
+        let manifest = runner_manifest(plugin_id.as_str(), descriptors.clone());
         load.plugins.push(loaded_builtin_plugin_summary(&manifest));
         for descriptor in &descriptors {
             state
@@ -552,7 +551,7 @@ fn loaded_plugin_summary(
     deployment: PluginDeploymentKind,
 ) -> PluginSummary {
     PluginSummary {
-        plugin_id: manifest.plugin_id.clone(),
+        plugin_id: manifest.plugin_id.to_string(),
         version: manifest.version.clone(),
         enabled: true,
         deployment: deployment_label(&deployment).into(),
@@ -563,8 +562,8 @@ fn loaded_plugin_summary(
 
 fn loaded_runner_summary(descriptor: &RunnerDescriptor, deployment: &str) -> RunnerSummary {
     RunnerSummary {
-        runner_id: descriptor.runner_id.clone(),
-        plugin_id: descriptor.plugin_id.clone(),
+        runner_id: descriptor.runner_id.to_string(),
+        plugin_id: descriptor.plugin_id.to_string(),
         enabled: true,
         deployment: deployment.into(),
         status: "loaded".into(),
@@ -683,8 +682,8 @@ impl ExternalProcessRunner {
             env.insert(key.clone(), value.clone());
         }
         env.insert("MUTSUKI_RUNNER_SESSION_TOKEN".into(), session_token);
-        env.insert("MUTSUKI_PLUGIN_ID".into(), descriptor.plugin_id.clone());
-        env.insert("MUTSUKI_RUNNER_ID".into(), descriptor.runner_id.clone());
+        env.insert("MUTSUKI_PLUGIN_ID".into(), descriptor.plugin_id.to_string());
+        env.insert("MUTSUKI_RUNNER_ID".into(), descriptor.runner_id.to_string());
         env.insert("MUTSUKI_PROFILE_ID".into(), profile_id.into());
         let spec = ProcessRunnerSpec {
             command: command_path,
@@ -706,12 +705,12 @@ impl ExternalProcessRunner {
             ))
         })?;
         let stderr_thread = spawn_stderr_forwarder(
-            descriptor.plugin_id.clone(),
-            descriptor.runner_id.clone(),
+            descriptor.plugin_id.to_string(),
+            descriptor.runner_id.to_string(),
             stderr,
             events.clone(),
         )?;
-        emit_runner_status(&events, &descriptor.runner_id, "started");
+        emit_runner_status(&events, descriptor.runner_id.as_str(), "started");
         Ok(Self {
             descriptor: descriptor.clone(),
             inner,
@@ -733,7 +732,7 @@ impl ExternalProcessRunner {
         if let Some(handle) = self.stderr_thread.take() {
             let _ = handle.join();
         }
-        emit_runner_status(&self.events, &self.descriptor.runner_id, "stopped");
+        emit_runner_status(&self.events, self.descriptor.runner_id.as_str(), "stopped");
         Ok(())
     }
 }
@@ -751,11 +750,11 @@ impl Runner for ExternalProcessRunner {
         let result = self.inner.run_batch(ctx, batch);
         if let Err(error) = &result {
             self.health.record_runner_runtime_error(
-                &self.descriptor.runner_id,
-                &self.descriptor.plugin_id,
+                self.descriptor.runner_id.as_str(),
+                self.descriptor.plugin_id.as_str(),
                 error.error(),
             );
-            emit_runner_status(&self.events, &self.descriptor.runner_id, "failed");
+            emit_runner_status(&self.events, self.descriptor.runner_id.as_str(), "failed");
         }
         result
     }

@@ -17,8 +17,8 @@ pub fn run_batch_request(entries: usize, payload_bytes: usize) -> RunBatchReques
     let mut batch_entries = Vec::with_capacity(entries);
     let mut leases = Vec::with_capacity(entries);
     for index in 0..entries {
-        let task_id = format!("wire-task-{index}");
-        let lease_id = format!("wire-lease-{index}");
+        let task_id = mutsuki_runtime_contracts::TaskId::from(format!("wire-task-{index}"));
+        let lease_id = mutsuki_runtime_contracts::TaskLeaseId::from(format!("wire-lease-{index}"));
         let mut task = Task::new(
             task_id.clone(),
             "mutsuki.benchmark.echo",
@@ -27,7 +27,7 @@ pub fn run_batch_request(entries: usize, payload_bytes: usize) -> RunBatchReques
         task.lease_id = Some(lease_id.clone());
         task.registry_generation = 1;
         batch_entries.push(BatchEntry {
-            entry_id: format!("wire-entry-{index}"),
+            entry_id: format!("wire-entry-{index}").into(),
             task_id: task_id.clone(),
             trace_id: None,
             parent_id: None,
@@ -60,7 +60,7 @@ pub fn run_batch_request(entries: usize, payload_bytes: usize) -> RunBatchReques
         resource_plan: WorkResourcePlan::empty(),
         task_leases: leases,
     };
-    let mut ctx = RunnerContext::new(1, 1, "benchmark.executor", None, "wire-invocation")
+    let mut ctx = RunnerContext::new(1, 1, "benchmark.executor", None::<&str>, "wire-invocation")
         .with_batch(batch.batch_id.clone(), entries);
     ctx.task_lease_ids = batch
         .task_leases

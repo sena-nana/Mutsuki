@@ -221,7 +221,7 @@ impl AppCapabilityEndpoint {
     fn handle_envelope(&self, envelope: CapabilityRequestEnvelope) -> DeliveryReceipt {
         {
             let receipts = self.receipts.lock();
-            if let Some(existing) = receipts.get(&envelope.request_id) {
+            if let Some(existing) = receipts.get(envelope.request_id.as_str()) {
                 return DeliveryReceipt::Duplicate {
                     request_id: envelope.request_id.clone(),
                     previous: Box::new(existing.clone()),

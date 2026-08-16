@@ -160,7 +160,7 @@ fn step_task(
     child.target_binding_id = step
         .get("target_binding_id")
         .and_then(Value::as_str)
-        .map(ToOwned::to_owned);
+        .map(mutsuki_runtime_contracts::BindingId::from);
     child.runner_hint = step
         .get("runner_hint")
         .and_then(Value::as_str)
@@ -183,7 +183,7 @@ fn step_task(
     child.correlation_id = parent
         .correlation_id
         .clone()
-        .or_else(|| Some(parent.task_id.clone()));
+        .or_else(|| Some(parent.task_id.to_string()));
     child.ordering = OrderingRequirement::StrictSequence {
         sequence_id: sequence_id.to_owned(),
     };
@@ -196,9 +196,10 @@ fn workflow_error(
     message: impl Into<String>,
 ) -> RuntimeError {
     let mut error = RuntimeError::new(code, "runtime.workflow_linear", message);
-    error
-        .evidence
-        .insert("task_id".into(), ScalarValue::String(task.task_id.clone()));
+    error.evidence.insert(
+        "task_id".into(),
+        ScalarValue::String(task.task_id.to_string()),
+    );
     error
 }
 
@@ -260,7 +261,7 @@ mod tests {
                     1,
                     1,
                     "executor:workflow",
-                    Vec::<String>::new(),
+                    Vec::<mutsuki_runtime_contracts::TaskLeaseId>::new(),
                     "batch:workflow",
                 )
                 .with_batch("batch:workflow", 1),

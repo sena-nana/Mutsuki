@@ -75,7 +75,7 @@ async fn run_task(
             let outcome = ctx
                 .call_raw(descriptor.target_protocol_id.clone(), payload)
                 .await?;
-            let result = tool_result(&task, request.call_id, request.name, outcome)?;
+            let result = tool_result(&task, request.call_id, request.name, outcome.into_outcome())?;
             result_event(task.task_id, "mutsuki.agent.tool.executed", result)
         }
         _ => Err(unsupported_protocol(PLUGIN_ID, &task)),
@@ -139,7 +139,7 @@ fn tool_result(
             call_id,
             name,
             output,
-            output_ref,
+            output_ref: output_ref.map(String::from),
             error: None,
             approved: true,
         }),

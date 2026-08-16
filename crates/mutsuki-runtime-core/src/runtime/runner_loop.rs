@@ -191,7 +191,7 @@ impl CoreRuntime {
             ),
             (
                 "runner_id".into(),
-                ScalarValue::String(descriptor.runner_id.clone()),
+                ScalarValue::String(descriptor.runner_id.to_string()),
             ),
             (
                 "requested_dispatch_limit".into(),
@@ -231,13 +231,16 @@ impl CoreRuntime {
                 attrs.clone(),
             )
         {
-            attrs.insert("span_id".into(), ScalarValue::String(span.span_id));
+            attrs.insert(
+                "span_id".into(),
+                ScalarValue::String(span.span_id.to_string()),
+            );
         }
         if self.events.is_enabled() {
             self.events.record(
                 RuntimeEventKind::Trace,
                 "scheduler.decision",
-                Some(descriptor.runner_id.clone()),
+                Some(descriptor.runner_id.to_string()),
                 attrs,
                 None,
             );

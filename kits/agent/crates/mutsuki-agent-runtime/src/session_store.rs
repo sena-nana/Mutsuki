@@ -252,7 +252,7 @@ mod tests {
 
     fn resource(session_id: &str, slot: &str, version: u64) -> ResourceRef {
         ResourceRef {
-            ref_id: format!("{session_id}:{slot}:{version}"),
+            ref_id: format!("{session_id}:{slot}:{version}").into(),
             resource_id: ResourceId {
                 kind_id: "agent.session".into(),
                 slot_id: slot.into(),
