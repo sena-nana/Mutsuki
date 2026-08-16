@@ -46,6 +46,11 @@ impl WebConsoleGuard {
         if !config.enabled {
             return Ok(None);
         }
+        let mut config = config;
+        let bilibili = BilibiliConsoleBridge::get(runtime);
+        if bilibili.is_some() && !config.extensions.iter().any(|id| id == "bilibili") {
+            config.extensions.push("bilibili".into());
+        }
         let workspace_enabled = config
             .extensions
             .iter()
@@ -76,7 +81,7 @@ impl WebConsoleGuard {
             Some(config_service.clone()),
             secret_monitor,
             &WebConsolePaths::resolve(product_root, &config),
-            BilibiliConsoleBridge::get(runtime),
+            bilibili,
             QqConsoleBridge::get(runtime),
             BotAgentConsoleServices {
                 connections: AgentConnectionConsoleBridge::get(runtime),
