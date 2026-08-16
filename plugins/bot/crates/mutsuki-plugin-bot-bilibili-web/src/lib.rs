@@ -78,7 +78,7 @@ impl WebExtension for BilibiliWebExtension {
             let service = service.clone();
             move |context, _params| {
                 context.require(CAPABILITY_RUNTIME_READ)?;
-                Ok(serde_json::to_value(service.status()).unwrap_or_default())
+                encode_json(service.status())
             }
         });
 
@@ -91,7 +91,7 @@ impl WebExtension for BilibiliWebExtension {
                     let actor =
                         optional_str(&params, "actor_id").unwrap_or(CONSOLE_LOGIN_ACTOR.into());
                     let result = service.login_start(&actor).await.map_err(map_bili_error)?;
-                    Ok(serde_json::to_value(result).unwrap_or_default())
+                    Ok(json!({ "qr_png_base64": result.qr_png_base64 }))
                 }
             }
         });
@@ -102,14 +102,15 @@ impl WebExtension for BilibiliWebExtension {
                 context.require(CAPABILITY_RUNTIME_READ)?;
                 let actor = optional_str(&params, "actor_id").unwrap_or(CONSOLE_LOGIN_ACTOR.into());
                 let result = service.login_poll(&actor).map_err(map_bili_error)?;
-                Ok(serde_json::to_value(result).unwrap_or_default())
+                encode_json(result)
             }
         });
 
         ctx.register_contextual("credential.clear", {
             let service = service.clone();
-            move |context, _params| {
+            move |context, params| {
                 context.require(CAPABILITY_RUNTIME_WRITE)?;
+                require_confirmed(&params)?;
                 service.credential_clear().map_err(map_bili_error)?;
                 Ok(json!({ "ok": true }))
             }
@@ -147,7 +148,7 @@ impl WebExtension for BilibiliWebExtension {
                         outbound_binding,
                     )
                     .map_err(map_bili_error)?;
-                Ok(serde_json::to_value(view).unwrap_or_default())
+                encode_json(view)
             }
         });
 
@@ -156,6 +157,7 @@ impl WebExtension for BilibiliWebExtension {
             move |context, params| {
                 context.require(CAPABILITY_RUNTIME_WRITE)?;
                 let subscription_id = required_str(&params, "subscription_id")?;
+                require_confirmed(&params)?;
                 service
                     .unsubscribe(&subscription_id)
                     .map_err(map_bili_error)?;
@@ -176,11 +178,11 @@ impl WebExtension for BilibiliWebExtension {
                 let paused = params
                     .get("paused")
                     .and_then(|v| v.as_bool())
-                    .ok_or_else(|| ExtensionError::Registration("missing paused".into()))?;
+                    .ok_or_else(|| invalid_argument("missing paused"))?;
                 let view = service
                     .set_paused(&actor, is_admin, selector.as_deref(), paused)
                     .map_err(map_bili_error)?;
-                Ok(serde_json::to_value(view).unwrap_or_default())
+                encode_json(view)
             }
         });
 
@@ -197,7 +199,7 @@ impl WebExtension for BilibiliWebExtension {
                 let card = service
                     .preview(&actor, is_admin, selector.as_deref())
                     .map_err(map_bili_error)?;
-                Ok(serde_json::to_value(card).unwrap_or_default())
+                encode_json(card)
             }
         });
 
@@ -212,7 +214,7 @@ impl WebExtension for BilibiliWebExtension {
                 let result = service
                     .bind_start(&operator, uid, &seed)
                     .map_err(map_bili_error)?;
-                Ok(serde_json::to_value(result).unwrap_or_default())
+                encode_json(result)
             }
         });
 
@@ -226,7 +228,7 @@ impl WebExtension for BilibiliWebExtension {
                 let result = service
                     .bind_verify(&operator, &platform, target)
                     .map_err(map_bili_error)?;
-                Ok(serde_json::to_value(result).unwrap_or_default())
+                encode_json(result)
             }
         });
 
@@ -308,7 +310,35 @@ fn load_or_synthesize_manifest(root: &Path) -> Result<ExtensionManifest, Extensi
 }
 
 fn map_bili_error(error: BilibiliManagementError) -> ExtensionError {
-    ExtensionError::Registration(error.message)
+    ExtensionError::Rpc {
+        code: error.code,
+        message: error.message,
+    }
+}
+
+fn encode_json(value: impl serde::Serialize) -> Result<JsonValue, ExtensionError> {
+    serde_json::to_value(value).map_err(|error| ExtensionError::Rpc {
+        code: "bilibili.encode_failed".into(),
+        message: error.to_string(),
+    })
+}
+
+fn invalid_argument(message: impl Into<String>) -> ExtensionError {
+    ExtensionError::Rpc {
+        code: "bilibili.invalid_argument".into(),
+        message: message.into(),
+    }
+}
+
+fn require_confirmed(params: &JsonValue) -> Result<(), ExtensionError> {
+    if params.get("confirmed").and_then(JsonValue::as_bool) == Some(true) {
+        Ok(())
+    } else {
+        Err(ExtensionError::Rpc {
+            code: "bilibili.confirmation_required".into(),
+            message: "destructive action requires confirmation".into(),
+        })
+    }
 }
 
 fn required_str(params: &JsonValue, key: &str) -> Result<String, ExtensionError> {
@@ -317,7 +347,7 @@ fn required_str(params: &JsonValue, key: &str) -> Result<String, ExtensionError>
         .and_then(|v| v.as_str())
         .map(str::to_string)
         .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| ExtensionError::Registration(format!("missing {key}")))
+        .ok_or_else(|| invalid_argument(format!("missing {key}")))
 }
 
 fn optional_str(params: &JsonValue, key: &str) -> Option<String> {
@@ -333,7 +363,7 @@ fn required_u64(params: &JsonValue, key: &str) -> Result<u64, ExtensionError> {
         .get(key)
         .and_then(|v| v.as_u64())
         .filter(|value| *value > 0)
-        .ok_or_else(|| ExtensionError::Registration(format!("missing or invalid {key}")))
+        .ok_or_else(|| invalid_argument(format!("missing or invalid {key}")))
 }
 
 fn parse_notifications_json(
@@ -353,7 +383,7 @@ fn parse_notifications_json(
             "dynamic" => BilibiliNotificationKind::Dynamic,
             "video" => BilibiliNotificationKind::Video,
             other => {
-                return Err(ExtensionError::Registration(format!(
+                return Err(invalid_argument(format!(
                     "unknown notification type {other}"
                 )));
             }
@@ -363,9 +393,7 @@ fn parse_notifications_json(
         }
     }
     if out.is_empty() {
-        return Err(ExtensionError::Registration(
-            "notifications must not be empty".into(),
-        ));
+        return Err(invalid_argument("notifications must not be empty"));
     }
     Ok(out)
 }
@@ -374,7 +402,7 @@ fn parse_target(params: &JsonValue) -> Result<BotTarget, ExtensionError> {
     let target = params
         .get("target")
         .cloned()
-        .ok_or_else(|| ExtensionError::Registration("missing target".into()))?;
+        .ok_or_else(|| invalid_argument("missing target"))?;
     serde_json::from_value(target)
-        .map_err(|error| ExtensionError::Registration(format!("invalid target: {error}")))
+        .map_err(|error| invalid_argument(format!("invalid target: {error}")))
 }

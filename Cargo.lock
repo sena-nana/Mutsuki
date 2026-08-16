@@ -4506,13 +4506,19 @@ dependencies = [
 name = "mutsuki-plugin-bot-bilibili-web"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "futures-util",
  "mutsuki-bot-management",
  "mutsuki-bot-protocol",
  "mutsuki-web-extension",
+ "mutsuki-web-host",
  "mutsuki-web-protocol",
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
+ "uuid",
 ]
 
 [[package]]

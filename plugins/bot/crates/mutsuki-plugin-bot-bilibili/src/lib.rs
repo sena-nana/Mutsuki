@@ -3372,6 +3372,73 @@ mod tests {
         assert_eq!(credential_store.0.lock().unwrap().last().unwrap().1, "");
     }
 
+    #[test]
+    fn management_service_subscribe_rejects_duplicate_id_and_empty_target() {
+        let mut seed = managed_config();
+        seed.subscriptions.push(BilibiliSubscription {
+            subscription_id: "sub-1".into(),
+            uid: 42,
+            notifications: vec![BilibiliPollKind::Dynamic],
+            target: BotTarget::Group {
+                group_id: "g1".into(),
+            },
+            outbound_binding: "qq-main".into(),
+            paused: false,
+            owner_user_id: Some("alice".into()),
+        });
+        let config = SharedBilibiliConfig::new(seed);
+        let config_store = Arc::new(RecordingConfigStore::default());
+        let management = BilibiliManagementService::new(
+            config.clone(),
+            SharedBilibiliCredential::default(),
+            Box::new(FakeTransport(Arc::new(Mutex::new(
+                FakeTransportState::default(),
+            )))),
+            Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap()),
+            Arc::new(RecordingCredentialStore::default()),
+            config_store.clone(),
+            Arc::new(AlwaysPresentSecrets),
+        );
+
+        assert_eq!(
+            management
+                .subscribe(
+                    "sub-1".into(),
+                    7,
+                    vec![BilibiliNotificationKind::Live],
+                    BotTarget::Group {
+                        group_id: "g2".into(),
+                    },
+                    "qq-main".into(),
+                )
+                .unwrap_err()
+                .code,
+            "bilibili.request_failed"
+        );
+        assert_eq!(
+            config.snapshot().subscriptions[0].owner_user_id.as_deref(),
+            Some("alice")
+        );
+
+        assert_eq!(
+            management
+                .subscribe(
+                    "sub-2".into(),
+                    7,
+                    vec![BilibiliNotificationKind::Live],
+                    BotTarget::Group {
+                        group_id: "".into(),
+                    },
+                    "qq-main".into(),
+                )
+                .unwrap_err()
+                .code,
+            "bilibili.request_failed"
+        );
+        assert_eq!(config.snapshot().subscriptions.len(), 1);
+        assert!(config_store.0.lock().unwrap().is_empty());
+    }
+
     struct AlwaysPresentSecrets;
 
     impl BilibiliSecretPresence for AlwaysPresentSecrets {

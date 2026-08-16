@@ -7,8 +7,39 @@ function escapeHtml(value) {
 }
 
 function formatError(err) {
-  if (err && typeof err === "object" && err.message) return err.message;
-  return String(err ?? "unknown error");
+  if (err && typeof err === "object" && err.code) {
+    return `[${err.code}] ${err.message || "操作失败"}`;
+  }
+  return err instanceof Error ? err.message : String(err ?? "unknown error");
+}
+
+function formatTarget(target) {
+  if (!target || typeof target !== "object") return "—";
+  switch (target.type) {
+    case "group":
+      return `群 ${target.group_id}`;
+    case "user":
+      return `用户 ${target.user_id}`;
+    case "guild_channel":
+      return `频道 ${target.guild_id}/${target.channel_id}`;
+    case "conversation":
+      return `会话 ${target.conversation_id}`;
+    case "platform_specific":
+      return `${target.platform}:${target.kind}:${target.id}`;
+    default:
+      return "—";
+  }
+}
+
+function safeHttpUrl(value) {
+  if (value == null || value === "") return "";
+  try {
+    const parsed = new URL(String(value));
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") return parsed.href;
+  } catch {
+    return "";
+  }
+  return "";
 }
 
 function kv(label, value) {
@@ -101,8 +132,9 @@ export function mountBilibiliPanel(host, rpc) {
     const clearBtn = button("清除凭据", "");
     clearBtn.disabled = !status.available;
     clearBtn.onclick = async () => {
+      if (!window.confirm("确认清除 B 站登录凭据？")) return;
       try {
-        await rpc.write("bilibili", "credential.clear");
+        await rpc.write("bilibili", "credential.clear", { confirmed: true });
         setMessage("凭据已清除");
         await refreshAll();
       } catch (err) {
@@ -143,6 +175,7 @@ export function mountBilibiliPanel(host, rpc) {
       card.append(
         kv("ID", item.subscription_id),
         kv("UID", String(item.uid)),
+        kv("目标", formatTarget(item.target)),
         kv(
           "通知",
           (item.notifications || [])
@@ -182,9 +215,26 @@ export function mountBilibiliPanel(host, rpc) {
             preview.className = "preview panel nested";
             listBox.appendChild(preview);
           }
-          preview.innerHTML = `<strong>${escapeHtml(cardView.title)}</strong>
-            <div class="muted">${escapeHtml(cardView.description)}</div>
-            <a href="${escapeHtml(cardView.url)}" target="_blank" rel="noreferrer">${escapeHtml(cardView.url)}</a>`;
+          preview.replaceChildren();
+          const titleEl = document.createElement("strong");
+          titleEl.textContent = cardView.title ?? "";
+          const descEl = document.createElement("div");
+          descEl.className = "muted";
+          descEl.textContent = cardView.description ?? "";
+          preview.append(titleEl, descEl);
+          const href = safeHttpUrl(cardView.url);
+          if (href) {
+            const link = document.createElement("a");
+            link.href = href;
+            link.target = "_blank";
+            link.rel = "noreferrer";
+            link.textContent = String(cardView.url ?? href);
+            preview.appendChild(link);
+          } else if (cardView.url) {
+            const urlText = document.createElement("div");
+            urlText.textContent = String(cardView.url);
+            preview.appendChild(urlText);
+          }
         } catch (err) {
           setMessage(formatError(err), true);
         }
@@ -192,9 +242,11 @@ export function mountBilibiliPanel(host, rpc) {
       const delBtn = button("删除");
       delBtn.disabled = !status.available;
       delBtn.onclick = async () => {
+        if (!window.confirm(`确认删除订阅 ${item.subscription_id}？`)) return;
         try {
           await rpc.write("bilibili", "subscriptions.unsubscribe", {
             subscription_id: item.subscription_id,
+            confirmed: true,
           });
           await refreshAll();
         } catch (err) {
@@ -269,7 +321,7 @@ export function mountBilibiliPanel(host, rpc) {
       field("订阅 ID", idInput),
       field("UID", uidInput),
       field("出站绑定", bindingInput),
-      field("群 ID (BotTarget.group)", groupInput),
+      field("群 ID（Web 仅支持群目标）", groupInput),
       field("通知类型", notifyInput),
     );
     const submit = button("创建订阅", "");
@@ -363,7 +415,7 @@ export function mountBilibiliPanel(host, rpc) {
   async function refreshAll() {
     setMessage("");
     await refreshStatus();
-    buildQrUi();
+    if (!pollTimer) buildQrUi();
     buildAddForm();
     buildBindForm();
     await refreshList();
@@ -372,7 +424,10 @@ export function mountBilibiliPanel(host, rpc) {
   refreshAll().catch((err) => setMessage(formatError(err), true));
   return {
     destroy() {
-      if (pollTimer) clearInterval(pollTimer);
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
     },
   };
 }

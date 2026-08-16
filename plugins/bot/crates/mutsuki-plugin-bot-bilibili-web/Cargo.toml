@@ -14,4 +14,13 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+async-trait = { workspace = true }
+futures-util = { workspace = true }
+mutsuki-web-host = { workspace = true }
 tempfile = { workspace = true }
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+uuid = { workspace = true }
+
+[lints]
+workspace = true

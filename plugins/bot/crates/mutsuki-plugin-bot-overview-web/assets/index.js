@@ -16,6 +16,7 @@ const PAGES = [
   { id: "overview", label: "概览" },
   { id: "tasks", label: "任务" },
   { id: "qq-bot", label: "QQ 管理", optional: true },
+  { id: "bilibili", label: "B站推送", optional: true },
   { id: "agent-connections", label: "Agent", optional: true },
   { id: "bot-flow", label: "流程编排", optional: true },
   { id: "config", label: "配置", optional: true },
@@ -172,6 +173,7 @@ function createShell(rpc, options = {}) {
     upgradeQuery: "",
     selectedTaskId: null,
   };
+  let bilibiliPanel = null;
 
   const app = document.createElement("div");
   app.className = "mutsuki-console lilia-workspace";
@@ -219,6 +221,10 @@ function createShell(rpc, options = {}) {
     title.textContent = pageMeta.label;
     subtitle.textContent = pageSubtitle(state.page, state.tab, { setupOnly });
     content.className = "page-body";
+    if (bilibiliPanel) {
+      bilibiliPanel.destroy();
+      bilibiliPanel = null;
+    }
     content.innerHTML = "";
     state.error = "";
     state.busy = true;
@@ -230,6 +236,7 @@ function createShell(rpc, options = {}) {
           includeQq,
           includeAgentConnections,
           includeBotFlow,
+          includeBilibili,
         });
       }
       else if (state.page === "runtime") await renderRuntime(content, rpc, app, state, go);
@@ -242,7 +249,7 @@ function createShell(rpc, options = {}) {
       else if (state.page === "qq-bot") await renderQqBot(content, rpc);
       else if (state.page === "agent-connections") await renderAgentConnections(content, rpc);
       else if (state.page === "bot-flow") await renderBotFlow(content, rpc);
-      else if (state.page === "bilibili") await renderBilibili(content, rpc);
+      else if (state.page === "bilibili") bilibiliPanel = await renderBilibili(content, rpc);
       else if (state.page === "ops") await renderOps(content, rpc, app, state, go);
       else await renderOverview(content, rpc, { go });
     } catch (err) {
@@ -349,6 +356,7 @@ async function renderOverview(content, rpc, ctx = {}) {
   if (ctx.includeConfig) availableActions.push(["配置账号与助手", "config"]);
   if (ctx.includeBotFlow) availableActions.push(["编排回复流程", "bot-flow"]);
   if (ctx.includeQq) availableActions.push(["QQ 登录与状态", "qq-bot"]);
+  if (ctx.includeBilibili) availableActions.push(["B站推送", "bilibili"]);
   if (ctx.includeAgentConnections) availableActions.push(["查看 Agent 会话", "agent-connections"]);
   for (const [label, page] of availableActions) {
     const button = document.createElement("button");
@@ -662,7 +670,7 @@ async function renderBilibili(content, rpc) {
       );
       return;
     }
-    mod.mountBilibiliPanel(content, rpc);
+    return mod.mountBilibiliPanel(content, rpc);
   } catch (err) {
     console.error("Bilibili panel failed to load", err);
     content.innerHTML = `<div class="error-banner"><strong>B站推送页不可用</strong><div class="muted">请刷新后重试。</div></div>`;
