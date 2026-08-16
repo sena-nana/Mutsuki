@@ -14,6 +14,7 @@ const PAGE_ALIASES = {
 
 const PAGES = [
   { id: "overview", label: "概览" },
+  { id: "tasks", label: "任务" },
   { id: "qq-bot", label: "QQ 管理", optional: true },
   { id: "agent-connections", label: "Agent", optional: true },
   { id: "bot-flow", label: "流程编排", optional: true },
@@ -153,7 +154,7 @@ function createShell(rpc, options = {}) {
   const builtinDatabases = Array.isArray(options.builtinDatabases) ? options.builtinDatabases : [];
   const setupOnly = includeConfig && !includeBilibili && !includeQq && !includeAgentConnections && !includeBotFlow;
   const pageAvailable = (page) => {
-    if (page === "overview") return !setupOnly;
+    if (page === "overview" || page === "tasks") return !setupOnly;
     if (page === "config") return includeConfig;
     if (page === "bilibili") return includeBilibili;
     if (page === "qq-bot") return includeQq;
@@ -1030,14 +1031,15 @@ async function renderTasks(content, rpc, app, state) {
   timelineCard.className = "card";
   timelineCard.innerHTML = `
     <h2>事件时间线</h2>
-    <div class="toolbar nested row-item">
-      <label>sequence <input id="task-event-seq" type="number" min="0" value="0" /></label>
-      <label>limit <input id="task-event-limit" type="number" min="1" value="32" /></label>
-      <button type="button" class="ghost" id="task-events-fetch">拉取</button>
-    </div>
-    <div id="task-events-output" class="muted">尚未拉取</div>
+    <p class="muted">按任务聚焦当前窗口中的 RuntimeEvent。无时间戳时按序号投影。</p>
+    <div id="task-trajectory" class="trajectory"></div>
   `;
   content.appendChild(timelineCard);
+  const trajHost = timelineCard.querySelector("#task-trajectory");
+  let traj = null;
+  let loadedEvents = [];
+  let earliestAvailable = 0;
+  let pageLimit = 100;
 
   const advanced = document.createElement("details");
   advanced.className = "card advanced-fold";
@@ -1090,6 +1092,7 @@ async function renderTasks(content, rpc, app, state) {
     if (!tasks.length) {
       tableHost.innerHTML = "<div class='muted'>暂无任务</div>";
       renderDetail(null);
+      await loadTaskEvents({ reset: true });
       return;
     }
     const table = document.createElement("table");
@@ -1112,33 +1115,123 @@ async function renderTasks(content, rpc, app, state) {
     const selected = tasks.find((item) => item.task_id === state.selectedTaskId) || tasks[0];
     state.selectedTaskId = selected.task_id;
     renderDetail(selected);
+    await loadTaskEvents({ reset: true });
   }
 
   toolbar.querySelector("#tasks-refresh").onclick = () =>
     loadTasks().catch((err) => flash(app, formatRpcError(err), true));
 
-  timelineCard.querySelector("#task-events-fetch").onclick = async () => {
-    const sequence = Number(timelineCard.querySelector("#task-event-seq").value || 0);
-    const limit = Number(timelineCard.querySelector("#task-event-limit").value || 32);
-    const output = timelineCard.querySelector("#task-events-output");
-    output.textContent = "拉取中…";
-    try {
-      const page = await rpc.read("control", "task_events_after", { sequence, limit });
-      const events = page?.events || page?.items || [];
-      if (Array.isArray(events) && events.length) {
-        output.innerHTML = `<ol class="event-timeline">${events
-          .map(
-            (event) =>
-              `<li><strong>${escapeHtml(String(event.sequence ?? event.kind ?? "event"))}</strong><div class="muted mono">${escapeHtml(JSON.stringify(event))}</div></li>`,
-          )
-          .join("")}</ol>`;
-      } else {
-        output.innerHTML = `<pre class="log-block">${escapeHtml(JSON.stringify(page, null, 2))}</pre>`;
-      }
-    } catch (err) {
-      output.innerHTML = `<div class="err-text">${escapeHtml(formatRpcError(err))}</div>`;
+  async function ensureTrajectory() {
+    if (traj) return traj;
+    const [
+      { mountTrajectoryView },
+      { projectRuntimeEvents, mergeBySequence, sequenceOf, trimWindow, EVENT_WINDOW_LIMIT },
+    ] = await Promise.all([
+      import("./trajectory-view.js"),
+      import("./trajectory-model.js"),
+    ]);
+    function project() {
+      return projectRuntimeEvents(loadedEvents, { focusSubjectId: state.selectedTaskId });
     }
-  };
+    function firstSequence() {
+      const values = loadedEvents.map(sequenceOf).filter((value) => value != null);
+      return values.length ? Math.min(...values) : earliestAvailable + 1;
+    }
+    traj = mountTrajectoryView(trajHost, {
+      ...project(),
+      hasOlder: false,
+      emptyText: "当前窗口没有该任务的事件",
+      onInspect: async (record) =>
+        loadedEvents.filter((event) => (record.sequences || []).includes(sequenceOf(event))),
+      onLoadOlder: async () => {
+        await loadTaskEvents({ reset: false });
+      },
+    });
+    traj._project = project;
+    traj._mergeBySequence = mergeBySequence;
+    traj._sequenceOf = sequenceOf;
+    traj._firstSequence = firstSequence;
+    traj._trimWindow = trimWindow;
+    traj._windowLimit = EVENT_WINDOW_LIMIT;
+    return traj;
+  }
+
+  async function loadTaskEvents({ reset }) {
+    const view = await ensureTrajectory();
+    try {
+      if (reset) {
+        loadedEvents = [];
+        view.update({ loading: true, records: [], groups: [], emptyText: "正在加载时间线…" });
+      } else {
+        view.update({ loadingOlder: true });
+      }
+      const probe = reset
+        ? await rpc.read("control", "task_events_after", { sequence: 0, limit: 1 })
+        : null;
+      if (probe) {
+        earliestAvailable = Number(probe.earliest_available_sequence || 0);
+        const latest = Number(probe.latest_sequence || 0);
+        pageLimit = 100;
+        const after = Math.max(
+          Math.max(0, earliestAvailable ? earliestAvailable - 1 : 0),
+          latest > pageLimit ? latest - pageLimit : Math.max(0, earliestAvailable ? earliestAvailable - 1 : 0),
+        );
+        const page = await rpc.read("control", "task_events_after", {
+          sequence: after,
+          limit: pageLimit,
+        });
+        loadedEvents = page?.events || page?.items || [];
+        view.update({
+          ...view._project(),
+          loading: false,
+          loadingOlder: false,
+          hasOlder: view._firstSequence() > (earliestAvailable || 1),
+          lost: Number(page?.lost || probe.lost || 0),
+          dropped: Number(page?.dropped || probe.dropped || 0),
+          truncated: !!(page?.has_more || page?.truncated),
+          emptyText: "当前窗口没有该任务的事件",
+        });
+        return;
+      }
+      const first = view._firstSequence();
+      if (first <= (earliestAvailable || 1)) {
+        view.update({ loadingOlder: false, hasOlder: false });
+        return;
+      }
+      const after = Math.max(
+        Math.max(0, earliestAvailable ? earliestAvailable - 1 : 0),
+        first - pageLimit - 1,
+      );
+      const page = await rpc.read("control", "task_events_after", {
+        sequence: after,
+        limit: pageLimit,
+      });
+      const older = (page?.events || page?.items || []).filter((event) => {
+        const seq = view._sequenceOf(event);
+        return seq != null && seq < first;
+      });
+      loadedEvents = view._trimWindow(
+        view._mergeBySequence(loadedEvents, older),
+        view._windowLimit,
+        "older",
+      );
+      view.update({
+        ...view._project(),
+        loadingOlder: false,
+        hasOlder: view._firstSequence() > (earliestAvailable || 1),
+        lost: Number(page?.lost || 0),
+        dropped: Number(page?.dropped || 0),
+        truncated: !!(page?.has_more || page?.truncated),
+      });
+    } catch (err) {
+      view.update({
+        loading: false,
+        loadingOlder: false,
+        emptyText: formatRpcError(err),
+      });
+      flash(app, formatRpcError(err), true);
+    }
+  }
 
   advanced.querySelector("#task-submit-btn").onclick = async () => {
     const raw = advanced.querySelector("#task-submit-json").value;

@@ -32,6 +32,8 @@ fn console_css_declares_two_column_workspace() {
     assert!(css.contains(".page-scroll"));
     assert!(css.contains(".card"));
     assert!(css.contains(".kv"));
+    assert!(css.contains(".mutsuki-console .trajectory"));
+    assert!(css.contains(".mutsuki-console .trajectory-row"));
 }
 
 #[tokio::test]
@@ -78,6 +80,23 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
     assert!(js.contains("<ul class=\"kv\">") || js.contains("className = \"kv\""));
     assert!(js.contains("overview-dashboard"));
     assert!(js.contains("metric-grid"));
+    assert!(js.contains("id: \"tasks\""));
+    assert!(js.contains("label: \"任务\""));
+    assert!(js.contains("./trajectory-view.js"));
+    assert!(js.contains("mountTrajectoryView"));
+    assert!(!js.contains("id=\"task-event-seq\""));
+    assert!(css.contains(".mutsuki-console .trajectory"));
+    assert!(css.contains(".mutsuki-console .trajectory-row"));
+    assert!(
+        http_get_body(&addr, "/trajectory-model.js")
+            .await
+            .contains("projectAgentEvents")
+    );
+    assert!(
+        http_get_body(&addr, "/trajectory-view.js")
+            .await
+            .contains("mountTrajectoryView")
+    );
     assert!(js.contains("mountConfigPanel"));
     assert!(css.contains(".mutsuki-console .overview-dashboard"));
     assert!(css.contains(".mutsuki-console .metric-grid"));
