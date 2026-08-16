@@ -306,7 +306,7 @@ function pageSubtitle(page, tab, options = {}) {
     case "config":
       return options.setupOnly ? "启用本机 Bot 工作区" : "管理 QQ 账号、模型和回复策略";
     case "qq-bot":
-      return "QQ 账号、会话规则、命令、Agent 与主动投递";
+      return "QQ 登录、连接状态与投递";
     case "agent-connections":
       return "查看助手状态、会话与用量";
     case "bot-flow":
@@ -348,7 +348,7 @@ async function renderOverview(content, rpc, ctx = {}) {
   const availableActions = [];
   if (ctx.includeConfig) availableActions.push(["配置账号与助手", "config"]);
   if (ctx.includeBotFlow) availableActions.push(["编排回复流程", "bot-flow"]);
-  if (ctx.includeQq) availableActions.push(["查看 QQ 状态", "qq-bot"]);
+  if (ctx.includeQq) availableActions.push(["QQ 登录与状态", "qq-bot"]);
   if (ctx.includeAgentConnections) availableActions.push(["查看 Agent 会话", "agent-connections"]);
   for (const [label, page] of availableActions) {
     const button = document.createElement("button");

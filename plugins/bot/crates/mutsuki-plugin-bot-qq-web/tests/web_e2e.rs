@@ -29,10 +29,13 @@ impl QqBotManagementApi for Api {
             revision: *self.revision.lock().unwrap(),
             accounts: vec![QqAccountView {
                 account_id: "main".into(),
+                app_id: "app".into(),
                 enabled: true,
                 health: "ok".into(),
                 connection_state: QqGatewayConnectionState::Resumable,
                 last_heartbeat_unix_ms: Some(100),
+                last_error: None,
+                reconnect_count: 0,
                 intents: 1 << 25,
                 shard: [0, 1],
                 credential_reference: if include_secret_status {
@@ -82,6 +85,9 @@ async fn qq_management_rpc_uses_authenticated_capabilities_confirmation_and_fixe
     let assets_dir = tempfile::tempdir().unwrap();
     let shell_dir = tempfile::tempdir().unwrap();
     let assets = materialize_frontend_assets(assets_dir.path()).unwrap();
+    let frontend = std::fs::read_to_string(assets.join("index.js")).unwrap();
+    assert!(frontend.contains("QQ 登录"));
+    assert!(frontend.contains("尚未启用 QQ Bot") || frontend.contains("QQ 尚未连接"));
     std::fs::write(
         shell_dir.path().join("index.html"),
         "<!doctype html><main></main>",

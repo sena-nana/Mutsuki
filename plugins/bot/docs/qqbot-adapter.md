@@ -42,9 +42,12 @@ After startup, publish a graph that connects the QQ Source to Match/Processor/Si
 no TOML subscription list, global command prefix or adapter-owned Handler switch.
 
 QQ fields are decoded strictly; unknown fields fail startup. Required fields are `account_id` and
-`app_id`. `client_secret_key` identifies a Host secret and defaults to
-`QQBOT_CLIENT_SECRET`. Network, intent, shard, timeout, retry, queue, dedup and reconnect fields use
-the defaults returned by `QqBotConfig::new` unless overridden.
+`app_id` when the adapter is enabled. `client_secret_key` identifies a Host secret and defaults to
+`QQBOT_CLIENT_SECRET`. The product Config / Web Console login form exposes enablement, App ID,
+Client Secret, and two receive switches (private/group and guild). Those switches update only the
+corresponding Gateway intent bits; remaining network, intent, shard, timeout, retry, queue, dedup
+and reconnect fields stay in the hidden runtime document and use the defaults returned by
+`QqBotConfig::new` unless overridden. Disabling the adapter does not require a complete login.
 
 Never place a client secret or access token in configured plugin data. For a key named
 `QQBOT_CLIENT_SECRET`, ServiceHost reads `MUTSUKI_SECRET_QQBOT_CLIENT_SECRET` by default. The value

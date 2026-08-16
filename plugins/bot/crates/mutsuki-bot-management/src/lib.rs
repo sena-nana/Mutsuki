@@ -27,10 +27,13 @@ pub struct QqBotManagementSnapshot {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QqAccountView {
     pub account_id: String,
+    pub app_id: String,
     pub enabled: bool,
     pub health: String,
     pub connection_state: QqGatewayConnectionState,
     pub last_heartbeat_unix_ms: Option<u64>,
+    pub last_error: Option<String>,
+    pub reconnect_count: u64,
     pub intents: u64,
     pub shard: [u64; 2],
     pub credential_reference: String,
@@ -818,6 +821,7 @@ fn cancel_interaction(
 /// Adapter config facts and live gateway status used to build one account view.
 pub struct QqAccountViewInput {
     pub account_id: String,
+    pub app_id: String,
     pub credential_reference: String,
     pub credential_present: bool,
     pub capability: QqBotCapabilityMatrix,
@@ -827,6 +831,7 @@ pub struct QqAccountViewInput {
     pub identified: bool,
     pub last_heartbeat_unix_ms: Option<u64>,
     pub last_error: Option<String>,
+    pub reconnect_count: u64,
 }
 
 /// Builds an account view from adapter config facts plus live gateway health.
@@ -852,10 +857,13 @@ pub fn account_view_from_config(input: QqAccountViewInput) -> QqAccountView {
     };
     QqAccountView {
         account_id: input.account_id,
+        app_id: input.app_id,
         enabled: true,
         health: health.into(),
         connection_state,
         last_heartbeat_unix_ms: input.last_heartbeat_unix_ms,
+        last_error: input.last_error,
+        reconnect_count: input.reconnect_count,
         intents: input.intents,
         shard: input.shard,
         credential_reference: input.credential_reference,
@@ -1011,6 +1019,7 @@ mod tests {
         let local = Arc::new(LocalQqManagementProvider::new());
         local.upsert_account(account_view_from_config(QqAccountViewInput {
             account_id: "main".into(),
+            app_id: "app".into(),
             credential_reference: "QQBOT_CLIENT_SECRET".into(),
             credential_present: true,
             capability: capability("main"),
@@ -1020,6 +1029,7 @@ mod tests {
             identified: true,
             last_heartbeat_unix_ms: Some(10),
             last_error: None,
+            reconnect_count: 0,
         }));
         local.upsert_delivery(delivery_view(
             BotDeliveryReceipt {
@@ -1058,12 +1068,37 @@ mod tests {
         (QqBotManagementService::new(local.clone()), local)
     }
 
+    #[test]
+    fn account_view_exposes_login_and_gateway_error() {
+        let account = account_view_from_config(QqAccountViewInput {
+            account_id: "main".into(),
+            app_id: "app".into(),
+            credential_reference: "QQBOT_CLIENT_SECRET".into(),
+            credential_present: false,
+            capability: capability("main"),
+            intents: 1,
+            shard: [0, 1],
+            connected: false,
+            identified: false,
+            last_heartbeat_unix_ms: None,
+            last_error: Some("identify rejected".into()),
+            reconnect_count: 3,
+        });
+        assert_eq!(account.app_id, "app");
+        assert_eq!(account.last_error.as_deref(), Some("identify rejected"));
+        assert_eq!(account.reconnect_count, 3);
+        assert_eq!(account.health, "unhealthy");
+    }
+
     #[tokio::test]
     async fn revision_fence_audit_and_secret_redaction() {
         let (api, _) = service();
         let open = api.snapshot("", true).await.unwrap();
         assert_eq!(open.revision, 0);
         assert_eq!(open.accounts[0].credential_status, "configured");
+        assert_eq!(open.accounts[0].app_id, "app");
+        assert_eq!(open.accounts[0].reconnect_count, 0);
+        assert_eq!(open.accounts[0].last_error, None);
         let redacted = api.snapshot("", false).await.unwrap();
         assert_eq!(redacted.accounts[0].credential_reference, "");
         assert_eq!(redacted.accounts[0].credential_status, "restricted");
