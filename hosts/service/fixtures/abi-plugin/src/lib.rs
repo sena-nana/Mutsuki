@@ -38,7 +38,7 @@ impl FixtureRunner {
             .build();
         descriptor.accepted_protocol_ids = FIXTURE_PROTOCOLS
             .iter()
-            .map(|protocol| (*protocol).to_string())
+            .map(|protocol| mutsuki_runtime_contracts::ProtocolId::from(*protocol))
             .collect();
         Self { descriptor }
     }
@@ -242,7 +242,7 @@ fn resource_ref(kind_id: &str, schema: &str, size: u64) -> ResourceRef {
             generation: 1,
             version: 1,
         },
-        ref_id: format!("{kind_id}:fixture"),
+        ref_id: format!("{kind_id}:fixture").into(),
         semantic: ResourceSemantic::FrozenValue,
         provider_id: PROVIDER_ID.into(),
         resource_kind: kind_id.into(),

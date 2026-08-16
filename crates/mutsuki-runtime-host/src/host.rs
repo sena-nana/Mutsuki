@@ -341,7 +341,7 @@ pub struct HostRuntimeConfig {
     pub actor_data_queue_limit: usize,
     pub actor_control_quota: usize,
     pub default_runner_limits: RunnerLimits,
-    pub runner_limits: BTreeMap<String, RunnerLimits>,
+    pub runner_limits: BTreeMap<mutsuki_runtime_contracts::RunnerId, RunnerLimits>,
     pub scheduler_policy: Arc<dyn SchedulerPolicy>,
     /// Host-owned executor for native async handlers. `None` keeps the minimal
     /// synchronous Host surface and rejects async handlers structurally.
@@ -772,10 +772,11 @@ impl HostRuntime {
             }
         }
         if let Some(affected_plugins) = &prepared.affected_plugins {
+            let affected_plugin_ids = affected_plugins.iter().map(ToString::to_string).collect();
             prepared.services = match mutsuki_runtime_sdk::HostServiceRegistry::merge_for_plugins(
                 self.context.services(),
                 &prepared.services,
-                affected_plugins,
+                &affected_plugin_ids,
             ) {
                 Ok(services) => services,
                 Err(error) => {
@@ -877,14 +878,17 @@ impl HostRuntime {
         }
     }
 
-    pub fn task_status(&self, task_id: &str) -> Option<TaskStatus> {
+    pub fn task_status(&self, task_id: impl AsRef<str>) -> Option<TaskStatus> {
         self.metrics.actor_commands.fetch_add(1, Ordering::Relaxed);
         self.metrics
             .task_status_queries
             .fetch_add(1, Ordering::Relaxed);
         let (reply_tx, reply_rx) = mpsc::channel();
         self.tx
-            .send(CoreActorMsg::TaskStatus(task_id.to_string(), reply_tx))
+            .send(CoreActorMsg::TaskStatus(
+                task_id.as_ref().to_string(),
+                reply_tx,
+            ))
             .ok()?;
         reply_rx.recv().ok().flatten()
     }

@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use mutsuki_runtime_contracts::resource::experimental::{CommandBatch, SagaPlan};
 use mutsuki_runtime_contracts::{
     CommandPlan, ERR_RESOURCE_GENERATION_MISMATCH, ERR_RESOURCE_NOT_FOUND,
-    ERR_RESOURCE_UNSUPPORTED, ExportPlan, PlanReceipt, ReadPlan, ResourceAccess, ResourceId,
+    ERR_RESOURCE_UNSUPPORTED, ExportPlan, PlanReceipt, ReadPlan, RefId, ResourceAccess, ResourceId,
     ResourceLifetime, ResourceProviderCompatibility, ResourceProviderReloadPolicy, ResourceRef,
     ResourceSealState, ResourceSemantic, ResourceTypeDescriptor, RuntimeError, ScalarValue,
     SnapshotDescriptor, StreamPlan, WritePlan,
@@ -31,7 +31,7 @@ struct MemoryResourceEntry {
 #[derive(Debug, Default)]
 struct MemoryResourceState {
     next_slot: u64,
-    resources: BTreeMap<String, MemoryResourceEntry>,
+    resources: BTreeMap<RefId, MemoryResourceEntry>,
 }
 
 #[derive(Debug, Default)]
@@ -53,9 +53,9 @@ impl MemoryResourceProvider {
     ) -> RuntimeResult<ResourceRef> {
         let mut state = self.state.lock().expect("memory provider mutex poisoned");
         state.next_slot += 1;
-        let ref_id = format!("memory-resource-{}", state.next_slot);
+        let ref_id = RefId::from(format!("memory-resource-{}", state.next_slot));
         let descriptor = resource_ref(
-            &ref_id,
+            ref_id.as_str(),
             kind_id,
             semantic,
             schema,

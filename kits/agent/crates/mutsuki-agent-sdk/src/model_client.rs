@@ -13,11 +13,14 @@ impl ModelClient {
         Self { ctx }
     }
 
-    pub fn generate(&self, request: AgentModelGenerateRequest) -> CallFuture {
+    pub fn generate(
+        &self,
+        request: AgentModelGenerateRequest,
+    ) -> CallFuture<AgentModelGenerateProtocol> {
         self.ctx.call::<AgentModelGenerateProtocol>(request)
     }
 
-    pub fn stream(&self, request: AgentModelStreamRequest) -> CallFuture {
+    pub fn stream(&self, request: AgentModelStreamRequest) -> CallFuture<AgentModelStreamProtocol> {
         self.ctx.call::<AgentModelStreamProtocol>(request)
     }
 }

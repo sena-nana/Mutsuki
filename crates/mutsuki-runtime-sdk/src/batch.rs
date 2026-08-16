@@ -1,19 +1,19 @@
 use mutsuki_runtime_contracts::{
-    BatchPayload, BinaryPackedPayload, ColumnPayload, ColumnarPayload, OrderingRequirement,
-    ResourceAccessMode, ResourceBackedPayload, ResourceRequirement, ResourceSlice, Task, TaskBatch,
-    WorkResourcePlan,
+    BatchId, BatchPayload, BinaryPackedPayload, ColumnPayload, ColumnarPayload,
+    OrderingRequirement, RefId, ResourceAccessMode, ResourceBackedPayload, ResourceRequirement,
+    ResourceSlice, Task, TaskBatch, TickId, WorkResourcePlan,
 };
 
 #[derive(Clone, Debug)]
 pub struct TaskBatchBuilder {
-    batch_id: String,
-    tick_id: Option<String>,
+    batch_id: BatchId,
+    tick_id: Option<TickId>,
     tasks: Vec<Task>,
     resource_plan: Option<WorkResourcePlan>,
 }
 
 impl TaskBatchBuilder {
-    pub fn new(batch_id: impl Into<String>) -> Self {
+    pub fn new(batch_id: impl Into<BatchId>) -> Self {
         Self {
             batch_id: batch_id.into(),
             tick_id: None,
@@ -22,7 +22,7 @@ impl TaskBatchBuilder {
         }
     }
 
-    pub fn tick_id(mut self, tick_id: impl Into<String>) -> Self {
+    pub fn tick_id(mut self, tick_id: impl Into<TickId>) -> Self {
         self.tick_id = Some(tick_id.into());
         self
     }
@@ -50,7 +50,7 @@ impl TaskBatchBuilder {
 pub struct TaskOptions;
 
 impl TaskOptions {
-    pub fn read(ref_id: impl Into<String>, expected_version: Option<u64>) -> ResourceRequirement {
+    pub fn read(ref_id: impl Into<RefId>, expected_version: Option<u64>) -> ResourceRequirement {
         ResourceRequirement {
             ref_id: ref_id.into(),
             mode: ResourceAccessMode::Read,
@@ -58,7 +58,7 @@ impl TaskOptions {
         }
     }
 
-    pub fn write(ref_id: impl Into<String>, expected_version: Option<u64>) -> ResourceRequirement {
+    pub fn write(ref_id: impl Into<RefId>, expected_version: Option<u64>) -> ResourceRequirement {
         ResourceRequirement {
             ref_id: ref_id.into(),
             mode: ResourceAccessMode::Write,
@@ -67,7 +67,7 @@ impl TaskOptions {
     }
 
     pub fn exclusive_write(
-        ref_id: impl Into<String>,
+        ref_id: impl Into<RefId>,
         expected_version: Option<u64>,
     ) -> ResourceRequirement {
         ResourceRequirement {

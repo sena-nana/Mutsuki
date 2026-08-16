@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use mutsuki_runtime_contracts::{
     ArtifactType, ExecutionClass, LifecyclePolicy, PermissionGrant, PluginArtifact,
-    PluginDeploymentKind, PluginManifest, PluginProvides, ProtocolClass, RunnerDescriptor,
-    RunnerPurity, RuntimeCapabilityGraph, RuntimeProfile,
+    PluginDeploymentKind, PluginId, PluginManifest, PluginProvides, ProtocolClass, ProtocolId,
+    RunnerDescriptor, RunnerPurity, RuntimeCapabilityGraph, RuntimeProfile,
 };
 use mutsuki_runtime_core::RuntimeResult;
 
@@ -12,7 +12,7 @@ use crate::error::{deployment_mismatch, plugin_not_found, runner_binding_invalid
 #[derive(Default)]
 pub(super) struct ResolvedPlugins {
     pub(super) manifests: Vec<PluginManifest>,
-    pub(super) deployments: BTreeMap<String, PluginDeploymentKind>,
+    pub(super) deployments: BTreeMap<PluginId, PluginDeploymentKind>,
 }
 
 pub(super) fn resolve_enabled_plugins(
@@ -24,10 +24,10 @@ pub(super) fn resolve_enabled_plugins(
         let manifest = manifests
             .iter()
             .find(|manifest| manifest.plugin_id == *plugin_id)
-            .ok_or_else(|| plugin_not_found(plugin_id))?;
+            .ok_or_else(|| plugin_not_found(plugin_id.as_str()))?;
         let deployment = deployment_for(profile, manifest);
         ensure_deployment_matches_artifact(
-            plugin_id,
+            plugin_id.as_str(),
             &deployment,
             &manifest.artifact.artifact_type,
         )?;
@@ -120,7 +120,7 @@ fn reject_cross_plugin_protocol_class_conflicts(manifests: &[PluginManifest]) ->
             {
                 return Err(protocol_class_error(
                     manifest,
-                    protocol_id,
+                    protocol_id.as_str(),
                     "cross_plugin_conflict",
                 ));
             }
@@ -141,7 +141,13 @@ fn normalize_protocol_classes(manifest: &mut PluginManifest) -> RuntimeResult<()
         runner.accepted_protocol_ids.dedup();
         known_protocols.extend(runner.accepted_protocol_ids.iter().cloned());
     }
-    known_protocols.extend(manifest.provides.effects.iter().cloned());
+    known_protocols.extend(
+        manifest
+            .provides
+            .effects
+            .iter()
+            .map(|effect| ProtocolId::from(effect.as_str())),
+    );
 
     if let Some(unknown) = manifest
         .provides
@@ -149,24 +155,33 @@ fn normalize_protocol_classes(manifest: &mut PluginManifest) -> RuntimeResult<()
         .keys()
         .find(|protocol_id| !known_protocols.contains(*protocol_id))
     {
-        return Err(protocol_class_error(manifest, unknown, "unknown_protocol"));
+        return Err(protocol_class_error(
+            manifest,
+            unknown.as_str(),
+            "unknown_protocol",
+        ));
     }
 
     for protocol_id in known_protocols {
-        let legacy_class = legacy_protocol_class(&protocol_id);
+        let legacy_class = legacy_protocol_class(protocol_id.as_str());
         let class = manifest
             .provides
             .protocol_classes
             .entry(protocol_id.clone())
             .or_insert(legacy_class.clone());
-        if (protocol_id.starts_with("effect.") && class != &ProtocolClass::Effect)
-            || (protocol_id.starts_with("core.")
+        if (protocol_id.as_str().starts_with("effect.") && class != &ProtocolClass::Effect)
+            || (protocol_id.as_str().starts_with("core.")
                 && !matches!(class, ProtocolClass::Core | ProtocolClass::Control))
-            || (manifest.provides.effects.contains(&protocol_id) && class != &ProtocolClass::Effect)
+            || (manifest
+                .provides
+                .effects
+                .iter()
+                .any(|effect| protocol_id == *effect)
+                && class != &ProtocolClass::Effect)
         {
             return Err(protocol_class_error(
                 manifest,
-                &protocol_id,
+                protocol_id.as_str(),
                 "canonical_conflict",
             ));
         }
@@ -177,7 +192,7 @@ fn normalize_protocol_classes(manifest: &mut PluginManifest) -> RuntimeResult<()
             let class = manifest
                 .provides
                 .protocol_classes
-                .get(protocol_id)
+                .get(protocol_id.as_str())
                 .expect("known runner protocol was normalized");
             let purity_matches = matches!(
                 (&runner.purity, class),
@@ -191,7 +206,7 @@ fn normalize_protocol_classes(manifest: &mut PluginManifest) -> RuntimeResult<()
             if !purity_matches || !control_matches {
                 return Err(protocol_class_error(
                     manifest,
-                    protocol_id,
+                    protocol_id.as_str(),
                     &format!("runner.{}.purity_conflict", runner.runner_id),
                 ));
             }
@@ -262,9 +277,9 @@ pub(super) fn runner_bindings(
         for runner in &manifest.provides.runners {
             for protocol_id in &runner.accepted_protocol_ids {
                 candidates
-                    .entry(protocol_id.clone())
+                    .entry(protocol_id.to_string())
                     .or_default()
-                    .insert(runner.runner_id.clone());
+                    .insert(runner.runner_id.to_string());
             }
         }
     }

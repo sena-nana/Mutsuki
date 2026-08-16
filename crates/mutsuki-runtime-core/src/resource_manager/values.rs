@@ -24,7 +24,7 @@ impl ResourceManager {
                 version: 1,
             }));
         }
-        let ref_id = self.id_source.next_id("value");
+        let ref_id = mutsuki_runtime_contracts::RefId::from(self.id_source.next_id("value"));
         let value_ref = ValueRef {
             ref_id: ref_id.clone(),
             provider_id: "runtime.resource_manager".into(),

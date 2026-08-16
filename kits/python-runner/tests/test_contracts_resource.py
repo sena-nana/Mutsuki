@@ -1,6 +1,13 @@
 from __future__ import annotations
 
 from mutsuki_runner_kit.contracts.codec import to_json_dict
+from mutsuki_runner_kit.contracts.ids import (
+    ExecutorId,
+    RefId,
+    ResourceCellId,
+    ResourceLeaseId,
+    TaskId,
+)
 from mutsuki_runner_kit.contracts.resource import (
     CommandBatch,
     CommandPlan,
@@ -36,7 +43,7 @@ def _resource_ref(
     semantic: ResourceSemantic = ResourceSemantic.FROZEN_VALUE,
 ) -> ResourceRef:
     return ResourceRef(
-        ref_id=ref_id,
+        ref_id=RefId(ref_id),
         resource_id=ResourceId(
             kind_id=kind_id,
             slot_id=ref_id,
@@ -112,7 +119,7 @@ def test_resource_access_variants_match_rust_tagged_shape() -> None:
 
 def test_resource_lifetime_lease_until_roundtrips_external_tag_shape() -> None:
     value_ref = ValueRef(
-        ref_id="value:lease",
+        ref_id=RefId("value:lease"),
         provider_id="python.resource",
         schema="value.v1",
         version=1,
@@ -130,7 +137,7 @@ def test_resource_lifetime_lease_until_roundtrips_external_tag_shape() -> None:
 
 def test_resource_value_and_state_ref_roundtrip() -> None:
     value_ref = ValueRef(
-        ref_id="value:1",
+        ref_id=RefId("value:1"),
         provider_id="python.resource",
         schema="value.v1",
         version=1,
@@ -142,7 +149,7 @@ def test_resource_value_and_state_ref_roundtrip() -> None:
     )
     resource_ref = _resource_ref()
 
-    assert_json_roundtrip(StateRef, StateRef(ref_id="state:1", schema="state.v1", version=3))
+    assert_json_roundtrip(StateRef, StateRef(ref_id=RefId("state:1"), schema="state.v1", version=3))
     assert_json_roundtrip(ResourceValue, ResourceValue.inline("value.v1", {"a": 1}, 1))
     assert_json_roundtrip(ResourceValue, ResourceValue.value_ref_value(value_ref))
     assert_json_roundtrip(ResourceValue, ResourceValue.resource_ref_value(resource_ref))
@@ -164,7 +171,7 @@ def test_resource_value_and_state_ref_roundtrip() -> None:
 
 def test_resource_cell_and_resource_lease_roundtrip() -> None:
     cell = ResourceCellRef(
-        cell_id="cell:http:default",
+        cell_id=ResourceCellId("cell:http:default"),
         resource_kind="http.connection_pool",
         owner_plugin_id="plugin-http",
         schema="http.connection_pool.v1",
@@ -173,10 +180,10 @@ def test_resource_cell_and_resource_lease_roundtrip() -> None:
         reload_policy="drain",
     )
     lease = ResourceLease(
-        lease_id="resource-lease-1",
+        lease_id=ResourceLeaseId("resource-lease-1"),
         cell_id=cell.cell_id,
-        borrower_task_id="task-http",
-        borrower_executor_id="executor-http",
+        borrower_task_id=TaskId("task-http"),
+        borrower_executor_id=ExecutorId("executor-http"),
         mode="shared",
         expires_at_step=None,
         generation=1,

@@ -22,7 +22,7 @@ struct FakeAsyncProvider {
 impl FakeAsyncProvider {
     fn resource(&self, kind_id: &str, schema: &str) -> ResourceRef {
         ResourceRef {
-            ref_id: format!("{}:{kind_id}", self.provider_id),
+            ref_id: format!("{}:{kind_id}", self.provider_id).into(),
             resource_id: ResourceId {
                 kind_id: kind_id.into(),
                 slot_id: format!("{}:{kind_id}", self.provider_id),

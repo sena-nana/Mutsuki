@@ -261,7 +261,7 @@ fn reference_failure(workload: BotReferenceWorkload, message: String) -> Runtime
 
 fn descriptor(workload: BotReferenceWorkload) -> RunnerDescriptor {
     RunnerDescriptor {
-        runner_id: format!("{}.runner", workload.protocol()),
+        runner_id: format!("{}.runner", workload.protocol()).into(),
         plugin_id: REFERENCE_PLUGIN_ID.into(),
         plugin_generation: 1,
         accepted_protocol_ids: vec![workload.protocol().into()],
@@ -277,7 +277,7 @@ fn descriptor(workload: BotReferenceWorkload) -> RunnerDescriptor {
         ordering: Default::default(),
         control: Default::default(),
         metadata: BTreeMap::new(),
-        contract_surfaces: vec![format!("runner:{}", workload.protocol())],
+        contract_surfaces: vec![format!("runner:{}", workload.protocol()).into()],
     }
 }
 

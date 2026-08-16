@@ -6,7 +6,9 @@ pub use mutsuki_agent_contracts::{
     AgentServiceDescriptor, AgentToolDescriptor, ContextProviderRequest, ContextProviderResult,
     PermissionDecision, PermissionRequest,
 };
-use mutsuki_runtime_contracts::{CompletionBatch, RunnerContext, RunnerDescriptor, WorkBatch};
+use mutsuki_runtime_contracts::{
+    CompletionBatch, PluginId, RunnerContext, RunnerDescriptor, WorkBatch,
+};
 use mutsuki_runtime_core::{Runner, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{RunnerDescriptorBuilder, map_work_batch_entries};
 use serde_json::Value;
@@ -59,7 +61,7 @@ pub struct AgentServiceRunner {
 
 impl AgentServiceRunner {
     pub fn new<S>(
-        plugin_id: impl Into<String>,
+        plugin_id: impl Into<PluginId>,
         plugin_generation: u64,
         service: Arc<S>,
     ) -> Result<Self, AgentError>
@@ -111,7 +113,8 @@ impl Runner for AgentServiceRunner {
             let output = service
                 .call(task.payload.clone().into())
                 .map_err(agent_runtime_error)?;
-            let mut result = mutsuki_runtime_contracts::RunnerResult::completed(&task.task_id);
+            let mut result =
+                mutsuki_runtime_contracts::RunnerResult::completed(task.task_id.clone());
             result.output = Some(output);
             Ok(result)
         })

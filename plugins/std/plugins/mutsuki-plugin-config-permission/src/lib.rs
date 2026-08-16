@@ -217,9 +217,10 @@ fn permission_error(
     message: impl Into<String>,
 ) -> RuntimeError {
     let mut error = RuntimeError::new(code, "runtime.config_permission", message);
-    error
-        .evidence
-        .insert("task_id".into(), ScalarValue::String(task.task_id.clone()));
+    error.evidence.insert(
+        "task_id".into(),
+        ScalarValue::String(task.task_id.to_string()),
+    );
     error
 }
 
@@ -287,7 +288,7 @@ mod tests {
                     1,
                     1,
                     "executor:config",
-                    Vec::<String>::new(),
+                    Vec::<mutsuki_runtime_contracts::TaskLeaseId>::new(),
                     "batch:permission",
                 )
                 .with_batch("batch:permission", 2),

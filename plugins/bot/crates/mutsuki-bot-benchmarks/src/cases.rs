@@ -33,7 +33,7 @@ use mutsuki_plugin_bot_event_router::{
 };
 use mutsuki_runtime_contracts::{
     BatchEntry, BatchPayload, CompletionBatch, DispatchLane, OrderingRequirement, RunnerContext,
-    RunnerResult, RunnerStatus, RuntimeError, Task, TaskBatch, TaskHandle, TaskOutcome,
+    RunnerResult, RunnerStatus, RuntimeError, Task, TaskBatch, TaskHandle, TaskId, TaskOutcome,
     TaskPayload, WorkBatch, WorkResourcePlan,
 };
 use mutsuki_runtime_core::Runner;
@@ -1012,7 +1012,8 @@ pub fn wait_resume_sample() -> Sample {
             Box::pin(async move {
                 let outcome = ctx
                     .call_raw("mutsuki.bot.benchmark/result@1", json!({"fixed": true}))
-                    .await?;
+                    .await?
+                    .into_outcome();
                 let mut result = RunnerResult::completed(task.task_id);
                 result.output = match outcome {
                     TaskOutcome::Completed { output, .. } => output,
@@ -1081,7 +1082,7 @@ impl QqHttpClient for ScriptedHttpClient {
 
 #[derive(Default)]
 struct OutcomeClient {
-    outcomes: Mutex<BTreeMap<String, TaskOutcome>>,
+    outcomes: Mutex<BTreeMap<TaskId, TaskOutcome>>,
 }
 
 impl OutcomeClient {
@@ -1121,20 +1122,20 @@ fn single_result(completion: CompletionBatch) -> Result<RunnerResult, RuntimeErr
 }
 
 fn context(id: &str, entries: usize) -> RunnerContext {
-    RunnerContext::new(1, 1, "bot-benchmark", Vec::<String>::new(), id)
+    RunnerContext::new(1, 1, "bot-benchmark", None::<&str>, id)
         .with_batch(format!("batch:{id}"), entries)
 }
 
 fn batch(runner_id: &str, tasks: &[Task]) -> WorkBatch {
     WorkBatch {
-        batch_id: format!("batch:{}", tasks[0].task_id),
+        batch_id: format!("batch:{}", tasks[0].task_id).into(),
         tick_id: "tick:bot-benchmark".into(),
         batch_key: runner_id.into(),
         entries: tasks
             .iter()
             .enumerate()
             .map(|(index, task)| BatchEntry {
-                entry_id: task.task_id.clone(),
+                entry_id: task.task_id.as_str().into(),
                 task_id: task.task_id.clone(),
                 trace_id: task.trace_id.clone(),
                 parent_id: None,

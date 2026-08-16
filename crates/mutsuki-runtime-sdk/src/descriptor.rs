@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 
 use mutsuki_runtime_contracts::{
-    ExecutionClass, HandlerBinding, InvocationMode, ProtocolDescriptor,
-    ResourceProviderCompatibility, ResourceProviderReloadPolicy, ResourceSemantic,
+    BindingId, ExecutionClass, HandlerBinding, InvocationMode, PluginId, ProtocolDescriptor,
+    ProtocolId, ResourceProviderCompatibility, ResourceProviderReloadPolicy, ResourceSemantic,
     ResourceTypeDescriptor, RunnerBatchCapability, RunnerConcurrency, RunnerControlCapability,
-    RunnerDescriptor, RunnerOrderingCapability, RunnerPayloadCapability, RunnerPurity,
-    RunnerResourceCapability, ScalarValue,
+    RunnerDescriptor, RunnerId, RunnerOrderingCapability, RunnerPayloadCapability, RunnerPurity,
+    RunnerResourceCapability, ScalarValue, SurfaceId,
 };
 use serde_json::{Value, json};
 
@@ -83,7 +83,7 @@ pub trait ResourceKindSpec: ResourceKind {
 
 #[derive(Clone, Debug)]
 pub struct ProtocolDescriptorBuilder {
-    protocol_id: String,
+    protocol_id: ProtocolId,
     version: String,
     input_schema: Value,
     output_schema: Value,
@@ -93,7 +93,7 @@ pub struct ProtocolDescriptorBuilder {
 }
 
 impl ProtocolDescriptorBuilder {
-    pub fn new(protocol_id: impl Into<String>) -> Self {
+    pub fn new(protocol_id: impl Into<ProtocolId>) -> Self {
         Self {
             protocol_id: protocol_id.into(),
             version: "1.0.0".into(),
@@ -150,10 +150,10 @@ impl ProtocolDescriptorBuilder {
 
 #[derive(Clone, Debug)]
 pub struct RunnerDescriptorBuilder {
-    runner_id: String,
-    plugin_id: String,
+    runner_id: RunnerId,
+    plugin_id: PluginId,
     plugin_generation: u64,
-    accepted_protocol_ids: Vec<String>,
+    accepted_protocol_ids: Vec<ProtocolId>,
     purity: RunnerPurity,
     execution_class: ExecutionClass,
     invocation_mode: InvocationMode,
@@ -166,14 +166,14 @@ pub struct RunnerDescriptorBuilder {
     ordering: RunnerOrderingCapability,
     control: RunnerControlCapability,
     metadata: BTreeMap<String, ScalarValue>,
-    contract_surfaces: Vec<String>,
+    contract_surfaces: Vec<SurfaceId>,
 }
 
 impl RunnerDescriptorBuilder {
-    pub fn new(runner_id: impl Into<String>, plugin_id: impl Into<String>) -> Self {
+    pub fn new(runner_id: impl Into<RunnerId>, plugin_id: impl Into<PluginId>) -> Self {
         let runner_id = runner_id.into();
         Self {
-            contract_surfaces: vec![format!("runner:{runner_id}")],
+            contract_surfaces: vec![SurfaceId::from(format!("runner:{runner_id}"))],
             runner_id,
             plugin_id: plugin_id.into(),
             plugin_generation: 1,
@@ -206,7 +206,7 @@ impl RunnerDescriptorBuilder {
         self
     }
 
-    pub fn accepted_protocol(mut self, protocol_id: impl Into<String>) -> Self {
+    pub fn accepted_protocol(mut self, protocol_id: impl Into<ProtocolId>) -> Self {
         self.accepted_protocol_ids.push(protocol_id.into());
         self
     }
@@ -218,14 +218,18 @@ impl RunnerDescriptorBuilder {
     where
         P: SdkProtocol,
     {
-        self.contract_surfaces
-            .push(format!("requires:task_protocol:{}", P::PROTOCOL_ID));
+        self.contract_surfaces.push(SurfaceId::from(format!(
+            "requires:task_protocol:{}",
+            P::PROTOCOL_ID
+        )));
         self
     }
 
     pub fn requires_protocol(mut self, protocol_id: impl Into<String>) -> Self {
-        self.contract_surfaces
-            .push(format!("requires:task_protocol:{}", protocol_id.into()));
+        self.contract_surfaces.push(SurfaceId::from(format!(
+            "requires:task_protocol:{}",
+            protocol_id.into()
+        )));
         self
     }
 
@@ -289,7 +293,7 @@ impl RunnerDescriptorBuilder {
         self
     }
 
-    pub fn contract_surface(mut self, surface_id: impl Into<String>) -> Self {
+    pub fn contract_surface(mut self, surface_id: impl Into<SurfaceId>) -> Self {
         self.contract_surfaces.push(surface_id.into());
         self
     }
@@ -319,10 +323,10 @@ impl RunnerDescriptorBuilder {
 
 #[derive(Clone, Debug)]
 pub struct HandlerBindingBuilder {
-    binding_id: String,
-    plugin_id: String,
-    protocol_id: String,
-    target_protocol_id: String,
+    binding_id: BindingId,
+    plugin_id: PluginId,
+    protocol_id: ProtocolId,
+    target_protocol_id: ProtocolId,
     target_runner_hint: Option<String>,
     pool_id: String,
     priority: i64,
@@ -332,10 +336,10 @@ pub struct HandlerBindingBuilder {
 
 impl HandlerBindingBuilder {
     pub fn new(
-        binding_id: impl Into<String>,
-        plugin_id: impl Into<String>,
-        protocol_id: impl Into<String>,
-        target_protocol_id: impl Into<String>,
+        binding_id: impl Into<BindingId>,
+        plugin_id: impl Into<PluginId>,
+        protocol_id: impl Into<ProtocolId>,
+        target_protocol_id: impl Into<ProtocolId>,
     ) -> Self {
         Self {
             binding_id: binding_id.into(),
@@ -350,7 +354,10 @@ impl HandlerBindingBuilder {
         }
     }
 
-    pub fn from_protocols<P, T>(binding_id: impl Into<String>, plugin_id: impl Into<String>) -> Self
+    pub fn from_protocols<P, T>(
+        binding_id: impl Into<BindingId>,
+        plugin_id: impl Into<PluginId>,
+    ) -> Self
     where
         P: SdkProtocol,
         T: SdkProtocol,

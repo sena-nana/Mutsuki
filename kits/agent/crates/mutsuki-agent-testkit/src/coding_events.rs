@@ -70,7 +70,7 @@ impl CodingEventLog {
 
 fn details_ref(slot: &str) -> ResourceRef {
     ResourceRef {
-        ref_id: format!("coding-details:{slot}"),
+        ref_id: format!("coding-details:{slot}").into(),
         resource_id: ResourceId {
             kind_id: "mutsuki.agent.coding.details".into(),
             slot_id: slot.into(),

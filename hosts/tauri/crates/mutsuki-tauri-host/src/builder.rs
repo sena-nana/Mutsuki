@@ -8,7 +8,7 @@ use crate::plugin_runner::{
     declared_permission_grant_manifest, register_builtin_runtime, register_discovered_plugins,
     register_permission_grants, scan_plugin_runners,
 };
-use mutsuki_runtime_contracts::{RuntimeProfile, RuntimeProfileMode};
+use mutsuki_runtime_contracts::{PluginId, RuntimeProfile, RuntimeProfileMode};
 use mutsuki_runtime_core::{AsyncBatchHandler, Runner};
 use mutsuki_runtime_host::{HostRuntimeConfig, RuntimeBootstrapper, TokioAsyncExecutor};
 use mutsuki_runtime_sdk::{RuntimeClientRef, TaskSubmitterRuntimeClient};
@@ -152,7 +152,11 @@ impl MutsukiTauriHostBuilder {
         let profile = RuntimeProfile {
             profile_id: self.config.profile_id.clone(),
             mode: RuntimeProfileMode::FullDev,
-            enabled_plugins: discovered.enabled_plugins.iter().cloned().collect(),
+            enabled_plugins: discovered
+                .enabled_plugins
+                .iter()
+                .map(PluginId::from)
+                .collect(),
             bindings: BTreeMap::new(),
             surface_bindings: BTreeMap::new(),
             supported_extensions: Vec::new(),

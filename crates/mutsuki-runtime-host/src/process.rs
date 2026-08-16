@@ -207,7 +207,7 @@ impl SpawnedBinaryRunner {
             thread::Builder::new()
                 .name(format!(
                     "mutsuki-{}-stderr",
-                    self.descriptor.runner_id.replace(['/', ':'], "-")
+                    self.descriptor.runner_id.as_str().replace(['/', ':'], "-")
                 ))
                 .spawn(move || {
                     let mut stderr = stderr;

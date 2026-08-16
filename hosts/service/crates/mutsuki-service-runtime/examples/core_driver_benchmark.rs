@@ -36,7 +36,7 @@ fn descriptor() -> RunnerDescriptor {
         ordering: RunnerOrderingCapability::default(),
         control: RunnerControlCapability::default(),
         metadata: BTreeMap::new(),
-        contract_surfaces: vec![format!("runner:{RUNNER_ID}")],
+        contract_surfaces: vec![format!("runner:{RUNNER_ID}").into()],
     }
 }
 

@@ -91,7 +91,7 @@ impl HostAdapter for ServiceHostAdapter {
     }
 
     fn cancel(&self, handle: &TaskHandle) -> HostFuture<'_, ()> {
-        let id = handle.task_id.clone();
+        let id = handle.task_id.to_string();
         Box::pin(async move {
             match self
                 .request(ControlCommand::TaskCancel(IdParam { id }))
@@ -112,7 +112,7 @@ impl HostAdapter for ServiceHostAdapter {
     }
 
     fn outcome(&self, handle: &TaskHandle) -> HostFuture<'_, Option<LocalTaskOutcome>> {
-        let id = handle.task_id.clone();
+        let id = handle.task_id.to_string();
         Box::pin(async move {
             let outcome = control_result!(
                 self.request(ControlCommand::TaskOutcome(IdParam { id }))

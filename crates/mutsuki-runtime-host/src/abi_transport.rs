@@ -58,7 +58,7 @@ impl<T: TypedRequestTransport> Runner for TransportRunner<T> {
             ));
         }
         self.transport.request(&RunBatchRequest {
-            runner_id: self.descriptor.runner_id.clone(),
+            runner_id: self.descriptor.runner_id.to_string(),
             ctx,
             batch,
         })
@@ -66,14 +66,14 @@ impl<T: TypedRequestTransport> Runner for TransportRunner<T> {
 
     fn cancel(&mut self, invocation_id: &str) -> RuntimeResult<()> {
         self.transport.request(&CancelRunnerRequest {
-            runner_id: self.descriptor.runner_id.clone(),
+            runner_id: self.descriptor.runner_id.to_string(),
             invocation_id: invocation_id.into(),
         })
     }
 
     fn dispose(&mut self) -> RuntimeResult<()> {
         self.transport.request(&DisposeRunnerRequest {
-            runner_id: self.descriptor.runner_id.clone(),
+            runner_id: self.descriptor.runner_id.to_string(),
         })
     }
 }

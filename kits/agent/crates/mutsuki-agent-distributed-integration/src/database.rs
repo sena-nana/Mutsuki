@@ -454,9 +454,9 @@ mod tests {
     };
     use mutsuki_plugin_db_sqlite::{SqliteEffectRunner, SqliteFacadeRunner};
     use mutsuki_runtime_contracts::{
-        BatchEntry, BatchPayload, DispatchLane, OrderingRequirement, ResourceAccess, ResourceId,
-        ResourceLifetime, ResourceSealState, ResourceSemantic, RunnerContext, WorkBatch,
-        WorkResourcePlan,
+        BatchEntry, BatchPayload, DispatchLane, EntryId, OrderingRequirement, ResourceAccess,
+        ResourceId, ResourceLifetime, ResourceSealState, ResourceSemantic, RunnerContext,
+        TaskLeaseId, WorkBatch, WorkResourcePlan,
     };
     use mutsuki_runtime_core::Runner;
     use tempfile::tempdir;
@@ -525,7 +525,7 @@ mod tests {
             1,
             1,
             "agent-database-test",
-            Vec::<String>::new(),
+            Vec::<TaskLeaseId>::new(),
             task.task_id.clone(),
         )
         .with_batch(format!("batch:{}", task.task_id), 1)
@@ -533,11 +533,11 @@ mod tests {
 
     fn batch(task: &Task) -> WorkBatch {
         WorkBatch {
-            batch_id: format!("batch:{}", task.task_id),
+            batch_id: format!("batch:{}", task.task_id).into(),
             tick_id: "tick:agent-database".into(),
             batch_key: "database".into(),
             entries: vec![BatchEntry {
-                entry_id: task.task_id.clone(),
+                entry_id: EntryId::from(task.task_id.as_str()),
                 task_id: task.task_id.clone(),
                 trace_id: None,
                 parent_id: None,
@@ -557,7 +557,7 @@ mod tests {
 
     fn resource(session: &str, slot: &str, version: u64) -> ResourceRef {
         ResourceRef {
-            ref_id: format!("{session}:{slot}:{version}"),
+            ref_id: format!("{session}:{slot}:{version}").into(),
             resource_id: ResourceId {
                 kind_id: "agent.session".into(),
                 slot_id: slot.into(),

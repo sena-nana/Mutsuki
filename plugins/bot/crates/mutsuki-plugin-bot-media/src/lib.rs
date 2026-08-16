@@ -321,10 +321,10 @@ fn decode<T: serde::de::DeserializeOwned>(task: &Task) -> RuntimeResult<T> {
 }
 
 fn outcome_value<T: serde::de::DeserializeOwned>(
-    outcome: TaskOutcome,
+    outcome: impl Into<TaskOutcome>,
     task: &Task,
 ) -> RuntimeResult<T> {
-    match outcome {
+    match outcome.into() {
         TaskOutcome::Completed {
             output: Some(output),
             ..
@@ -367,7 +367,7 @@ mod tests {
 
     #[derive(Default)]
     struct OutcomeClient {
-        outcomes: Mutex<BTreeMap<String, TaskOutcome>>,
+        outcomes: Mutex<BTreeMap<mutsuki_runtime_contracts::TaskId, TaskOutcome>>,
     }
 
     impl RuntimeClient for OutcomeClient {
@@ -394,7 +394,7 @@ mod tests {
             self.calls
                 .lock()
                 .unwrap()
-                .push((source.ref_id.clone(), target_mime.into()));
+                .push((source.ref_id.to_string(), target_mime.into()));
             Ok(resource("transcoded", target_mime))
         }
 
@@ -531,7 +531,7 @@ mod tests {
 
     fn resource(id: &str, schema: &str) -> ResourceRef {
         ResourceRef {
-            ref_id: format!("ref-{id}"),
+            ref_id: format!("ref-{id}").into(),
             resource_id: ResourceId {
                 kind_id: "blob".into(),
                 slot_id: id.into(),
@@ -554,7 +554,7 @@ mod tests {
     }
 
     fn context() -> RunnerContext {
-        RunnerContext::new(1, 1, "media-test", Vec::<String>::new(), "media-invocation")
+        RunnerContext::new(1, 1, "media-test", None::<&str>, "media-invocation")
             .with_batch("media-batch", 1)
     }
 

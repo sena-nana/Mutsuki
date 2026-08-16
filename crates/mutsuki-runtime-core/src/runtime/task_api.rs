@@ -14,7 +14,13 @@ use super::{CoreRuntime, TaskResultSnapshot};
 impl CoreRuntime {
     /// Returns the task and owning runner pairs affected by a cascade cancellation.
     /// Hosts use this snapshot before terminal transitions clear runner ownership.
-    pub fn task_cancellation_targets(&self, handle: &TaskHandle) -> Vec<(String, String)> {
+    pub fn task_cancellation_targets(
+        &self,
+        handle: &TaskHandle,
+    ) -> Vec<(
+        mutsuki_runtime_contracts::TaskId,
+        mutsuki_runtime_contracts::RunnerId,
+    )> {
         let mut pending = vec![handle.task_id.clone()];
         let mut visited = BTreeSet::new();
         let mut targets = Vec::new();
@@ -39,7 +45,10 @@ impl CoreRuntime {
         targets
     }
 
-    pub(crate) fn enqueue_task(&mut self, mut task: Task) -> RuntimeResult<String> {
+    pub(crate) fn enqueue_task(
+        &mut self,
+        mut task: Task,
+    ) -> RuntimeResult<mutsuki_runtime_contracts::TaskId> {
         self.ensure_not_aborted()?;
         if task.registry_generation == 0 {
             task.registry_generation = self.load_plan.registry_generation;
@@ -64,7 +73,7 @@ impl CoreRuntime {
             sequence,
             kind: RuntimeEventKind::Task,
             name: "task.enqueue".into(),
-            subject_id: Some(task_id.clone()),
+            subject_id: Some(task_id.to_string()),
             attributes: BTreeMap::new(),
             error: None,
         });
@@ -72,7 +81,7 @@ impl CoreRuntime {
             sequence,
             kind: RuntimeEventKind::Task,
             name: "task.submitted".into(),
-            subject_id: Some(task_id.clone()),
+            subject_id: Some(task_id.to_string()),
             attributes: BTreeMap::new(),
             error: None,
         });
@@ -119,10 +128,12 @@ impl CoreRuntime {
 
     pub fn submit_targeted_task(
         &mut self,
-        task_id: &str,
-        binding_id: &str,
+        task_id: impl AsRef<str>,
+        binding_id: impl AsRef<str>,
         payload: Value,
     ) -> RuntimeResult<TaskHandle> {
+        let task_id = task_id.as_ref();
+        let binding_id = binding_id.as_ref();
         let binding = self
             .handler_bindings
             .all()
@@ -135,13 +146,14 @@ impl CoreRuntime {
                     format!("handler_binding.{binding_id}"),
                 )
             })?;
-        let mut task = Task::new(task_id, &binding.target_protocol_id, payload);
+        let mut task = Task::new(task_id, binding.target_protocol_id.clone(), payload);
         task.target_binding_id = Some(binding.binding_id.clone());
         task.runner_hint = binding.target_runner_hint.clone();
         self.submit_task(task)
     }
 
-    fn task_handle_for_id(&self, task_id: &str) -> RuntimeResult<TaskHandle> {
+    fn task_handle_for_id(&self, task_id: impl AsRef<str>) -> RuntimeResult<TaskHandle> {
+        let task_id = task_id.as_ref();
         let record = self.tasks.get(task_id).ok_or_else(|| {
             crate::runtime_failure(
                 mutsuki_runtime_contracts::ERR_TASK_NOT_FOUND,
@@ -159,7 +171,7 @@ impl CoreRuntime {
         })
     }
 
-    pub(crate) fn task_status(&self, task_id: &str) -> Option<TaskStatus> {
+    pub(crate) fn task_status(&self, task_id: impl AsRef<str>) -> Option<TaskStatus> {
         self.tasks.get(task_id).map(|record| record.status.clone())
     }
 
@@ -167,7 +179,7 @@ impl CoreRuntime {
         self.task_status(&handle.task_id)
     }
 
-    pub(crate) fn task_result(&self, task_id: &str) -> Option<TaskResultSnapshot> {
+    pub(crate) fn task_result(&self, task_id: impl AsRef<str>) -> Option<TaskResultSnapshot> {
         self.tasks.get(task_id).map(|record| TaskResultSnapshot {
             task_id: record.task.task_id.clone(),
             status: record.status.clone(),
@@ -182,7 +194,11 @@ impl CoreRuntime {
         self.task_result(&handle.task_id)
     }
 
-    pub(crate) fn task_outcome(&self, task_id: &str) -> RuntimeResult<Option<TaskOutcome>> {
+    pub(crate) fn task_outcome(
+        &self,
+        task_id: impl AsRef<str>,
+    ) -> RuntimeResult<Option<TaskOutcome>> {
+        let task_id = task_id.as_ref();
         let record = self.tasks.get(task_id).ok_or_else(|| {
             crate::runtime_failure(
                 mutsuki_runtime_contracts::ERR_TASK_NOT_FOUND,
@@ -226,7 +242,8 @@ impl CoreRuntime {
         self.task_outcome(&handle.task_id)
     }
 
-    pub(crate) fn task_events(&self, task_id: &str) -> Vec<&RuntimeEvent> {
+    pub(crate) fn task_events(&self, task_id: impl AsRef<str>) -> Vec<&RuntimeEvent> {
+        let task_id = task_id.as_ref();
         self.events
             .iter()
             .filter(|event| event.subject_id.as_deref() == Some(task_id))
@@ -245,7 +262,8 @@ impl CoreRuntime {
         self.events.page_after(sequence, limit)
     }
 
-    pub(crate) fn cancel_task_by_id(&mut self, task_id: &str) -> RuntimeResult<()> {
+    pub(crate) fn cancel_task_by_id(&mut self, task_id: impl AsRef<str>) -> RuntimeResult<()> {
+        let task_id = task_id.as_ref();
         let awaits = self.tasks.awaits_for_parent(task_id);
         if awaits
             .iter()
@@ -287,7 +305,12 @@ impl CoreRuntime {
         self.cancel_task_by_id(&handle.task_id)
     }
 
-    pub fn expire_task(&mut self, task_id: &str, reason: impl Into<String>) -> RuntimeResult<()> {
+    pub fn expire_task(
+        &mut self,
+        task_id: impl AsRef<str>,
+        reason: impl Into<String>,
+    ) -> RuntimeResult<()> {
+        let task_id = task_id.as_ref();
         let mut failure = crate::runtime_error(
             ERR_TASK_EXPIRED,
             "runtime.task",
@@ -305,9 +328,10 @@ impl CoreRuntime {
 
     pub fn dead_letter_task(
         &mut self,
-        task_id: &str,
+        task_id: impl AsRef<str>,
         reason: impl Into<String>,
     ) -> RuntimeResult<()> {
+        let task_id = task_id.as_ref();
         let mut failure = crate::runtime_error(
             ERR_TASK_DEAD_LETTER,
             "runtime.task",
@@ -323,7 +347,7 @@ impl CoreRuntime {
         Ok(())
     }
 
-    pub(crate) fn wake_task_by_id(&mut self, task_id: &str) -> RuntimeResult<()> {
+    pub(crate) fn wake_task_by_id(&mut self, task_id: impl AsRef<str>) -> RuntimeResult<()> {
         self.tasks.wake(task_id, self.current_step)
     }
 

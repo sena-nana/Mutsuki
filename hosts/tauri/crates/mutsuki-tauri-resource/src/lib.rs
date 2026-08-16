@@ -10,7 +10,7 @@ pub use import_export::TauriFileImportExport;
 pub use preview::TauriPreviewStore;
 pub use provider::{PROVIDER_ID, TauriResourceProvider};
 
-use mutsuki_runtime_contracts::ResourceRef;
+use mutsuki_runtime_contracts::{RefId, ResourceRef};
 use mutsuki_runtime_sdk::ResourceProviderGateway;
 use mutsuki_tauri_bridge::PreviewHandle;
 use std::path::{Path, PathBuf};
@@ -103,7 +103,7 @@ impl TauriResourceStore {
         self.preview.create_preview_handle(ref_id, ttl)
     }
 
-    pub fn resolve_preview_token(&self, token: &str) -> Result<String, ResourceBridgeError> {
+    pub fn resolve_preview_token(&self, token: &str) -> Result<RefId, ResourceBridgeError> {
         self.preview.resolve_preview_token(token)
     }
 
@@ -112,7 +112,7 @@ impl TauriResourceStore {
         token: &str,
     ) -> Result<(Vec<u8>, Option<String>), ResourceBridgeError> {
         let ref_id = self.preview.resolve_preview_token(token)?;
-        self.provider.read_preview(&ref_id)
+        self.provider.read_preview(ref_id.as_str())
     }
 
     pub fn revoke_preview_token(&self, token: &str) -> Result<(), ResourceBridgeError> {

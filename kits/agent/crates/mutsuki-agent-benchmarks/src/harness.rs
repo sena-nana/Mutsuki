@@ -32,10 +32,10 @@ use mutsuki_plugin_agent_model_gateway::ModelGateway;
 use mutsuki_plugin_agent_session::SessionStore;
 use mutsuki_plugin_agent_tool_router::ToolRegistry;
 use mutsuki_runtime_contracts::{
-    BatchEntry, BatchPayload, CompletionBatch, DispatchLane, OrderingRequirement, ResourceAccess,
-    ResourceId, ResourceLifetime, ResourceSealState, ResourceSemantic, RunnerContext, RunnerResult,
-    RunnerStatus, RuntimeError, Task, TaskBatch, TaskHandle, TaskOutcome, WorkBatch,
-    WorkResourcePlan,
+    BatchEntry, BatchPayload, CompletionBatch, DispatchLane, EntryId, OrderingRequirement,
+    ResourceAccess, ResourceId, ResourceLifetime, ResourceSealState, ResourceSemantic,
+    RunnerContext, RunnerResult, RunnerStatus, RuntimeError, Task, TaskBatch, TaskHandle, TaskId,
+    TaskLeaseId, TaskOutcome, WorkBatch, WorkResourcePlan,
 };
 use mutsuki_runtime_core::Runner;
 use mutsuki_runtime_sdk::{RuntimeClient, RuntimeResult};
@@ -45,7 +45,7 @@ use crate::measurement::{Sample, allocation_delta, allocation_snapshot, canonica
 
 #[derive(Default)]
 struct OutcomeClient {
-    outcomes: Mutex<BTreeMap<String, TaskOutcome>>,
+    outcomes: Mutex<BTreeMap<TaskId, TaskOutcome>>,
 }
 
 impl OutcomeClient {
@@ -1808,8 +1808,9 @@ fn single_result(completion: CompletionBatch) -> Result<RunnerResult, RuntimeErr
     }
 }
 
-fn context(id: &str) -> RunnerContext {
-    let mut context = RunnerContext::new(1, 1, "agent-benchmark", Vec::<String>::new(), id)
+fn context(id: impl AsRef<str>) -> RunnerContext {
+    let id = id.as_ref();
+    let mut context = RunnerContext::new(1, 1, "agent-benchmark", Vec::<TaskLeaseId>::new(), id)
         .with_batch(format!("batch:{id}"), 1);
     context.invocation_id = format!("invocation:{id}");
     context
@@ -1817,14 +1818,14 @@ fn context(id: &str) -> RunnerContext {
 
 fn batch(runner_id: &str, tasks: &[Task]) -> WorkBatch {
     WorkBatch {
-        batch_id: format!("batch:{}", tasks[0].task_id),
+        batch_id: format!("batch:{}", tasks[0].task_id).into(),
         tick_id: "tick:agent-benchmark".into(),
         batch_key: runner_id.into(),
         entries: tasks
             .iter()
             .enumerate()
             .map(|(index, task)| BatchEntry {
-                entry_id: task.task_id.clone(),
+                entry_id: EntryId::from(task.task_id.as_str()),
                 task_id: task.task_id.clone(),
                 trace_id: task.trace_id.clone(),
                 parent_id: None,

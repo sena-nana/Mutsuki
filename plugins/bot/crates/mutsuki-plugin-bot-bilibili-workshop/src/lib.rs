@@ -214,7 +214,7 @@ impl WorkshopRunner {
             BOT_MESSAGE_SEND_PROTOCOL_ID,
             serde_json::to_value(message).expect("message serializes"),
         );
-        outbound.target_binding_id = Some(request.outbound_binding);
+        outbound.target_binding_id = Some(request.outbound_binding.into());
         let mut result = RunnerResult::completed(task.task_id.clone());
         result.tasks.push(outbound);
         Ok(result)

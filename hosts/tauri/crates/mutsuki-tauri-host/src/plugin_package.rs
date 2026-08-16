@@ -167,7 +167,7 @@ fn load_package(
         .map_err(|error| format!("failed to parse {plugin_toml_name}: {error}"))?;
     validate_identity(
         "plugin.toml",
-        &runtime_manifest.plugin_id,
+        runtime_manifest.plugin_id.as_str(),
         &runtime_manifest.version,
     )?;
     if runtime_manifest.plugin_id != product.plugin_id

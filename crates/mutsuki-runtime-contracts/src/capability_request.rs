@@ -9,11 +9,7 @@ use serde_json::Value;
 use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-/// Stable request identity used for correlation and idempotent replay.
-pub type CapabilityRequestId = String;
-
-/// Opaque peer identity string owned by the host (for example an AppId).
-pub type CapabilityPeerId = String;
+use crate::{CapabilityPeerId, CapabilityRequestId};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CapabilityDescriptor {
@@ -96,7 +92,7 @@ pub enum DeliveryReceipt {
     Accepted {
         request_id: CapabilityRequestId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        remote_task_id: Option<String>,
+        remote_task_id: Option<crate::TaskId>,
     },
     Duplicate {
         request_id: CapabilityRequestId,
@@ -109,21 +105,21 @@ pub enum DeliveryReceipt {
     Completed {
         request_id: CapabilityRequestId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        remote_task_id: Option<String>,
+        remote_task_id: Option<crate::TaskId>,
         #[serde(default)]
         output: Value,
     },
     Failed {
         request_id: CapabilityRequestId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        remote_task_id: Option<String>,
+        remote_task_id: Option<crate::TaskId>,
         code: String,
         message: String,
     },
 }
 
 impl DeliveryReceipt {
-    pub fn request_id(&self) -> &str {
+    pub fn request_id(&self) -> &CapabilityRequestId {
         match self {
             Self::Accepted { request_id, .. }
             | Self::Duplicate { request_id, .. }
@@ -239,7 +235,7 @@ impl IdempotentReceiptStore {
                 previous: Box::new(previous.receipt.clone()),
             };
         }
-        let estimated_bytes = estimate_receipt_bytes(&request_id, &receipt);
+        let estimated_bytes = estimate_receipt_bytes(request_id.as_str(), &receipt);
         self.receipts.insert(
             request_id.clone(),
             StoredReceipt {
@@ -332,7 +328,7 @@ fn estimate_receipt_bytes(request_id: &str, receipt: &DeliveryReceipt) -> usize 
     const OVERHEAD: usize = 32;
     let body = match receipt {
         DeliveryReceipt::Accepted { remote_task_id, .. } => {
-            remote_task_id.as_ref().map_or(0, String::len)
+            remote_task_id.as_ref().map_or(0, |id| id.as_str().len())
         }
         // Duplicate receipts are never stored.
         DeliveryReceipt::Duplicate { .. } => 0,
@@ -344,13 +340,15 @@ fn estimate_receipt_bytes(request_id: &str, receipt: &DeliveryReceipt) -> usize 
             remote_task_id,
             output,
             ..
-        } => remote_task_id.as_ref().map_or(0, String::len) + estimate_json_bytes(output),
+        } => {
+            remote_task_id.as_ref().map_or(0, |id| id.as_str().len()) + estimate_json_bytes(output)
+        }
         DeliveryReceipt::Failed {
             remote_task_id,
             code,
             message,
             ..
-        } => remote_task_id.as_ref().map_or(0, String::len) + code.len() + message.len(),
+        } => remote_task_id.as_ref().map_or(0, |id| id.as_str().len()) + code.len() + message.len(),
     };
     request_id
         .len()
@@ -460,7 +458,7 @@ mod tests {
             store.accept_or_duplicate_at(
                 id.clone(),
                 DeliveryReceipt::Completed {
-                    request_id: id,
+                    request_id: CapabilityRequestId::from(id),
                     remote_task_id: None,
                     output: json!({"n": index}),
                 },
@@ -515,7 +513,7 @@ mod tests {
             store.accept_or_duplicate_at(
                 id.clone(),
                 DeliveryReceipt::Completed {
-                    request_id: id,
+                    request_id: CapabilityRequestId::from(id),
                     remote_task_id: None,
                     output: json!("x".repeat(400)),
                 },

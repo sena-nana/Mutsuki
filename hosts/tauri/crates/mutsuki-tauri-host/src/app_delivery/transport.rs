@@ -278,7 +278,7 @@ impl AppLinkTransport for InMemoryAppLinkTransport {
             .ok_or(AppDeliveryError::EndpointUnavailable)?;
         let receipt = DeliveryReceipt::Accepted {
             request_id: envelope.request_id.clone(),
-            remote_task_id: Some(format!("task-{}", envelope.request_id)),
+            remote_task_id: Some(format!("task-{}", envelope.request_id).into()),
         };
         Ok(peer
             .receipts

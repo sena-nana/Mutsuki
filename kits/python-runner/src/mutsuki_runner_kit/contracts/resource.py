@@ -21,6 +21,14 @@ from mutsuki_runner_kit.contracts.codec import (
     to_json_dict,
     to_json_value,
 )
+from mutsuki_runner_kit.contracts.ids import (
+    ExecutorId,
+    PluginId,
+    RefId,
+    ResourceCellId,
+    ResourceLeaseId,
+    TaskId,
+)
 
 
 class ValueStorage(StrEnum):
@@ -285,7 +293,7 @@ class ResourceAccess:
 @dataclass(frozen=True)
 class LeaseToken:
     token_id: str
-    ref_id: str
+    ref_id: RefId
     owner: str
     mode: str
     expires_at_step: int | None
@@ -296,7 +304,7 @@ class LeaseToken:
         raw = as_mapping(data, "LeaseToken")
         return cls(
             token_id=as_str(field_value(raw, "token_id"), "token_id"),
-            ref_id=as_str(field_value(raw, "ref_id"), "ref_id"),
+            ref_id=RefId(as_str(field_value(raw, "ref_id"), "ref_id")),
             owner=as_str(field_value(raw, "owner"), "owner"),
             mode=as_str(field_value(raw, "mode"), "mode"),
             expires_at_step=optional_int(field_value(raw, "expires_at_step"), "expires_at_step"),
@@ -316,9 +324,9 @@ class ExclusiveWriteLease:
 
 @dataclass(frozen=True)
 class ResourceCellRef:
-    cell_id: str
+    cell_id: ResourceCellId
     resource_kind: str
-    owner_plugin_id: str
+    owner_plugin_id: PluginId
     schema: str
     generation: int
     health: str
@@ -328,9 +336,11 @@ class ResourceCellRef:
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = as_mapping(data, "ResourceCellRef")
         return cls(
-            cell_id=as_str(field_value(raw, "cell_id"), "cell_id"),
+            cell_id=ResourceCellId(as_str(field_value(raw, "cell_id"), "cell_id")),
             resource_kind=as_str(field_value(raw, "resource_kind"), "resource_kind"),
-            owner_plugin_id=as_str(field_value(raw, "owner_plugin_id"), "owner_plugin_id"),
+            owner_plugin_id=PluginId(
+                as_str(field_value(raw, "owner_plugin_id"), "owner_plugin_id")
+            ),
             schema=as_str(field_value(raw, "schema"), "schema"),
             generation=as_int(field_value(raw, "generation"), "generation"),
             health=as_str(field_value(raw, "health"), "health"),
@@ -340,10 +350,10 @@ class ResourceCellRef:
 
 @dataclass(frozen=True)
 class ResourceLease:
-    lease_id: str
-    cell_id: str
-    borrower_task_id: str
-    borrower_executor_id: str
+    lease_id: ResourceLeaseId
+    cell_id: ResourceCellId
+    borrower_task_id: TaskId
+    borrower_executor_id: ExecutorId
     mode: str
     expires_at_step: int | None
     generation: int
@@ -352,11 +362,13 @@ class ResourceLease:
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = as_mapping(data, "ResourceLease")
         return cls(
-            lease_id=as_str(field_value(raw, "lease_id"), "lease_id"),
-            cell_id=as_str(field_value(raw, "cell_id"), "cell_id"),
-            borrower_task_id=as_str(field_value(raw, "borrower_task_id"), "borrower_task_id"),
-            borrower_executor_id=as_str(
-                field_value(raw, "borrower_executor_id"), "borrower_executor_id"
+            lease_id=ResourceLeaseId(as_str(field_value(raw, "lease_id"), "lease_id")),
+            cell_id=ResourceCellId(as_str(field_value(raw, "cell_id"), "cell_id")),
+            borrower_task_id=TaskId(
+                as_str(field_value(raw, "borrower_task_id"), "borrower_task_id")
+            ),
+            borrower_executor_id=ExecutorId(
+                as_str(field_value(raw, "borrower_executor_id"), "borrower_executor_id")
             ),
             mode=as_str(field_value(raw, "mode"), "mode"),
             expires_at_step=optional_int(field_value(raw, "expires_at_step"), "expires_at_step"),
@@ -366,7 +378,7 @@ class ResourceLease:
 
 @dataclass(frozen=True)
 class ResourceRef:
-    ref_id: str
+    ref_id: RefId
     resource_id: ResourceId
     semantic: ResourceSemantic
     provider_id: str
@@ -385,7 +397,7 @@ class ResourceRef:
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = as_mapping(data, "ResourceRef")
         return cls(
-            ref_id=as_str(field_value(raw, "ref_id"), "ref_id"),
+            ref_id=RefId(as_str(field_value(raw, "ref_id"), "ref_id")),
             resource_id=ResourceId.from_json_dict(
                 as_mapping(field_value(raw, "resource_id"), "resource_id")
             ),
@@ -408,7 +420,7 @@ class ResourceRef:
 
 @dataclass(frozen=True)
 class ValueRef:
-    ref_id: str
+    ref_id: RefId
     provider_id: str
     schema: str
     version: int
@@ -422,7 +434,7 @@ class ValueRef:
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = as_mapping(data, "ValueRef")
         return cls(
-            ref_id=as_str(field_value(raw, "ref_id"), "ref_id"),
+            ref_id=RefId(as_str(field_value(raw, "ref_id"), "ref_id")),
             provider_id=as_str(field_value(raw, "provider_id"), "provider_id"),
             schema=as_str(field_value(raw, "schema"), "schema"),
             version=as_int(field_value(raw, "version"), "version"),

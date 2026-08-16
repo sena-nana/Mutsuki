@@ -1,4 +1,5 @@
 use crate::error::ResourceBridgeError;
+use mutsuki_runtime_contracts::RefId;
 use mutsuki_tauri_bridge::PreviewHandle;
 use parking_lot::RwLock;
 use std::collections::BTreeMap;
@@ -8,7 +9,7 @@ use uuid::Uuid;
 
 #[derive(Clone, Debug)]
 struct PreviewToken {
-    ref_id: String,
+    ref_id: RefId,
     expires_at: SystemTime,
 }
 
@@ -37,19 +38,19 @@ impl TauriPreviewStore {
         self.inner.write().insert(
             token.clone(),
             PreviewToken {
-                ref_id: ref_id.to_string(),
+                ref_id: RefId::from(ref_id),
                 expires_at,
             },
         );
         Ok(PreviewHandle {
-            ref_id: ref_id.to_string(),
+            ref_id: RefId::from(ref_id),
             token: token.clone(),
             url: format!("mutsuki-resource://{token}"),
             expires_at_unix_secs,
         })
     }
 
-    pub fn resolve_preview_token(&self, token: &str) -> Result<String, ResourceBridgeError> {
+    pub fn resolve_preview_token(&self, token: &str) -> Result<RefId, ResourceBridgeError> {
         let now = SystemTime::now();
         let mut inner = self.inner.write();
         inner.retain(|_, preview| preview.expires_at > now);

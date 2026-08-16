@@ -417,7 +417,7 @@ impl FakeEditorContextService {
             document: document.clone(),
             version: doc.version,
             content_ref: Some(ResourceRef {
-                ref_id: format!("editor-buffer:{slot}"),
+                ref_id: format!("editor-buffer:{slot}").into(),
                 resource_id: ResourceId {
                     kind_id: "mutsuki.agent.editor.buffer".into(),
                     slot_id: slot,

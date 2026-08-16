@@ -33,7 +33,7 @@ impl CoreRuntime {
                     self.events.record(
                         RuntimeEventKind::State,
                         "state.commit",
-                        Some(delta.target_ref),
+                        Some(delta.target_ref.to_string()),
                         BTreeMap::new(),
                         None,
                     );

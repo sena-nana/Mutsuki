@@ -133,7 +133,7 @@ fn completion(request: &RunBatchRequest) -> CompletionBatch {
             .map(|entry| EntryCompletion {
                 entry_id: entry.entry_id.clone(),
                 task_id: entry.task_id.clone(),
-                result: Some(RunnerResult::completed(&entry.task_id)),
+                result: Some(RunnerResult::completed(entry.task_id.clone())),
                 error: None,
             })
             .collect(),

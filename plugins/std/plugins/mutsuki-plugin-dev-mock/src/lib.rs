@@ -233,7 +233,7 @@ fn dev_resource_ref(task: &mutsuki_runtime_contracts::Task) -> ResourceRef {
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| format!("dev-resource-{}", task.task_id));
     ResourceRef {
-        ref_id: ref_id.clone(),
+        ref_id: ref_id.clone().into(),
         resource_id: ResourceId {
             kind_id: "mutsuki.dev.mock.resource".into(),
             slot_id: ref_id.clone(),
@@ -316,8 +316,14 @@ mod tests {
 
         let completion = runner
             .run_batch(
-                RunnerContext::new(1, 1, "executor:dev", Vec::<String>::new(), "batch:dev")
-                    .with_batch("batch:dev", 4),
+                RunnerContext::new(
+                    1,
+                    1,
+                    "executor:dev",
+                    Vec::<mutsuki_runtime_contracts::TaskLeaseId>::new(),
+                    "batch:dev",
+                )
+                .with_batch("batch:dev", 4),
                 batch,
             )
             .unwrap();

@@ -628,7 +628,8 @@ async fn inspect_reply_delivery(
             serde_json::to_value(BotReplyDeliveryCommand::Inspect { reply_id })
                 .map_err(|error| bridge_failure(task, "delivery.inspect.encode", error))?,
         )
-        .await;
+        .await
+        .map(|value| value.into_outcome());
     match outcome {
         Ok(TaskOutcome::Completed {
             output: Some(output),
@@ -668,9 +669,9 @@ async fn reserve_reply_delivery(
 
 fn decode_reply_delivery_outcome(
     task: &Task,
-    outcome: RuntimeResult<TaskOutcome>,
+    outcome: RuntimeResult<impl Into<TaskOutcome>>,
 ) -> RuntimeResult<BotReplyDeliveryReceipt> {
-    match outcome? {
+    match outcome?.into() {
         TaskOutcome::Completed {
             output: Some(output),
             ..
@@ -933,11 +934,11 @@ async fn speech_reply_messages(
 }
 
 fn decode_child_output<T: serde::de::DeserializeOwned>(
-    outcome: TaskOutcome,
+    outcome: impl Into<TaskOutcome>,
     task: &Task,
     route: &str,
 ) -> RuntimeResult<T> {
-    match outcome {
+    match outcome.into() {
         TaskOutcome::Completed {
             output: Some(output),
             ..
@@ -1714,7 +1715,7 @@ fn outgoing_messages_with_limit(
 
 fn trace_context(task: &Task) -> Option<BotAgentTraceContext> {
     (task.trace_id.is_some() || task.correlation_id.is_some()).then(|| BotAgentTraceContext {
-        trace_id: task.trace_id.clone(),
+        trace_id: task.trace_id.clone().map(Into::into),
         correlation_id: task.correlation_id.clone(),
     })
 }
@@ -2521,7 +2522,7 @@ mod tests {
             "profile",
             resource(id),
             ResourceCellRef {
-                cell_id: format!("cell-{id}"),
+                cell_id: format!("cell-{id}").into(),
                 resource_kind: "agent.session".into(),
                 owner_plugin_id: "test".into(),
                 schema: "agent.session.v1".into(),
@@ -2534,7 +2535,7 @@ mod tests {
 
     fn resource(id: &str) -> ResourceRef {
         ResourceRef {
-            ref_id: format!("ref-{id}"),
+            ref_id: format!("ref-{id}").into(),
             resource_id: ResourceId {
                 kind_id: "agent.session".into(),
                 slot_id: id.into(),

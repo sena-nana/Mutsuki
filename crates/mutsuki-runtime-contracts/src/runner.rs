@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    BatchEntry, BatchId, ExecutorId, OrderingRequirement, PayloadLayout, ProtocolId, RefId,
-    ResourceRef, RunnerId, ScalarValue, Task, TaskAwait, TaskId, TaskLease, TaskLeaseId, TickId,
-    ValueRef,
+    BatchEntry, BatchId, ExecutorId, OrderingRequirement, PayloadLayout, PluginId, ProtocolId,
+    RefId, ResourceRef, RunnerId, ScalarValue, Task, TaskAwait, TaskId, TaskLease, TaskLeaseId,
+    TickId, ValueRef,
 };
 use crate::{StateDelta, SurfaceId};
 
@@ -85,8 +85,8 @@ pub enum RunnerPurity {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RunnerDescriptor {
-    pub runner_id: String,
-    pub plugin_id: String,
+    pub runner_id: RunnerId,
+    pub plugin_id: PluginId,
     pub plugin_generation: u64,
     pub accepted_protocol_ids: Vec<ProtocolId>,
     pub purity: RunnerPurity,
@@ -268,8 +268,8 @@ impl RunnerContext {
         Self {
             registry_generation,
             current_step,
-            tick_id: format!("tick-{current_step}"),
-            batch_id: invocation_id.clone(),
+            tick_id: TickId::from(format!("tick-{current_step}")),
+            batch_id: BatchId::from(invocation_id.clone()),
             executor_id: executor_id.into(),
             task_lease_ids,
             entry_count,
@@ -330,6 +330,12 @@ impl IntoTaskLeaseIds for Option<TaskLeaseId> {
     }
 }
 
+impl IntoTaskLeaseIds for Option<&str> {
+    fn into_task_lease_ids(self) -> Vec<TaskLeaseId> {
+        self.map(TaskLeaseId::from).into_iter().collect()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunnerStatus {
@@ -381,7 +387,7 @@ pub struct RunnerResult {
 }
 
 impl RunnerResult {
-    pub fn completed(task_id: impl Into<String>) -> Self {
+    pub fn completed(task_id: impl Into<crate::TaskId>) -> Self {
         Self {
             task_id: task_id.into(),
             output: None,

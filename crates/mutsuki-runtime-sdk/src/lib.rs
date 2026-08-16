@@ -1,5 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 use std::future::Future;
+use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -8,10 +9,10 @@ use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 extern crate self as mutsuki_runtime_sdk;
 
 use mutsuki_runtime_contracts::{
-    CancelPolicy, CompletionBatch, EntryCompletion, ResourceAccess, ResourceId, ResourceLifetime,
-    ResourceRef, ResourceSealState, ResourceSemantic, RunnerDescriptor, RunnerResult, RunnerStatus,
-    RuntimeError, Task, TaskAwait, TaskBatch, TaskHandle, TaskOutcome, TaskStepContinuation,
-    WorkBatch,
+    BindingId, CancelPolicy, CompletionBatch, EntryCompletion, ProtocolId, RefId, ResourceAccess,
+    ResourceId, ResourceLifetime, ResourceRef, ResourceSealState, ResourceSemantic,
+    RunnerDescriptor, RunnerId, RunnerResult, RunnerStatus, RuntimeError, Task, TaskAwait,
+    TaskBatch, TaskHandle, TaskId, TaskOutcome, TaskStepContinuation, WorkBatch,
 };
 use mutsuki_runtime_core::{CoreRuntime, Runner, RunnerContext};
 use serde::Serialize;
@@ -22,9 +23,11 @@ mod backend;
 mod batch;
 mod descriptor;
 mod host;
+mod lease;
 mod plugin;
 mod portability;
 mod resource;
+mod typed_task;
 
 pub use abi::{
     ABI_V2_BRIDGE_ID, ABI_V2_CODEC_ID, ABI_V2_ENTRY_SYMBOL, ABI_V2_TRANSPORT_VERSION, AbiBuffer,
@@ -47,6 +50,7 @@ pub use host::{
     RecordingEventBridge, ScopedHostService, ShutdownController, StaticCapabilityBroker,
     StaticConfigProvider, TaskSubmitter, TaskSubmitterRuntimeClient,
 };
+pub use lease::{ExclusiveWriteGuard, ResourceLeaseGuard};
 pub use mutsuki_runtime_core::{ReloadDecision, RuntimeFailure, RuntimeResult};
 pub use mutsuki_runtime_sdk_macros::{ResourceKind, SdkProtocol, mutsuki_runner};
 pub use plugin::{
@@ -56,6 +60,7 @@ pub use plugin::{
 };
 pub use portability::Checkpointable;
 pub use resource::{ResourceClient, ResourceKind, TypedResourceHandle};
+pub use typed_task::{SdkProtocolOutput, TypedTaskHandle, TypedTaskOutcome};
 
 pub mod contracts {
     pub use mutsuki_runtime_contracts::*;
@@ -188,22 +193,22 @@ impl Future for TaskHandleFuture {
 #[derive(Clone)]
 pub struct AsyncRunnerContext {
     client: RuntimeClientRef,
-    parent_task_id: String,
-    current_runner_id: String,
-    trace_id: Option<String>,
+    parent_task_id: TaskId,
+    current_runner_id: RunnerId,
+    trace_id: Option<mutsuki_runtime_contracts::TraceId>,
     correlation_id: Option<String>,
     next_call: Arc<AtomicU64>,
     pending: Arc<Mutex<Option<PendingAwait>>>,
     allow_self_call: bool,
-    allowed_protocols: Arc<BTreeSet<String>>,
+    allowed_protocols: Arc<BTreeSet<ProtocolId>>,
 }
 
 impl AsyncRunnerContext {
     pub fn task_id(&self) -> &str {
-        &self.parent_task_id
+        self.parent_task_id.as_str()
     }
 
-    pub fn call<P>(&self, input: impl Serialize) -> CallFuture
+    pub fn call<P>(&self, input: impl Serialize) -> CallFuture<P>
     where
         P: SdkProtocol,
     {
@@ -215,7 +220,7 @@ impl AsyncRunnerContext {
     /// Core remains the execution and routing fact source: the future only
     /// emits the child tasks as one continuation and then observes their
     /// `TaskOutcome`s in input order.
-    pub fn call_batch<P, T>(&self, inputs: impl IntoIterator<Item = T>) -> BatchCallFuture
+    pub fn call_batch<P, T>(&self, inputs: impl IntoIterator<Item = T>) -> BatchCallFuture<P>
     where
         P: SdkProtocol,
         T: Serialize,
@@ -243,7 +248,7 @@ impl AsyncRunnerContext {
                 }
             };
             let call_index = self.next_call.fetch_add(1, Ordering::Relaxed) + 1;
-            let task_id = format!("{}:call:{call_index}", self.parent_task_id);
+            let task_id = TaskId::from(format!("{}:call:{call_index}", self.parent_task_id));
             let mut task = Task::new(task_id.clone(), P::PROTOCOL_ID, payload);
             task.trace_id = self.trace_id.clone();
             task.correlation_id = self.correlation_id.clone();
@@ -262,6 +267,7 @@ impl AsyncRunnerContext {
             parent_task_id: self.parent_task_id.clone(),
             pending: self.pending.clone(),
             state: BatchCallState::Init { tasks, handles },
+            _marker: PhantomData,
         }
     }
 
@@ -269,12 +275,12 @@ impl AsyncRunnerContext {
         &self,
         input: impl Serialize,
         cancel_policy: CancelPolicy,
-    ) -> CallFuture
+    ) -> CallFuture<P>
     where
         P: SdkProtocol,
     {
         match serde_json::to_value(input) {
-            Ok(payload) => self.call_raw_with_cancel_policy(P::PROTOCOL_ID, payload, cancel_policy),
+            Ok(payload) => self.start_call(P::PROTOCOL_ID, payload, None, cancel_policy),
             Err(error) => CallFuture::failed(
                 self.client.clone(),
                 self.parent_task_id.clone(),
@@ -284,25 +290,25 @@ impl AsyncRunnerContext {
         }
     }
 
-    pub fn call_raw(&self, protocol_id: impl Into<String>, payload: Value) -> CallFuture {
+    pub fn call_raw(&self, protocol_id: impl Into<ProtocolId>, payload: Value) -> CallFuture<()> {
         self.call_raw_with_cancel_policy(protocol_id, payload, CancelPolicy::Cascade)
     }
 
     pub fn call_raw_with_cancel_policy(
         &self,
-        protocol_id: impl Into<String>,
+        protocol_id: impl Into<ProtocolId>,
         payload: Value,
         cancel_policy: CancelPolicy,
-    ) -> CallFuture {
-        self.call_with_runner_hint(protocol_id, payload, None, cancel_policy)
+    ) -> CallFuture<()> {
+        self.start_call(protocol_id, payload, None, cancel_policy)
     }
 
     pub fn call_targeted<P>(
         &self,
-        binding_id: impl Into<String>,
+        binding_id: impl Into<BindingId>,
         runner_hint: impl Into<String>,
         input: impl Serialize,
-    ) -> CallFuture
+    ) -> CallFuture<P>
     where
         P: SdkProtocol,
     {
@@ -316,20 +322,19 @@ impl AsyncRunnerContext {
 
     pub fn call_targeted_with_cancel_policy<P>(
         &self,
-        binding_id: impl Into<String>,
+        binding_id: impl Into<BindingId>,
         runner_hint: impl Into<String>,
         input: impl Serialize,
         cancel_policy: CancelPolicy,
-    ) -> CallFuture
+    ) -> CallFuture<P>
     where
         P: SdkProtocol,
     {
         match serde_json::to_value(input) {
-            Ok(payload) => self.call_targeted_raw_with_cancel_policy(
-                binding_id,
+            Ok(payload) => self.start_call(
                 P::PROTOCOL_ID,
-                runner_hint,
                 payload,
+                Some((binding_id.into(), runner_hint.into())),
                 cancel_policy,
             ),
             Err(error) => CallFuture::failed(
@@ -343,11 +348,11 @@ impl AsyncRunnerContext {
 
     pub fn call_targeted_raw(
         &self,
-        binding_id: impl Into<String>,
-        protocol_id: impl Into<String>,
+        binding_id: impl Into<BindingId>,
+        protocol_id: impl Into<ProtocolId>,
         runner_hint: impl Into<String>,
         payload: Value,
-    ) -> CallFuture {
+    ) -> CallFuture<()> {
         self.call_targeted_raw_with_cancel_policy(
             binding_id,
             protocol_id,
@@ -359,13 +364,13 @@ impl AsyncRunnerContext {
 
     pub fn call_targeted_raw_with_cancel_policy(
         &self,
-        binding_id: impl Into<String>,
-        protocol_id: impl Into<String>,
+        binding_id: impl Into<BindingId>,
+        protocol_id: impl Into<ProtocolId>,
         runner_hint: impl Into<String>,
         payload: Value,
         cancel_policy: CancelPolicy,
-    ) -> CallFuture {
-        self.call_with_runner_hint(
+    ) -> CallFuture<()> {
+        self.start_call(
             protocol_id,
             payload,
             Some((binding_id.into(), runner_hint.into())),
@@ -373,15 +378,15 @@ impl AsyncRunnerContext {
         )
     }
 
-    fn call_with_runner_hint(
+    fn start_call<P>(
         &self,
-        protocol_id: impl Into<String>,
+        protocol_id: impl Into<ProtocolId>,
         payload: Value,
-        target: Option<(String, String)>,
+        target: Option<(BindingId, String)>,
         cancel_policy: CancelPolicy,
-    ) -> CallFuture {
+    ) -> CallFuture<P> {
         let protocol_id = protocol_id.into();
-        if let Err(error) = self.require_protocol(&protocol_id) {
+        if let Err(error) = self.require_protocol(protocol_id.as_str()) {
             return CallFuture::failed(
                 self.client.clone(),
                 self.parent_task_id.clone(),
@@ -390,7 +395,7 @@ impl AsyncRunnerContext {
             );
         }
         let call_index = self.next_call.fetch_add(1, Ordering::Relaxed) + 1;
-        let task_id = format!("{}:call:{call_index}", self.parent_task_id);
+        let task_id = TaskId::from(format!("{}:call:{call_index}", self.parent_task_id));
         let mut task = Task::new(task_id.clone(), protocol_id.clone(), payload);
         task.trace_id = self.trace_id.clone();
         task.correlation_id = self.correlation_id.clone();
@@ -419,6 +424,7 @@ impl AsyncRunnerContext {
                 handle,
             },
             self_call_blocked,
+            _marker: PhantomData,
         }
     }
 
@@ -437,12 +443,13 @@ impl AsyncRunnerContext {
     }
 }
 
-pub struct CallFuture {
+pub struct CallFuture<P = ()> {
     client: RuntimeClientRef,
-    parent_task_id: String,
+    parent_task_id: TaskId,
     pending: Arc<Mutex<Option<PendingAwait>>>,
     state: CallState,
     self_call_blocked: bool,
+    _marker: PhantomData<fn() -> P>,
 }
 
 enum CallState {
@@ -452,10 +459,10 @@ enum CallState {
     Done,
 }
 
-impl CallFuture {
+impl<P> CallFuture<P> {
     fn failed(
         client: RuntimeClientRef,
-        parent_task_id: String,
+        parent_task_id: TaskId,
         pending: Arc<Mutex<Option<PendingAwait>>>,
         error: RuntimeFailure,
     ) -> Self {
@@ -465,12 +472,13 @@ impl CallFuture {
             pending,
             state: CallState::Failed(Some(error)),
             self_call_blocked: false,
+            _marker: PhantomData,
         }
     }
 }
 
-impl Future for CallFuture {
-    type Output = RuntimeResult<TaskOutcome>;
+impl<P> Future for CallFuture<P> {
+    type Output = RuntimeResult<TypedTaskOutcome<P>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         if self.self_call_blocked {
@@ -499,7 +507,7 @@ impl Future for CallFuture {
             CallState::Submitted { handle } => match self.client.task_outcome(&handle) {
                 Ok(Some(outcome)) => {
                     self.state = CallState::Done;
-                    Poll::Ready(Ok(outcome))
+                    Poll::Ready(Ok(TypedTaskOutcome::from_outcome(outcome)))
                 }
                 Ok(None) => {
                     *self.pending.lock().expect("pending await mutex poisoned") =
@@ -527,11 +535,12 @@ impl Future for CallFuture {
     }
 }
 
-pub struct BatchCallFuture {
+pub struct BatchCallFuture<P = ()> {
     client: RuntimeClientRef,
-    parent_task_id: String,
+    parent_task_id: TaskId,
     pending: Arc<Mutex<Option<PendingAwait>>>,
     state: BatchCallState,
+    _marker: PhantomData<fn() -> P>,
 }
 
 enum BatchCallState {
@@ -547,10 +556,10 @@ enum BatchCallState {
     Done,
 }
 
-impl BatchCallFuture {
+impl<P> BatchCallFuture<P> {
     fn failed(
         client: RuntimeClientRef,
-        parent_task_id: String,
+        parent_task_id: TaskId,
         pending: Arc<Mutex<Option<PendingAwait>>>,
         error: RuntimeFailure,
     ) -> Self {
@@ -559,12 +568,13 @@ impl BatchCallFuture {
             parent_task_id,
             pending,
             state: BatchCallState::Failed(Some(error)),
+            _marker: PhantomData,
         }
     }
 }
 
-impl Future for BatchCallFuture {
-    type Output = RuntimeResult<Vec<TaskOutcome>>;
+impl<P> Future for BatchCallFuture<P> {
+    type Output = RuntimeResult<Vec<TypedTaskOutcome<P>>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let state = std::mem::replace(&mut self.state, BatchCallState::Done);
@@ -611,7 +621,11 @@ impl Future for BatchCallFuture {
                 }
                 Poll::Ready(Ok(outcomes
                     .into_iter()
-                    .map(|outcome| outcome.expect("all batch outcomes completed"))
+                    .map(|outcome| {
+                        TypedTaskOutcome::from_outcome(
+                            outcome.expect("all batch outcomes completed"),
+                        )
+                    })
                     .collect()))
             }
             BatchCallState::Failed(mut error) => {
@@ -637,7 +651,7 @@ struct PendingAwait {
 
 impl PendingAwait {
     fn new(
-        parent_task_id: String,
+        parent_task_id: TaskId,
         child: TaskHandle,
         task: Option<Task>,
         cancel_policy: CancelPolicy,
@@ -651,7 +665,7 @@ impl PendingAwait {
     }
 
     fn new_batch(
-        parent_task_id: String,
+        parent_task_id: TaskId,
         child: TaskHandle,
         tasks: Vec<Task>,
         cancel_policy: CancelPolicy,
@@ -689,8 +703,8 @@ pub struct TaskAwaitRunnerAdapter {
     descriptor: RunnerDescriptor,
     client: RuntimeClientRef,
     factory: BoxedTaskAwaitRunner,
-    invocations: HashMap<String, AsyncInvocation>,
-    invocation_tasks: HashMap<String, String>,
+    invocations: HashMap<TaskId, AsyncInvocation>,
+    invocation_tasks: HashMap<String, TaskId>,
     allow_self_call: bool,
 }
 
@@ -720,15 +734,15 @@ impl TaskAwaitRunnerAdapter {
         self
     }
 
-    fn track_invocation(&mut self, task_id: &str, invocation_id: &str) {
+    fn track_invocation(&mut self, task_id: &TaskId, invocation_id: &str) {
         if invocation_id.is_empty() {
             return;
         }
         self.invocation_tasks
-            .insert(invocation_id.to_owned(), task_id.to_owned());
+            .insert(invocation_id.to_owned(), task_id.clone());
     }
 
-    fn remove_invocation_by_task(&mut self, task_id: &str) -> Option<AsyncInvocation> {
+    fn remove_invocation_by_task(&mut self, task_id: &TaskId) -> Option<AsyncInvocation> {
         let invocation = self.invocations.remove(task_id)?;
         self.invocation_tasks
             .retain(|_, known_task_id| known_task_id != task_id);
@@ -788,7 +802,7 @@ impl Runner for TaskAwaitRunnerAdapter {
         } else if self.invocations.contains_key(invocation_id) {
             // Hosts may address an idle async invocation by task id after the
             // worker has returned the adapter to Core between polls.
-            self.remove_invocation_by_task(invocation_id);
+            self.remove_invocation_by_task(&TaskId::from(invocation_id));
         }
         Ok(())
     }
@@ -828,7 +842,7 @@ impl TaskAwaitRunnerAdapter {
             let async_ctx = AsyncRunnerContext {
                 client: self.client.clone(),
                 parent_task_id: task.task_id.clone(),
-                current_runner_id: self.descriptor.runner_id.clone(),
+                current_runner_id: RunnerId::from(self.descriptor.runner_id.clone()),
                 trace_id: task.trace_id.clone(),
                 correlation_id: task.correlation_id.clone(),
                 next_call: Arc::new(AtomicU64::new(0)),
@@ -840,8 +854,9 @@ impl TaskAwaitRunnerAdapter {
                         .iter()
                         .filter_map(|surface| {
                             surface
+                                .as_str()
                                 .strip_prefix("requires:task_protocol:")
-                                .map(ToOwned::to_owned)
+                                .map(ProtocolId::from)
                         })
                         .collect(),
                 ),
@@ -913,7 +928,7 @@ fn single_entry_batch(ctx: &RunnerContext, mut task: Task) -> WorkBatch {
         .task_lease_ids
         .first()
         .cloned()
-        .unwrap_or_else(|| format!("lease:{}", task.task_id));
+        .unwrap_or_else(|| format!("lease:{}", task.task_id).into());
     task.lease_id = Some(lease_id.clone());
     let lease = TaskLease {
         lease_id,
@@ -930,7 +945,7 @@ fn single_entry_batch(ctx: &RunnerContext, mut task: Task) -> WorkBatch {
         tick_id: ctx.tick_id.clone(),
         batch_key: "sdk.test.runner".into(),
         entries: vec![BatchEntry {
-            entry_id: task.task_id.clone(),
+            entry_id: mutsuki_runtime_contracts::EntryId::from(task.task_id.as_str()),
             task_id: task.task_id.clone(),
             trace_id: task.trace_id.clone(),
             parent_id: None,
@@ -948,12 +963,12 @@ fn single_entry_batch(ctx: &RunnerContext, mut task: Task) -> WorkBatch {
     }
 }
 
-fn continuation_ref(parent_task_id: &str) -> ResourceRef {
-    let ref_id = format!("continuation:{parent_task_id}");
+fn continuation_ref(parent_task_id: &TaskId) -> ResourceRef {
+    let ref_id = RefId::from(format!("continuation:{parent_task_id}"));
     ResourceRef {
         resource_id: ResourceId {
             kind_id: "continuation".into(),
-            slot_id: ref_id.clone(),
+            slot_id: ref_id.to_string(),
             generation: 1,
             version: 1,
         },

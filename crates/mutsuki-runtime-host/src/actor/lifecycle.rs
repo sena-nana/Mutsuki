@@ -4,7 +4,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
-use mutsuki_runtime_contracts::{CompletionBatch, TaskHandle, TaskStatus, WorkBatch};
+use mutsuki_runtime_contracts::{
+    CompletionBatch, RunnerId, TaskHandle, TaskId, TaskStatus, WorkBatch,
+};
 use mutsuki_runtime_core::{
     CoreRuntime, ReloadDecision, Runner, RunnerIsolation, RunnerManagementHandle, RuntimeResult,
 };
@@ -145,8 +147,8 @@ pub(super) fn reload_runtime(
     pools: &mut WorkerPools,
     management: &ManagementExecutor,
     rx: &ActorReceiver,
-    pending_cancels: &mut BTreeMap<String, Vec<String>>,
-    running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
+    pending_cancels: &mut BTreeMap<RunnerId, Vec<String>>,
+    running_batches_by_task: &mut BTreeMap<TaskId, RunningBatch>,
     draining_invocations: &mut BTreeMap<String, DrainingInvocation>,
 ) -> RuntimeResult<ReloadDecision> {
     let affected_runner_ids = prepared.affected_plugins.as_ref().map(|affected_plugins| {
@@ -208,11 +210,11 @@ fn drain_for_reload(
     pools: &mut WorkerPools,
     management: &ManagementExecutor,
     rx: &ActorReceiver,
-    pending_cancels: &mut BTreeMap<String, Vec<String>>,
-    running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
+    pending_cancels: &mut BTreeMap<RunnerId, Vec<String>>,
+    running_batches_by_task: &mut BTreeMap<TaskId, RunningBatch>,
     draining_invocations: &mut BTreeMap<String, DrainingInvocation>,
     drain_timeout: Duration,
-    affected_runner_ids: Option<&BTreeSet<String>>,
+    affected_runner_ids: Option<&BTreeSet<RunnerId>>,
 ) -> RuntimeResult<()> {
     let started_at = Instant::now();
     loop {

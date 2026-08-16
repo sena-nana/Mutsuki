@@ -32,7 +32,7 @@ pub(super) fn descriptor_with_class(
         ordering: Default::default(),
         control: Default::default(),
         metadata: BTreeMap::new(),
-        contract_surfaces: vec![format!("runner:{id}")],
+        contract_surfaces: vec![format!("runner:{id}").into()],
     }
 }
 

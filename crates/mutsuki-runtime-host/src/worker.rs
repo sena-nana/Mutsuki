@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
-use mutsuki_runtime_contracts::{DispatchLane, ExecutionClass};
+use mutsuki_runtime_contracts::{DispatchLane, ExecutionClass, RunnerId};
 use mutsuki_runtime_core::{
     RunnerCompletion, RunnerDispatch, RunnerDispatchTarget, RuntimeFailure, RuntimeResult,
 };
@@ -156,10 +156,10 @@ pub(crate) struct PoolCapacitySnapshot {
 pub(crate) struct WorkerStarted {
     pub worker_id: String,
     pub execution_class: ExecutionClass,
-    pub runner_id: String,
+    pub runner_id: RunnerId,
     pub invocation_id: String,
-    pub batch_id: String,
-    pub task_ids: Vec<String>,
+    pub batch_id: mutsuki_runtime_contracts::BatchId,
+    pub task_ids: Vec<mutsuki_runtime_contracts::TaskId>,
 }
 
 pub(crate) struct WorkerExited {

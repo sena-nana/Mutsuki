@@ -4,7 +4,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use mutsuki_runtime_contracts::{AsyncInvocationHandle, ExecutionClass, TaskHandle, TaskStatus};
+use mutsuki_runtime_contracts::{
+    AsyncInvocationHandle, BatchId, ExecutionClass, RunnerId, TaskHandle, TaskId, TaskStatus,
+};
 use mutsuki_runtime_core::{
     CoreRuntime, RunnerCompletion, RunnerIsolation, RunnerLoopReport, RunnerManagementHandle,
     RuntimeResult,
@@ -22,9 +24,9 @@ use super::cancellation::request_running_cancel;
 /// Actor bookkeeping for one task entry in an active batch. The task and lease
 /// authority remains in `CoreRuntime`.
 pub(super) struct RunningBatch {
-    pub(super) runner_id: String,
+    pub(super) runner_id: RunnerId,
     pub(super) invocation_id: String,
-    pub(super) batch_id: String,
+    pub(super) batch_id: BatchId,
     pub(super) execution_class: ExecutionClass,
     pub(super) handle: TaskHandle,
     pub(super) deadline_tick: Option<u64>,
@@ -40,13 +42,13 @@ pub(super) struct RunningBatch {
 /// Invocation isolated from new work until its late completion is disposed or
 /// its hard-process runner has recovered.
 pub(super) struct DrainingInvocation {
-    pub(super) runner_id: String,
+    pub(super) runner_id: RunnerId,
     pub(super) recover_after_termination: bool,
 }
 
 fn apply_pending_cancels(
     completion: &mut RunnerCompletion,
-    pending_cancels: &mut BTreeMap<String, Vec<String>>,
+    pending_cancels: &mut BTreeMap<mutsuki_runtime_contracts::RunnerId, Vec<String>>,
 ) {
     let Some(runner) = completion.runner.as_mut() else {
         return;
@@ -61,8 +63,8 @@ fn apply_pending_cancels(
 }
 
 fn remove_pending_cancel(
-    pending_cancels: &mut BTreeMap<String, Vec<String>>,
-    runner_id: &str,
+    pending_cancels: &mut BTreeMap<mutsuki_runtime_contracts::RunnerId, Vec<String>>,
+    runner_id: &mutsuki_runtime_contracts::RunnerId,
     invocation_id: &str,
 ) {
     let remove_runner = if let Some(invocation_ids) = pending_cancels.get_mut(runner_id) {
@@ -81,11 +83,11 @@ fn remove_pending_cancel(
 pub(super) fn handle_worker_completion(
     mut completion: RunnerCompletion,
     core: &mut CoreRuntime,
-    pending_cancels: &mut BTreeMap<String, Vec<String>>,
-    running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
+    pending_cancels: &mut BTreeMap<mutsuki_runtime_contracts::RunnerId, Vec<String>>,
+    running_batches_by_task: &mut BTreeMap<TaskId, RunningBatch>,
     draining_invocations: &mut BTreeMap<String, DrainingInvocation>,
 ) -> RuntimeResult<RunnerLoopReport> {
-    let invocation_id = completion.batch_id.clone();
+    let invocation_id = completion.batch_id.to_string();
     if let Some(draining) = draining_invocations.remove(&invocation_id) {
         remove_pending_cancel(pending_cancels, &draining.runner_id, &invocation_id);
         if draining.recover_after_termination {
@@ -122,8 +124,8 @@ pub(super) fn handle_worker_completion(
 pub(super) fn handle_async_event(
     event: AsyncExecutorEvent,
     core: &mut CoreRuntime,
-    pending_cancels: &mut BTreeMap<String, Vec<String>>,
-    running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
+    pending_cancels: &mut BTreeMap<mutsuki_runtime_contracts::RunnerId, Vec<String>>,
+    running_batches_by_task: &mut BTreeMap<TaskId, RunningBatch>,
     draining_invocations: &mut BTreeMap<String, DrainingInvocation>,
 ) -> RuntimeResult<RunnerLoopReport> {
     let (invocation, result) = match event {
@@ -232,8 +234,8 @@ pub(super) fn supervise_running_invocations(
     config: &HostRuntimeConfig,
     pools: &mut WorkerPools,
     management: &ManagementExecutor,
-    pending_cancels: &mut BTreeMap<String, Vec<String>>,
-    running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
+    pending_cancels: &mut BTreeMap<mutsuki_runtime_contracts::RunnerId, Vec<String>>,
+    running_batches_by_task: &mut BTreeMap<TaskId, RunningBatch>,
     draining_invocations: &mut BTreeMap<String, DrainingInvocation>,
 ) {
     cancel_expired_tick_deadlines(
@@ -281,8 +283,8 @@ fn cancel_expired_tick_deadlines(
     core: &mut CoreRuntime,
     config: &HostRuntimeConfig,
     management: &ManagementExecutor,
-    pending_cancels: &mut BTreeMap<String, Vec<String>>,
-    running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
+    pending_cancels: &mut BTreeMap<mutsuki_runtime_contracts::RunnerId, Vec<String>>,
+    running_batches_by_task: &mut BTreeMap<TaskId, RunningBatch>,
 ) {
     let current_step = core.current_step();
     let expired: Vec<_> = running_batches_by_task
@@ -316,8 +318,8 @@ fn isolate_invocation(
     core: &mut CoreRuntime,
     config: &HostRuntimeConfig,
     pools: &mut WorkerPools,
-    pending_cancels: &mut BTreeMap<String, Vec<String>>,
-    running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
+    pending_cancels: &mut BTreeMap<mutsuki_runtime_contracts::RunnerId, Vec<String>>,
+    running_batches_by_task: &mut BTreeMap<TaskId, RunningBatch>,
     draining_invocations: &mut BTreeMap<String, DrainingInvocation>,
 ) {
     if draining_invocations.contains_key(invocation_id) {
@@ -375,7 +377,7 @@ fn isolate_invocation(
     }
 }
 
-pub(super) fn task_status(core: &CoreRuntime, task_id: &str) -> Option<TaskStatus> {
+pub(super) fn task_status(core: &CoreRuntime, task_id: impl AsRef<str>) -> Option<TaskStatus> {
     core.tasks()
         .get(task_id)
         .map(|record| record.status.clone())
@@ -383,7 +385,7 @@ pub(super) fn task_status(core: &CoreRuntime, task_id: &str) -> Option<TaskStatu
 
 pub(super) fn mark_worker_started(
     started: WorkerStarted,
-    running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
+    running_batches_by_task: &mut BTreeMap<TaskId, RunningBatch>,
 ) {
     let now = Instant::now();
     for task_id in &started.task_ids {
@@ -403,7 +405,7 @@ pub(super) fn mark_worker_started(
 
 fn remove_running_batch_entries(
     completion: &RunnerCompletion,
-    running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
+    running_batches_by_task: &mut BTreeMap<TaskId, RunningBatch>,
 ) {
     for lease in &completion.task_leases {
         running_batches_by_task.remove(&lease.task_id);
@@ -413,7 +415,7 @@ fn remove_running_batch_entries(
 pub(super) fn cancel_async_invocation(
     invocation_id: &str,
     config: &HostRuntimeConfig,
-    running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
+    running_batches_by_task: &mut BTreeMap<TaskId, RunningBatch>,
 ) -> bool {
     let handle = running_batches_by_task
         .values()

@@ -1,9 +1,9 @@
 use mutsuki_agent_contracts::AgentError;
 use mutsuki_runtime_sdk::contracts::{
-    DomainEvent, ExecutionClass, OrderingRequirement, PayloadLayout, RunnerBatchCapability,
-    RunnerControlCapability, RunnerMode, RunnerOrderingCapability, RunnerPayloadCapability,
-    RunnerPurity, RunnerResourceCapability, RunnerResult, RunnerSideEffect, RunnerStatus,
-    ScalarValue, Task, TimeoutGranularity,
+    DomainEvent, ExecutionClass, OrderingRequirement, PayloadLayout, PluginId,
+    RunnerBatchCapability, RunnerControlCapability, RunnerId, RunnerMode, RunnerOrderingCapability,
+    RunnerPayloadCapability, RunnerPurity, RunnerResourceCapability, RunnerResult,
+    RunnerSideEffect, RunnerStatus, ScalarValue, Task, TaskId, TimeoutGranularity,
 };
 use mutsuki_runtime_sdk::{RunnerDescriptorBuilder, RuntimeFailure, RuntimeResult};
 use serde::Serialize;
@@ -11,11 +11,11 @@ use serde::de::DeserializeOwned;
 
 pub fn runtime_failure(
     source: &'static str,
-    route: impl Into<String>,
+    route: impl AsRef<str>,
     error: AgentError,
 ) -> RuntimeFailure {
     let mut runtime_error =
-        mutsuki_runtime_sdk::contracts::RuntimeError::new(error.code, source, route.into());
+        mutsuki_runtime_sdk::contracts::RuntimeError::new(error.code, source, route.as_ref());
     runtime_error
         .evidence
         .insert("message".into(), ScalarValue::String(error.message));
@@ -51,7 +51,7 @@ where
 }
 
 pub fn result_event(
-    task_id: impl Into<String>,
+    task_id: impl Into<TaskId>,
     event_kind: impl Into<String>,
     payload: impl Serialize,
 ) -> RuntimeResult<RunnerResult> {
@@ -75,13 +75,14 @@ pub fn result_event(
 
 pub fn completed_output<T>(
     source: &'static str,
-    parent_task_id: &str,
-    outcome: mutsuki_runtime_sdk::contracts::TaskOutcome,
+    parent_task_id: impl AsRef<str>,
+    outcome: impl Into<mutsuki_runtime_sdk::contracts::TaskOutcome>,
 ) -> RuntimeResult<T>
 where
     T: DeserializeOwned,
 {
-    match outcome {
+    let parent_task_id = parent_task_id.as_ref();
+    match outcome.into() {
         mutsuki_runtime_sdk::contracts::TaskOutcome::Completed {
             output: Some(output),
             ..
@@ -126,7 +127,7 @@ where
     }
 }
 
-pub fn failed_result(task_id: impl Into<String>, error: AgentError) -> RunnerResult {
+pub fn failed_result(task_id: impl Into<TaskId>, error: AgentError) -> RunnerResult {
     let task_id = task_id.into();
     let mut result = RunnerResult::completed(task_id.clone());
     result.status = RunnerStatus::Failed;
@@ -151,8 +152,8 @@ pub fn unsupported_protocol(source: &'static str, task: &Task) -> RuntimeFailure
 
 /// Batch-first orchestration runner with explicit capabilities.
 pub fn orchestration_runner(
-    runner_id: impl Into<String>,
-    plugin_id: impl Into<String>,
+    runner_id: impl Into<RunnerId>,
+    plugin_id: impl Into<PluginId>,
 ) -> RunnerDescriptorBuilder {
     agent_runner(
         runner_id,
@@ -164,8 +165,8 @@ pub fn orchestration_runner(
 
 /// Effectful runner for LLM / external provider boundaries.
 pub fn effectful_runner(
-    runner_id: impl Into<String>,
-    plugin_id: impl Into<String>,
+    runner_id: impl Into<RunnerId>,
+    plugin_id: impl Into<PluginId>,
 ) -> RunnerDescriptorBuilder {
     agent_runner(
         runner_id,
@@ -177,8 +178,8 @@ pub fn effectful_runner(
 }
 
 fn agent_runner(
-    runner_id: impl Into<String>,
-    plugin_id: impl Into<String>,
+    runner_id: impl Into<RunnerId>,
+    plugin_id: impl Into<PluginId>,
     execution_class: ExecutionClass,
     side_effect: RunnerSideEffect,
 ) -> RunnerDescriptorBuilder {

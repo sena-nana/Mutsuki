@@ -109,10 +109,10 @@ fn benchmark_case(runner_count: usize, task_count: usize) -> Value {
 
 fn runner_descriptor(index: usize) -> RunnerDescriptor {
     RunnerDescriptor {
-        runner_id: format!("bench.runner.{index}"),
+        runner_id: format!("bench.runner.{index}").into(),
         plugin_id: "bench.plugin".into(),
         plugin_generation: 1,
-        accepted_protocol_ids: vec![format!("bench.target.{index}")],
+        accepted_protocol_ids: vec![format!("bench.target.{index}").into()],
         purity: RunnerPurity::Pure,
         execution_class: ExecutionClass::Cpu,
         invocation_mode: Default::default(),
@@ -125,6 +125,6 @@ fn runner_descriptor(index: usize) -> RunnerDescriptor {
         ordering: Default::default(),
         control: Default::default(),
         metadata: BTreeMap::new(),
-        contract_surfaces: vec![format!("runner:bench.runner.{index}")],
+        contract_surfaces: vec![format!("runner:bench.runner.{index}").into()],
     }
 }

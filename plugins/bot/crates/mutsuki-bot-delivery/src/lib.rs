@@ -668,8 +668,14 @@ impl ReplyDeliveryService {
                 serde_json::to_value(message).map_err(|_| DeliveryError::InvalidRequest)?,
             )
             .await;
-        self.finish_runtime_outcome(request, receipt, attempt_number, now_unix_ms, outcome)
-            .await
+        self.finish_runtime_outcome(
+            request,
+            receipt,
+            attempt_number,
+            now_unix_ms,
+            outcome.map(|value| value.into_outcome()),
+        )
+        .await
     }
 
     async fn finish_runtime_outcome(

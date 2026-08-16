@@ -3,35 +3,35 @@ use std::sync::Arc;
 
 use mutsuki_runtime_contracts::{
     ContractSurface, ERR_REGISTRY_FROZEN, ERR_REGISTRY_UNAUTHORIZED, ERR_RELOAD_BLOCKED,
-    ExecutionClass, HandlerBinding, InvocationMode, OrderingRequirement, PayloadLayout,
-    ProtocolClass, RunnerConcurrency, RunnerDescriptor, RunnerPurity, RuntimeLoadPlan,
-    SurfaceCompatibility, SurfaceOccupancy,
+    ExecutionClass, ExecutorId, HandlerBinding, InvocationMode, OrderingRequirement, PayloadLayout,
+    PluginId, ProtocolClass, ProtocolId, RunnerConcurrency, RunnerDescriptor, RunnerId,
+    RunnerPurity, RuntimeLoadPlan, SurfaceCompatibility, SurfaceId, SurfaceOccupancy,
 };
 
 use crate::{AsyncBatchHandler, Runner, RuntimeResult};
 
 #[derive(Default)]
 pub struct RunnerRegistry {
-    runners: HashMap<String, Vec<Box<dyn Runner>>>,
-    async_handlers: HashMap<String, Arc<dyn AsyncBatchHandler>>,
-    descriptors: HashMap<String, RunnerDescriptor>,
+    runners: HashMap<RunnerId, Vec<Box<dyn Runner>>>,
+    async_handlers: HashMap<RunnerId, Arc<dyn AsyncBatchHandler>>,
+    descriptors: HashMap<RunnerId, RunnerDescriptor>,
     descriptor_snapshot: Arc<[RunnerDescriptor]>,
-    heartbeats: HashMap<String, RunnerHeartbeat>,
-    capabilities: HashMap<String, RunnerCapabilityDeclaration>,
+    heartbeats: HashMap<RunnerId, RunnerHeartbeat>,
+    capabilities: HashMap<RunnerId, RunnerCapabilityDeclaration>,
     frozen: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunnerHeartbeat {
-    pub runner_id: String,
-    pub executor_id: String,
+    pub runner_id: RunnerId,
+    pub executor_id: ExecutorId,
     pub last_seen_step: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunnerCapabilityDeclaration {
-    pub runner_id: String,
-    pub protocol_ids: Vec<String>,
+    pub runner_id: RunnerId,
+    pub protocol_ids: Vec<ProtocolId>,
     pub capacity: usize,
 }
 
@@ -51,7 +51,8 @@ impl HandlerBindingRegistry {
         Self { bindings }
     }
 
-    pub fn query_protocol(&self, protocol_id: &str) -> Vec<&HandlerBinding> {
+    pub fn query_protocol(&self, protocol_id: impl AsRef<str>) -> Vec<&HandlerBinding> {
+        let protocol_id = protocol_id.as_ref();
         self.bindings
             .iter()
             .filter(|binding| binding.protocol_id == protocol_id)
@@ -93,7 +94,7 @@ impl RunnerRegistry {
                 "runner.register",
             ));
         }
-        let runner_id = runner.descriptor().runner_id.clone();
+        let runner_id = RunnerId::from(runner.descriptor().runner_id.as_str());
         let descriptor = normalized_descriptor(runner.descriptor().clone());
         if self.async_handlers.contains_key(&runner_id) {
             return Err(duplicate_runner(&runner_id));
@@ -129,7 +130,7 @@ impl RunnerRegistry {
             ));
         }
         let descriptor = normalized_descriptor(handler.descriptor().clone());
-        let runner_id = descriptor.runner_id.clone();
+        let runner_id = RunnerId::from(descriptor.runner_id.as_str());
         if self.descriptors.contains_key(&runner_id)
             || self.runners.contains_key(&runner_id)
             || self.async_handlers.contains_key(&runner_id)
@@ -152,7 +153,11 @@ impl RunnerRegistry {
         Ok(())
     }
 
-    pub fn unregister(&mut self, runner_id: &str) -> RuntimeResult<Option<Box<dyn Runner>>> {
+    pub fn unregister(
+        &mut self,
+        runner_id: impl AsRef<str>,
+    ) -> RuntimeResult<Option<Box<dyn Runner>>> {
+        let runner_id = runner_id.as_ref();
         if self.frozen {
             return Err(crate::runtime_failure(
                 ERR_REGISTRY_FROZEN,
@@ -183,10 +188,13 @@ impl RunnerRegistry {
             };
             let actual = self
                 .runners
-                .get(&descriptor.runner_id)
+                .get(descriptor.runner_id.as_str())
                 .map(Vec::len)
                 .unwrap_or_else(|| {
-                    usize::from(self.async_handlers.contains_key(&descriptor.runner_id))
+                    usize::from(
+                        self.async_handlers
+                            .contains_key(descriptor.runner_id.as_str()),
+                    )
                 });
             if actual != expected {
                 return Err(crate::runtime_failure(
@@ -212,24 +220,25 @@ impl RunnerRegistry {
 
     pub fn descriptor(
         &self,
-        runner_id: &str,
+        runner_id: impl AsRef<str>,
     ) -> Option<mutsuki_runtime_contracts::RunnerDescriptor> {
-        self.descriptors.get(runner_id).cloned()
+        self.descriptors.get(runner_id.as_ref()).cloned()
     }
 
-    pub fn runner_ids(&self) -> Vec<String> {
+    pub fn runner_ids(&self) -> Vec<RunnerId> {
         self.descriptor_snapshot
             .iter()
-            .map(|descriptor| descriptor.runner_id.clone())
+            .map(|descriptor| RunnerId::from(descriptor.runner_id.as_str()))
             .collect()
     }
 
     pub fn heartbeat(
         &mut self,
-        runner_id: &str,
-        executor_id: &str,
+        runner_id: impl AsRef<str>,
+        executor_id: impl AsRef<str>,
         current_step: u64,
     ) -> RuntimeResult<RunnerHeartbeat> {
+        let runner_id = runner_id.as_ref();
         if !self.descriptors.contains_key(runner_id) {
             return Err(crate::runtime_failure(
                 mutsuki_runtime_contracts::ERR_RUNNER_NOT_FOUND,
@@ -239,23 +248,25 @@ impl RunnerRegistry {
         }
         let heartbeat = RunnerHeartbeat {
             runner_id: runner_id.into(),
-            executor_id: executor_id.into(),
+            executor_id: executor_id.as_ref().into(),
             last_seen_step: current_step,
         };
-        self.heartbeats.insert(runner_id.into(), heartbeat.clone());
+        self.heartbeats
+            .insert(heartbeat.runner_id.clone(), heartbeat.clone());
         Ok(heartbeat)
     }
 
-    pub fn runner_heartbeat(&self, runner_id: &str) -> Option<&RunnerHeartbeat> {
-        self.heartbeats.get(runner_id)
+    pub fn runner_heartbeat(&self, runner_id: impl AsRef<str>) -> Option<&RunnerHeartbeat> {
+        self.heartbeats.get(runner_id.as_ref())
     }
 
     pub fn declare_capability(
         &mut self,
-        runner_id: &str,
-        protocol_ids: Vec<String>,
+        runner_id: impl AsRef<str>,
+        protocol_ids: Vec<ProtocolId>,
         capacity: usize,
     ) -> RuntimeResult<RunnerCapabilityDeclaration> {
+        let runner_id = runner_id.as_ref();
         let descriptor = self.descriptors.get(runner_id).ok_or_else(|| {
             crate::runtime_failure(
                 mutsuki_runtime_contracts::ERR_RUNNER_NOT_FOUND,
@@ -280,19 +291,23 @@ impl RunnerRegistry {
             capacity,
         };
         self.capabilities
-            .insert(runner_id.into(), declaration.clone());
+            .insert(declaration.runner_id.clone(), declaration.clone());
         Ok(declaration)
     }
 
-    pub fn runner_capability(&self, runner_id: &str) -> Option<&RunnerCapabilityDeclaration> {
-        self.capabilities.get(runner_id)
+    pub fn runner_capability(
+        &self,
+        runner_id: impl AsRef<str>,
+    ) -> Option<&RunnerCapabilityDeclaration> {
+        self.capabilities.get(runner_id.as_ref())
     }
 
-    pub(crate) fn take_runner(&mut self, runner_id: &str) -> Option<Box<dyn Runner>> {
-        self.runners.get_mut(runner_id)?.pop()
+    pub(crate) fn take_runner(&mut self, runner_id: impl AsRef<str>) -> Option<Box<dyn Runner>> {
+        self.runners.get_mut(runner_id.as_ref())?.pop()
     }
 
-    pub(crate) fn available_dispatch_instances(&self, runner_id: &str) -> usize {
+    pub(crate) fn available_dispatch_instances(&self, runner_id: impl AsRef<str>) -> usize {
+        let runner_id = runner_id.as_ref();
         if self.async_handlers.contains_key(runner_id) {
             usize::MAX
         } else {
@@ -301,23 +316,26 @@ impl RunnerRegistry {
     }
 
     pub(crate) fn put_runner(&mut self, runner: Box<dyn Runner>) {
-        let runner_id = runner.descriptor().runner_id.clone();
+        let runner_id = RunnerId::from(runner.descriptor().runner_id.as_str());
         self.runners.entry(runner_id).or_default().push(runner);
     }
 
-    pub(crate) fn async_handler(&self, runner_id: &str) -> Option<Arc<dyn AsyncBatchHandler>> {
-        self.async_handlers.get(runner_id).cloned()
+    pub(crate) fn async_handler(
+        &self,
+        runner_id: impl AsRef<str>,
+    ) -> Option<Arc<dyn AsyncBatchHandler>> {
+        self.async_handlers.get(runner_id.as_ref()).cloned()
     }
 
     pub(crate) fn partition_by_plugins(
         mut self,
-        plugin_ids: &std::collections::BTreeSet<String>,
+        plugin_ids: &std::collections::BTreeSet<PluginId>,
     ) -> (Self, Self) {
         let mut retained = Self::default();
         let mut selected = Self::default();
         let descriptors = std::mem::take(&mut self.descriptors);
         for (runner_id, descriptor) in descriptors {
-            let target = if plugin_ids.contains(&descriptor.plugin_id) {
+            let target = if plugin_ids.contains(descriptor.plugin_id.as_str()) {
                 &mut selected
             } else {
                 &mut retained
@@ -360,7 +378,12 @@ impl RunnerRegistry {
         self.descriptor_snapshot = descriptors.into();
     }
 
-    pub fn cancel_runner(&mut self, runner_id: &str, invocation_id: &str) -> RuntimeResult<()> {
+    pub fn cancel_runner(
+        &mut self,
+        runner_id: impl AsRef<str>,
+        invocation_id: &str,
+    ) -> RuntimeResult<()> {
+        let runner_id = runner_id.as_ref();
         let runner = self
             .runners
             .get_mut(runner_id)
@@ -380,14 +403,16 @@ impl RunnerRegistry {
         for runners in self.runners.values_mut() {
             for runner in runners {
                 runner.dispose()?;
-                bag.disposed.push(runner.descriptor().runner_id.clone());
+                bag.disposed
+                    .push(RunnerId::from(runner.descriptor().runner_id.as_str()));
             }
         }
         for handler in self.async_handlers.values() {
             if let Some(management) = handler.management_handle() {
                 management.dispose()?;
             }
-            bag.disposed.push(handler.descriptor().runner_id.clone());
+            bag.disposed
+                .push(RunnerId::from(handler.descriptor().runner_id.as_str()));
         }
         Ok(bag)
     }
@@ -399,7 +424,7 @@ fn normalized_descriptor(mut descriptor: RunnerDescriptor) -> RunnerDescriptor {
     descriptor
 }
 
-fn duplicate_runner(runner_id: &str) -> crate::RuntimeFailure {
+fn duplicate_runner(runner_id: impl std::fmt::Display) -> crate::RuntimeFailure {
     crate::runtime_failure(
         ERR_REGISTRY_UNAUTHORIZED,
         "runtime.runner_registry",
@@ -409,7 +434,7 @@ fn duplicate_runner(runner_id: &str) -> crate::RuntimeFailure {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DisposeBag {
-    pub disposed: Vec<String>,
+    pub disposed: Vec<RunnerId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -422,7 +447,7 @@ pub enum PluginGenerationPhase {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PluginGenerationState {
-    pub plugin_id: String,
+    pub plugin_id: PluginId,
     pub generation: u64,
     pub phase: PluginGenerationPhase,
 }
@@ -438,7 +463,7 @@ pub struct RegistrySnapshot {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ContractChange {
-    pub surface_id: String,
+    pub surface_id: SurfaceId,
     pub compatibility: SurfaceCompatibility,
 }
 
@@ -496,7 +521,7 @@ fn validate_runner_protocol_classes(
         let class = load_plan
             .plugins
             .iter()
-            .find_map(|plugin| plugin.provides.protocol_classes.get(protocol_id))
+            .find_map(|plugin| plugin.provides.protocol_classes.get(protocol_id.as_str()))
             .ok_or_else(|| {
                 crate::runtime_failure(
                     ERR_REGISTRY_UNAUTHORIZED,
@@ -692,8 +717,9 @@ fn validate_handler_bindings(load_plan: &RuntimeLoadPlan) -> RuntimeResult<()> {
 
 fn runner_accepts_protocol(
     runner: &mutsuki_runtime_contracts::RunnerDescriptor,
-    protocol_id: &str,
+    protocol_id: impl AsRef<str>,
 ) -> bool {
+    let protocol_id = protocol_id.as_ref();
     runner
         .accepted_protocol_ids
         .iter()

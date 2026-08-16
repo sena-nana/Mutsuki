@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from mutsuki_runner_kit.contracts.batch import CompletionBatch, WorkBatch
 from mutsuki_runner_kit.contracts.codec import JsonValue
 from mutsuki_runner_kit.contracts.errors import RuntimeError
+from mutsuki_runner_kit.contracts.ids import ProtocolId, SurfaceId
 from mutsuki_runner_kit.contracts.runner import (
     ExecutionClass,
     RunnerContext,
@@ -48,10 +49,10 @@ class _ScalarFixture:
             runner_id=f"{PLUGIN_ID}.{self.protocol_id.removeprefix('runner.')}",
             plugin_id=PLUGIN_ID,
             plugin_generation=1,
-            accepted_protocol_ids=(self.protocol_id,),
+            accepted_protocol_ids=(ProtocolId(self.protocol_id),),
             purity=RunnerPurity.PURE,
             execution_class=self.execution_class,
-            contract_surfaces=(f"runner:{self.protocol_id}",),
+            contract_surfaces=(SurfaceId(f"runner:{self.protocol_id}"),),
         )
 
     async def run_batch(self, ctx: RunnerContext, batch: WorkBatch) -> CompletionBatch:

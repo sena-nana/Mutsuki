@@ -36,7 +36,7 @@ fn batch_round_trip(entries: usize) -> Result<Vec<CaseResult>, String> {
     let measurement = ALLOCATOR.measurement();
     let reply = runtime
         .dispatch(HostRuntimeCommand::SubmitBatch(Box::new(TaskBatch {
-            batch_id: format!("host-submit-{entries}"),
+            batch_id: format!("host-submit-{entries}").into(),
             tick_id: None,
             tasks,
             resource_plan: None,

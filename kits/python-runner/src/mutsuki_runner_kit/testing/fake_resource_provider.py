@@ -12,6 +12,7 @@ from mutsuki_runner_kit.contracts.errors import (
     ERR_RESOURCE_NOT_FOUND,
     RuntimeError,
 )
+from mutsuki_runner_kit.contracts.ids import RefId
 from mutsuki_runner_kit.contracts.resource import (
     CommandBatch,
     CommandPlan,
@@ -52,7 +53,7 @@ class FakeResourceProvider:
             return value
         ref_id = self._id("value")
         value_ref = ValueRef(
-            ref_id=ref_id,
+            ref_id=RefId(ref_id),
             provider_id="python.resource",
             schema=schema,
             version=1,
@@ -79,7 +80,7 @@ class FakeResourceProvider:
         path = self._root / f"{ref_id}.bin"
         path.write_bytes(data)
         resource = ResourceRef(
-            ref_id=ref_id,
+            ref_id=RefId(ref_id),
             resource_id=_resource_id("bytes", ref_id),
             semantic=ResourceSemantic.FROZEN_VALUE,
             provider_id="python.resource",
@@ -104,7 +105,7 @@ class FakeResourceProvider:
     def create_blob_resource(self, schema: str, data: bytes) -> ResourceRef:
         ref_id = self._id("resource")
         resource = ResourceRef(
-            ref_id=ref_id,
+            ref_id=RefId(ref_id),
             resource_id=_resource_id("blob", ref_id),
             semantic=ResourceSemantic.FROZEN_VALUE,
             provider_id="python.resource",
@@ -143,7 +144,7 @@ class FakeResourceProvider:
         path = self._root / f"{ref_id}.bin"
         path.write_bytes(data)
         resource = ResourceRef(
-            ref_id=ref_id,
+            ref_id=RefId(ref_id),
             resource_id=_resource_id(kind_id, ref_id),
             semantic=ResourceSemantic.COW_VERSIONED_STATE,
             provider_id="python.resource",
@@ -169,7 +170,7 @@ class FakeResourceProvider:
         data = json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode()
         ref_id = self._id("resource")
         resource = ResourceRef(
-            ref_id=ref_id,
+            ref_id=RefId(ref_id),
             resource_id=_resource_id(kind_id, ref_id),
             semantic=ResourceSemantic.READ_ONLY_FACT,
             provider_id="python.resource",
@@ -189,7 +190,7 @@ class FakeResourceProvider:
     def create_stream_resource(self, kind_id: str, schema: str, endpoint: str) -> ResourceRef:
         ref_id = self._id("resource")
         resource = ResourceRef(
-            ref_id=ref_id,
+            ref_id=RefId(ref_id),
             resource_id=_resource_id(kind_id, ref_id),
             semantic=ResourceSemantic.STREAM_RESOURCE,
             provider_id="python.resource",
@@ -214,7 +215,7 @@ class FakeResourceProvider:
         path = self._root / f"{ref_id}.bin"
         path.write_bytes(data)
         resource = ResourceRef(
-            ref_id=ref_id,
+            ref_id=RefId(ref_id),
             resource_id=_resource_id(kind_id, ref_id),
             semantic=ResourceSemantic.VERSIONED_SNAPSHOT,
             provider_id="python.resource",
@@ -239,7 +240,7 @@ class FakeResourceProvider:
     def create_capability_resource(self, kind_id: str, schema: str) -> ResourceRef:
         ref_id = self._id("resource")
         resource = ResourceRef(
-            ref_id=ref_id,
+            ref_id=RefId(ref_id),
             resource_id=_resource_id(kind_id, ref_id),
             semantic=ResourceSemantic.CAPABILITY_RESOURCE,
             provider_id="python.resource",
@@ -332,7 +333,7 @@ class FakeResourceProvider:
             raise _resource_error(ERR_CAPABILITY_EXHAUSTED, f"resource.lease.{ref_id}")
         token = LeaseToken(
             token_id=self._id("lease"),
-            ref_id=ref_id,
+            ref_id=RefId(ref_id),
             owner=owner,
             mode="exclusive_write",
             expires_at_step=expires_at_step,

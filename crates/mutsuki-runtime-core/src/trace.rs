@@ -5,18 +5,18 @@ use mutsuki_runtime_contracts::TraceSpan;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TraceClosureIssue {
     DuplicateSpanId {
-        span_id: String,
+        span_id: mutsuki_runtime_contracts::SpanId,
     },
     MissingParent {
-        span_id: String,
-        parent_span_id: String,
+        span_id: mutsuki_runtime_contracts::SpanId,
+        parent_span_id: mutsuki_runtime_contracts::SpanId,
     },
     ParentTraceMismatch {
-        span_id: String,
-        parent_span_id: String,
+        span_id: mutsuki_runtime_contracts::SpanId,
+        parent_span_id: mutsuki_runtime_contracts::SpanId,
     },
     InvalidInterval {
-        span_id: String,
+        span_id: mutsuki_runtime_contracts::SpanId,
     },
 }
 

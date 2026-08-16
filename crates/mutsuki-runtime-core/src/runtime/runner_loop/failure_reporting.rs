@@ -14,15 +14,15 @@ pub(super) fn reclaim_expired_task_leases(runtime: &mut CoreRuntime) {
         let mut attrs = BTreeMap::new();
         attrs.insert(
             "lease_id".into(),
-            ScalarValue::String(lease.lease_id.clone()),
+            ScalarValue::String(lease.lease_id.to_string()),
         );
         attrs.insert(
             "runner_id".into(),
-            ScalarValue::String(lease.runner_id.clone()),
+            ScalarValue::String(lease.runner_id.to_string()),
         );
         attrs.insert(
             "executor_id".into(),
-            ScalarValue::String(lease.executor_id.clone()),
+            ScalarValue::String(lease.executor_id.to_string()),
         );
         attrs.insert(
             "registry_generation".into(),
@@ -45,7 +45,7 @@ pub(super) fn reclaim_expired_task_leases(runtime: &mut CoreRuntime) {
         runtime.events.record(
             RuntimeEventKind::Task,
             "task.lease.expired",
-            Some(lease.task_id.clone()),
+            Some(lease.task_id.to_string()),
             attrs,
             None,
         );
@@ -105,7 +105,7 @@ pub(super) fn fail_runner_dispatches(
 
 pub(super) fn record_rejected_runner_result(
     runtime: &mut CoreRuntime,
-    task_id: String,
+    task_id: mutsuki_runtime_contracts::TaskId,
     error: RuntimeError,
 ) {
     let mut attrs = BTreeMap::new();
@@ -121,7 +121,7 @@ pub(super) fn record_rejected_runner_result(
     runtime.events.record(
         RuntimeEventKind::Task,
         "task.result.rejected",
-        Some(task_id),
+        Some(task_id.to_string()),
         attrs,
         Some(error),
     );

@@ -63,8 +63,9 @@ impl ContextProviderBatchPlan {
             batch_id: format!(
                 "{}:{}:context-providers",
                 request.session_id, request.turn_id
-            ),
-            tick_id: Some(format!("{}:{}", request.session_id, request.turn_id)),
+            )
+            .into(),
+            tick_id: Some(format!("{}:{}", request.session_id, request.turn_id).into()),
             tasks,
             resource_plan: None,
         };

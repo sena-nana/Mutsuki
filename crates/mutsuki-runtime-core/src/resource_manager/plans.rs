@@ -8,7 +8,12 @@ use crate::RuntimeResult;
 use super::ResourceManager;
 
 impl ResourceManager {
-    pub fn build_read_plan(&self, ref_id: &str, operation: &str) -> RuntimeResult<ReadPlan> {
+    pub fn build_read_plan(
+        &self,
+        ref_id: impl AsRef<str>,
+        operation: &str,
+    ) -> RuntimeResult<ReadPlan> {
+        let ref_id = ref_id.as_ref();
         let resource = self.open_resource(ref_id)?;
         Ok(ReadPlan {
             plan_id: format!("read-plan:{ref_id}:{operation}"),
@@ -34,7 +39,12 @@ impl ResourceManager {
         })
     }
 
-    pub fn build_export_plan(&self, ref_id: &str, target: &str) -> RuntimeResult<ExportPlan> {
+    pub fn build_export_plan(
+        &self,
+        ref_id: impl AsRef<str>,
+        target: &str,
+    ) -> RuntimeResult<ExportPlan> {
+        let ref_id = ref_id.as_ref();
         let resource = self.open_resource(ref_id)?;
         Ok(ExportPlan {
             plan_id: format!("export-plan:{ref_id}:{target}"),
@@ -46,11 +56,12 @@ impl ResourceManager {
 
     pub fn build_command_plan(
         &self,
-        ref_id: &str,
+        ref_id: impl AsRef<str>,
         operation: &str,
         args: Value,
         idempotency_key: Option<String>,
     ) -> RuntimeResult<CommandPlan> {
+        let ref_id = ref_id.as_ref();
         let capability = self.open_resource(ref_id)?;
         Ok(CommandPlan {
             plan_id: format!("command-plan:{ref_id}:{operation}"),
@@ -63,10 +74,11 @@ impl ResourceManager {
 
     pub fn build_write_plan(
         &self,
-        ref_id: &str,
+        ref_id: impl AsRef<str>,
         conflict_policy: &str,
         operations: Value,
     ) -> RuntimeResult<WritePlan> {
+        let ref_id = ref_id.as_ref();
         let resource = self.open_resource(ref_id)?;
         let patch = PatchDescriptor {
             patch_id: format!("patch:{ref_id}:{}", resource.version),

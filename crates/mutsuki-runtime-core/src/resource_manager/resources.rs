@@ -11,7 +11,8 @@ use super::{
 };
 
 impl ResourceManager {
-    pub fn open_resource(&self, ref_id: &str) -> RuntimeResult<ResourceRef> {
+    pub fn open_resource(&self, ref_id: impl AsRef<str>) -> RuntimeResult<ResourceRef> {
+        let ref_id = ref_id.as_ref();
         self.hub
             .get(ref_id)
             .map(|entry| entry.descriptor.clone())
@@ -111,11 +112,11 @@ impl ResourceManager {
         provider_id: &str,
         endpoint: &str,
     ) -> ResourceRef {
-        let ref_id = self.id_source.next_id("resource");
+        let ref_id = mutsuki_runtime_contracts::RefId::from(self.id_source.next_id("resource"));
         let descriptor = ResourceRef {
             resource_id: ResourceId {
                 kind_id: stream_id.into(),
-                slot_id: ref_id.clone(),
+                slot_id: ref_id.to_string(),
                 generation: 1,
                 version: 1,
             },
@@ -139,7 +140,8 @@ impl ResourceManager {
         descriptor
     }
 
-    pub fn close_stream_resource(&mut self, ref_id: &str) -> RuntimeResult<ResourceRef> {
+    pub fn close_stream_resource(&mut self, ref_id: impl AsRef<str>) -> RuntimeResult<ResourceRef> {
+        let ref_id = ref_id.as_ref();
         match self.hub.get(ref_id) {
             Some(entry) if matches!(&entry.descriptor.access, ResourceAccess::Stream { .. }) => {
                 Ok(self
@@ -154,7 +156,7 @@ impl ResourceManager {
         }
     }
 
-    pub fn resource_store_name(&self, ref_id: &str) -> Option<&'static str> {
+    pub fn resource_store_name(&self, ref_id: impl AsRef<str>) -> Option<&'static str> {
         self.hub.store_name(ref_id)
     }
 }
