@@ -342,7 +342,7 @@ pub(super) fn profile_hash(
     capability_graph: &RuntimeCapabilityGraph,
 ) -> String {
     format!(
-        "profile:{}:{:?}:{}:{}:{}:extensions={:?}:events={}:{:?}:traces={}:{:?}:scheduler_details={}:dispatch_spans={}",
+        "profile:{}:{:?}:{}:{}:{}:extensions={:?}:events={}:{:?}:traces={}:{:?}:scheduler_details={}:dispatch_spans={}:state_history={}:{}",
         profile.profile_id,
         profile.mode,
         profile.enabled_plugins.len(),
@@ -355,6 +355,8 @@ pub(super) fn profile_hash(
         profile.observability.traces.overflow_policy,
         profile.observability.detailed_scheduler_decisions,
         profile.observability.dispatch_spans,
+        profile.observability.state_history.capacity_per_ref,
+        profile.observability.state_history.retain_steps,
     )
 }
 

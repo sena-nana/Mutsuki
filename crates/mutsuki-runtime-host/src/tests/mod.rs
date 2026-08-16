@@ -4,6 +4,7 @@ mod async_runtime;
 mod binary;
 mod binary_runner;
 mod bootstrapper;
+mod composability;
 mod helpers;
 mod host_runtime;
 mod management;

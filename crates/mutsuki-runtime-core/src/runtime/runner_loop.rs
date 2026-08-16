@@ -49,6 +49,7 @@ impl CoreRuntime {
     ) -> RuntimeResult<RunnerLoopReport> {
         self.ensure_not_aborted()?;
         self.current_step += 1;
+        self.states.prune(self.current_step);
         self.reclaim_expired_task_leases();
         self.wake_due_tasks();
         let mut loop_report = empty_runner_loop_report();
@@ -120,6 +121,7 @@ impl CoreRuntime {
             ));
         }
         self.current_step = target_step;
+        self.states.prune(self.current_step);
         self.reclaim_expired_task_leases();
         self.wake_due_tasks();
         let mut loop_report = empty_runner_loop_report();

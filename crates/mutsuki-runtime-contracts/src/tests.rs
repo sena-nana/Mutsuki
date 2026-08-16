@@ -862,11 +862,20 @@ fn observability_profile_and_page_roundtrip_json() {
         traces: ObservabilityOutletProfile::new(64, ObservabilityOverflowPolicy::DropOldest),
         detailed_scheduler_decisions: true,
         dispatch_spans: true,
+        state_history: StateHistoryProfile::bounded(8, 32),
     };
     assert_eq!(
         serde_json::from_str::<ObservabilityProfile>(&serde_json::to_string(&profile).unwrap())
             .unwrap(),
         profile
+    );
+    let rollback = StateRollback {
+        target_ref: "state:actor".into(),
+        to_version: 3,
+    };
+    assert_eq!(
+        serde_json::from_str::<StateRollback>(&serde_json::to_string(&rollback).unwrap()).unwrap(),
+        rollback
     );
 
     let page = ObservabilityPage {

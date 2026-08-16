@@ -188,6 +188,13 @@ pub(super) fn schedule_ready_at(
                 &mut async_reservations
             } else {
                 if descriptor.execution_class == ExecutionClass::Control {
+                    if descriptor.runner_id.as_str() == "core.kernel" {
+                        return Ok(mutsuki_runtime_core::ScheduleDecision::new(
+                            "host.default",
+                            1,
+                            "control.kernel.inline",
+                        ));
+                    }
                     return Ok(mutsuki_runtime_core::ScheduleDecision::new(
                         "host.default",
                         0,

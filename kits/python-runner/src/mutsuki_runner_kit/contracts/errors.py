@@ -33,6 +33,8 @@ ERR_RESOURCE_NOT_FOUND = "resource.not_found"
 ERR_RESOURCE_GENERATION_MISMATCH = "resource.generation_mismatch"
 ERR_RESOURCE_LEASE_EXPIRED = "resource.lease_expired"
 ERR_STATE_CONFLICT = "state.conflict"
+ERR_STATE_HISTORY_DISABLED = "state.history_disabled"
+ERR_STATE_HISTORY_UNAVAILABLE = "state.history_unavailable"
 ERR_RELOAD_BLOCKED = "plugin.reload_blocked"
 
 
