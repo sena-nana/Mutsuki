@@ -615,7 +615,7 @@ fn select_provider<'a>(
         )));
     }
     for provider in candidates {
-        if bound_provider.is_some_and(|plugin_id| plugin_id != &provider.provider_plugin_id) {
+        if bound_provider.is_some_and(|plugin_id| provider.provider_plugin_id != *plugin_id) {
             continue;
         }
         if let Some(constraint) = version_constraint {

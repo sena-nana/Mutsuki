@@ -73,3 +73,17 @@ class StateDelta:
                 as_str(field_value(raw, "conflict_policy"), "conflict_policy")
             ),
         )
+
+
+@dataclass(frozen=True)
+class StateRollback:
+    target_ref: RefId
+    to_version: int
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
+        raw = as_mapping(data, "StateRollback")
+        return cls(
+            target_ref=RefId(as_str(field_value(raw, "target_ref"), "target_ref")),
+            to_version=as_int(field_value(raw, "to_version"), "to_version"),
+        )

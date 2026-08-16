@@ -132,6 +132,10 @@ impl CoreRuntime {
         self.handler_bindings = HandlerBindingRegistry::from_load_plan(&new_plan);
         self.surfaces = new_plan.contract_surfaces.clone();
         self.protocol_classes = super::super::protocol_classes_for_plan(&new_plan);
+        self.states.configure(
+            new_plan.observability.state_history.clone(),
+            self.current_step,
+        );
         self.load_plan = new_plan;
     }
 }

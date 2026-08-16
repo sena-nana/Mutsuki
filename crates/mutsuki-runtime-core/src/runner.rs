@@ -117,7 +117,11 @@ impl CoreKernelRunner {
                 runner_id: "core.kernel".into(),
                 plugin_id: "core".into(),
                 plugin_generation,
-                accepted_protocol_ids: vec!["core.commit".into(), "core.event.append".into()],
+                accepted_protocol_ids: vec![
+                    "core.commit".into(),
+                    "core.event.append".into(),
+                    "core.state.rollback".into(),
+                ],
                 purity: RunnerPurity::Committer,
                 execution_class: ExecutionClass::Control,
                 invocation_mode: Default::default(),

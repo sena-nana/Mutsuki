@@ -16,6 +16,7 @@ fn aggregate_only_runtime() -> CoreRuntime {
         traces: ObservabilityOutletProfile::new(64, ObservabilityOverflowPolicy::DropOldest),
         detailed_scheduler_decisions: false,
         dispatch_spans: false,
+        state_history: StateHistoryProfile::default(),
     };
     CoreRuntime::boot(plan, vec![completed_runner!(worker)]).unwrap()
 }

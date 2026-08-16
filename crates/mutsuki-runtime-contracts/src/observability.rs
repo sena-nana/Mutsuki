@@ -26,12 +26,37 @@ impl ObservabilityOutletProfile {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StateHistoryProfile {
+    /// Max retained versions per state ref. Zero disables history and rollback.
+    pub capacity_per_ref: usize,
+    /// Logical-step retention period. Zero keeps versions until capacity evicts.
+    pub retain_steps: u64,
+}
+
+impl StateHistoryProfile {
+    pub const fn bounded(capacity_per_ref: usize, retain_steps: u64) -> Self {
+        Self {
+            capacity_per_ref,
+            retain_steps,
+        }
+    }
+
+    #[must_use]
+    pub const fn is_enabled(&self) -> bool {
+        self.capacity_per_ref > 0
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObservabilityProfile {
     pub events: ObservabilityOutletProfile,
     pub traces: ObservabilityOutletProfile,
     pub detailed_scheduler_decisions: bool,
     pub dispatch_spans: bool,
+    /// Optional bounded state history used by `core.state.rollback`.
+    #[serde(default)]
+    pub state_history: StateHistoryProfile,
 }
 
 impl Default for ObservabilityProfile {
@@ -47,6 +72,7 @@ impl Default for ObservabilityProfile {
             ),
             detailed_scheduler_decisions: false,
             dispatch_spans: false,
+            state_history: StateHistoryProfile::default(),
         }
     }
 }

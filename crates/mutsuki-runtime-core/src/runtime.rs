@@ -119,6 +119,7 @@ impl CoreRuntime {
         let events = EventLog::with_profile(load_plan.observability.events.clone());
         let traces = TraceLog::with_profile(load_plan.observability.traces.clone());
         let protocol_classes = protocol_classes_for_plan(&load_plan);
+        let states = StateStore::with_profile(load_plan.observability.state_history.clone());
         Ok(Self {
             surfaces: load_plan.contract_surfaces.clone(),
             protocol_classes,
@@ -129,7 +130,7 @@ impl CoreRuntime {
             generation_states,
             tasks: TaskPool::default(),
             resources: ResourceManager::new(),
-            states: StateStore::default(),
+            states,
             events,
             traces,
             scheduler_decisions: 0,
@@ -251,6 +252,8 @@ impl CoreRuntime {
     }
 
     pub fn configure_observability(&mut self, profile: ObservabilityProfile) {
+        self.states
+            .configure(profile.state_history.clone(), self.current_step);
         self.events.configure(profile.events.clone());
         self.traces.configure(profile.traces.clone());
         self.load_plan.observability = profile;

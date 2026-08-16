@@ -503,3 +503,9 @@ pub struct StateDelta {
     pub patch: Value,
     pub conflict_policy: ConflictPolicy,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StateRollback {
+    pub target_ref: RefId,
+    pub to_version: u64,
+}

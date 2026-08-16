@@ -1,5 +1,6 @@
 #[macro_use]
 mod fixtures;
+mod composability;
 mod handler_bindings;
 mod lease_fencing;
 mod lifecycle;
