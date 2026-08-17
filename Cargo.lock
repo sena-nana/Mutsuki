@@ -3910,6 +3910,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "mutsuki-bot-sandbox"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "mutsuki-bot-conversation",
+ "mutsuki-bot-protocol",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "mutsuki-bot-sdk"
 version = "0.1.0"
 dependencies = [
@@ -3938,6 +3951,7 @@ dependencies = [
  "mutsuki-bot-interaction",
  "mutsuki-bot-management",
  "mutsuki-bot-protocol",
+ "mutsuki-bot-sandbox",
  "mutsuki-bot-state-db",
  "mutsuki-bot-testkit",
  "mutsuki-bot-web-console",
@@ -4006,6 +4020,7 @@ dependencies = [
  "mutsuki-bot-flow",
  "mutsuki-bot-management",
  "mutsuki-bot-protocol",
+ "mutsuki-bot-sandbox",
  "mutsuki-config-service",
  "mutsuki-plugin-bot-agent-web",
  "mutsuki-plugin-bot-bilibili-web",
@@ -4014,6 +4029,7 @@ dependencies = [
  "mutsuki-plugin-bot-flow-web",
  "mutsuki-plugin-bot-overview-web",
  "mutsuki-plugin-bot-qq-web",
+ "mutsuki-plugin-bot-sandbox-web",
  "mutsuki-plugin-bot-upgrade-web",
  "mutsuki-plugin-config-web",
  "mutsuki-service-control",
@@ -4674,6 +4690,24 @@ dependencies = [
  "futures-util",
  "mutsuki-bot-management",
  "mutsuki-bot-protocol",
+ "mutsuki-web-extension",
+ "mutsuki-web-host",
+ "mutsuki-web-protocol",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
+ "uuid",
+]
+
+[[package]]
+name = "mutsuki-plugin-bot-sandbox-web"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures-util",
+ "mutsuki-bot-sandbox",
  "mutsuki-web-extension",
  "mutsuki-web-host",
  "mutsuki-web-protocol",

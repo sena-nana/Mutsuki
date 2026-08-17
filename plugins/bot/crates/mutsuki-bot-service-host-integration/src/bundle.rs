@@ -8,14 +8,21 @@ use mutsuki_bot_delivery::{
 };
 use mutsuki_bot_interaction::{InteractionConditionMatcher, InteractionError, InteractionService};
 use mutsuki_bot_protocol::{
+    BOT_EVENT_INGEST_PROTOCOL_ID, BOT_FLOW_BOT_EVENT_TYPE, BOT_FLOW_INGRESS_PROTOCOL_ID,
     BOT_MESSAGE_SEND_PROTOCOL_ID, BotActiveDeliveryRequest, BotDeliveryContent,
-    BotDeliveryPartReceipt, BotMessage, DeliveryPartStatus, DeliveryPolicy, MessageSegment,
+    BotDeliveryPartReceipt, BotEvent, BotFlowContext, BotFlowEventEnvelope, BotFlowPayload,
+    BotFlowTypeRef, BotMessage, DeliveryPartStatus, DeliveryPolicy, MessageSegment,
     QqConversationRef,
+};
+use mutsuki_bot_sandbox::{
+    SANDBOX_SERVICE_ID, SandboxApi, SandboxError, SandboxRuntime, SandboxService,
 };
 use mutsuki_bot_state_db::{
     BotManagementAuditRecord, BotManagementOperationReservation, BotStateDbRepository,
 };
-use mutsuki_runtime_contracts::{ContractSurfaceKind, SurfaceRequirement, Task, TaskOutcome};
+use mutsuki_runtime_contracts::{
+    ContractSurfaceKind, SurfaceRequirement, Task, TaskOutcome, TaskPayload,
+};
 use mutsuki_runtime_sdk::ResourceRegistryGateway;
 use mutsuki_runtime_sdk::RuntimeClientRef;
 use mutsuki_service_runtime::ServiceRuntimeBuilder;
@@ -134,6 +141,7 @@ impl QqBotPluginBundle {
             .take()
             .ok_or_else(|| QqOpenApiError::InvalidPayload("event source already taken".into()))?;
         let control = source.control_handle();
+        let inbound = source.inbound_handle();
         let management_config = self.config.clone();
         let management_health = self.health.clone();
         let management_credentials = self.credentials.clone();
@@ -149,10 +157,12 @@ impl QqBotPluginBundle {
             .provides
             .services
             .push(QQ_MANAGEMENT_SERVICE_ID.into());
+        manifest.provides.services.push(SANDBOX_SERVICE_ID.into());
         manifest
             .provides
             .capabilities
             .push("bot.qq.management".into());
+        manifest.provides.capabilities.push("bot.sandbox".into());
         if let Some(provider_id) = media_provider_id {
             manifest.requires.push(SurfaceRequirement::new(
                 ContractSurfaceKind::ResourceProvider,
@@ -166,7 +176,7 @@ impl QqBotPluginBundle {
                     BotStateDbRepository::open(&state_path).map_err(|error| error.to_string())?,
                 );
                 let gateway = Arc::new(RuntimeQqDeliveryGateway {
-                    runtime,
+                    runtime: runtime.clone(),
                     account_id: management_config.account_id.clone(),
                 });
                 let delivery = ActiveDeliveryService::new(
@@ -186,21 +196,34 @@ impl QqBotPluginBundle {
                     health: management_health.clone(),
                     control: control.clone(),
                     repository: repository.clone(),
-                    delivery,
+                    delivery: delivery.clone(),
                     interaction,
                 });
                 let state = Arc::new(StateDbQqManagementStore { repository });
                 let management =
                     Arc::new(QqBotManagementService::with_state_store(provider, state));
+                let sandbox = Arc::new(SandboxService::with_account(
+                    management_config.account_id.clone(),
+                ));
+                sandbox.set_runtime(Arc::new(HostSandboxRuntime {
+                    runtime,
+                    delivery,
+                    account_id: management_config.account_id.clone(),
+                }));
+                let observed = sandbox.clone();
+                inbound.set(Arc::new(move |event| observed.observe_event(event)));
                 Ok::<LoadedPlugin, String>(LoadedPlugin {
                     manifest: loaded_manifest.clone(),
                     runners: Vec::new(),
                     async_handlers: Vec::new(),
-                    host_services: vec![RuntimeBootstrapperService::new(
-                        QQ_MANAGEMENT_SERVICE_ID,
-                        management,
-                        "bot.qq.management",
-                    )],
+                    host_services: vec![
+                        RuntimeBootstrapperService::new(
+                            QQ_MANAGEMENT_SERVICE_ID,
+                            management,
+                            "bot.qq.management",
+                        ),
+                        RuntimeBootstrapperService::new(SANDBOX_SERVICE_ID, sandbox, "bot.sandbox"),
+                    ],
                     resource_providers: Vec::new(),
                     async_resource_providers: Vec::new(),
                     host_effects: Vec::new(),
@@ -841,6 +864,89 @@ fn unix_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
         .unwrap_or_default()
+}
+
+struct HostSandboxRuntime {
+    runtime: RuntimeClientRef,
+    delivery: ActiveDeliveryService,
+    account_id: String,
+}
+
+#[async_trait]
+impl SandboxRuntime for HostSandboxRuntime {
+    fn live_available(&self) -> bool {
+        true
+    }
+
+    async fn ingest(&self, event: BotEvent) -> Result<(), SandboxError> {
+        let event_id = event.event_id.clone();
+        let envelope = BotFlowEventEnvelope {
+            event_id: event.event_id.clone(),
+            protocol_id: BOT_EVENT_INGEST_PROTOCOL_ID.into(),
+            payload: BotFlowPayload {
+                event_type: BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1),
+                value: serde_json::to_value(&event)
+                    .map_err(|error| SandboxError::new("encode_failed", error.to_string()))?,
+            },
+            context: BotFlowContext {
+                bot: Some(event.bot.clone()),
+                target: Some(event.target.clone()),
+                actor: event.actor.clone(),
+                ext: event.ext.clone(),
+            },
+            trace_id: None,
+            correlation_id: Some(event_id.clone()),
+        };
+        let task = Task::new(
+            format!("sandbox.ingress:{event_id}"),
+            BOT_FLOW_INGRESS_PROTOCOL_ID,
+            TaskPayload::from_local(envelope),
+        );
+        self.runtime
+            .submit_one(task)
+            .map_err(|error| SandboxError::new("runtime.submit", error.to_string()))?;
+        Ok(())
+    }
+
+    async fn deliver(
+        &self,
+        operation_id: &str,
+        conversation: &QqConversationRef,
+        text: &str,
+    ) -> Result<Value, SandboxError> {
+        if conversation.account_id != self.account_id {
+            return Err(SandboxError::new(
+                "invalid_argument",
+                "会话不属于当前 QQ 账号",
+            ));
+        }
+        let request = BotActiveDeliveryRequest {
+            delivery_id: format!("sandbox-send-{operation_id}"),
+            idempotency_key: format!("sandbox-send-key-{operation_id}"),
+            conversation: conversation.clone(),
+            content: BotDeliveryContent {
+                segments: vec![MessageSegment::text(text)],
+                summary: Some("沙盒后台消息".into()),
+                reply_to: None,
+            },
+            policy: DeliveryPolicy {
+                max_attempts: 1,
+                initial_backoff_ms: 1_000,
+                max_backoff_ms: 1_000,
+                not_before_unix_ms: None,
+                expires_at_unix_ms: None,
+            },
+            dry_run: false,
+            source_execution_id: None,
+        };
+        let receipt = self
+            .delivery
+            .submit(&request, unix_ms())
+            .await
+            .map_err(|error| SandboxError::new("delivery.failed", error.to_string()))?;
+        serde_json::to_value(receipt)
+            .map_err(|error| SandboxError::new("encode_failed", error.to_string()))
+    }
 }
 
 struct SystemQqIdSource {

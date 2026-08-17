@@ -293,7 +293,12 @@ fn console_config(product: &serde_json::Value) -> LocalConsoleConfig {
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false)
     {
-        extensions.extend(["qq".into(), "agent".into(), "bot-flow-editor".into()]);
+        extensions.extend([
+            "qq".into(),
+            "agent".into(),
+            "bot-flow-editor".into(),
+            "sandbox".into(),
+        ]);
     }
     LocalConsoleConfig {
         enabled: true,
@@ -619,7 +624,7 @@ mod tests {
         assert_eq!(product.console.listen, "127.0.0.1:8787");
         assert_eq!(
             product.console.extensions,
-            vec!["config", "qq", "agent", "bot-flow-editor"]
+            vec!["config", "qq", "agent", "bot-flow-editor", "sandbox"]
         );
         let secret_path = root.path().join("secrets.toml");
         let content = std::fs::read_to_string(&secret_path).unwrap();
@@ -654,7 +659,7 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(restored.console.extensions.len(), 4);
+        assert_eq!(restored.console.extensions.len(), 5);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

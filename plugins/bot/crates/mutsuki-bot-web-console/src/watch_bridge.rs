@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use mutsuki_bot_management::{BilibiliManagementApi, QqBotManagementApi};
+use mutsuki_bot_sandbox::SandboxApi;
 use mutsuki_config_service::{ConfigService, ConfigWatchSubscription};
 use mutsuki_service_control::ControlChangeSubscription;
 use mutsuki_web_host::MutsukiWebHost;
@@ -67,6 +68,7 @@ pub fn attach_management_changed_bridges(
     host: &MutsukiWebHost,
     qq: Option<&Arc<dyn QqBotManagementApi>>,
     bilibili: Option<&Arc<dyn BilibiliManagementApi>>,
+    sandbox: Option<&Arc<dyn SandboxApi>>,
 ) -> Option<ManagementChangeBridge> {
     let bridge = host.bridge()?.clone();
     let mut tasks = Vec::new();
@@ -81,10 +83,20 @@ pub fn attach_management_changed_bridges(
         }));
     }
     if let Some(mut changes) = bilibili.and_then(|api| api.subscribe_changes()) {
+        let bridge = bridge.clone();
         tasks.push(tokio::spawn(async move {
             while let Some(event) = changes.changed().await {
                 if let Ok(payload) = serde_json::to_value(event) {
                     let _ = bridge.publish_event("bilibili.changed", payload);
+                }
+            }
+        }));
+    }
+    if let Some(mut changes) = sandbox.and_then(|api| api.subscribe_changes()) {
+        tasks.push(tokio::spawn(async move {
+            while let Some(event) = changes.changed().await {
+                if let Ok(payload) = serde_json::to_value(event) {
+                    let _ = bridge.publish_event("sandbox.changed", payload);
                 }
             }
         }));

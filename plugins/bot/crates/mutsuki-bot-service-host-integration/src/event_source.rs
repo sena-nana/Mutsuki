@@ -10,10 +10,11 @@ use serde_json::Value;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_tungstenite::tungstenite::Message;
 
+use mutsuki_bot_protocol::BotEvent;
 use mutsuki_plugin_bot_adapter_qqbot::{
     GatewayAction, GatewayFrame, HttpMethod, QQBOT_ADAPTER_PLUGIN_ID, QqAuthManager, QqBotConfig,
     QqGatewayPump, QqOpenApiError, QqOpenApiTransport, ReqwestQqHttpClient, SharedQqCredentials,
-    session_summary, validate_gateway_url,
+    adapter::qq_gateway_frame_to_bot_event, session_summary, validate_gateway_url,
 };
 
 pub const QQBOT_GATEWAY_SOURCE_ID: &str = "mutsuki.bot.adapter.qqbot.gateway.source";
@@ -47,6 +48,28 @@ pub struct QqGatewayControlHandle {
     reconnect: Arc<Mutex<Option<mpsc::Sender<()>>>>,
 }
 
+#[derive(Clone, Default)]
+pub struct QqInboundObserveHandle {
+    observer: Arc<Mutex<Option<Arc<dyn Fn(BotEvent) + Send + Sync>>>>,
+}
+
+impl QqInboundObserveHandle {
+    pub fn set(&self, observer: Arc<dyn Fn(BotEvent) + Send + Sync>) {
+        *self.observer.lock().expect("QQ inbound observer mutex") = Some(observer);
+    }
+
+    fn notify(&self, event: BotEvent) {
+        if let Some(observer) = self
+            .observer
+            .lock()
+            .expect("QQ inbound observer mutex")
+            .clone()
+        {
+            observer(event);
+        }
+    }
+}
+
 impl QqGatewayControlHandle {
     /// Requests a reconnect from the live QQ Gateway EventSource.
     pub fn reconnect(&self) -> Result<(), String> {
@@ -72,6 +95,7 @@ pub struct QqGatewayEventSource {
     auth: QqAuthManager,
     health: QqGatewayHealthHandle,
     control: QqGatewayControlHandle,
+    inbound: QqInboundObserveHandle,
     stop: Arc<Mutex<Option<watch::Sender<bool>>>>,
     stopped: Arc<Mutex<Option<oneshot::Receiver<()>>>>,
     abort: Arc<Mutex<Option<tokio::task::AbortHandle>>>,
@@ -98,6 +122,7 @@ impl QqGatewayEventSource {
                 })),
             },
             control: QqGatewayControlHandle::default(),
+            inbound: QqInboundObserveHandle::default(),
             stop: Arc::new(Mutex::new(None)),
             stopped: Arc::new(Mutex::new(None)),
             abort: Arc::new(Mutex::new(None)),
@@ -110,6 +135,11 @@ impl QqGatewayEventSource {
 
     pub fn control_handle(&self) -> QqGatewayControlHandle {
         self.control.clone()
+    }
+
+    #[must_use]
+    pub fn inbound_handle(&self) -> QqInboundObserveHandle {
+        self.inbound.clone()
     }
 }
 
@@ -124,6 +154,7 @@ impl HostEventSource for QqGatewayEventSource {
         let auth = self.auth.clone();
         let health = self.health.clone();
         let control = self.control.clone();
+        let inbound = self.inbound.clone();
         let (stop_tx, stop_rx) = watch::channel(false);
         *self.stop.lock().expect("QQBot stop mutex") = Some(stop_tx);
         if let Err(error) = config.validate() {
@@ -165,7 +196,7 @@ impl HostEventSource for QqGatewayEventSource {
                     credentials: cleanup_credentials,
                     auth: cleanup_auth,
                 };
-                run_gateway(config, api, health, ctx, stop_rx, reconnect_rx).await
+                run_gateway(config, api, health, inbound, ctx, stop_rx, reconnect_rx).await
             }
         });
         *self.abort.lock().expect("QQBot abort mutex") = Some(task.abort_handle());
@@ -221,6 +252,7 @@ async fn run_gateway(
     config: QqBotConfig,
     api: Arc<Mutex<QqOpenApiTransport>>,
     health: QqGatewayHealthHandle,
+    inbound: QqInboundObserveHandle,
     ctx: HostEventSourceContext,
     mut local_stop: watch::Receiver<bool>,
     mut reconnect: mpsc::Receiver<()>,
@@ -239,6 +271,7 @@ async fn run_gateway(
             &mut pump,
             GatewayConnectionContext {
                 health: &health,
+                inbound: &inbound,
                 ctx: &ctx,
                 reconnect_attempt: &mut reconnect_attempt,
                 host_stop: &mut host_stop,
@@ -302,6 +335,7 @@ async fn run_gateway(
 
 struct GatewayConnectionContext<'a> {
     health: &'a QqGatewayHealthHandle,
+    inbound: &'a QqInboundObserveHandle,
     ctx: &'a HostEventSourceContext,
     reconnect_attempt: &'a mut u32,
     host_stop: &'a mut mutsuki_service_runtime::HostShutdownToken,
@@ -317,6 +351,7 @@ async fn run_connection(
 ) -> Result<ConnectionEnd, GatewayFailure> {
     let GatewayConnectionContext {
         health,
+        inbound,
         ctx,
         reconnect_attempt,
         host_stop,
@@ -543,6 +578,11 @@ async fn run_connection(
                             if let Err(error) = ctx.task_submitter.submit_one(task) {
                                 pump.forget_dispatch(&frame);
                                 return Err(recoverable_failure(error));
+                            }
+                            if let Ok(event) =
+                                qq_gateway_frame_to_bot_event(&config.account_id, frame.clone())
+                            {
+                                inbound.notify(event);
                             }
                             let mut snapshot = health.inner.lock().expect("QQBot health mutex");
                             snapshot.last_event_unix_ms = unix_ms();

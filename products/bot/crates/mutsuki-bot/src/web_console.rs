@@ -5,7 +5,7 @@ use std::sync::Arc;
 use mutsuki_agent_service_host_integration::LOCAL_AGENT_CONFIG_PROVIDER_ID;
 use mutsuki_bot_service_host_integration::{
     AgentConnectionConsoleBridge, BilibiliConsoleBridge, BotFlowConsoleBridge,
-    LocalAgentConsoleBridge, QqConsoleBridge,
+    LocalAgentConsoleBridge, QqConsoleBridge, SandboxConsoleBridge,
 };
 use mutsuki_bot_web_console::{
     BotAgentConsoleServices, ConsoleAssetDirs, ControlChangeBridge, ManagementChangeBridge,
@@ -54,10 +54,20 @@ impl WebConsoleGuard {
         if bilibili.is_some() && !config.extensions.iter().any(|id| id == "bilibili") {
             config.extensions.push("bilibili".into());
         }
-        let workspace_enabled = config
+        if config
             .extensions
             .iter()
-            .any(|extension| matches!(extension.as_str(), "qq" | "agent" | "bot-flow-editor"));
+            .any(|extension| matches!(extension.as_str(), "qq" | "agent" | "bot-flow-editor"))
+            && !config.extensions.iter().any(|id| id == "sandbox")
+        {
+            config.extensions.push("sandbox".into());
+        }
+        let workspace_enabled = config.extensions.iter().any(|extension| {
+            matches!(
+                extension.as_str(),
+                "qq" | "agent" | "bot-flow-editor" | "sandbox"
+            )
+        });
         let mut config_provider_ids = vec![PRODUCT_CONFIG_PROVIDER_ID.into()];
         if workspace_enabled {
             config_provider_ids.extend([
@@ -79,6 +89,7 @@ impl WebConsoleGuard {
         let secret_monitor = build_secret_monitor(service, &config);
         let bilibili = BilibiliConsoleBridge::get(runtime);
         let qq = QqConsoleBridge::get(runtime);
+        let sandbox = SandboxConsoleBridge::get(runtime);
         let (host, assets) = build_console_host_with_agent(
             &config,
             &secrets,
@@ -89,6 +100,7 @@ impl WebConsoleGuard {
             &WebConsolePaths::resolve(product_root, &config),
             bilibili.clone(),
             qq.clone(),
+            sandbox.clone(),
             BotAgentConsoleServices {
                 connections: AgentConnectionConsoleBridge::get(runtime),
                 sessions: LocalAgentConsoleBridge::get(runtime),
@@ -111,13 +123,16 @@ impl WebConsoleGuard {
                     message: "started Web Console has no event bridge".into(),
                 },
             )?;
-        let management_changes =
-            attach_management_changed_bridges(&host, qq.as_ref(), bilibili.as_ref()).ok_or_else(
-                || WebConsoleError::Config {
-                    code: "web.console.bridge_unavailable",
-                    message: "started Web Console has no event bridge".into(),
-                },
-            )?;
+        let management_changes = attach_management_changed_bridges(
+            &host,
+            qq.as_ref(),
+            bilibili.as_ref(),
+            sandbox.as_ref(),
+        )
+        .ok_or_else(|| WebConsoleError::Config {
+            code: "web.console.bridge_unavailable",
+            message: "started Web Console has no event bridge".into(),
+        })?;
         Ok(Some(Self {
             host,
             _config_watch: config_watch,

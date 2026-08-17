@@ -1,0 +1,26 @@
+[package]
+name = "mutsuki-plugin-bot-sandbox-web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "WebExtension for the QQ conversation sandbox console."
+
+[dependencies]
+async-trait.workspace = true
+mutsuki-bot-sandbox.workspace = true
+mutsuki-web-extension.workspace = true
+mutsuki-web-protocol.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+futures-util.workspace = true
+mutsuki-web-host.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true
