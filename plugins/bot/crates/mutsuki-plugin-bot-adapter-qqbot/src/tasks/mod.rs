@@ -226,7 +226,7 @@ impl Runner for QqGatewayMapRunner {
                 BOT_FLOW_INGRESS_PROTOCOL_ID,
                 mutsuki_runtime_contracts::TaskPayload::from_local(flow_envelope(
                     event,
-                    task.trace_id.clone(),
+                    task.trace_id.clone().map(Into::into),
                     task.correlation_id.clone(),
                 )?),
             );
@@ -340,7 +340,7 @@ impl Runner for QqOpenApiRunner {
                     task.protocol_id
                 ))),
             }
-            .map_err(|error| openapi_failure(&task.protocol_id, error))?;
+            .map_err(|error| openapi_failure(task.protocol_id.as_str(), error))?;
 
             tracing::info!(
                 account_id = %account_id,
@@ -425,8 +425,8 @@ pub fn gateway_descriptor(plugin_generation: u64) -> RunnerDescriptor {
         control: RunnerControlCapability::default(),
         metadata: metadata("QQBot Gateway frame mapper"),
         contract_surfaces: vec![
-            format!("runner:{QQBOT_GATEWAY_RUNNER_ID}"),
-            format!("task_protocol:{QQBOT_GATEWAY_FRAME_PROTOCOL_ID}"),
+            format!("runner:{QQBOT_GATEWAY_RUNNER_ID}").into(),
+            format!("task_protocol:{QQBOT_GATEWAY_FRAME_PROTOCOL_ID}").into(),
         ],
     }
 }
@@ -465,7 +465,7 @@ pub fn openapi_descriptor(plugin_generation: u64, media_enabled: bool) -> Runner
         ordering: preserve_submit_order(),
         control: RunnerControlCapability::default(),
         metadata: metadata("QQBot OpenAPI adapter"),
-        contract_surfaces: vec![format!("runner:{QQBOT_OPENAPI_RUNNER_ID}")],
+        contract_surfaces: vec![format!("runner:{QQBOT_OPENAPI_RUNNER_ID}").into()],
     }
 }
 

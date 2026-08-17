@@ -438,7 +438,7 @@ async fn run_task_wave(client: &ControlClient, prefix: &str, tasks: usize) -> Re
         client,
         ControlCommand::TaskSubmitBatch(TaskSubmitBatchParam {
             batch: TaskBatch {
-                batch_id: format!("batch-{prefix}"),
+                batch_id: format!("batch-{prefix}").into(),
                 tick_id: None,
                 tasks: batch_tasks,
                 resource_plan: None,

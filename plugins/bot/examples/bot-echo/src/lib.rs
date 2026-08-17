@@ -218,9 +218,9 @@ fn echo_descriptor(plugin_generation: u64) -> RunnerDescriptor {
             ScalarValue::String("Platform-neutral example echo command handler".into()),
         )]),
         contract_surfaces: vec![
-            format!("runner:{ECHO_RUNNER_ID}"),
-            format!("task_protocol:{ECHO_PROTOCOL_ID}"),
-            format!("task_protocol:{PING_PROTOCOL_ID}"),
+            format!("runner:{ECHO_RUNNER_ID}").into(),
+            format!("task_protocol:{ECHO_PROTOCOL_ID}").into(),
+            format!("task_protocol:{PING_PROTOCOL_ID}").into(),
         ],
     }
 }

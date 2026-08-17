@@ -6,8 +6,9 @@ use std::sync::Arc;
 use mutsuki_runtime_contracts::{
     ArtifactType, BridgeDescriptor, CodecDescriptor, HandlerBinding, HostExtensionDescriptor,
     HostExtensionKind, LifecyclePolicy, PermissionGrant, PluginArtifact, PluginBackendDescriptor,
-    PluginDeploymentKind, PluginExtensionDescriptor, PluginManifest, PluginProvides, ProtocolClass,
-    ProtocolDescriptor, ResourceTypeDescriptor, RunnerDescriptor, ScalarValue, SurfaceRequirement,
+    PluginDeploymentKind, PluginExtensionDescriptor, PluginId, PluginManifest, PluginProvides,
+    ProtocolClass, ProtocolDescriptor, ProtocolId, ResourceTypeDescriptor, RunnerDescriptor,
+    ScalarValue, SurfaceRequirement,
 };
 use mutsuki_runtime_core::{AsyncBatchHandler, Runner, RuntimeResult};
 
@@ -120,7 +121,7 @@ impl PluginLoader for BuiltinPluginLoader {
 }
 
 pub struct PluginBuilder {
-    plugin_id: String,
+    plugin_id: PluginId,
     version: String,
     api_version: String,
     artifact: PluginArtifact,
@@ -138,7 +139,7 @@ pub struct PluginBuilder {
 }
 
 impl PluginBuilder {
-    pub fn new(plugin_id: impl Into<String>) -> Self {
+    pub fn new(plugin_id: impl Into<PluginId>) -> Self {
         Self {
             plugin_id: plugin_id.into(),
             version: "0.1.0".into(),
@@ -263,7 +264,11 @@ impl PluginBuilder {
     }
 
     /// 声明协议的调度语义，使 runner purity 与安装清单保持一致。
-    pub fn protocol_class(mut self, protocol_id: impl Into<String>, class: ProtocolClass) -> Self {
+    pub fn protocol_class(
+        mut self,
+        protocol_id: impl Into<ProtocolId>,
+        class: ProtocolClass,
+    ) -> Self {
         self.provides
             .protocol_classes
             .insert(protocol_id.into(), class);
@@ -522,7 +527,7 @@ impl PluginBuilder {
 
     fn collect_runner_requirements(&mut self, descriptor: &RunnerDescriptor) {
         for surface in &descriptor.contract_surfaces {
-            let Some(protocol_id) = surface.strip_prefix("requires:task_protocol:") else {
+            let Some(protocol_id) = surface.as_str().strip_prefix("requires:task_protocol:") else {
                 continue;
             };
             self.insert_requirement(SurfaceRequirement::task_protocol(protocol_id));

@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use mutsuki_runtime_contracts::{
-    ContractSurface, ContractSurfaceKind, ResourceAccess, SurfaceOccupancy, SurfaceOccupancyHandle,
-    SurfaceOccupancyHandleKind,
+    ContractSurface, ContractSurfaceKind, ResourceAccess, SurfaceId, SurfaceOccupancy,
+    SurfaceOccupancyHandle, SurfaceOccupancyHandleKind,
 };
 
 use crate::RuntimeResult;
@@ -92,7 +92,7 @@ impl ResourceManager {
         occupancy
     }
 
-    fn resource_surface_counts(&self) -> HashMap<String, (u64, u64)> {
+    fn resource_surface_counts(&self) -> HashMap<SurfaceId, (u64, u64)> {
         let mut counts = HashMap::new();
         for entry in self.hub.entries() {
             count_resource_surface(
@@ -126,7 +126,7 @@ impl ResourceManager {
         counts
     }
 
-    fn stream_surface_counts(&self) -> HashMap<String, u64> {
+    fn stream_surface_counts(&self) -> HashMap<SurfaceId, u64> {
         let mut counts = HashMap::new();
         for entry in self
             .hub
@@ -142,8 +142,8 @@ impl ResourceManager {
         counts
     }
 
-    fn handle_surface_counts(&self) -> HashMap<String, HandleCounts> {
-        let mut counts: HashMap<String, HandleCounts> = HashMap::new();
+    fn handle_surface_counts(&self) -> HashMap<SurfaceId, HandleCounts> {
+        let mut counts: HashMap<SurfaceId, HandleCounts> = HashMap::new();
         for handle in self.occupancy_handles.values() {
             let item = counts.entry(handle.surface_id.clone()).or_default();
             match handle.kind {
@@ -157,7 +157,7 @@ impl ResourceManager {
 }
 
 fn count_resource_surface(
-    counts: &mut HashMap<String, (u64, u64)>,
+    counts: &mut HashMap<SurfaceId, (u64, u64)>,
     value: &str,
     kind: ContractSurfaceKind,
     entry: &ResourceEntry,
@@ -167,13 +167,13 @@ fn count_resource_surface(
         ContractSurfaceKind::ResourceProvider => "resource_provider",
         _ => return,
     };
-    increment_resource_count(counts, value.to_string(), entry);
-    increment_resource_count(counts, format!("{prefix}:{value}"), entry);
+    increment_resource_count(counts, SurfaceId::from(value), entry);
+    increment_resource_count(counts, SurfaceId::from(format!("{prefix}:{value}")), entry);
 }
 
 fn increment_resource_count(
-    counts: &mut HashMap<String, (u64, u64)>,
-    surface_id: String,
+    counts: &mut HashMap<SurfaceId, (u64, u64)>,
+    surface_id: SurfaceId,
     entry: &ResourceEntry,
 ) {
     let item = counts.entry(surface_id).or_insert((0, 0));
@@ -184,20 +184,20 @@ fn increment_resource_count(
 }
 
 fn increment_active_lease_count(
-    counts: &mut HashMap<String, (u64, u64)>,
-    surface_id: String,
+    counts: &mut HashMap<SurfaceId, (u64, u64)>,
+    surface_id: impl Into<SurfaceId>,
     active_leases: u64,
 ) {
-    counts.entry(surface_id).or_insert((0, 0)).1 += active_leases;
+    counts.entry(surface_id.into()).or_insert((0, 0)).1 += active_leases;
 }
 
-fn increment_count(counts: &mut HashMap<String, u64>, key: String) {
-    *counts.entry(key).or_insert(0) += 1;
+fn increment_count(counts: &mut HashMap<SurfaceId, u64>, key: impl Into<SurfaceId>) {
+    *counts.entry(key.into()).or_insert(0) += 1;
 }
 
-fn zero_occupancy(surface_id: &str) -> SurfaceOccupancy {
+fn zero_occupancy(surface_id: &SurfaceId) -> SurfaceOccupancy {
     SurfaceOccupancy {
-        surface_id: surface_id.into(),
+        surface_id: surface_id.clone(),
         ready_tasks: 0,
         running_invocations: 0,
         resource_refs: 0,

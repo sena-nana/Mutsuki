@@ -654,7 +654,7 @@ fn test_audio_resource(id: &str) -> ResourceRef {
             generation: 1,
             version: 1,
         },
-        ref_id: format!("ref-{id}"),
+        ref_id: format!("ref-{id}").into(),
         semantic: ResourceSemantic::VersionedSnapshot,
         provider_id: "test.media".into(),
         resource_kind: "bot.media".into(),
@@ -1136,7 +1136,7 @@ fn agent_session(id: &str) -> AgentSession {
                 generation: 1,
                 version: 1,
             },
-            ref_id: format!("ref-{id}"),
+            ref_id: format!("ref-{id}").into(),
             semantic: ResourceSemantic::VersionedSnapshot,
             provider_id: "test".into(),
             resource_kind: "agent.session".into(),
@@ -1151,7 +1151,7 @@ fn agent_session(id: &str) -> AgentSession {
             seal_state: ResourceSealState::Sealed,
         },
         ResourceCellRef {
-            cell_id: format!("cell-{id}"),
+            cell_id: format!("cell-{id}").into(),
             resource_kind: "agent.session".into(),
             owner_plugin_id: "test".into(),
             schema: "agent.session.v1".into(),
@@ -1202,7 +1202,12 @@ async fn wait_for_flow_tasks(runtime: &ServiceRuntime) {
             let snapshots = runtime.task_snapshots().unwrap();
             if snapshots
                 .iter()
-                .filter(|snapshot| !snapshot.task_id.starts_with("bot-reply-delivery-recovery:"))
+                .filter(|snapshot| {
+                    !snapshot
+                        .task_id
+                        .as_str()
+                        .starts_with("bot-reply-delivery-recovery:")
+                })
                 .all(|snapshot| {
                     matches!(
                         snapshot.status,

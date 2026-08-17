@@ -21,7 +21,7 @@ pub(super) fn stage_artifact(
         .service
         .run_dir
         .join("abi")
-        .join(&record.manifest.plugin_id)
+        .join(record.manifest.plugin_id.as_str())
         .join(hash);
     fs::create_dir_all(&dir).map_err(|error| ServiceRuntimeError::AbiPlugin {
         plugin_id: record.manifest.plugin_id.clone(),

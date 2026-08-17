@@ -10,6 +10,7 @@ from typing import cast
 import pytest
 
 from mutsuki_runner_kit.contracts.codec import JsonValue, to_json_dict
+from mutsuki_runner_kit.contracts.ids import TaskLeaseId
 from mutsuki_runner_kit.contracts.task import Task
 from mutsuki_runner_kit.runners.backend import PythonRunnerBackend
 from mutsuki_runner_kit.testing.batches import runner_context, single_test_batch
@@ -186,7 +187,7 @@ async def test_binary_bridge_preserves_batch_contract_semantics() -> None:
         ),
         io.BytesIO(),
     )
-    task = replace(Task.new("task-1", "raw.input"), lease_id="task-lease-test")
+    task = replace(Task.new("task-1", "raw.input"), lease_id=TaskLeaseId("task-lease-test"))
     batch = single_test_batch(task)
     run = encode_binary_request(
         2,

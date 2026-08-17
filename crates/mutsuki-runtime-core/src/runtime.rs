@@ -3,8 +3,9 @@ use std::sync::Arc;
 
 use mutsuki_runtime_contracts::{
     ContractSurface, ERR_RUNTIME_ABORTED, ERR_RUNTIME_NOT_ACCEPTING, HandlerBinding,
-    ObservabilityPage, ObservabilityProfile, ProtocolClass, RuntimeError, RuntimeEvent,
-    RuntimeEventKind, RuntimeLoadPlan, ScalarValue, TaskStatus, TraceSpan,
+    ObservabilityPage, ObservabilityProfile, PluginId, ProtocolClass, ProtocolId, RefId, RunnerId,
+    RuntimeError, RuntimeEvent, RuntimeEventKind, RuntimeLoadPlan, ScalarValue, TaskId, TaskStatus,
+    TraceSpan,
 };
 use serde_json::Value;
 
@@ -32,11 +33,11 @@ pub use scheduler::{DispatchBudget, LaneBudget, ScheduleDecision};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TaskResultSnapshot {
-    pub task_id: String,
+    pub task_id: TaskId,
     pub status: mutsuki_runtime_contracts::TaskStatus,
     pub output: Option<Value>,
-    pub output_ref: Option<String>,
-    pub continuation_ref: Option<String>,
+    pub output_ref: Option<RefId>,
+    pub continuation_ref: Option<RefId>,
     pub failure: Option<RuntimeError>,
 }
 
@@ -60,8 +61,8 @@ pub struct RuntimeStatistics {
 
 struct DrainingGeneration {
     registry_generation: u64,
-    runner_ids: Vec<String>,
-    plugin_ids: std::collections::BTreeSet<String>,
+    runner_ids: Vec<RunnerId>,
+    plugin_ids: std::collections::BTreeSet<PluginId>,
     registry: RunnerRegistry,
 }
 
@@ -69,7 +70,7 @@ pub struct CoreRuntime {
     load_plan: RuntimeLoadPlan,
     handler_bindings: HandlerBindingRegistry,
     surfaces: Vec<ContractSurface>,
-    protocol_classes: BTreeMap<String, ProtocolClass>,
+    protocol_classes: BTreeMap<ProtocolId, ProtocolClass>,
     registry: RunnerRegistry,
     draining_generations: Vec<DrainingGeneration>,
     generation_states: Vec<PluginGenerationState>,
@@ -118,6 +119,7 @@ impl CoreRuntime {
         let events = EventLog::with_profile(load_plan.observability.events.clone());
         let traces = TraceLog::with_profile(load_plan.observability.traces.clone());
         let protocol_classes = protocol_classes_for_plan(&load_plan);
+        let states = StateStore::with_profile(load_plan.observability.state_history.clone());
         Ok(Self {
             surfaces: load_plan.contract_surfaces.clone(),
             protocol_classes,
@@ -128,7 +130,7 @@ impl CoreRuntime {
             generation_states,
             tasks: TaskPool::default(),
             resources: ResourceManager::new(),
-            states: StateStore::default(),
+            states,
             events,
             traces,
             scheduler_decisions: 0,
@@ -149,7 +151,7 @@ impl CoreRuntime {
 
     pub fn handler_bindings(
         &self,
-        protocol_id: &str,
+        protocol_id: impl AsRef<str>,
     ) -> Vec<&mutsuki_runtime_contracts::HandlerBinding> {
         self.handler_bindings.query_protocol(protocol_id)
     }
@@ -250,6 +252,8 @@ impl CoreRuntime {
     }
 
     pub fn configure_observability(&mut self, profile: ObservabilityProfile) {
+        self.states
+            .configure(profile.state_history.clone(), self.current_step);
         self.events.configure(profile.events.clone());
         self.traces.configure(profile.traces.clone());
         self.load_plan.observability = profile;
@@ -302,15 +306,15 @@ impl CoreRuntime {
     }
 
     #[cfg(test)]
-    pub(crate) fn unregister_runner(&mut self, runner_id: &str) -> RuntimeResult<()> {
+    pub(crate) fn unregister_runner(&mut self, runner_id: impl AsRef<str>) -> RuntimeResult<()> {
         self.registry.unregister(runner_id)?;
         Ok(())
     }
 
     pub fn runner_heartbeat(
         &mut self,
-        runner_id: &str,
-        executor_id: &str,
+        runner_id: impl AsRef<str>,
+        executor_id: impl AsRef<str>,
     ) -> RuntimeResult<crate::registry::RunnerHeartbeat> {
         self.registry
             .heartbeat(runner_id, executor_id, self.current_step)
@@ -318,8 +322,8 @@ impl CoreRuntime {
 
     pub fn runner_capability(
         &mut self,
-        runner_id: &str,
-        protocol_ids: Vec<String>,
+        runner_id: impl AsRef<str>,
+        protocol_ids: Vec<ProtocolId>,
         capacity: usize,
     ) -> RuntimeResult<crate::registry::RunnerCapabilityDeclaration> {
         self.registry
@@ -329,14 +333,14 @@ impl CoreRuntime {
     /// Delivers cooperative cancellation to a runner currently held by Core.
     pub fn cancel_runner_invocation(
         &mut self,
-        runner_id: &str,
+        runner_id: impl AsRef<str>,
         invocation_or_task_id: &str,
     ) -> RuntimeResult<()> {
         self.registry
             .cancel_runner(runner_id, invocation_or_task_id)
     }
 
-    pub fn state_value(&self, ref_id: &str) -> Option<&(u64, Value)> {
+    pub fn state_value(&self, ref_id: impl AsRef<str>) -> Option<&(u64, Value)> {
         self.states.get(ref_id)
     }
 
@@ -352,13 +356,19 @@ impl CoreRuntime {
         self.traces.page_after(sequence, limit)
     }
 
-    fn is_surface_deprecated(&self, surface_id: &str) -> bool {
+    fn is_surface_deprecated(&self, surface_id: impl AsRef<str>) -> bool {
+        let surface_id = surface_id.as_ref();
         self.surfaces
             .iter()
             .any(|surface| surface.surface_id == surface_id && surface.deprecated)
     }
 
-    fn ensure_surface_not_deprecated(&self, surface_id: &str, source: &str) -> RuntimeResult<()> {
+    fn ensure_surface_not_deprecated(
+        &self,
+        surface_id: impl AsRef<str>,
+        source: &str,
+    ) -> RuntimeResult<()> {
+        let surface_id = surface_id.as_ref();
         if self.is_surface_deprecated(surface_id) {
             return Err(crate::runtime_failure(
                 mutsuki_runtime_contracts::ERR_RELOAD_BLOCKED,
@@ -387,7 +397,8 @@ impl CoreRuntime {
         Ok(())
     }
 
-    pub(crate) fn ensure_task_can_suspend(&self, task_id: &str) -> RuntimeResult<()> {
+    pub(crate) fn ensure_task_can_suspend(&self, task_id: impl AsRef<str>) -> RuntimeResult<()> {
+        let task_id = task_id.as_ref();
         let active_mutable = self.resources.active_mutable_lease_routes_for_task(task_id);
         if !active_mutable.is_empty() {
             let mut error = crate::runtime_error(
@@ -406,10 +417,11 @@ impl CoreRuntime {
 
     pub(crate) fn record_task_terminal_event(
         &mut self,
-        task_id: &str,
+        task_id: impl AsRef<str>,
         name: &str,
         error: Option<RuntimeError>,
     ) {
+        let task_id = task_id.as_ref();
         self.events.record_with(|sequence| RuntimeEvent {
             sequence,
             kind: RuntimeEventKind::Task,
@@ -420,7 +432,11 @@ impl CoreRuntime {
         });
     }
 
-    pub(crate) fn wake_tasks_waiting_on(&mut self, child_task_id: &str) -> RuntimeResult<usize> {
+    pub(crate) fn wake_tasks_waiting_on(
+        &mut self,
+        child_task_id: impl AsRef<str>,
+    ) -> RuntimeResult<usize> {
+        let child_task_id = child_task_id.as_ref();
         let waits = self.tasks.take_waits_for_child(child_task_id);
         let mut woken = 0;
         for task_await in waits {
@@ -433,7 +449,7 @@ impl CoreRuntime {
                 self.events.record(
                     RuntimeEventKind::Task,
                     "task.wake",
-                    Some(task_await.parent_task_id),
+                    Some(task_await.parent_task_id.to_string()),
                     BTreeMap::from([(
                         "child_task_id".into(),
                         ScalarValue::String(child_task_id.to_string()),
@@ -452,7 +468,7 @@ impl CoreRuntime {
             self.events.record(
                 RuntimeEventKind::Task,
                 "task.wake",
-                Some(task_id.clone()),
+                Some(task_id.to_string()),
                 BTreeMap::from([
                     ("reason".into(), ScalarValue::String("ready_at_step".into())),
                     (
@@ -493,11 +509,11 @@ impl CoreRuntime {
     }
 }
 
-fn protocol_classes_for_plan(load_plan: &RuntimeLoadPlan) -> BTreeMap<String, ProtocolClass> {
+fn protocol_classes_for_plan(load_plan: &RuntimeLoadPlan) -> BTreeMap<ProtocolId, ProtocolClass> {
     load_plan
         .plugins
         .iter()
         .flat_map(|plugin| plugin.provides.protocol_classes.iter())
-        .map(|(protocol_id, class)| (protocol_id.clone(), class.clone()))
+        .map(|(protocol_id, class)| (ProtocolId::from(protocol_id.as_str()), class.clone()))
         .collect()
 }

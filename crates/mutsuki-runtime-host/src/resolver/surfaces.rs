@@ -1,5 +1,5 @@
 use mutsuki_runtime_contracts::{
-    ContractSurface, ContractSurfaceKind, PluginManifest, RuntimeCapabilityGraph,
+    ContractSurface, ContractSurfaceKind, PluginId, PluginManifest, RuntimeCapabilityGraph,
 };
 use serde_json::Value;
 
@@ -186,7 +186,7 @@ fn push_named_capability_surfaces(surfaces: &mut Vec<ContractSurface>, manifest:
         .iter()
         .filter_map(|(protocol_id, class)| {
             (class == &mutsuki_runtime_contracts::ProtocolClass::Effect)
-                .then_some(protocol_id.clone())
+                .then_some(protocol_id.to_string())
         })
         .collect::<Vec<_>>();
     push_named_surfaces(
@@ -330,7 +330,7 @@ fn push_active_surface(
     surfaces: &mut Vec<ContractSurface>,
     active_ids: &[String],
     id: &str,
-    owner_plugin_id: &str,
+    owner_plugin_id: impl Into<PluginId>,
     kind: ContractSurfaceKind,
     surface_id: String,
     fingerprint: String,
@@ -342,15 +342,16 @@ fn push_active_surface(
 
 fn push_named_surfaces(
     surfaces: &mut Vec<ContractSurface>,
-    plugin_id: &str,
+    plugin_id: impl Into<PluginId> + Clone,
     kind: ContractSurfaceKind,
     prefix: &str,
     names: &[String],
 ) {
+    let plugin_id = plugin_id.into();
     for name in names {
         push_surface(
             surfaces,
-            plugin_id,
+            plugin_id.clone(),
             kind.clone(),
             format!("{prefix}:{name}"),
             format!("{prefix}:{name}"),
@@ -360,13 +361,13 @@ fn push_named_surfaces(
 
 fn push_surface(
     surfaces: &mut Vec<ContractSurface>,
-    owner_plugin_id: &str,
+    owner_plugin_id: impl Into<PluginId>,
     kind: ContractSurfaceKind,
     surface_id: String,
     fingerprint: String,
 ) {
     surfaces.push(ContractSurface {
-        surface_id,
+        surface_id: surface_id.into(),
         kind,
         owner_plugin_id: owner_plugin_id.into(),
         fingerprint,

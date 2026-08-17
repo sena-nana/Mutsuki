@@ -14,6 +14,7 @@ from mutsuki_runner_kit.contracts.batch import (
     WorkResourcePlan,
 )
 from mutsuki_runner_kit.contracts.errors import ERR_TASK_CLAIM_CONFLICT, RuntimeError
+from mutsuki_runner_kit.contracts.ids import BatchKey, EntryId, RunnerId, TaskLeaseId
 from mutsuki_runner_kit.contracts.runner import RunnerContext, RunnerDescriptor, RunnerResult
 from mutsuki_runner_kit.contracts.task import Task, TaskLease
 from mutsuki_runner_kit.runners.protocol import RunnerInvokeError
@@ -85,15 +86,17 @@ class ScalarBatchAdapter:
 
 
 def single_entry_batch(ctx: RunnerContext, task: Task, *, runner_id: str) -> WorkBatch:
-    lease_id = ctx.task_lease_ids[0] if ctx.task_lease_ids else f"lease:{task.task_id}"
+    lease_id = (
+        ctx.task_lease_ids[0] if ctx.task_lease_ids else TaskLeaseId(f"lease:{task.task_id}")
+    )
     leased_task = replace(task, lease_id=lease_id)
     return WorkBatch(
         batch_id=ctx.batch_id,
         tick_id=ctx.tick_id,
-        batch_key=runner_id,
+        batch_key=BatchKey(runner_id),
         entries=(
             BatchEntry(
-                entry_id=leased_task.task_id,
+                entry_id=EntryId(leased_task.task_id),
                 task_id=leased_task.task_id,
                 trace_id=leased_task.trace_id,
                 parent_id=None,
@@ -112,7 +115,7 @@ def single_entry_batch(ctx: RunnerContext, task: Task, *, runner_id: str) -> Wor
             TaskLease(
                 lease_id=lease_id,
                 task_id=leased_task.task_id,
-                runner_id=runner_id,
+                runner_id=RunnerId(runner_id),
                 executor_id=ctx.executor_id,
                 registry_generation=ctx.registry_generation,
                 acquired_at_step=ctx.current_step,

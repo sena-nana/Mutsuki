@@ -13,6 +13,7 @@ from mutsuki_runner_kit.contracts.codec import (
     as_str,
     field_value,
 )
+from mutsuki_runner_kit.contracts.ids import PluginId, SurfaceId
 
 
 class ContractSurfaceKind(StrEnum):
@@ -57,9 +58,9 @@ class SurfaceOccupancyHandleKind(StrEnum):
 
 @dataclass(frozen=True)
 class ContractSurface:
-    surface_id: str
+    surface_id: SurfaceId
     kind: ContractSurfaceKind
-    owner_plugin_id: str
+    owner_plugin_id: PluginId
     fingerprint: str
     deprecated: bool
 
@@ -67,9 +68,11 @@ class ContractSurface:
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = as_mapping(data, "ContractSurface")
         return cls(
-            surface_id=as_str(field_value(raw, "surface_id"), "surface_id"),
+            surface_id=SurfaceId(as_str(field_value(raw, "surface_id"), "surface_id")),
             kind=ContractSurfaceKind(as_str(field_value(raw, "kind"), "kind")),
-            owner_plugin_id=as_str(field_value(raw, "owner_plugin_id"), "owner_plugin_id"),
+            owner_plugin_id=PluginId(
+                as_str(field_value(raw, "owner_plugin_id"), "owner_plugin_id")
+            ),
             fingerprint=as_str(field_value(raw, "fingerprint"), "fingerprint"),
             deprecated=as_bool(field_value(raw, "deprecated"), "deprecated"),
         )
@@ -77,7 +80,7 @@ class ContractSurface:
 
 @dataclass(frozen=True)
 class SurfaceOccupancy:
-    surface_id: str
+    surface_id: SurfaceId
     ready_tasks: int
     running_invocations: int
     resource_refs: int
@@ -92,7 +95,7 @@ class SurfaceOccupancy:
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = as_mapping(data, "SurfaceOccupancy")
         return cls(
-            surface_id=as_str(field_value(raw, "surface_id"), "surface_id"),
+            surface_id=SurfaceId(as_str(field_value(raw, "surface_id"), "surface_id")),
             ready_tasks=as_int(field_value(raw, "ready_tasks"), "ready_tasks"),
             running_invocations=as_int(
                 field_value(raw, "running_invocations"), "running_invocations"
@@ -123,8 +126,8 @@ class SurfaceOccupancy:
 @dataclass(frozen=True)
 class SurfaceOccupancyHandle:
     handle_id: str
-    surface_id: str
-    owner_plugin_id: str
+    surface_id: SurfaceId
+    owner_plugin_id: PluginId
     plugin_generation: int
     registry_generation: int
     kind: SurfaceOccupancyHandleKind
@@ -134,8 +137,10 @@ class SurfaceOccupancyHandle:
         raw = as_mapping(data, "SurfaceOccupancyHandle")
         return cls(
             handle_id=as_str(field_value(raw, "handle_id"), "handle_id"),
-            surface_id=as_str(field_value(raw, "surface_id"), "surface_id"),
-            owner_plugin_id=as_str(field_value(raw, "owner_plugin_id"), "owner_plugin_id"),
+            surface_id=SurfaceId(as_str(field_value(raw, "surface_id"), "surface_id")),
+            owner_plugin_id=PluginId(
+                as_str(field_value(raw, "owner_plugin_id"), "owner_plugin_id")
+            ),
             plugin_generation=as_int(field_value(raw, "plugin_generation"), "plugin_generation"),
             registry_generation=as_int(
                 field_value(raw, "registry_generation"), "registry_generation"

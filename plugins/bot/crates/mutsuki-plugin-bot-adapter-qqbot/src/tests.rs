@@ -10,8 +10,8 @@ use mutsuki_bot_protocol::{
     QqMessageSegmentKind, QqPermissionRequirement,
 };
 use mutsuki_runtime_contracts::{
-    BatchEntry, BatchPayload, CompletionBatch, DispatchLane, OrderingRequirement, RunnerResult,
-    RunnerSideEffect, RuntimeError, Task, WorkBatch, WorkResourcePlan,
+    BatchEntry, BatchKey, BatchPayload, CompletionBatch, DispatchLane, OrderingRequirement,
+    RunnerResult, RunnerSideEffect, RuntimeError, Task, WorkBatch, WorkResourcePlan,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext};
 use serde_json::{Value, json};
@@ -730,9 +730,9 @@ fn test_image_resource() -> mutsuki_runtime_contracts::ResourceRef {
 
 fn test_media_resource(id: &str, schema: &str) -> mutsuki_runtime_contracts::ResourceRef {
     let mut resource = test_image_resource();
-    resource.ref_id = format!("{id}-1");
+    resource.ref_id = format!("{id}-1").into();
     resource.resource_id.kind_id = id.into();
-    resource.resource_id.slot_id = resource.ref_id.clone();
+    resource.resource_id.slot_id = resource.ref_id.to_string();
     resource.resource_kind = id.into();
     resource.schema = schema.into();
     resource.content_hash = Some(format!("sha256:{id}"));
@@ -1512,7 +1512,7 @@ fn test_context(current_step: u64) -> RunnerContext {
         1,
         current_step,
         "executor:test",
-        Some("task-lease-test".into()),
+        Some("task-lease-test"),
         "invocation:test",
     )
 }
@@ -1536,7 +1536,7 @@ fn run_tasks(runner: &mut impl Runner, tasks: Vec<Task>) -> CompletionBatch {
         .iter()
         .enumerate()
         .map(|(index, task)| BatchEntry {
-            entry_id: format!("entry-{index}"),
+            entry_id: format!("entry-{index}").into(),
             task_id: task.task_id.clone(),
             trace_id: task.trace_id.clone(),
             parent_id: None,
@@ -1552,7 +1552,7 @@ fn run_tasks(runner: &mut impl Runner, tasks: Vec<Task>) -> CompletionBatch {
     let batch = WorkBatch {
         batch_id: "batch:test".into(),
         tick_id: "tick:test".into(),
-        batch_key: runner.descriptor().runner_id.clone(),
+        batch_key: BatchKey::from(runner.descriptor().runner_id.as_str()),
         entries,
         payload: BatchPayload::from_tasks(&tasks),
         resource_plan: WorkResourcePlan::empty(),

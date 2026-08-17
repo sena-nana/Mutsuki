@@ -53,6 +53,18 @@ def as_str_tuple(value: object, field_name: str) -> tuple[str, ...]:
     return tuple(as_str(item, field_name) for item in value)
 
 
+def as_id[T: str](id_type: type[T], value: object, field_name: str) -> T:
+    return id_type(as_str(value, field_name))
+
+
+def optional_id[T: str](id_type: type[T], value: object, field_name: str) -> T | None:
+    return None if value is None else as_id(id_type, value, field_name)
+
+
+def as_id_tuple[T: str](id_type: type[T], value: object, field_name: str) -> tuple[T, ...]:
+    return tuple(id_type(item) for item in as_str_tuple(value, field_name))
+
+
 def sequence(value: object, field_name: str) -> Sequence[object]:
     if not isinstance(value, Sequence) or isinstance(value, str | bytes | bytearray):
         raise TypeError(f"{field_name} expects sequence")

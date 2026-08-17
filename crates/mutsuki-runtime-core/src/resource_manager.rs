@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, HashMap};
 
 use mutsuki_runtime_contracts::{
     ERR_CAPABILITY_EXHAUSTED, ERR_RESOURCE_GENERATION_MISMATCH, ERR_RESOURCE_NOT_FOUND,
-    PlanReceipt, ResourceCellRef, ResourceLease, ResourceRef, ResourceValue,
-    SurfaceOccupancyHandle, ValueRef,
+    PlanReceipt, RefId, ResourceCellId, ResourceCellRef, ResourceLease, ResourceLeaseId,
+    ResourceRef, ResourceValue, SurfaceOccupancyHandle, ValueRef,
 };
 use serde_json::Value;
 
@@ -28,7 +28,7 @@ pub enum PackedValue {
 #[derive(Clone, Debug)]
 struct ResourceCellEntry {
     descriptor: ResourceCellRef,
-    active_leases: HashMap<String, ResourceLease>,
+    active_leases: HashMap<ResourceLeaseId, ResourceLease>,
 }
 
 impl ResourceCellEntry {
@@ -42,9 +42,9 @@ impl ResourceCellEntry {
 
 #[derive(Clone, Debug)]
 pub struct ResourceManager {
-    values: HashMap<String, (ValueRef, Value)>,
+    values: HashMap<RefId, (ValueRef, Value)>,
     hub: ResourceHub,
-    resource_cells: HashMap<String, ResourceCellEntry>,
+    resource_cells: HashMap<ResourceCellId, ResourceCellEntry>,
     occupancy_handles: HashMap<String, SurfaceOccupancyHandle>,
     id_source: SequentialIdSource,
     inline_value_max_bytes: usize,
@@ -86,7 +86,7 @@ fn capability_exhausted(route: String) -> RuntimeFailure {
 }
 
 fn receipt_descriptors(receipt: &PlanReceipt) -> Vec<ResourceRef> {
-    let mut descriptors = BTreeMap::<String, ResourceRef>::new();
+    let mut descriptors = BTreeMap::<RefId, ResourceRef>::new();
     if let Some(resource) = &receipt.resource_ref {
         merge_descriptor(&mut descriptors, resource.clone());
     }
@@ -99,7 +99,7 @@ fn receipt_descriptors(receipt: &PlanReceipt) -> Vec<ResourceRef> {
     descriptors.into_values().collect()
 }
 
-fn merge_descriptor(descriptors: &mut BTreeMap<String, ResourceRef>, descriptor: ResourceRef) {
+fn merge_descriptor(descriptors: &mut BTreeMap<RefId, ResourceRef>, descriptor: ResourceRef) {
     descriptors
         .entry(descriptor.ref_id.clone())
         .and_modify(|current| {

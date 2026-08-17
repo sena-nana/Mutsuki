@@ -60,8 +60,8 @@ struct IdempotentDomainRequest {
     request_id: String,
     source_domain: RuntimeDomainId,
     target_domain: RuntimeDomainId,
-    task_id: String,
-    protocol_id: String,
+    task_id: mutsuki_runtime_contracts::TaskId,
+    protocol_id: mutsuki_runtime_contracts::ProtocolId,
     handle: DomainTaskHandle,
 }
 

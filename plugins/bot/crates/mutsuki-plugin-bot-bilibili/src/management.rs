@@ -261,9 +261,17 @@ impl BilibiliManagementService {
                 "outbound_binding is required".into(),
             ));
         }
+        require_deliverable_target(&target)?;
         let mut next = self.config.snapshot();
-        next.subscriptions
-            .retain(|subscription| subscription.subscription_id != subscription_id);
+        if next
+            .subscriptions
+            .iter()
+            .any(|item| item.subscription_id == subscription_id)
+        {
+            return Err(BilibiliError::InvalidResponse(format!(
+                "subscription_id {subscription_id} already exists"
+            )));
+        }
         let subscription = BilibiliSubscription {
             subscription_id,
             uid,
@@ -399,6 +407,7 @@ impl BilibiliManagementService {
         if !profile.signature.contains(&code) {
             return Ok(BilibiliBindVerifyResult::SignatureMismatch { code });
         }
+        require_deliverable_target(&target)?;
         let mut next = config.clone();
         let subscription_id = self_subscription_id_for(platform, operator_user_id);
         next.subscriptions
@@ -631,6 +640,27 @@ impl BilibiliManagementApi for BilibiliManagementService {
         }
         result
     }
+}
+
+fn require_deliverable_target(target: &BotTarget) -> Result<(), BilibiliError> {
+    let empty = match target {
+        BotTarget::User { user_id } => user_id.trim().is_empty(),
+        BotTarget::Group { group_id } => group_id.trim().is_empty(),
+        BotTarget::GuildChannel {
+            guild_id,
+            channel_id,
+        } => guild_id.trim().is_empty() || channel_id.trim().is_empty(),
+        BotTarget::Conversation { conversation_id } => conversation_id.trim().is_empty(),
+        BotTarget::PlatformSpecific { platform, kind, id } => {
+            platform.trim().is_empty() || kind.trim().is_empty() || id.trim().is_empty()
+        }
+    };
+    if empty {
+        return Err(BilibiliError::InvalidResponse(
+            "target identifiers must not be empty".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn map_error(error: BilibiliError) -> BilibiliManagementError {

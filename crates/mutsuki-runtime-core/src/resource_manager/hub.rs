@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use mutsuki_runtime_contracts::{LeaseToken, ResourceRef, ResourceSemantic};
+use mutsuki_runtime_contracts::{LeaseToken, RefId, ResourceRef, ResourceSemantic};
 
 #[derive(Clone, Debug)]
 pub(super) struct ResourceEntry {
@@ -19,7 +19,7 @@ impl ResourceEntry {
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct ResourceHub {
-    entries: HashMap<String, ResourceEntry>,
+    entries: HashMap<RefId, ResourceEntry>,
 }
 
 impl ResourceHub {
@@ -27,25 +27,25 @@ impl ResourceHub {
         self.entries.insert(entry.descriptor.ref_id.clone(), entry);
     }
 
-    pub(super) fn get(&self, ref_id: &str) -> Option<&ResourceEntry> {
-        self.entries.get(ref_id)
+    pub(super) fn get(&self, ref_id: impl AsRef<str>) -> Option<&ResourceEntry> {
+        self.entries.get(ref_id.as_ref())
     }
 
-    pub(super) fn get_mut(&mut self, ref_id: &str) -> Option<&mut ResourceEntry> {
-        self.entries.get_mut(ref_id)
+    pub(super) fn get_mut(&mut self, ref_id: impl AsRef<str>) -> Option<&mut ResourceEntry> {
+        self.entries.get_mut(ref_id.as_ref())
     }
 
-    pub(super) fn remove(&mut self, ref_id: &str) -> Option<ResourceEntry> {
-        self.entries.remove(ref_id)
+    pub(super) fn remove(&mut self, ref_id: impl AsRef<str>) -> Option<ResourceEntry> {
+        self.entries.remove(ref_id.as_ref())
     }
 
     pub(super) fn entries(&self) -> impl Iterator<Item = &ResourceEntry> {
         self.entries.values()
     }
 
-    pub(super) fn store_name(&self, ref_id: &str) -> Option<&'static str> {
+    pub(super) fn store_name(&self, ref_id: impl AsRef<str>) -> Option<&'static str> {
         self.entries
-            .get(ref_id)
+            .get(ref_id.as_ref())
             .map(|entry| semantic_store_name(&entry.descriptor.semantic))
     }
 }

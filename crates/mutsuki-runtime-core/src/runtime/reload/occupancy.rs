@@ -17,7 +17,8 @@ fn merge_occupancy(
     task_occupancy: Vec<SurfaceOccupancy>,
     resource_occupancy: Vec<SurfaceOccupancy>,
 ) -> Vec<SurfaceOccupancy> {
-    let mut by_surface: BTreeMap<String, SurfaceOccupancy> = BTreeMap::new();
+    let mut by_surface: BTreeMap<mutsuki_runtime_contracts::SurfaceId, SurfaceOccupancy> =
+        BTreeMap::new();
     for item in task_occupancy.into_iter().chain(resource_occupancy) {
         let entry = by_surface
             .entry(item.surface_id.clone())
@@ -35,9 +36,9 @@ fn merge_occupancy(
     by_surface.into_values().collect()
 }
 
-fn zero_occupancy(surface_id: &str) -> SurfaceOccupancy {
+fn zero_occupancy(surface_id: &mutsuki_runtime_contracts::SurfaceId) -> SurfaceOccupancy {
     SurfaceOccupancy {
-        surface_id: surface_id.into(),
+        surface_id: surface_id.clone(),
         ready_tasks: 0,
         running_invocations: 0,
         resource_refs: 0,

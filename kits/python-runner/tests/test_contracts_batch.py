@@ -22,6 +22,18 @@ from mutsuki_runner_kit.contracts.batch import (
     WorkResourcePlan,
     WorkSet,
 )
+from mutsuki_runner_kit.contracts.ids import (
+    BatchId,
+    BatchKey,
+    EntryId,
+    ExecutorId,
+    RefId,
+    RunnerId,
+    TaskId,
+    TaskLeaseId,
+    TickId,
+    TraceId,
+)
 from mutsuki_runner_kit.contracts.resource import (
     ResourceAccess,
     ResourceId,
@@ -38,7 +50,7 @@ from mutsuki_runner_kit.testing.assertions import assert_json_roundtrip
 
 def _resource_ref(ref_id: str = "resource:1") -> ResourceRef:
     return ResourceRef(
-        ref_id=ref_id,
+        ref_id=RefId(ref_id),
         resource_id=ResourceId(kind_id="bytes", slot_id=ref_id, generation=1, version=1),
         semantic=ResourceSemantic.FROZEN_VALUE,
         provider_id="python.resource",
@@ -57,9 +69,9 @@ def _resource_ref(ref_id: str = "resource:1") -> ResourceRef:
 
 def test_work_batch_and_completion_batch_roundtrip() -> None:
     entry = BatchEntry(
-        entry_id="entry-1",
-        task_id="task-1",
-        trace_id="trace-1",
+        entry_id=EntryId("entry-1"),
+        task_id=TaskId("task-1"),
+        trace_id=TraceId("trace-1"),
         parent_id=None,
         payload_index=0,
         resource_requirement_indices=(0,),
@@ -70,23 +82,23 @@ def test_work_batch_and_completion_batch_roundtrip() -> None:
         ordering=OrderingRequirement.preserve_submit_order(),
     )
     batch = WorkBatch(
-        batch_id="batch-1",
-        tick_id="tick-10",
-        batch_key="runner-a",
+        batch_id=BatchId("batch-1"),
+        tick_id=TickId("tick-10"),
+        batch_key=BatchKey("runner-a"),
         entries=(entry,),
         payload=BatchPayload.row([{"input": 1}]),
         resource_plan=WorkResourcePlan(
-            read_views=(ResourceReadView(ref_id="resource:1", requirement_indices=(0,)),),
-            write_locks=(ResourceWriteLock(ref_id="resource:2", requirement_indices=(1,)),),
-            serial_groups=(("entry-1",),),
-            version_checks=(VersionExpectation(ref_id="resource:1", expected_version=1),),
+            read_views=(ResourceReadView(ref_id=RefId("resource:1"), requirement_indices=(0,)),),
+            write_locks=(ResourceWriteLock(ref_id=RefId("resource:2"), requirement_indices=(1,)),),
+            serial_groups=((EntryId("entry-1"),),),
+            version_checks=(VersionExpectation(ref_id=RefId("resource:1"), expected_version=1),),
         ),
         task_leases=(
             TaskLease(
-                lease_id="lease-1",
-                task_id="task-1",
-                runner_id="runner-a",
-                executor_id="executor-a",
+                lease_id=TaskLeaseId("lease-1"),
+                task_id=TaskId("task-1"),
+                runner_id=RunnerId("runner-a"),
+                executor_id=ExecutorId("executor-a"),
                 registry_generation=3,
                 acquired_at_step=10,
                 expires_at_step=11,
@@ -97,12 +109,12 @@ def test_work_batch_and_completion_batch_roundtrip() -> None:
     assert_json_roundtrip(
         CompletionBatch,
         CompletionBatch(
-            batch_id="batch-1",
-            tick_id="tick-10",
+            batch_id=BatchId("batch-1"),
+            tick_id=TickId("tick-10"),
             results=(
                 EntryCompletion(
-                    entry_id="entry-1",
-                    task_id="task-1",
+                    entry_id=EntryId("entry-1"),
+                    task_id=TaskId("task-1"),
                     result=RunnerResult.completed("task-1"),
                 ),
             ),
@@ -116,8 +128,8 @@ def test_task_batch_and_work_set_roundtrip() -> None:
     assert_json_roundtrip(
         TaskBatch,
         TaskBatch(
-            batch_id="submit-batch-1",
-            tick_id="tick-10",
+            batch_id=BatchId("submit-batch-1"),
+            tick_id=TickId("tick-10"),
             tasks=(task,),
             resource_plan=WorkResourcePlan.empty(),
         ),
@@ -126,12 +138,12 @@ def test_task_batch_and_work_set_roundtrip() -> None:
     assert_json_roundtrip(
         WorkSet,
         WorkSet(
-            tick_id="tick-10",
-            batch_key="runner-a",
+            tick_id=TickId("tick-10"),
+            batch_key=BatchKey("runner-a"),
             entries=(
                 BatchEntry(
-                    entry_id="entry-1",
-                    task_id="task-1",
+                    entry_id=EntryId("entry-1"),
+                    task_id=TaskId("task-1"),
                     trace_id=None,
                     parent_id=None,
                     payload_index=0,
@@ -145,7 +157,7 @@ def test_task_batch_and_work_set_roundtrip() -> None:
             ),
             resource_requirements=(
                 ResourceRequirement(
-                    ref_id="resource:1",
+                    ref_id=RefId("resource:1"),
                     mode=ResourceAccessMode.READ,
                     expected_version=1,
                 ),

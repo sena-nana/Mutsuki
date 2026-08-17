@@ -1139,7 +1139,7 @@ impl BilibiliRunner {
             "bind" => {
                 let uid = parse_uid(command.args.get(1)).map_err(|error| bili_error(task, error))?;
                 let challenge = management
-                    .bind_start(actor_id, uid, &task.task_id)
+                    .bind_start(actor_id, uid, task.task_id.as_str())
                     .map_err(|error| bili_management_error(task, error))?;
                 Ok(self.command_reply(
                     task,
@@ -1441,7 +1441,7 @@ async fn run_task_async(
         };
     }
     let request: PollRequest = decode(&task).map_err(RuntimeFailure::new)?;
-    let kind = BilibiliPollKind::from_protocol_id(&task.protocol_id).ok_or_else(|| {
+    let kind = BilibiliPollKind::from_protocol_id(task.protocol_id.as_str()).ok_or_else(|| {
         RuntimeFailure::new(bili_error(
             &task,
             BilibiliError::InvalidResponse("unsupported poll protocol".into()),
@@ -1716,10 +1716,10 @@ async fn render_cards(
 
 fn decode_render_outcome(
     task: &Task,
-    outcome: TaskOutcome,
+    outcome: impl Into<TaskOutcome>,
     kind: &str,
 ) -> RuntimeResult<ImageRenderResponse> {
-    match outcome {
+    match outcome.into() {
         TaskOutcome::Completed {
             output: Some(output),
             ..
@@ -1774,7 +1774,7 @@ async fn run_chromium_risk_control_fallback(
         )
         .await
         .map_err(|error| risk_control_failure(&task, "snapshot.task", error.to_string()))?;
-    if !matches!(outcome, TaskOutcome::Completed { .. }) {
+    if !matches!(outcome.into_outcome(), TaskOutcome::Completed { .. }) {
         return Err(risk_control_failure(
             &task,
             "snapshot.outcome",
@@ -1782,7 +1782,7 @@ async fn run_chromium_risk_control_fallback(
         ));
     }
     let latest = resources
-        .open_resource_descriptor(&output.ref_id)
+        .open_resource_descriptor(output.ref_id.as_str())
         .map_err(|error| risk_control_failure(&task, "resource.open", error.to_string()))?;
     let bytes = resources
         .collect_read_plan(&ReadPlan {
@@ -2008,7 +2008,7 @@ fn command_outbound_result(
     child.correlation_id = task
         .correlation_id
         .clone()
-        .or_else(|| Some(task.task_id.clone()));
+        .or_else(|| Some(task.task_id.to_string()));
     child.registry_generation = task.registry_generation;
     child.target_binding_id = binding.filter(|value| !value.is_empty()).map(Into::into);
     result.tasks.push(child);
@@ -2122,7 +2122,7 @@ fn outbound_task(parent: &Task, message: BotMessage, binding: &str, index: usize
     task.correlation_id = parent
         .correlation_id
         .clone()
-        .or_else(|| Some(parent.task_id.clone()));
+        .or_else(|| Some(parent.task_id.to_string()));
     task
 }
 
@@ -2942,7 +2942,8 @@ mod tests {
         assert!(
             managed.provides.runners[0]
                 .accepted_protocol_ids
-                .contains(&MANAGEMENT_COMMAND.to_string())
+                .iter()
+                .any(|protocol_id| protocol_id == MANAGEMENT_COMMAND)
         );
         let extension = managed.provides.extensions.first().unwrap();
         let nodes = BotNodeCatalogFragment::from_plugin_extension(extension)
@@ -2961,7 +2962,7 @@ mod tests {
                 .accepted_protocol_ids
                 .iter()
                 .all(
-                    |protocol_id| managed.provides.protocol_classes.get(protocol_id)
+                    |protocol_id| managed.provides.protocol_classes.get(protocol_id.as_str())
                         == Some(&ProtocolClass::Effect)
                 )
         );
@@ -3047,8 +3048,8 @@ mod tests {
             .unwrap(),
         );
         let batch = command_batch(vec![task]);
-        let context = RunnerContext::new(1, 1, "executor", Vec::<String>::new(), "invocation")
-            .with_batch("batch", 1);
+        let context =
+            RunnerContext::new(1, 1, "executor", None::<&str>, "invocation").with_batch("batch", 1);
         let waiting = runner.run_batch(context.clone(), batch.clone()).unwrap();
         let waiting = waiting.results[0].result.as_ref().unwrap();
         assert_eq!(waiting.tasks[0].protocol_id, SNAPSHOT);
@@ -3095,8 +3096,8 @@ mod tests {
             .unwrap(),
         );
         let batch = command_batch(vec![task]);
-        let context = RunnerContext::new(1, 1, "executor", Vec::<String>::new(), "invocation")
-            .with_batch("batch", 1);
+        let context =
+            RunnerContext::new(1, 1, "executor", None::<&str>, "invocation").with_batch("batch", 1);
         let waiting = runner.run_batch(context.clone(), batch.clone()).unwrap();
         let waiting = waiting.results[0].result.as_ref().unwrap();
         assert_eq!(waiting.tasks[0].protocol_id, CARD_RENDER);
@@ -3170,8 +3171,8 @@ mod tests {
         .into_runtime_runner(Arc::new(RenderedChildClient), None);
         let task = command_task("login-render", "admin", &["login"]);
         let batch = command_batch(vec![task]);
-        let context = RunnerContext::new(1, 1, "executor", Vec::<String>::new(), "invocation")
-            .with_batch("batch", 1);
+        let context =
+            RunnerContext::new(1, 1, "executor", None::<&str>, "invocation").with_batch("batch", 1);
         let waiting = runner.run_batch(context.clone(), batch.clone()).unwrap();
         let waiting = waiting.results[0].result.as_ref().unwrap();
         assert_eq!(waiting.tasks[0].protocol_id, QR_RENDER);
@@ -3213,8 +3214,8 @@ mod tests {
             .unwrap(),
         );
         let batch = command_batch(vec![task]);
-        let context = RunnerContext::new(1, 1, "executor", Vec::<String>::new(), "invocation")
-            .with_batch("batch", 1);
+        let context =
+            RunnerContext::new(1, 1, "executor", None::<&str>, "invocation").with_batch("batch", 1);
 
         let first = runner.run_batch(context.clone(), batch.clone()).unwrap();
         assert_eq!(
@@ -3380,6 +3381,73 @@ mod tests {
         assert_eq!(credential_store.0.lock().unwrap().last().unwrap().1, "");
     }
 
+    #[test]
+    fn management_service_subscribe_rejects_duplicate_id_and_empty_target() {
+        let mut seed = managed_config();
+        seed.subscriptions.push(BilibiliSubscription {
+            subscription_id: "sub-1".into(),
+            uid: 42,
+            notifications: vec![BilibiliPollKind::Dynamic],
+            target: BotTarget::Group {
+                group_id: "g1".into(),
+            },
+            outbound_binding: "qq-main".into(),
+            paused: false,
+            owner_user_id: Some("alice".into()),
+        });
+        let config = SharedBilibiliConfig::new(seed);
+        let config_store = Arc::new(RecordingConfigStore::default());
+        let management = BilibiliManagementService::new(
+            config.clone(),
+            SharedBilibiliCredential::default(),
+            Box::new(FakeTransport(Arc::new(Mutex::new(
+                FakeTransportState::default(),
+            )))),
+            Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap()),
+            Arc::new(RecordingCredentialStore::default()),
+            config_store.clone(),
+            Arc::new(AlwaysPresentSecrets),
+        );
+
+        assert_eq!(
+            management
+                .subscribe(
+                    "sub-1".into(),
+                    7,
+                    vec![BilibiliNotificationKind::Live],
+                    BotTarget::Group {
+                        group_id: "g2".into(),
+                    },
+                    "qq-main".into(),
+                )
+                .unwrap_err()
+                .code,
+            "bilibili.request_failed"
+        );
+        assert_eq!(
+            config.snapshot().subscriptions[0].owner_user_id.as_deref(),
+            Some("alice")
+        );
+
+        assert_eq!(
+            management
+                .subscribe(
+                    "sub-2".into(),
+                    7,
+                    vec![BilibiliNotificationKind::Live],
+                    BotTarget::Group {
+                        group_id: "".into(),
+                    },
+                    "qq-main".into(),
+                )
+                .unwrap_err()
+                .code,
+            "bilibili.request_failed"
+        );
+        assert_eq!(config.snapshot().subscriptions.len(), 1);
+        assert!(config_store.0.lock().unwrap().is_empty());
+    }
+
     struct AlwaysPresentSecrets;
 
     impl BilibiliSecretPresence for AlwaysPresentSecrets {
@@ -3495,7 +3563,7 @@ mod tests {
                 .iter()
                 .enumerate()
                 .map(|(index, task)| BatchEntry {
-                    entry_id: format!("entry-{index}"),
+                    entry_id: format!("entry-{index}").into(),
                     task_id: task.task_id.clone(),
                     trace_id: None,
                     parent_id: None,
@@ -3639,7 +3707,11 @@ mod tests {
         assert!(!protocols.contains(&POLL_DYNAMIC));
         assert!(!protocols.contains(&LINK_RESOLVE));
         assert_eq!(
-            manifest.provides.runners[0].accepted_protocol_ids,
+            manifest.provides.runners[0]
+                .accepted_protocol_ids
+                .iter()
+                .map(|protocol_id| protocol_id.as_str())
+                .collect::<Vec<_>>(),
             vec![POLL_LIVE, POLL_VIDEO]
         );
     }

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Self
 
@@ -22,6 +22,23 @@ from mutsuki_runner_kit.contracts.codec import (
 class ObservabilityOverflowPolicy(StrEnum):
     DROP_OLDEST = "drop_oldest"
     DROP_NEW = "drop_new"
+
+
+@dataclass(frozen=True)
+class StateHistoryProfile:
+    capacity_per_ref: int = 0
+    retain_steps: int = 0
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
+        raw = as_mapping(data, "StateHistoryProfile")
+        return cls(
+            capacity_per_ref=as_int(field_value(raw, "capacity_per_ref"), "capacity_per_ref"),
+            retain_steps=as_int(field_value(raw, "retain_steps"), "retain_steps"),
+        )
+
+    def is_enabled(self) -> bool:
+        return self.capacity_per_ref > 0
 
 
 @dataclass(frozen=True)
@@ -46,10 +63,12 @@ class ObservabilityProfile:
     traces: ObservabilityOutletProfile
     detailed_scheduler_decisions: bool
     dispatch_spans: bool
+    state_history: StateHistoryProfile = field(default_factory=StateHistoryProfile)
 
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = as_mapping(data, "ObservabilityProfile")
+        history = raw.get("state_history")
         return cls(
             events=ObservabilityOutletProfile.from_json_dict(
                 as_mapping(field_value(raw, "events"), "events")
@@ -62,6 +81,9 @@ class ObservabilityProfile:
                 "detailed_scheduler_decisions",
             ),
             dispatch_spans=as_bool(field_value(raw, "dispatch_spans"), "dispatch_spans"),
+            state_history=StateHistoryProfile()
+            if history is None
+            else StateHistoryProfile.from_json_dict(as_mapping(history, "state_history")),
         )
 
 

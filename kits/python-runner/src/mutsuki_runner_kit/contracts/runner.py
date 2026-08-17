@@ -10,6 +10,7 @@ from mutsuki_runner_kit.contracts.codec import (
     JsonValue,
     ScalarValue,
     as_bool,
+    as_id_tuple,
     as_int,
     as_json_dict,
     as_json_value,
@@ -24,6 +25,17 @@ from mutsuki_runner_kit.contracts.codec import (
 from mutsuki_runner_kit.contracts.effect import EffectRequest
 from mutsuki_runner_kit.contracts.entry import OrderingRequirement, PayloadLayout
 from mutsuki_runner_kit.contracts.event import DomainEvent
+from mutsuki_runner_kit.contracts.ids import (
+    BatchId,
+    ExecutorId,
+    PluginId,
+    ProtocolId,
+    RunnerId,
+    SurfaceId,
+    TaskId,
+    TaskLeaseId,
+    TickId,
+)
 from mutsuki_runner_kit.contracts.resource import ResourceRef, ValueRef
 from mutsuki_runner_kit.contracts.state import StateDelta
 from mutsuki_runner_kit.contracts.task import Task, TaskAwait
@@ -258,10 +270,10 @@ class RunnerControlCapability:
 
 @dataclass(frozen=True)
 class RunnerDescriptor:
-    runner_id: str
-    plugin_id: str
+    runner_id: RunnerId
+    plugin_id: PluginId
     plugin_generation: int
-    accepted_protocol_ids: tuple[str, ...]
+    accepted_protocol_ids: tuple[ProtocolId, ...]
     purity: RunnerPurity
     execution_class: ExecutionClass
     invocation_mode: InvocationMode = InvocationMode.SYNC_EXCLUSIVE
@@ -274,17 +286,17 @@ class RunnerDescriptor:
     ordering: RunnerOrderingCapability = field(default_factory=RunnerOrderingCapability)
     control: RunnerControlCapability = field(default_factory=RunnerControlCapability)
     metadata: dict[str, ScalarValue] = field(default_factory=dict)
-    contract_surfaces: tuple[str, ...] = ()
+    contract_surfaces: tuple[SurfaceId, ...] = ()
 
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = as_mapping(data, "RunnerDescriptor")
         return cls(
-            runner_id=as_str(field_value(raw, "runner_id"), "runner_id"),
-            plugin_id=as_str(field_value(raw, "plugin_id"), "plugin_id"),
+            runner_id=RunnerId(as_str(field_value(raw, "runner_id"), "runner_id")),
+            plugin_id=PluginId(as_str(field_value(raw, "plugin_id"), "plugin_id")),
             plugin_generation=as_int(field_value(raw, "plugin_generation"), "plugin_generation"),
-            accepted_protocol_ids=as_str_tuple(
-                field_value(raw, "accepted_protocol_ids"), "accepted_protocol_ids"
+            accepted_protocol_ids=as_id_tuple(
+                ProtocolId, field_value(raw, "accepted_protocol_ids"), "accepted_protocol_ids"
             ),
             purity=RunnerPurity(as_str(field_value(raw, "purity"), "purity")),
             execution_class=ExecutionClass(
@@ -314,8 +326,8 @@ class RunnerDescriptor:
                 as_mapping(field_value(raw, "control"), "control")
             ),
             metadata=as_scalar_dict(field_value(raw, "metadata"), "metadata"),
-            contract_surfaces=as_str_tuple(
-                field_value(raw, "contract_surfaces"), "contract_surfaces"
+            contract_surfaces=as_id_tuple(
+                SurfaceId, field_value(raw, "contract_surfaces"), "contract_surfaces"
             ),
         )
 
@@ -324,10 +336,10 @@ class RunnerDescriptor:
 class RunnerContext:
     registry_generation: int
     current_step: int
-    tick_id: str
-    batch_id: str
-    executor_id: str
-    task_lease_ids: tuple[str, ...]
+    tick_id: TickId
+    batch_id: BatchId
+    executor_id: ExecutorId
+    task_lease_ids: tuple[TaskLeaseId, ...]
     entry_count: int
     invocation_id: str = ""
     cancel_token: str = ""
@@ -343,10 +355,12 @@ class RunnerContext:
                 field_value(raw, "registry_generation"), "registry_generation"
             ),
             current_step=as_int(field_value(raw, "current_step"), "current_step"),
-            tick_id=as_str(field_value(raw, "tick_id"), "tick_id"),
-            batch_id=as_str(field_value(raw, "batch_id"), "batch_id"),
-            executor_id=as_str(field_value(raw, "executor_id"), "executor_id"),
-            task_lease_ids=as_str_tuple(field_value(raw, "task_lease_ids"), "task_lease_ids"),
+            tick_id=TickId(as_str(field_value(raw, "tick_id"), "tick_id")),
+            batch_id=BatchId(as_str(field_value(raw, "batch_id"), "batch_id")),
+            executor_id=ExecutorId(as_str(field_value(raw, "executor_id"), "executor_id")),
+            task_lease_ids=as_id_tuple(
+                TaskLeaseId, field_value(raw, "task_lease_ids"), "task_lease_ids"
+            ),
             entry_count=as_int(field_value(raw, "entry_count"), "entry_count"),
             invocation_id=as_str(field_value(raw, "invocation_id"), "invocation_id"),
             cancel_token=as_str(field_value(raw, "cancel_token"), "cancel_token"),
@@ -358,7 +372,7 @@ class RunnerContext:
 
 @dataclass(frozen=True)
 class RunnerResult:
-    task_id: str
+    task_id: TaskId
     output: JsonValue = None
     deltas: tuple[StateDelta, ...] = ()
     events: tuple[DomainEvent, ...] = ()
@@ -371,14 +385,14 @@ class RunnerResult:
 
     @classmethod
     def completed(cls, task_id: str) -> Self:
-        return cls(task_id=task_id)
+        return cls(task_id=TaskId(task_id))
 
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = as_mapping(data, "RunnerResult")
         task_await = field_value(raw, "task_await")
         return cls(
-            task_id=as_str(field_value(raw, "task_id"), "task_id"),
+            task_id=TaskId(as_str(field_value(raw, "task_id"), "task_id")),
             output=as_json_value(raw.get("output")),
             deltas=tuple_from_json(raw, "deltas", StateDelta),
             events=tuple_from_json(raw, "events", DomainEvent),

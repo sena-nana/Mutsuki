@@ -7,8 +7,8 @@ use crate::extension::{
     SchedulerPolicyDescriptor, WorkflowDescriptor,
 };
 use crate::{
-    BindingId, ObservabilityProfile, ProtocolId, ResourceTypeDescriptor, RunnerDescriptor,
-    ScalarValue, SurfaceId,
+    BindingId, ObservabilityProfile, PluginId, ProtocolId, ResourceTypeDescriptor,
+    RunnerDescriptor, ScalarValue, SurfaceId,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -141,7 +141,7 @@ pub struct PluginProvides {
     /// Empty maps are accepted only as legacy manifest input and are
     /// normalized by the Host resolver before a RuntimeLoadPlan is emitted.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub protocol_classes: BTreeMap<String, ProtocolClass>,
+    pub protocol_classes: BTreeMap<ProtocolId, ProtocolClass>,
     pub handler_bindings: Vec<HandlerBinding>,
     pub resource_schemas: Vec<String>,
     pub resource_providers: Vec<String>,
@@ -249,7 +249,7 @@ pub enum ProtocolClass {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ProtocolDescriptor {
-    pub protocol_id: String,
+    pub protocol_id: ProtocolId,
     pub version: String,
     pub input_schema: serde_json::Value,
     pub output_schema: serde_json::Value,
@@ -261,8 +261,8 @@ pub struct ProtocolDescriptor {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct HandlerBinding {
     pub binding_id: BindingId,
-    pub plugin_id: String,
-    pub protocol_id: String,
+    pub plugin_id: PluginId,
+    pub protocol_id: ProtocolId,
     pub target_protocol_id: ProtocolId,
     pub target_runner_hint: Option<String>,
     pub pool_id: String,
@@ -273,7 +273,7 @@ pub struct HandlerBinding {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PluginManifest {
-    pub plugin_id: String,
+    pub plugin_id: PluginId,
     pub version: String,
     pub api_version: String,
     pub artifact: PluginArtifact,
@@ -292,7 +292,7 @@ pub struct PluginManifest {
 /// changing the business contract exposed by the plugin.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PluginBusinessSurface {
-    pub plugin_id: String,
+    pub plugin_id: PluginId,
     pub api_version: String,
     pub provides: PluginProvides,
     pub requires: Vec<SurfaceRequirement>,
@@ -320,7 +320,7 @@ impl PluginManifest {
 pub struct RuntimeProfile {
     pub profile_id: String,
     pub mode: RuntimeProfileMode,
-    pub enabled_plugins: Vec<String>,
+    pub enabled_plugins: Vec<PluginId>,
     pub bindings: BTreeMap<String, String>,
     /// Explicit public-surface provider selection. Keys use the canonical
     /// `<kind>:<surface-id>` form and values are provider plugin ids.
@@ -330,7 +330,7 @@ pub struct RuntimeProfile {
     /// Universal extensions do not need to be listed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub supported_extensions: Vec<String>,
-    pub plugin_deployments: BTreeMap<String, PluginDeploymentKind>,
+    pub plugin_deployments: BTreeMap<PluginId, PluginDeploymentKind>,
     pub observability: ObservabilityProfile,
     pub allow_dynamic_registration: bool,
     pub allow_hot_reload: bool,
@@ -357,15 +357,15 @@ pub struct RuntimeCapabilityGraph {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CapabilityProviderSelection {
     pub capability: String,
-    pub provider_plugin_id: String,
+    pub provider_plugin_id: PluginId,
     pub provider_version: Option<String>,
-    pub surface_id: String,
+    pub surface_id: SurfaceId,
     pub reason: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PermissionAuditEntry {
-    pub plugin_id: String,
+    pub plugin_id: PluginId,
     pub permission_kind: String,
     pub permission: String,
     pub granted: bool,
@@ -435,7 +435,7 @@ impl ContractSurfaceKind {
 pub struct ContractSurface {
     pub surface_id: SurfaceId,
     pub kind: ContractSurfaceKind,
-    pub owner_plugin_id: String,
+    pub owner_plugin_id: PluginId,
     pub fingerprint: String,
     pub deprecated: bool,
 }
@@ -466,7 +466,7 @@ pub enum SurfaceOccupancyHandleKind {
 pub struct SurfaceOccupancyHandle {
     pub handle_id: String,
     pub surface_id: SurfaceId,
-    pub owner_plugin_id: String,
+    pub owner_plugin_id: PluginId,
     pub plugin_generation: u64,
     pub registry_generation: u64,
     pub kind: SurfaceOccupancyHandleKind,
@@ -504,9 +504,9 @@ pub struct RuntimeLoadPlan {
     pub profile_hash: String,
     pub registry_generation: u64,
     pub plugins: Vec<PluginManifest>,
-    pub load_order: Vec<String>,
+    pub load_order: Vec<PluginId>,
     pub runner_bindings: BTreeMap<String, String>,
-    pub plugin_deployments: BTreeMap<String, PluginDeploymentKind>,
+    pub plugin_deployments: BTreeMap<PluginId, PluginDeploymentKind>,
     pub observability: ObservabilityProfile,
     pub capability_graph: RuntimeCapabilityGraph,
     pub contract_surfaces: Vec<ContractSurface>,

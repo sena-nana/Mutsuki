@@ -67,7 +67,7 @@ fn same_plugin_projects_optional_contributions_without_changing_business_identit
         application_a
             .contract_surfaces
             .iter()
-            .any(|surface| surface.surface_id.contains("mutsuki.agent"))
+            .any(|surface| surface.surface_id.as_str().contains("mutsuki.agent"))
     );
     assert!(
         !application_b
@@ -176,7 +176,10 @@ fn resolver_normalizes_legacy_protocol_classes_and_accepted_protocols() {
 
     assert_eq!(
         provides.runners[0].accepted_protocol_ids,
-        vec!["sim.alpha", "sim.beta"]
+        vec![
+            mutsuki_runtime_contracts::ProtocolId::from("sim.alpha"),
+            mutsuki_runtime_contracts::ProtocolId::from("sim.beta"),
+        ]
     );
     assert_eq!(
         provides.protocol_classes.get("sim.alpha"),

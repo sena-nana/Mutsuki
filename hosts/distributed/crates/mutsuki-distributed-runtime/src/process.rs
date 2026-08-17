@@ -1213,7 +1213,7 @@ mod tests {
     #[derive(Default)]
     struct ProcessFakeHost {
         tasks: Mutex<Vec<Task>>,
-        cancelled: Mutex<Vec<String>>,
+        cancelled: Mutex<Vec<mutsuki_runtime_contracts::TaskId>>,
     }
 
     impl HostAdapter for ProcessFakeHost {
@@ -1256,7 +1256,7 @@ mod tests {
                         protocol_id: task.protocol_id.clone(),
                         status: "ready".into(),
                         registry_generation: task.registry_generation,
-                        runner_id: task.runner_hint.clone(),
+                        runner_id: task.runner_hint.clone().map(Into::into),
                         lease_id: None,
                     })
                     .collect())
@@ -1959,7 +1959,8 @@ mod tests {
                 .expect("query child Worker")
                 .expect("child outcome")
                 .output_ref
-                .as_deref(),
+                .as_ref()
+                .map(|id| id.as_str()),
             Some("content:child-process-result")
         );
         client

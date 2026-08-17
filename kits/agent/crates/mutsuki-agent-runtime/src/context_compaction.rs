@@ -216,7 +216,7 @@ fn fallback_item(source_snapshot: ResourceRef, version: SessionVersion) -> Conte
         provenance: ContextProvenance {
             provider_id: "mutsuki.agent.runtime.compaction".into(),
             source_kind: "session_snapshot".into(),
-            source_id: source_snapshot.ref_id,
+            source_id: source_snapshot.ref_id.into_string(),
             source_version: version.0.to_string(),
         },
         required: true,
@@ -248,7 +248,7 @@ mod tests {
 
     fn reference(slot: &str) -> ResourceRef {
         ResourceRef {
-            ref_id: format!("context:{slot}"),
+            ref_id: format!("context:{slot}").into(),
             resource_id: ResourceId {
                 kind_id: "agent.context".into(),
                 slot_id: slot.into(),

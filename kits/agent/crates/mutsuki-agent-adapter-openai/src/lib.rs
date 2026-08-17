@@ -329,11 +329,11 @@ pub fn async_handler(
 }
 
 fn runtime_error(
-    task_id: &str,
+    task_id: impl AsRef<str>,
     value: ProtocolError,
 ) -> mutsuki_runtime_sdk::contracts::RuntimeError {
     let mut error =
-        mutsuki_runtime_sdk::contracts::RuntimeError::new(value.code, PLUGIN_ID, task_id);
+        mutsuki_runtime_sdk::contracts::RuntimeError::new(value.code, PLUGIN_ID, task_id.as_ref());
     error.evidence.insert(
         "class".into(),
         mutsuki_runtime_sdk::contracts::ScalarValue::String(format!("{:?}", value.class)),
@@ -727,7 +727,8 @@ mod tests {
         ModelCapability, ToolSideEffect,
     };
     use mutsuki_runtime_sdk::contracts::{
-        BatchEntry, BatchPayload, DispatchLane, OrderingRequirement, Task, WorkResourcePlan,
+        BatchEntry, BatchPayload, DispatchLane, OrderingRequirement, Task, TaskLeaseId,
+        WorkResourcePlan,
     };
 
     use super::*;
@@ -1089,7 +1090,7 @@ mod tests {
                 .iter()
                 .enumerate()
                 .map(|(index, task)| BatchEntry {
-                    entry_id: format!("entry-{index}"),
+                    entry_id: format!("entry-{index}").into(),
                     task_id: task.task_id.clone(),
                     trace_id: None,
                     parent_id: None,
@@ -1112,7 +1113,7 @@ mod tests {
                     1,
                     1,
                     "executor:credential-isolation",
-                    Vec::<String>::new(),
+                    Vec::<TaskLeaseId>::new(),
                     "batch:credential-isolation",
                 )
                 .with_batch("batch:credential-isolation", 2),

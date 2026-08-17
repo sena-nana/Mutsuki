@@ -103,7 +103,7 @@ where
     ) -> Result<DeliveryReceipt, AppDeliveryError> {
         let target = AppId::new(envelope.target.clone())?;
         self.emit_phase(
-            &envelope.request_id,
+            envelope.request_id.as_str(),
             target.as_str(),
             DeliveryPhase::Connecting,
             None,
@@ -114,7 +114,7 @@ where
             Ok(session) => session,
             Err(AppDeliveryError::EndpointUnavailable) if options.activate_if_offline => {
                 self.emit_phase(
-                    &envelope.request_id,
+                    envelope.request_id.as_str(),
                     target.as_str(),
                     DeliveryPhase::TargetActivating,
                     None,
@@ -134,7 +134,7 @@ where
         }
 
         self.emit_phase(
-            &envelope.request_id,
+            envelope.request_id.as_str(),
             target.as_str(),
             DeliveryPhase::Negotiating,
             None,
@@ -152,7 +152,7 @@ where
             };
         }
         self.emit_phase(
-            &envelope.request_id,
+            envelope.request_id.as_str(),
             target.as_str(),
             DeliveryPhase::TargetReady,
             None,
@@ -163,7 +163,7 @@ where
         }
 
         self.emit_phase(
-            &envelope.request_id,
+            envelope.request_id.as_str(),
             target.as_str(),
             DeliveryPhase::Transmitting,
             None,
@@ -180,7 +180,7 @@ where
             }
             Err(_) => match self
                 .transport
-                .query_receipt(&session, &envelope.request_id)
+                .query_receipt(&session, envelope.request_id.as_str())
                 .await
             {
                 Ok(Some(receipt)) => receipt,
@@ -206,7 +206,7 @@ where
                 DeliveryPhase::DeliveryFailed
             }
         };
-        self.emit_phase(&envelope.request_id, target.as_str(), phase, None);
+        self.emit_phase(envelope.request_id.as_str(), target.as_str(), phase, None);
         Ok(receipt)
     }
 
@@ -250,15 +250,15 @@ where
             let draft = DeliveryDraft::from_envelope(&envelope, error.to_string());
             let _ = self.drafts.save(draft);
             self.emit_phase(
-                &envelope.request_id,
-                &envelope.target,
+                envelope.request_id.as_str(),
+                envelope.target.as_str(),
                 DeliveryPhase::DraftSaved,
                 Some(&error),
             );
         }
         self.emit_phase(
-            &envelope.request_id,
-            &envelope.target,
+            envelope.request_id.as_str(),
+            envelope.target.as_str(),
             DeliveryPhase::DeliveryFailed,
             Some(&error),
         );

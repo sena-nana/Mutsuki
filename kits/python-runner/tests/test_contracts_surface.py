@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from mutsuki_runner_kit.contracts.ids import SurfaceId
 from mutsuki_runner_kit.contracts.surface import (
     SurfaceOccupancy,
     SurfaceOccupancyHandle,
@@ -10,7 +11,7 @@ from mutsuki_runner_kit.testing.assertions import assert_json_roundtrip
 
 def test_surface_occupancy_roundtrips() -> None:
     occupancy = SurfaceOccupancy(
-        surface_id="runner:runner-a",
+        surface_id=SurfaceId("runner:runner-a"),
         ready_tasks=0,
         running_invocations=0,
         resource_refs=0,
@@ -23,7 +24,7 @@ def test_surface_occupancy_roundtrips() -> None:
     )
     handle = SurfaceOccupancyHandle(
         handle_id="timer:heartbeat:1",
-        surface_id="timer:heartbeat",
+        surface_id=SurfaceId("timer:heartbeat"),
         owner_plugin_id="plugin-a",
         plugin_generation=2,
         registry_generation=7,

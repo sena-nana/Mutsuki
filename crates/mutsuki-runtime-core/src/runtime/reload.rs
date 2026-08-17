@@ -34,10 +34,10 @@ pub enum InvocationPollution {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunningInvocationDisposition {
-    pub task_id: String,
+    pub task_id: mutsuki_runtime_contracts::TaskId,
     pub invocation_id: String,
-    pub runner_id: String,
-    pub plugin_id: String,
+    pub runner_id: mutsuki_runtime_contracts::RunnerId,
+    pub plugin_id: mutsuki_runtime_contracts::PluginId,
     pub plugin_generation: u64,
     pub pollution: InvocationPollution,
 }
@@ -141,7 +141,7 @@ impl CoreRuntime {
                     self.events.record(
                         RuntimeEventKind::Runner,
                         "runner.cancel",
-                        Some(disposition.runner_id.clone()),
+                        Some(disposition.runner_id.to_string()),
                         cancel_attrs(disposition, "reload.cancel_requeue"),
                         None,
                     );
@@ -150,7 +150,7 @@ impl CoreRuntime {
                     self.events.record(
                         RuntimeEventKind::Reload,
                         "plugin.reload.drain_invocation",
-                        Some(disposition.task_id.clone()),
+                        Some(disposition.task_id.to_string()),
                         cancel_attrs(disposition, "reload.drain"),
                         None,
                     );
@@ -172,7 +172,9 @@ impl CoreRuntime {
                     .load_plan
                     .plugins
                     .iter()
-                    .map(|plugin| plugin.plugin_id.clone())
+                    .map(|plugin| {
+                        mutsuki_runtime_contracts::PluginId::from(plugin.plugin_id.as_str())
+                    })
                     .collect(),
                 registry: old_registry,
             });
@@ -199,7 +201,7 @@ impl CoreRuntime {
         mut new_plan: RuntimeLoadPlan,
         new_runners: Vec<Box<dyn Runner>>,
         new_async_handlers: Vec<Arc<dyn AsyncBatchHandler>>,
-        affected_plugins: std::collections::BTreeSet<String>,
+        affected_plugins: std::collections::BTreeSet<mutsuki_runtime_contracts::PluginId>,
     ) -> RuntimeResult<ReloadDecision> {
         if affected_plugins.is_empty() {
             return self.reload_load_plan_only(new_plan);
@@ -209,14 +211,19 @@ impl CoreRuntime {
             .registry
             .descriptors()
             .into_iter()
-            .map(|descriptor| (descriptor.runner_id.clone(), descriptor))
+            .map(|descriptor| {
+                (
+                    mutsuki_runtime_contracts::RunnerId::from(descriptor.runner_id.as_str()),
+                    descriptor,
+                )
+            })
             .collect::<BTreeMap<_, _>>();
         for plugin in &mut new_plan.plugins {
-            if affected_plugins.contains(&plugin.plugin_id) {
+            if affected_plugins.contains(plugin.plugin_id.as_str()) {
                 continue;
             }
             for runner in &mut plugin.provides.runners {
-                if let Some(previous) = old_descriptors.get(&runner.runner_id) {
+                if let Some(previous) = old_descriptors.get(runner.runner_id.as_str()) {
                     runner.plugin_generation = previous.plugin_generation;
                 }
             }
@@ -224,14 +231,14 @@ impl CoreRuntime {
 
         let mut candidate_registry = RunnerRegistry::default();
         for mut runner in new_runners {
-            if affected_plugins.contains(&runner.descriptor().plugin_id) {
+            if affected_plugins.contains(runner.descriptor().plugin_id.as_str()) {
                 candidate_registry.register(runner)?;
             } else {
                 runner.dispose()?;
             }
         }
         for handler in new_async_handlers {
-            if affected_plugins.contains(&handler.descriptor().plugin_id) {
+            if affected_plugins.contains(handler.descriptor().plugin_id.as_str()) {
                 candidate_registry.register_async_handler(handler)?;
             } else if let Some(management) = handler.management_handle() {
                 management.dispose()?;
@@ -241,7 +248,7 @@ impl CoreRuntime {
 
         let runner_descriptors = old_descriptors
             .values()
-            .filter(|descriptor| !affected_plugins.contains(&descriptor.plugin_id))
+            .filter(|descriptor| !affected_plugins.contains(descriptor.plugin_id.as_str()))
             .cloned()
             .chain(candidate_registry.descriptors())
             .collect::<Vec<_>>();
@@ -288,7 +295,7 @@ impl CoreRuntime {
                     self.events.record(
                         RuntimeEventKind::Runner,
                         "runner.cancel",
-                        Some(disposition.runner_id.clone()),
+                        Some(disposition.runner_id.to_string()),
                         cancel_attrs(disposition, "reload.cancel_requeue"),
                         None,
                     );
@@ -297,7 +304,7 @@ impl CoreRuntime {
                     self.events.record(
                         RuntimeEventKind::Reload,
                         "plugin.reload.drain_invocation",
-                        Some(disposition.task_id.clone()),
+                        Some(disposition.task_id.to_string()),
                         cancel_attrs(disposition, "reload.drain"),
                         None,
                     );

@@ -69,7 +69,7 @@ impl CoreRuntime {
     pub(super) fn mark_generation_phase_for_plugins(
         &mut self,
         registry_generation: u64,
-        plugin_ids: &std::collections::BTreeSet<String>,
+        plugin_ids: &std::collections::BTreeSet<mutsuki_runtime_contracts::PluginId>,
         phase: PluginGenerationPhase,
     ) {
         for state in &mut self.generation_states {
@@ -100,7 +100,7 @@ impl CoreRuntime {
 
     pub(super) fn set_active_generation_states_for_plugins(
         &mut self,
-        plugin_ids: &std::collections::BTreeSet<String>,
+        plugin_ids: &std::collections::BTreeSet<mutsuki_runtime_contracts::PluginId>,
     ) {
         let active_generation = self.load_plan.registry_generation;
         for state in &mut self.generation_states {
@@ -132,6 +132,10 @@ impl CoreRuntime {
         self.handler_bindings = HandlerBindingRegistry::from_load_plan(&new_plan);
         self.surfaces = new_plan.contract_surfaces.clone();
         self.protocol_classes = super::super::protocol_classes_for_plan(&new_plan);
+        self.states.configure(
+            new_plan.observability.state_history.clone(),
+            self.current_step,
+        );
         self.load_plan = new_plan;
     }
 }
@@ -144,7 +148,7 @@ pub(super) fn generation_states_for_plan(
         .plugins
         .iter()
         .map(|plugin| PluginGenerationState {
-            plugin_id: plugin.plugin_id.clone(),
+            plugin_id: plugin.plugin_id.as_str().into(),
             generation: load_plan.registry_generation,
             phase: phase.clone(),
         })

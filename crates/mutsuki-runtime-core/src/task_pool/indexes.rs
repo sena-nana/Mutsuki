@@ -2,19 +2,23 @@ use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::Hash;
 
-use mutsuki_runtime_contracts::{DispatchLane, RunnerDescriptor, TaskId, TaskStatus};
+use mutsuki_runtime_contracts::{
+    DispatchLane, ProtocolId, RunnerDescriptor, RunnerId, TaskId, TaskStatus,
+};
 
 use super::{TaskPool, TaskRecord};
 
 type ReadyQueues =
-    HashMap<String, HashMap<ReadySelector, BTreeMap<DispatchLane, BTreeSet<ReadyKey>>>>;
-type ReadyCounts =
-    HashMap<String, HashMap<ReadySelector, BTreeMap<DispatchLane, BTreeMap<(u64, u64), usize>>>>;
+    HashMap<ProtocolId, HashMap<ReadySelector, BTreeMap<DispatchLane, BTreeSet<ReadyKey>>>>;
+type ReadyCounts = HashMap<
+    ProtocolId,
+    HashMap<ReadySelector, BTreeMap<DispatchLane, BTreeMap<(u64, u64), usize>>>,
+>;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub(super) struct ReadySelector {
     runner_hint: Option<String>,
-    owner_runner: Option<String>,
+    owner_runner: Option<RunnerId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -26,7 +30,7 @@ pub(super) struct ReadyKey {
 }
 
 impl ReadyKey {
-    pub(super) fn task_id(&self) -> &str {
+    pub(super) fn task_id(&self) -> &TaskId {
         &self.task_id
     }
 
@@ -42,18 +46,18 @@ pub(super) struct TaskIndexes {
     ready_by_step: BTreeMap<u64, BTreeSet<TaskId>>,
     ready_with_expectations: BTreeSet<TaskId>,
     wake_by_step: BTreeMap<u64, BTreeSet<TaskId>>,
-    running_by_runner: HashMap<String, BTreeSet<TaskId>>,
-    waiting_by_runner: HashMap<String, BTreeSet<TaskId>>,
+    running_by_runner: HashMap<RunnerId, BTreeSet<TaskId>>,
+    waiting_by_runner: HashMap<RunnerId, BTreeSet<TaskId>>,
     leases_by_expiry: BTreeMap<u64, BTreeSet<TaskId>>,
 }
 
 impl TaskPool {
-    pub(super) fn insert_record_indexes(&mut self, task_id: &str) {
-        self.update_record_indexes(task_id, true);
+    pub(super) fn insert_record_indexes(&mut self, task_id: impl AsRef<str>) {
+        self.update_record_indexes(task_id.as_ref(), true);
     }
 
-    pub(super) fn remove_record_indexes(&mut self, task_id: &str) {
-        self.update_record_indexes(task_id, false);
+    pub(super) fn remove_record_indexes(&mut self, task_id: impl AsRef<str>) {
+        self.update_record_indexes(task_id.as_ref(), false);
     }
 
     fn update_record_indexes(&mut self, task_id: &str, present: bool) {
@@ -176,35 +180,36 @@ impl TaskPool {
 
     fn with_ready_selectors<R>(
         &self,
-        runner_id: &str,
+        runner_id: impl AsRef<str>,
         use_selectors: impl FnOnce(&[ReadySelector; 4]) -> R,
     ) -> R {
+        let runner_id = runner_id.as_ref();
         let mut cache = self.ready_selector_cache.borrow_mut();
         if cache.contains_key(runner_id) {
             return use_selectors(cache.get(runner_id).expect("cached selector exists"));
         }
         if cache.len() < super::READY_SELECTOR_CACHE_CAPACITY {
-            cache.insert(runner_id.into(), build_ready_selectors(runner_id));
+            cache.insert(RunnerId::from(runner_id), build_ready_selectors(runner_id));
             return use_selectors(cache.get(runner_id).expect("inserted selector exists"));
         }
         drop(cache);
         use_selectors(&build_ready_selectors(runner_id))
     }
 
-    pub(super) fn running_task_ids(&self, runner_id: &str) -> Option<&BTreeSet<TaskId>> {
-        self.indexes.running_by_runner.get(runner_id)
+    pub(super) fn running_task_ids(&self, runner_id: impl AsRef<str>) -> Option<&BTreeSet<TaskId>> {
+        self.indexes.running_by_runner.get(runner_id.as_ref())
     }
 
-    pub(super) fn waiting_task_ids(&self, runner_id: &str) -> Option<&BTreeSet<TaskId>> {
-        self.indexes.waiting_by_runner.get(runner_id)
+    pub(super) fn waiting_task_ids(&self, runner_id: impl AsRef<str>) -> Option<&BTreeSet<TaskId>> {
+        self.indexes.waiting_by_runner.get(runner_id.as_ref())
     }
 
-    pub(super) fn running_count_for_runner(&self, runner_id: &str) -> usize {
-        map_set_len(&self.indexes.running_by_runner, runner_id)
+    pub(super) fn running_count_for_runner(&self, runner_id: impl AsRef<str>) -> usize {
+        map_set_len(&self.indexes.running_by_runner, runner_id.as_ref())
     }
 
-    pub(super) fn waiting_count_for_runner(&self, runner_id: &str) -> usize {
-        map_set_len(&self.indexes.waiting_by_runner, runner_id)
+    pub(super) fn waiting_count_for_runner(&self, runner_id: impl AsRef<str>) -> usize {
+        map_set_len(&self.indexes.waiting_by_runner, runner_id.as_ref())
     }
 
     pub(crate) fn stale_expectation_task_ids(&self) -> Vec<TaskId> {
@@ -373,20 +378,21 @@ impl TaskIndexes {
 }
 
 fn build_ready_selectors(runner_id: &str) -> [ReadySelector; 4] {
-    let runner_id = runner_id.to_owned();
+    let hint = runner_id.to_owned();
+    let owner = RunnerId::from(runner_id);
     [
         ReadySelector::default(),
         ReadySelector {
-            runner_hint: Some(runner_id.clone()),
+            runner_hint: Some(hint.clone()),
             owner_runner: None,
         },
         ReadySelector {
             runner_hint: None,
-            owner_runner: Some(runner_id.clone()),
+            owner_runner: Some(owner.clone()),
         },
         ReadySelector {
-            runner_hint: Some(runner_id.clone()),
-            owner_runner: Some(runner_id),
+            runner_hint: Some(hint),
+            owner_runner: Some(owner),
         },
     ]
 }
@@ -403,7 +409,7 @@ fn next_bucket_after(buckets: &BTreeMap<u64, BTreeSet<TaskId>>, current_step: u6
 
 fn set_ready(
     index: &mut ReadyQueues,
-    protocol_id: &str,
+    protocol_id: &ProtocolId,
     selector: &ReadySelector,
     lane: &DispatchLane,
     key: &ReadyKey,
@@ -411,7 +417,7 @@ fn set_ready(
 ) {
     if present {
         index
-            .entry(protocol_id.into())
+            .entry(protocol_id.clone())
             .or_default()
             .entry(selector.clone())
             .or_default()
@@ -443,7 +449,7 @@ fn set_ready(
 
 fn set_ready_count(
     index: &mut ReadyCounts,
-    protocol_id: &str,
+    protocol_id: &ProtocolId,
     selector: &ReadySelector,
     lane: &DispatchLane,
     ready_at_step: u64,
@@ -453,7 +459,7 @@ fn set_ready_count(
     let bucket = (ready_at_step, registry_generation);
     if present {
         *index
-            .entry(protocol_id.into())
+            .entry(protocol_id.clone())
             .or_default()
             .entry(selector.clone())
             .or_default()
@@ -516,11 +522,11 @@ fn set_value<V: Clone + Ord>(set: &mut BTreeSet<V>, value: &V, present: bool) {
 fn set_bucket(
     buckets: &mut BTreeMap<u64, BTreeSet<TaskId>>,
     step: u64,
-    task_id: &str,
+    task_id: &TaskId,
     present: bool,
 ) {
     if present {
-        buckets.entry(step).or_default().insert(task_id.into());
+        buckets.entry(step).or_default().insert(task_id.clone());
     } else if buckets.get_mut(&step).is_some_and(|tasks| {
         tasks.remove(task_id);
         tasks.is_empty()
@@ -529,7 +535,10 @@ fn set_bucket(
     }
 }
 
-fn map_set_len<V>(map: &HashMap<String, BTreeSet<V>>, key: &str) -> usize {
+fn map_set_len<K, V>(map: &HashMap<K, BTreeSet<V>>, key: &str) -> usize
+where
+    K: std::hash::Hash + Eq + std::borrow::Borrow<str>,
+{
     map.get(key).map_or(0, BTreeSet::len)
 }
 

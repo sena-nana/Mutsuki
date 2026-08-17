@@ -47,7 +47,7 @@ pub struct RunnerDispatch {
 pub struct RunnerCompletion {
     pub runner: Option<Box<dyn Runner>>,
     pub task_leases: Vec<TaskLease>,
-    pub batch_id: String,
+    pub batch_id: mutsuki_runtime_contracts::BatchId,
     pub expected_entries: Vec<BatchEntry>,
     pub result: RuntimeResult<CompletionBatch>,
 }

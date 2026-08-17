@@ -769,7 +769,8 @@ async fn run_facade_task(
                 task_failure(&task, HttpErrorCode::InvalidRequest, error.to_string())
             })?,
         )
-        .await?;
+        .await?
+        .into_outcome();
     let output = match outcome {
         TaskOutcome::Completed {
             output: Some(output),
@@ -880,9 +881,10 @@ fn protocol_descriptor(protocol_id: &str) -> mutsuki_runtime_contracts::Protocol
 fn gateway_failure(task: &Task, error: HttpGatewayError) -> RuntimeFailure {
     let mut failure =
         RuntimeError::new(error.code.as_str(), "runtime.io_http_client", error.message);
-    failure
-        .evidence
-        .insert("task_id".into(), ScalarValue::String(task.task_id.clone()));
+    failure.evidence.insert(
+        "task_id".into(),
+        ScalarValue::String(task.task_id.to_string()),
+    );
     for (key, value) in error.evidence {
         failure.evidence.insert(key, ScalarValue::String(value));
     }

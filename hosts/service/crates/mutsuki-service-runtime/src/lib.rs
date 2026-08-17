@@ -12,9 +12,9 @@ use std::time::{Duration, Instant};
 use mutsuki_runtime_contracts::resource::experimental::{CommandBatch, SagaPlan};
 use mutsuki_runtime_contracts::{
     CancelPolicy, CommandPlan, DispatchLane, ERR_RUNTIME_HOST_FAILED, ExecutionClass, ExportPlan,
-    PlanReceipt, PluginDeploymentKind, ReadPlan, ResourceRef, RuntimeError, RuntimeLoadPlan,
-    RuntimeProfile, RuntimeProfileMode, SnapshotDescriptor, StreamPlan, SurfaceCompatibility, Task,
-    TaskBatch, TaskHandle, TaskOutcome, TaskStatus, WritePlan,
+    PlanReceipt, PluginDeploymentKind, PluginId, ReadPlan, ResourceRef, RunnerId, RuntimeError,
+    RuntimeLoadPlan, RuntimeProfile, RuntimeProfileMode, SnapshotDescriptor, StreamPlan,
+    SurfaceCompatibility, Task, TaskBatch, TaskHandle, TaskId, TaskOutcome, TaskStatus, WritePlan,
 };
 use mutsuki_runtime_core::{
     AsyncBatchHandler, Runner, RuntimeFailure, RuntimeResult, RuntimeStopState,
@@ -105,7 +105,7 @@ pub trait LoadPlanObserver: Send + Sync {
 
 #[derive(Clone, Debug)]
 struct RunnerLimitOverride {
-    runner_id: String,
+    runner_id: RunnerId,
     max_running: Option<usize>,
     wall_clock_timeout_ms: Option<u64>,
 }
@@ -114,13 +114,13 @@ type RunnerLimitFactory = Arc<dyn Fn() -> RunnerLimitOverride + Send + Sync>;
 
 #[derive(Default)]
 struct PreparedComponent {
-    manifests: BTreeMap<String, mutsuki_runtime_contracts::PluginManifest>,
+    manifests: BTreeMap<PluginId, mutsuki_runtime_contracts::PluginManifest>,
     native_runner_factories: Vec<NativeRunnerFactory>,
     async_handler_factories: Vec<AsyncHandlerFactory>,
-    loaded_plugin_factories: BTreeMap<String, LoadedPluginFactory>,
+    loaded_plugin_factories: BTreeMap<PluginId, LoadedPluginFactory>,
     health_probe: Option<(String, HealthProbe)>,
     event_sources: Mutex<Vec<Box<dyn HostEventSource>>>,
-    runner_limits: BTreeMap<String, RunnerLimits>,
+    runner_limits: BTreeMap<RunnerId, RunnerLimits>,
     runner_limit_factories: Vec<RunnerLimitFactory>,
     load_plan_hooks: Vec<Arc<dyn LoadPlanLifecycleHook>>,
     load_plan_observers: Vec<Arc<dyn LoadPlanObserver>>,
@@ -195,7 +195,7 @@ impl PreparedComponentRegistry {
             .collect()
     }
 
-    fn loaded_plugin_factories(&self) -> BTreeMap<String, LoadedPluginFactory> {
+    fn loaded_plugin_factories(&self) -> BTreeMap<PluginId, LoadedPluginFactory> {
         self.records
             .values()
             .flat_map(|component| component.loaded_plugin_factories.clone())
@@ -209,7 +209,7 @@ impl PreparedComponentRegistry {
             .collect()
     }
 
-    fn runner_limits(&self) -> BTreeMap<String, RunnerLimits> {
+    fn runner_limits(&self) -> BTreeMap<RunnerId, RunnerLimits> {
         let mut limits = BTreeMap::new();
         for (runner_id, registered) in self
             .records
@@ -298,7 +298,7 @@ struct PluginDeploymentState {
     #[serde(default = "deployment_state_version")]
     version: u32,
     #[serde(default)]
-    plugins: BTreeMap<String, PluginDeploymentKind>,
+    plugins: BTreeMap<PluginId, PluginDeploymentKind>,
 }
 
 impl Default for PluginDeploymentState {
@@ -508,9 +508,9 @@ pub enum ServiceRuntimeError {
     #[error("link control bridge failed: {0}")]
     LinkControl(#[from] mutsuki_service_link::LinkControlServerError),
     #[error("external runner link {link} for plugin {plugin_id} is not supported")]
-    UnsupportedRunnerLink { plugin_id: String, link: String },
+    UnsupportedRunnerLink { plugin_id: PluginId, link: String },
     #[error("external runner {runner_id} failed to start: {detail}")]
-    ExternalRunnerSpawn { runner_id: String, detail: String },
+    ExternalRunnerSpawn { runner_id: RunnerId, detail: String },
     #[error("service runtime already started")]
     AlreadyStarted,
     #[error("service runtime is not available")]
@@ -524,29 +524,29 @@ pub enum ServiceRuntimeError {
     #[error("configured plugin id must not be empty")]
     EmptyConfiguredPluginId,
     #[error("configured plugin {0} is selected more than once")]
-    DuplicateConfiguredPlugin(String),
+    DuplicateConfiguredPlugin(PluginId),
     #[error("configured plugin factory is not registered: {0}")]
-    UnknownConfiguredPlugin(String),
+    UnknownConfiguredPlugin(PluginId),
     #[error("configured plugin {plugin_id} contains raw credential field {field}")]
-    RawConfiguredPluginSecret { plugin_id: String, field: String },
+    RawConfiguredPluginSecret { plugin_id: PluginId, field: String },
     #[error("configured plugin {plugin_id} failed to install: {detail}")]
-    ConfiguredPluginInstall { plugin_id: String, detail: String },
+    ConfiguredPluginInstall { plugin_id: PluginId, detail: String },
     #[error("ABI plugin {plugin_id} failed to load: {detail}")]
-    AbiPlugin { plugin_id: String, detail: String },
+    AbiPlugin { plugin_id: PluginId, detail: String },
     #[error("configured plugin {plugin_id} has no available artifact: {detail}")]
-    PluginUnavailable { plugin_id: String, detail: String },
+    PluginUnavailable { plugin_id: PluginId, detail: String },
     #[error("configured plugin {plugin_id} has multiple deployments and requires a Host selection")]
-    PluginDeploymentAmbiguous { plugin_id: String },
+    PluginDeploymentAmbiguous { plugin_id: PluginId },
     #[error("configured plugin {plugin_id} deployment {deployment:?} is unavailable: {detail}")]
     PluginDeploymentUnavailable {
-        plugin_id: String,
+        plugin_id: PluginId,
         deployment: PluginDeploymentKind,
         detail: String,
     },
     #[error(
         "plugin {plugin_id} builtin and selected deployment expose different business surfaces"
     )]
-    PluginBusinessSurfaceMismatch { plugin_id: String },
+    PluginBusinessSurfaceMismatch { plugin_id: PluginId },
     #[error("failed to read or write plugin deployment state {path}: {detail}")]
     PluginDeploymentState { path: String, detail: String },
 }
@@ -624,7 +624,7 @@ impl ConfiguredPluginCatalog {
         }
         if self.factories.contains_key(plugin_id) {
             return Err(ServiceRuntimeError::DuplicateConfiguredPlugin(
-                plugin_id.into(),
+                PluginId::from(plugin_id),
             ));
         }
         self.factories.insert(plugin_id.into(), Arc::new(factory));
@@ -639,7 +639,7 @@ impl ConfiguredPluginCatalog {
             .find(|plugin_id| self.factories.contains_key(*plugin_id))
         {
             return Err(ServiceRuntimeError::DuplicateConfiguredPlugin(
-                plugin_id.clone(),
+                PluginId::from(plugin_id.as_str()),
             ));
         }
         self.factories.extend(other.factories);
@@ -1138,7 +1138,7 @@ impl ServiceRuntimeBuilder {
     /// handlers share a runner without weakening one another's safety boundary.
     pub fn configure_runner_limits(
         mut self,
-        runner_id: impl Into<String>,
+        runner_id: impl Into<RunnerId>,
         max_running: Option<usize>,
         wall_clock_timeout_ms: Option<u64>,
     ) -> Self {
@@ -1172,7 +1172,7 @@ impl ServiceRuntimeBuilder {
     /// for applying the resulting scheduler boundary atomically with the runtime generation.
     pub fn register_dynamic_runner_limit<F>(
         mut self,
-        runner_id: impl Into<String>,
+        runner_id: impl Into<RunnerId>,
         factory: F,
     ) -> Self
     where
@@ -1347,12 +1347,12 @@ impl ServiceRuntimeBuilder {
             }
             if !seen.insert(plugin_id.to_owned()) {
                 return Err(ServiceRuntimeError::DuplicateConfiguredPlugin(
-                    plugin_id.into(),
+                    PluginId::from(plugin_id),
                 ));
             }
             if let Some(field) = raw_credential_field(&selection.config, "") {
                 return Err(ServiceRuntimeError::RawConfiguredPluginSecret {
-                    plugin_id: plugin_id.into(),
+                    plugin_id: PluginId::from(plugin_id),
                     field,
                 });
             }
@@ -1364,7 +1364,10 @@ impl ServiceRuntimeBuilder {
             let plugin_id = selection.id.clone();
             self.current_component = Some(plugin_id.clone());
             self = factory.prepare(&selection.config, self).map_err(|detail| {
-                ServiceRuntimeError::ConfiguredPluginInstall { plugin_id, detail }
+                ServiceRuntimeError::ConfiguredPluginInstall {
+                    plugin_id: PluginId::from(plugin_id),
+                    detail,
+                }
             })?;
             self.current_component = None;
         }
@@ -1373,9 +1376,9 @@ impl ServiceRuntimeBuilder {
 }
 
 fn resolve_runner_limits(
-    configured: &BTreeMap<String, RunnerLimits>,
+    configured: &BTreeMap<RunnerId, RunnerLimits>,
     factories: &[RunnerLimitFactory],
-) -> BTreeMap<String, RunnerLimits> {
+) -> BTreeMap<RunnerId, RunnerLimits> {
     let mut limits = configured.clone();
     for factory in factories {
         let override_ = factory();
@@ -1978,7 +1981,7 @@ impl ServiceRuntimeInner {
                 .collect::<Vec<_>>();
             let [selection] = selections.as_slice() else {
                 return Err(ServiceRuntimeError::UnknownConfiguredPlugin(
-                    plugin_id.clone(),
+                    PluginId::from(plugin_id.as_str()),
                 ));
             };
             if !selection.enabled {
@@ -1986,14 +1989,13 @@ impl ServiceRuntimeInner {
             }
             if let Some(field) = raw_credential_field(&selection.config, "") {
                 return Err(ServiceRuntimeError::RawConfiguredPluginSecret {
-                    plugin_id: plugin_id.clone(),
+                    plugin_id: PluginId::from(plugin_id.as_str()),
                     field,
                 });
             }
-            let factory = self
-                .configured_plugins
-                .factory(plugin_id)
-                .ok_or_else(|| ServiceRuntimeError::UnknownConfiguredPlugin(plugin_id.clone()))?;
+            let factory = self.configured_plugins.factory(plugin_id).ok_or_else(|| {
+                ServiceRuntimeError::UnknownConfiguredPlugin(PluginId::from(plugin_id.as_str()))
+            })?;
             let builder = ServiceRuntimeBuilder {
                 config: candidate_config.clone(),
                 configured_plugins: self.configured_plugins.clone(),
@@ -2004,13 +2006,13 @@ impl ServiceRuntimeInner {
             let prepared = factory
                 .prepare(&selection.config, builder)
                 .map_err(|detail| ServiceRuntimeError::ConfiguredPluginInstall {
-                    plugin_id: plugin_id.clone(),
+                    plugin_id: PluginId::from(plugin_id.as_str()),
                     detail,
                 })?;
             for (component_id, component) in prepared.components.records {
                 if !affected.contains(&component_id) {
                     return Err(ServiceRuntimeError::ConfiguredPluginInstall {
-                        plugin_id: plugin_id.clone(),
+                        plugin_id: PluginId::from(plugin_id.as_str()),
                         detail: format!(
                             "configured factory emitted component owned by `{component_id}`"
                         ),
@@ -2032,10 +2034,10 @@ impl ServiceRuntimeInner {
         let mut runtime_affected = affected.clone();
         for plugin_id in &affected {
             if let Some(component) = combined_components.records.get(plugin_id) {
-                runtime_affected.extend(component.manifests.keys().cloned());
+                runtime_affected.extend(component.manifests.keys().map(ToString::to_string));
             }
             if let Some(component) = candidate_components.records.get(plugin_id) {
-                runtime_affected.extend(component.manifests.keys().cloned());
+                runtime_affected.extend(component.manifests.keys().map(ToString::to_string));
             }
             combined_components.replace_component(
                 plugin_id,
@@ -2387,7 +2389,7 @@ impl ServiceRuntimeInner {
             .expect("deployment state mutex");
         let mut plugin_ids = configured
             .iter()
-            .map(|selection| selection.id.trim().to_string())
+            .map(|selection| PluginId::from(selection.id.trim()))
             .collect::<BTreeSet<_>>();
         plugin_ids.extend(
             catalog
@@ -2403,9 +2405,9 @@ impl ServiceRuntimeInner {
                     .iter()
                     .find(|record| record.manifest.plugin_id == plugin_id);
                 PluginStatus {
-                    configured: configured
-                        .iter()
-                        .any(|selection| selection.enabled && selection.id.trim() == plugin_id),
+                    configured: configured.iter().any(|selection| {
+                        selection.enabled && selection.id.trim() == plugin_id.as_str()
+                    }),
                     active_deployment: active
                         .map(|record| deployment_name(&deployment_for(record))),
                     preferred_deployment: state.plugins.get(&plugin_id).map(deployment_name),
@@ -2426,7 +2428,7 @@ impl ServiceRuntimeInner {
                                 .map(|runtime| runtime.runner_link.clone()),
                         })
                         .collect(),
-                    plugin_id,
+                    plugin_id: plugin_id.to_string(),
                 }
             })
             .collect();
@@ -2435,7 +2437,7 @@ impl ServiceRuntimeInner {
             .iter()
             .map(|item| PluginInventoryDiagnostic {
                 manifest_path: item.manifest_path.display().to_string(),
-                plugin_id: item.plugin_id.clone(),
+                plugin_id: item.plugin_id.as_ref().map(|id| id.to_string()),
                 deployment: item.deployment.as_ref().map(deployment_name),
                 detail: item.detail.clone(),
             })
@@ -2506,10 +2508,11 @@ impl ServiceRuntimeInner {
         let mut next = previous.clone();
         match deployment {
             Some(deployment) => {
-                next.plugins.insert(plugin_id.clone(), deployment);
+                next.plugins
+                    .insert(PluginId::from(plugin_id.as_str()), deployment);
             }
             None => {
-                next.plugins.remove(&plugin_id);
+                next.plugins.remove(plugin_id.as_str());
             }
         }
         let builtin_registry = self
@@ -3082,7 +3085,7 @@ fn resolve_catalog(
             let details = inventory
                 .diagnostics
                 .iter()
-                .filter(|item| item.plugin_id.as_deref() == Some(plugin_id))
+                .filter(|item| item.plugin_id.as_ref().map(|id| id.as_str()) == Some(plugin_id))
                 .map(|item| item.detail.as_str())
                 .collect::<Vec<_>>()
                 .join("; ");
@@ -3094,7 +3097,7 @@ fn resolve_catalog(
         };
         if candidates.is_empty() {
             return Err(ServiceRuntimeError::PluginUnavailable {
-                plugin_id: plugin_id.into(),
+                plugin_id: PluginId::from(plugin_id),
                 detail: diagnostic(),
             });
         }
@@ -3104,7 +3107,7 @@ fn resolve_catalog(
                 .copied()
                 .find(|record| deployment_for(record) == *preferred)
                 .ok_or_else(|| ServiceRuntimeError::PluginDeploymentUnavailable {
-                    plugin_id: plugin_id.into(),
+                    plugin_id: PluginId::from(plugin_id),
                     deployment: preferred.clone(),
                     detail: diagnostic(),
                 })?
@@ -3123,11 +3126,11 @@ fn resolve_catalog(
             });
             if builtin_abi_only {
                 builtin.ok_or_else(|| ServiceRuntimeError::PluginDeploymentAmbiguous {
-                    plugin_id: plugin_id.into(),
+                    plugin_id: PluginId::from(plugin_id),
                 })?
             } else {
                 return Err(ServiceRuntimeError::PluginDeploymentAmbiguous {
-                    plugin_id: plugin_id.into(),
+                    plugin_id: PluginId::from(plugin_id),
                 });
             }
         };
@@ -3138,7 +3141,7 @@ fn resolve_catalog(
             && builtin.manifest.business_surface() != chosen.manifest.business_surface()
         {
             return Err(ServiceRuntimeError::PluginBusinessSurfaceMismatch {
-                plugin_id: plugin_id.into(),
+                plugin_id: PluginId::from(plugin_id),
             });
         }
         selected.push(chosen.clone());
@@ -3273,8 +3276,8 @@ fn read_log_tail(
 struct CoreBootInputs<'a> {
     native_runner_factories: &'a [NativeRunnerFactory],
     async_handler_factories: &'a [AsyncHandlerFactory],
-    loaded_plugin_factories: &'a BTreeMap<String, LoadedPluginFactory>,
-    runner_limits: &'a BTreeMap<String, RunnerLimits>,
+    loaded_plugin_factories: &'a BTreeMap<PluginId, LoadedPluginFactory>,
+    runner_limits: &'a BTreeMap<RunnerId, RunnerLimits>,
     load_plan_hooks: &'a [Arc<dyn LoadPlanLifecycleHook>],
     load_plan_observers: &'a [Arc<dyn LoadPlanObserver>],
 }
@@ -3482,7 +3485,7 @@ async fn runtime_bootstrapper(
     catalog: &PluginCatalog,
     native_runner_factories: &[NativeRunnerFactory],
     async_handler_factories: &[AsyncHandlerFactory],
-    loaded_plugin_factories: &BTreeMap<String, LoadedPluginFactory>,
+    loaded_plugin_factories: &BTreeMap<PluginId, LoadedPluginFactory>,
     runtime_client: Arc<DeferredRuntimeClient>,
 ) -> ServiceRuntimeResult<(RuntimeBootstrapper, RuntimeProfile)> {
     let mut bootstrapper = RuntimeBootstrapper::new();
@@ -3507,7 +3510,7 @@ async fn runtime_bootstrapper(
                     record.clone(),
                     config.clone(),
                     runtime_client.clone(),
-                    configured_plugin_config(config, &record.manifest.plugin_id),
+                    configured_plugin_config(config, record.manifest.plugin_id.as_str()),
                 )
                 .await?,
             );
@@ -3597,8 +3600,8 @@ fn register_stdio_runners(
             "MUTSUKI_HOME".into(),
             config.service.home_dir.to_string_lossy().into_owned(),
         );
-        extra_env.insert("MUTSUKI_RUNNER_ID".into(), descriptor.runner_id.clone());
-        extra_env.insert("MUTSUKI_PLUGIN_ID".into(), descriptor.plugin_id.clone());
+        extra_env.insert("MUTSUKI_RUNNER_ID".into(), descriptor.runner_id.to_string());
+        extra_env.insert("MUTSUKI_PLUGIN_ID".into(), descriptor.plugin_id.to_string());
         let spec = ProcessRunnerSpec {
             command: runtime.command.clone().into(),
             args: runtime.args.clone(),
@@ -3614,7 +3617,7 @@ fn register_stdio_runners(
             })?;
         if let Some(stderr) = runner.take_stderr() {
             let runner_id = descriptor.runner_id.clone();
-            std::thread::spawn(move || drain_blocking_stderr(runner_id, stderr));
+            std::thread::spawn(move || drain_blocking_stderr(runner_id.to_string(), stderr));
         }
         bootstrapper.register_external_runner(deployment.clone(), Box::new(runner));
     }
@@ -3662,11 +3665,11 @@ fn sidecar_specs(config: &ServiceConfig, catalog: &PluginCatalog) -> Vec<Managed
                 .provides
                 .runners
                 .first()
-                .map(|runner| runner.runner_id.clone())
+                .map(|runner| runner.runner_id.to_string())
                 .unwrap_or_else(|| format!("sidecar:{}", record.manifest.plugin_id));
             Some(ManagedRunnerSpec {
                 runner_id,
-                plugin_id: record.manifest.plugin_id.clone(),
+                plugin_id: record.manifest.plugin_id.to_string(),
                 runtime: runtime.clone(),
                 env_allowlist: config.runners.env_allowlist.clone(),
                 service_home: config.service.home_dir.clone(),
@@ -3720,24 +3723,28 @@ fn to_control_task_snapshots(snapshots: Vec<HostTaskSnapshot>) -> Vec<ControlTas
     snapshots
         .into_iter()
         .map(|snapshot| ControlTaskSnapshot {
-            task_id: snapshot.task_id,
-            protocol_id: snapshot.protocol_id,
+            task_id: snapshot.task_id.into(),
+            protocol_id: snapshot.protocol_id.into(),
             status: task_status_name(&snapshot.status).into(),
             priority: snapshot.priority,
             ready_at_step: snapshot.ready_at_step,
             created_sequence: snapshot.created_sequence,
             registry_generation: snapshot.registry_generation,
-            target_binding_id: snapshot.target_binding_id,
+            target_binding_id: snapshot.target_binding_id.map(Into::into),
             runner_hint: snapshot.runner_hint,
             claimed_by: snapshot.claimed_by,
             owner_runner: snapshot.owner_runner,
-            lease_id: snapshot.lease_id,
-            trace_id: snapshot.trace_id,
+            lease_id: snapshot.lease_id.map(Into::into),
+            trace_id: snapshot.trace_id.map(Into::into),
             correlation_id: snapshot.correlation_id,
-            input_refs: snapshot.input_refs,
-            output_ref: snapshot.output_ref,
-            continuation_ref: snapshot.continuation_ref,
-            required_surfaces: snapshot.required_surfaces,
+            input_refs: snapshot.input_refs.into_iter().map(Into::into).collect(),
+            output_ref: snapshot.output_ref.map(Into::into),
+            continuation_ref: snapshot.continuation_ref.map(Into::into),
+            required_surfaces: snapshot
+                .required_surfaces
+                .into_iter()
+                .map(Into::into)
+                .collect(),
             failure: snapshot.failure.map(|failure| ControlTaskFailureSummary {
                 code: failure.code,
                 source: failure.source,
@@ -3747,10 +3754,10 @@ fn to_control_task_snapshots(snapshots: Vec<HostTaskSnapshot>) -> Vec<ControlTas
         .collect()
 }
 
-fn to_control_task_outcome(task_id: &str, outcome: Option<TaskOutcome>) -> TaskOutcomeView {
+fn to_control_task_outcome(task_id: &TaskId, outcome: Option<TaskOutcome>) -> TaskOutcomeView {
     match outcome {
         None => TaskOutcomeView {
-            task_id: task_id.into(),
+            task_id: task_id.clone(),
             status: "pending".into(),
             output: None,
             output_ref: None,
@@ -3861,17 +3868,17 @@ fn resolve_task_handles(
         .collect::<std::collections::BTreeMap<_, _>>();
     let mut handles = Vec::with_capacity(task_ids.len());
     for task_id in task_ids {
-        let Some(snapshot) = by_id.remove(task_id) else {
+        let Some(snapshot) = by_id.remove(task_id.as_str()) else {
             return Err(ControlError::Failed(format!(
                 "task {task_id} was not found"
             )));
         };
         handles.push(TaskHandle {
-            task_id: snapshot.task_id,
-            protocol_id: snapshot.protocol_id,
-            target_binding_id: snapshot.target_binding_id,
+            task_id: snapshot.task_id.into(),
+            protocol_id: snapshot.protocol_id.into(),
+            target_binding_id: snapshot.target_binding_id.map(Into::into),
             cancel_policy: CancelPolicy::Cascade,
-            trace_id: snapshot.trace_id,
+            trace_id: snapshot.trace_id.map(Into::into),
             correlation_id: snapshot.correlation_id,
         });
     }
@@ -4224,7 +4231,7 @@ mod tests {
                 tokio::time::sleep(Duration::from_millis(5)).await;
                 map_work_batch_entries(&batch, |task| {
                     Ok(mutsuki_runtime_contracts::RunnerResult::completed(
-                        &task.task_id,
+                        task.task_id.clone(),
                     ))
                 })
             })
@@ -4836,10 +4843,15 @@ generation = 7
         assert_eq!(snapshots[0].protocol_id, "control.input");
         assert_eq!(snapshots[0].status, "ready");
         assert_eq!(snapshots[0].priority, 3);
-        assert_eq!(snapshots[0].trace_id.as_deref(), Some("trace-control"));
+        assert_eq!(
+            snapshots[0].trace_id.as_ref().map(|id| id.as_str()),
+            Some("trace-control")
+        );
         assert_eq!(
             snapshots[0].required_surfaces,
-            vec!["surface:control".to_string()]
+            vec![mutsuki_runtime_contracts::SurfaceId::from(
+                "surface:control"
+            )]
         );
         assert!(snapshots[0].lease_id.is_none());
         assert!(snapshots[0].failure.is_none());
@@ -5097,7 +5109,7 @@ generation = 7
         );
 
         let view = to_control_task_outcome(
-            "failed-task",
+            &TaskId::from("failed-task"),
             Some(TaskOutcome::Failed {
                 task_id: "failed-task".into(),
                 error,
@@ -5112,7 +5124,7 @@ generation = 7
     #[test]
     fn task_outcome_exposes_inline_business_output() {
         let view = to_control_task_outcome(
-            "completed-task",
+            &TaskId::from("completed-task"),
             Some(TaskOutcome::Completed {
                 task_id: "completed-task".into(),
                 output: Some(json!({"answer": 42})),
@@ -5223,7 +5235,7 @@ generation = 7
                     1,
                     1,
                     "executor:test",
-                    Some("lease-1".into()),
+                    Some::<mutsuki_runtime_contracts::TaskLeaseId>("lease-1".into()),
                     "invocation:test",
                 ),
                 batch,
@@ -6022,7 +6034,8 @@ generation = 7
                         checks.fetch_add(1, Ordering::SeqCst);
                     }
                 }
-                let mut result = mutsuki_runtime_contracts::RunnerResult::completed(&task.task_id);
+                let mut result =
+                    mutsuki_runtime_contracts::RunnerResult::completed(task.task_id.clone());
                 if let Some(protocol) = next_protocol {
                     let mut next = Task::new(
                         format!("{}:{protocol}", task.task_id),
@@ -6059,8 +6072,8 @@ generation = 7
             control: RunnerControlCapability::default(),
             metadata: BTreeMap::new(),
             contract_surfaces: vec![
-                format!("runner:{runner_id}"),
-                format!("task_protocol:{protocol}"),
+                format!("runner:{runner_id}").into(),
+                format!("task_protocol:{protocol}").into(),
             ],
         }
     }

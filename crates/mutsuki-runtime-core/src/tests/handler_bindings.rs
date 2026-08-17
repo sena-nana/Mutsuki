@@ -76,7 +76,10 @@ fn core_facade_can_submit_one_targeted_task_from_handler_binding() {
     binding.target_runner_hint = Some("message.runner".into());
     let plan = load_plan(vec![runner.clone()], vec![binding]);
     let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(boxed_runner!(runner, |task| {
-        assert_eq!(task.target_binding_id.as_deref(), Some("message-handler"));
+        assert_eq!(
+            task.target_binding_id.as_ref().map(|id| id.as_str()),
+            Some("message-handler")
+        );
         assert_eq!(task.protocol_id, "cap.message.handle");
         RunnerResult::completed(task.task_id.clone())
     }));

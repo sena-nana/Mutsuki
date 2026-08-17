@@ -63,7 +63,7 @@ impl QqMediaProvider for ResourceGatewayQqMediaProvider {
         }
         let latest = self
             .resources
-            .open_resource_descriptor(&resource.ref_id)
+            .open_resource_descriptor(resource.ref_id.as_str())
             .map_err(|error| QqMediaError::NotFound(error.to_string()))?;
         if latest.provider_id != self.provider_id || latest.generation != resource.generation {
             return Err(QqMediaError::NotReadable(

@@ -80,8 +80,8 @@ impl ApprovalBridge {
         }
         let attribution_matches = response
             .trace_id
-            .as_deref()
-            .is_none_or(|trace_id| trace_id == entry.request.trace_id)
+            .as_ref()
+            .is_none_or(|trace_id| trace_id == &entry.request.trace_id)
             && response
                 .correlation_id
                 .as_deref()
@@ -112,7 +112,7 @@ impl ApprovalBridge {
 fn fallback_attribution(context: FrontendContext) -> ApprovalAttribution {
     let id = Uuid::new_v4();
     ApprovalAttribution {
-        trace_id: format!("approval-trace:{id}"),
+        trace_id: format!("approval-trace:{id}").into(),
         correlation_id: format!("approval-correlation:{id}"),
         context,
     }

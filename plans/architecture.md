@@ -331,6 +331,7 @@ RunnerResult 不直接修改事实源：
 - `ResourceCellRef`：长期资源状态单元，例如连接池、stream、cookie jar、rate limiter。
 - `ResourceLease`：某个 task step 临时使用 ResourceCell 的租约。
 - `StateRef`：跨 task 权威语义状态。
+- `StateHistoryProfile`：可选、默认关闭的有界状态历史。`capacity_per_ref` 限制每个 ref 保留的版本数，`retain_steps` 是逻辑 step 周期；过期或超额的版本不能再通过 `core.state.rollback` 回退。
 
 默认规则：
 

@@ -304,11 +304,11 @@ fn standard_dispatch_capacity(
 
 pub(crate) fn validate_runner_limits(
     default_limits: &RunnerLimits,
-    runner_limits: &std::collections::BTreeMap<String, RunnerLimits>,
+    runner_limits: &std::collections::BTreeMap<mutsuki_runtime_contracts::RunnerId, RunnerLimits>,
 ) -> RuntimeResult<()> {
     validate_runner_limit("default", default_limits)?;
     for (runner_id, limits) in runner_limits {
-        validate_runner_limit(runner_id, limits)?;
+        validate_runner_limit(runner_id.as_str(), limits)?;
     }
     Ok(())
 }

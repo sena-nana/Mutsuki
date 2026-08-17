@@ -151,7 +151,7 @@ fn target_task(parent: &Task, target: &Value, index: usize) -> Result<Task, Runt
     child.target_binding_id = target
         .get("target_binding_id")
         .and_then(Value::as_str)
-        .map(ToOwned::to_owned);
+        .map(mutsuki_runtime_contracts::BindingId::from);
     child.runner_hint = target
         .get("runner_hint")
         .and_then(Value::as_str)
@@ -171,7 +171,7 @@ fn target_task(parent: &Task, target: &Value, index: usize) -> Result<Task, Runt
     child.correlation_id = parent
         .correlation_id
         .clone()
-        .or_else(|| Some(parent.task_id.clone()));
+        .or_else(|| Some(parent.task_id.to_string()));
     Ok(child)
 }
 
@@ -181,9 +181,10 @@ fn broadcast_error(
     message: impl Into<String>,
 ) -> RuntimeError {
     let mut error = RuntimeError::new(code, "runtime.workflow_broadcast", message);
-    error
-        .evidence
-        .insert("task_id".into(), ScalarValue::String(task.task_id.clone()));
+    error.evidence.insert(
+        "task_id".into(),
+        ScalarValue::String(task.task_id.to_string()),
+    );
     error
 }
 
@@ -245,7 +246,7 @@ mod tests {
                     1,
                     1,
                     "executor:broadcast",
-                    Vec::<String>::new(),
+                    Vec::<mutsuki_runtime_contracts::TaskLeaseId>::new(),
                     "batch:broadcast",
                 )
                 .with_batch("batch:broadcast", 1),
@@ -257,7 +258,10 @@ mod tests {
         assert_eq!(result.tasks.len(), 2);
         assert_eq!(result.tasks[0].task_id, "broadcast:1:target:1");
         assert_eq!(
-            result.tasks[0].target_binding_id.as_deref(),
+            result.tasks[0]
+                .target_binding_id
+                .as_ref()
+                .map(|id| id.as_str()),
             Some("binding:mutsuki.dev.echo")
         );
         assert_eq!(result.tasks[1].task_id, "custom-target");

@@ -10,9 +10,9 @@ use crate::plugin_runner::{
     register_permission_grants, scan_plugin_runners,
 };
 use mutsuki_runtime_contracts::{
-    ERR_RUNNER_NOT_FOUND, ObservabilityPage, ObservabilityProfile, RuntimeError, RuntimeEvent,
-    RuntimeEventKind, RuntimeProfile, RuntimeProfileMode, ScalarValue, Task, TaskBatch, TaskHandle,
-    TaskStatus, TraceSpan,
+    ERR_RUNNER_NOT_FOUND, ObservabilityPage, ObservabilityProfile, PluginId, RuntimeError,
+    RuntimeEvent, RuntimeEventKind, RuntimeProfile, RuntimeProfileMode, ScalarValue, Task,
+    TaskBatch, TaskHandle, TaskId, TaskStatus, TraceSpan,
 };
 use mutsuki_runtime_core::{ReloadDecision, RuntimeFailure};
 use mutsuki_runtime_host::{
@@ -64,7 +64,7 @@ struct DesktopPluginState {
     plugins: Vec<PluginSummary>,
     runners: Vec<RunnerSummary>,
     packages: Vec<PluginPackageRecord>,
-    active_protocols: BTreeSet<String>,
+    active_protocols: BTreeSet<mutsuki_runtime_contracts::ProtocolId>,
 }
 
 pub(crate) struct HostComponents {
@@ -75,7 +75,7 @@ pub(crate) struct HostComponents {
     pub plugins: Vec<PluginSummary>,
     pub runners: Vec<RunnerSummary>,
     pub packages: Vec<PluginPackageRecord>,
-    pub active_protocols: BTreeSet<String>,
+    pub active_protocols: BTreeSet<mutsuki_runtime_contracts::ProtocolId>,
     pub reload_blocked_by_builtin_runners: bool,
     pub builtin_runner_factories: Vec<BuiltinRunnerFactory>,
     pub runtime_client_runner_factories: Vec<RuntimeClientRunnerFactory>,
@@ -96,12 +96,12 @@ struct TaskSupervisor {
 
 #[derive(Debug, Default)]
 struct TaskSupervisorState {
-    active: BTreeMap<String, TaskHandle>,
-    events_by_task: BTreeMap<String, TaskEventBuffer>,
-    task_event_order: VecDeque<(String, u64)>,
+    active: BTreeMap<TaskId, TaskHandle>,
+    events_by_task: BTreeMap<TaskId, TaskEventBuffer>,
+    task_event_order: VecDeque<(TaskId, u64)>,
     retained_task_events: usize,
-    terminal_results: BTreeMap<String, Result<FrontendTaskResult, String>>,
-    terminal_order: VecDeque<String>,
+    terminal_results: BTreeMap<TaskId, Result<FrontendTaskResult, String>>,
+    terminal_order: VecDeque<TaskId>,
     last_runtime_event_sequence: u64,
     last_trace_span_sequence: u64,
     pump_running: bool,
@@ -145,11 +145,11 @@ impl TaskSupervisor {
         Self::take_task_events(&mut state, &task_id);
     }
 
-    fn handle_for(&self, task_id: &str) -> Option<TaskHandle> {
+    fn handle_for(&self, task_id: &TaskId) -> Option<TaskHandle> {
         self.state.lock().active.get(task_id).cloned()
     }
 
-    fn wait_result(&self, task_id: &str, consume: bool) -> HostResult<FrontendTaskResult> {
+    fn wait_result(&self, task_id: &TaskId, consume: bool) -> HostResult<FrontendTaskResult> {
         let mut state = self.state.lock();
         loop {
             if let Some(result) = state.terminal_results.get(task_id).cloned() {
@@ -311,7 +311,7 @@ impl TaskSupervisor {
 
     fn retain_terminal(
         state: &mut TaskSupervisorState,
-        task_id: String,
+        task_id: TaskId,
         result: Result<FrontendTaskResult, String>,
     ) {
         state.terminal_results.insert(task_id.clone(), result);
@@ -327,7 +327,7 @@ impl TaskSupervisor {
     fn retain_task_event(
         &self,
         state: &mut TaskSupervisorState,
-        task_id: String,
+        task_id: TaskId,
         event: RuntimeEvent,
     ) {
         if self.task_event_capacity_per_task == 0 || self.task_event_capacity_total == 0 {
@@ -395,7 +395,7 @@ impl TaskSupervisor {
         }
     }
 
-    fn take_task_events(state: &mut TaskSupervisorState, task_id: &str) -> TaskEventBuffer {
+    fn take_task_events(state: &mut TaskSupervisorState, task_id: &TaskId) -> TaskEventBuffer {
         let buffer = state.events_by_task.remove(task_id).unwrap_or_default();
         state.retained_task_events = state
             .retained_task_events
@@ -619,7 +619,7 @@ impl MutsukiTauriHost {
     }
 
     pub fn submit_task(&self, task: Task) -> HostResult<TaskHandle> {
-        self.ensure_protocol_available(&task.protocol_id)?;
+        self.ensure_protocol_available(task.protocol_id.as_str())?;
         let submitted = self.dispatch_submission(HostRuntimeCommand::SubmitTask(Box::new(task)))?;
         let handle = match submitted {
             HostRuntimeReply::TaskSubmitted(handle) => handle,
@@ -631,7 +631,7 @@ impl MutsukiTauriHost {
 
     pub fn submit_batch(&self, batch: TaskBatch) -> HostResult<Vec<TaskHandle>> {
         for task in &batch.tasks {
-            self.ensure_protocol_available(&task.protocol_id)?;
+            self.ensure_protocol_available(task.protocol_id.as_str())?;
         }
         let submitted =
             self.dispatch_submission(HostRuntimeCommand::SubmitBatch(Box::new(batch)))?;
@@ -764,7 +764,11 @@ impl MutsukiTauriHost {
         let profile = RuntimeProfile {
             profile_id: self.config.profile_id.clone(),
             mode: RuntimeProfileMode::FullDev,
-            enabled_plugins: discovered.enabled_plugins.iter().cloned().collect(),
+            enabled_plugins: discovered
+                .enabled_plugins
+                .iter()
+                .map(PluginId::from)
+                .collect(),
             bindings: BTreeMap::new(),
             surface_bindings: BTreeMap::new(),
             supported_extensions: Vec::new(),
@@ -834,7 +838,8 @@ impl MutsukiTauriHost {
         let handle = self.tasks.handle_for(&request.task_id).ok_or_else(|| {
             HostError::Runtime(format!("task is not tracked: {}", request.task_id))
         })?;
-        self.cancel_task_handle(handle).map(|handle| handle.task_id)
+        self.cancel_task_handle(handle)
+            .map(|handle| handle.task_id.to_string())
     }
 
     pub fn cancel_task_handle(&self, handle: TaskHandle) -> HostResult<TaskHandle> {
@@ -1171,10 +1176,11 @@ fn run_task_pump(
     }
 }
 
-fn task_event_id(event: &RuntimeEvent) -> Option<String> {
+fn task_event_id(event: &RuntimeEvent) -> Option<TaskId> {
     (event.kind == RuntimeEventKind::Task)
         .then(|| event.subject_id.clone())
         .flatten()
+        .map(TaskId::from)
 }
 
 fn ensure_bounded_resource_payload(actual: usize) -> HostResult<()> {
@@ -1321,7 +1327,7 @@ fn emit_log_record(
         target,
         message,
         timestamp_ms: current_timestamp_ms(),
-        trace_id,
+        trace_id: trace_id.map(mutsuki_runtime_contracts::TraceId::from),
         correlation_id,
         fields,
     });
@@ -1351,7 +1357,7 @@ mod supervisor_tests {
         let supervisor = TaskSupervisor::default();
         let handles = (0..=TaskSupervisor::MAX_RETAINED_RESULTS)
             .map(|index| TaskHandle {
-                task_id: format!("task:retained:{index:03}"),
+                task_id: format!("task:retained:{index:03}").into(),
                 protocol_id: "test.retention".into(),
                 target_binding_id: None,
                 cancel_policy: CancelPolicy::Cascade,
@@ -1429,7 +1435,7 @@ mod supervisor_tests {
                 sequence,
                 kind: RuntimeEventKind::Task,
                 name: format!("task.event.{sequence}"),
-                subject_id: Some(handles[(sequence as usize) % 2].task_id.clone()),
+                subject_id: Some(handles[(sequence as usize) % 2].task_id.to_string()),
                 attributes: BTreeMap::new(),
                 error: None,
             })

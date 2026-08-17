@@ -5,7 +5,8 @@ use mutsuki_agent_contracts::{
     AgentError, ResourceRef, SessionDelta, SessionSnapshotRef, SessionVersion,
 };
 use mutsuki_runtime_contracts::{
-    LeaseToken, ResourceAccess, ResourceId, ResourceLifetime, ResourceSealState, ResourceSemantic,
+    LeaseToken, RefId, ResourceAccess, ResourceId, ResourceLifetime, ResourceSealState,
+    ResourceSemantic,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -19,7 +20,7 @@ pub struct AgentResourceStore {
 struct ResourceStoreState {
     next_resource: u64,
     next_lease: u64,
-    resources: BTreeMap<String, StoredResource>,
+    resources: BTreeMap<RefId, StoredResource>,
     leases: BTreeMap<String, StoredLease>,
 }
 
@@ -29,7 +30,7 @@ struct StoredResource {
 }
 
 struct StoredLease {
-    ref_id: String,
+    ref_id: RefId,
     expires_at_step: Option<u64>,
 }
 
@@ -53,7 +54,7 @@ impl AgentResourceStore {
         let mut state = self.inner.lock().expect("agent resource store mutex");
         state.next_resource = state.next_resource.saturating_add(1);
         let slot_id = format!("{owner}:{}", state.next_resource);
-        let ref_id = format!("{kind}:{slot_id}:{version}");
+        let ref_id = RefId::from(format!("{kind}:{slot_id}:{version}"));
         let reference = ResourceRef {
             ref_id: ref_id.clone(),
             resource_id: ResourceId {

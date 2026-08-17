@@ -14,7 +14,7 @@ use mutsuki_distributed_contracts::{
 };
 use mutsuki_distributed_runtime::Coordinator;
 use mutsuki_runtime_contracts::{
-    ContentId, ExecutionMobility, PortabilityCapability, PortableTask, RecoveryMode,
+    ContentId, ExecutionMobility, PortabilityCapability, PortableTask, RecoveryMode, RefId,
     RequirementSet, ResourcePersistence, RetrySafety, SchemaIdentity, Task,
     TaskAcceptanceDurability,
 };
@@ -223,7 +223,12 @@ fn portable_task(
         .map_err(|error| AgentError::invalid_input(error.to_string()))?;
     let digest = hex::encode(Sha256::digest(&payload_bytes));
     let mut task = Task::new(task_id, protocol_id, payload);
-    task.input_refs = placement.required_resource_refs.clone();
+    task.input_refs = placement
+        .required_resource_refs
+        .iter()
+        .cloned()
+        .map(RefId::from)
+        .collect();
     let capability = portability_capability(placement);
     let portable = PortableTask::new(
         task,
@@ -316,7 +321,7 @@ mod tests {
     };
     use mutsuki_runtime_contracts::{
         CancelPolicy, CapabilitySet, PortabilityCatalog, RuntimeEvent, TaskBatch, TaskHandle,
-        TaskPortabilityDescriptor,
+        TaskId, TaskPortabilityDescriptor,
     };
 
     #[derive(Default)]
@@ -370,7 +375,7 @@ mod tests {
             let task_id = global_task_id.0.clone();
             Box::pin(async move {
                 Ok(Some(LocalTaskOutcome {
-                    task_id,
+                    task_id: task_id.into(),
                     status: "completed".into(),
                     output_ref: Some("resource:result".into()),
                     reason: None,
@@ -438,7 +443,10 @@ mod tests {
             futures::executor::block_on(client.recover_result("agent-subagent:parent:child"))
                 .unwrap()
                 .unwrap();
-        assert_eq!(outcome.output_ref.as_deref(), Some("resource:result"));
+        assert_eq!(
+            outcome.output_ref.as_ref().map(|id| id.as_str()),
+            Some("resource:result")
+        );
         assert_eq!(
             futures::executor::block_on(client.cancel_subagents("parent")).unwrap(),
             1
@@ -471,7 +479,7 @@ mod tests {
         assert_eq!(portable.capability.mobility, ExecutionMobility::LocalOnly);
         assert_eq!(
             portable.task.input_refs,
-            vec!["resource:workspace".to_owned()]
+            vec![RefId::from("resource:workspace")]
         );
         assert_eq!(
             portable.capability.resource_persistence,
@@ -527,7 +535,7 @@ mod tests {
     #[derive(Default)]
     struct RecordingHost {
         submitted: Mutex<Vec<Task>>,
-        cancelled: Mutex<Vec<String>>,
+        cancelled: Mutex<Vec<TaskId>>,
     }
 
     impl HostAdapter for RecordingHost {
@@ -693,7 +701,7 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(
-            outcome.output_ref.as_deref(),
+            outcome.output_ref.as_ref().map(|id| id.as_str()),
             Some("resource:remote-result")
         );
         assert_eq!(
@@ -702,7 +710,9 @@ mod tests {
         );
         assert_eq!(
             worker_host.cancelled.lock().unwrap().as_slice(),
-            &["agent-subagent:remote-parent:remote-child:attempt:1".to_owned()]
+            &[TaskId::from(
+                "agent-subagent:remote-parent:remote-child:attempt:1",
+            )]
         );
     }
 
@@ -728,7 +738,7 @@ mod tests {
         assert_eq!(submitted.len(), 1);
         assert_eq!(
             submitted[0].input_refs,
-            vec!["resource:workspace".to_owned()]
+            vec![RefId::from("resource:workspace")]
         );
     }
 }

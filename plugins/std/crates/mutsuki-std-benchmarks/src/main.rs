@@ -684,7 +684,14 @@ impl ResourceRegistryGateway for BenchmarkResources {
 }
 
 fn context(id: &str) -> RunnerContext {
-    RunnerContext::new(1, 1, "benchmark", Vec::<String>::new(), id).with_batch(id, 1)
+    RunnerContext::new(
+        1,
+        1,
+        "benchmark",
+        Vec::<mutsuki_runtime_contracts::TaskLeaseId>::new(),
+        id,
+    )
+    .with_batch(id, 1)
 }
 
 fn batch(runner_id: &str, task: &Task) -> WorkBatch {
@@ -693,14 +700,14 @@ fn batch(runner_id: &str, task: &Task) -> WorkBatch {
 
 fn batch_tasks(runner_id: &str, tasks: &[Task]) -> WorkBatch {
     WorkBatch {
-        batch_id: format!("batch:{}", tasks[0].task_id),
+        batch_id: format!("batch:{}", tasks[0].task_id).into(),
         tick_id: "tick:1".into(),
         batch_key: runner_id.into(),
         entries: tasks
             .iter()
             .enumerate()
             .map(|(index, task)| BatchEntry {
-                entry_id: task.task_id.clone(),
+                entry_id: task.task_id.as_str().into(),
                 task_id: task.task_id.clone(),
                 trace_id: None,
                 parent_id: None,

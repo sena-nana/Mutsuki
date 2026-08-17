@@ -5,10 +5,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use mutsuki_runtime_contracts::{
-    BridgeDescriptor, CodecDescriptor, DomainEvent, HostExtensionDescriptor, ObservabilityPage,
-    PluginBackendDescriptor, PluginManifest, RuntimeError, RuntimeEvent, RuntimeLoadPlan,
-    ScalarValue, SchedulerPolicyDescriptor, Task, TaskBatch, TaskHandle, TaskOutcome, TaskStatus,
-    TraceSpan, WorkflowDescriptor,
+    BindingId, BridgeDescriptor, CodecDescriptor, DomainEvent, HostExtensionDescriptor,
+    ObservabilityPage, PluginBackendDescriptor, PluginManifest, ProtocolId, RefId, RunnerId,
+    RuntimeError, RuntimeEvent, RuntimeLoadPlan, ScalarValue, SchedulerPolicyDescriptor, SurfaceId,
+    Task, TaskBatch, TaskHandle, TaskId, TaskLeaseId, TaskOutcome, TaskStatus, TraceId, TraceSpan,
+    WorkflowDescriptor,
 };
 use mutsuki_runtime_core::{
     ReloadDecision, RuntimeFailure, RuntimeResult, RuntimeStatistics, RuntimeStopState,
@@ -770,25 +771,25 @@ pub struct HostTaskFailureSummary {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct HostTaskSnapshot {
-    pub task_id: String,
-    pub protocol_id: String,
+    pub task_id: TaskId,
+    pub protocol_id: ProtocolId,
     pub status: TaskStatus,
     pub priority: i64,
     pub ready_at_step: Option<u64>,
     pub created_sequence: u64,
     pub registry_generation: u64,
-    pub target_binding_id: Option<String>,
+    pub target_binding_id: Option<BindingId>,
     pub runner_hint: Option<String>,
-    pub claimed_by: Option<String>,
-    pub owner_runner: Option<String>,
-    pub lease_id: Option<String>,
+    pub claimed_by: Option<RunnerId>,
+    pub owner_runner: Option<RunnerId>,
+    pub lease_id: Option<TaskLeaseId>,
     pub attempt_generation: u64,
-    pub trace_id: Option<String>,
+    pub trace_id: Option<TraceId>,
     pub correlation_id: Option<String>,
-    pub input_refs: Vec<String>,
-    pub output_ref: Option<String>,
-    pub continuation_ref: Option<String>,
-    pub required_surfaces: Vec<String>,
+    pub input_refs: Vec<RefId>,
+    pub output_ref: Option<RefId>,
+    pub continuation_ref: Option<RefId>,
+    pub required_surfaces: Vec<SurfaceId>,
     pub failure: Option<HostTaskFailureSummary>,
 }
 

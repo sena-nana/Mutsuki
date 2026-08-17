@@ -483,7 +483,7 @@ impl RemoteWorker for WorkerEndpoint {
             self.localizer.localize(&envelope.direct_inputs).await?;
             let mut local_task = envelope.portable.into_local_task();
             local_task.task_id =
-                format!("{}:attempt:{}", envelope.global_task_id.0, envelope.attempt);
+                format!("{}:attempt:{}", envelope.global_task_id.0, envelope.attempt).into();
             let handles = self
                 .host
                 .submit_batch(TaskBatch::one(
@@ -638,7 +638,7 @@ impl Coordinator {
         portable: PortableTask,
     ) -> Result<TaskPlacement, DistributedError> {
         let mut task = portable.into_local_task();
-        task.task_id = format!("{}:attempt:{attempt}", global_task_id.0);
+        task.task_id = format!("{}:attempt:{attempt}", global_task_id.0).into();
         let handles = self
             .origin_host
             .submit_batch(TaskBatch::one(

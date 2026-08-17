@@ -111,9 +111,10 @@ pub(super) fn block(
 
 pub(super) fn wake(
     task_pool: &mut TaskPool,
-    task_id: &str,
+    task_id: impl AsRef<str>,
     current_step: u64,
 ) -> RuntimeResult<()> {
+    let task_id = task_id.as_ref();
     let previous_status = task_pool.mutate_record_indexed(task_id, |record| {
         if !matches!(record.status, TaskStatus::Waiting | TaskStatus::Blocked) {
             return Err(crate::runtime_failure(
@@ -135,7 +136,10 @@ pub(super) fn wake(
     Ok(())
 }
 
-pub(super) fn wake_due_tasks(task_pool: &mut TaskPool, current_step: u64) -> Vec<(String, u64)> {
+pub(super) fn wake_due_tasks(
+    task_pool: &mut TaskPool,
+    current_step: u64,
+) -> Vec<(mutsuki_runtime_contracts::TaskId, u64)> {
     let due_tasks = task_pool.take_due_wake_tasks(current_step);
     for (task_id, _) in &due_tasks {
         let previous_status = task_pool
@@ -157,9 +161,10 @@ pub(super) fn wake_due_tasks(task_pool: &mut TaskPool, current_step: u64) -> Vec
 
 pub(super) fn reject_ready(
     task_pool: &mut TaskPool,
-    task_id: &str,
+    task_id: impl AsRef<str>,
     failure: RuntimeError,
 ) -> RuntimeResult<()> {
+    let task_id = task_id.as_ref();
     task_pool.mutate_record_indexed(task_id, |record| {
         if record.status != TaskStatus::Ready {
             return Err(crate::runtime_failure(
@@ -181,10 +186,12 @@ pub(super) fn reject_ready(
 
 pub(super) fn cancel_running_invocation(
     task_pool: &mut TaskPool,
-    runner_id: &str,
-    invocation_id: &str,
+    runner_id: impl AsRef<str>,
+    invocation_id: impl AsRef<str>,
     current_step: u64,
 ) -> usize {
+    let runner_id = runner_id.as_ref();
+    let invocation_id = invocation_id.as_ref();
     let task_id = task_pool
         .running_task_ids(runner_id)
         .into_iter()
@@ -194,7 +201,7 @@ pub(super) fn cancel_running_invocation(
                 record
                     .lease
                     .as_ref()
-                    .is_some_and(|lease| lease.lease_id == invocation_id)
+                    .is_some_and(|lease| lease.lease_id.as_str() == invocation_id)
                     .then(|| record.task.task_id.clone())
             })
         });
@@ -245,10 +252,11 @@ pub(super) fn cancel_task(
 
 pub(super) fn request_cancel_by_core(
     task_pool: &mut TaskPool,
-    task_id: &str,
+    task_id: impl AsRef<str>,
     current_step: u64,
     failure: Option<RuntimeError>,
 ) -> RuntimeResult<bool> {
+    let task_id = task_id.as_ref();
     if let Some(pending) = task_pool.pending_cancellations.get_mut(task_id) {
         if failure.is_some() {
             pending.failure = failure;
@@ -259,7 +267,7 @@ pub(super) fn request_cancel_by_core(
     if status == TaskStatus::Running {
         task_pool
             .pending_cancellations
-            .insert(task_id.to_string(), PendingCancellation { failure });
+            .insert(task_id.into(), PendingCancellation { failure });
         return Ok(false);
     }
     terminal_by_core(
@@ -283,7 +291,7 @@ pub(super) fn finalize_requested_cancellation(
     };
     task_pool.mutate_record_indexed(&lease.task_id, |record| {
         let matches_active = record.status == TaskStatus::Running
-            && record.claimed_by.as_deref() == Some(lease.runner_id.as_str())
+            && record.claimed_by.as_ref() == Some(&lease.runner_id)
             && record.lease.as_ref() == Some(lease);
         if !matches_active {
             return Err(crate::runtime_failure(
@@ -307,12 +315,13 @@ pub(super) fn finalize_requested_cancellation(
 
 pub(super) fn terminal_by_core(
     task_pool: &mut TaskPool,
-    task_id: &str,
+    task_id: impl AsRef<str>,
     status: TaskStatus,
     failure: Option<RuntimeError>,
     action: &str,
     current_step: u64,
 ) -> RuntimeResult<()> {
+    let task_id = task_id.as_ref();
     let (active_lease, previous_status) = task_pool.mutate_record_indexed(task_id, |record| {
         if is_terminal_status(&record.status) {
             return Err(crate::runtime_failure(
@@ -340,7 +349,7 @@ pub(super) fn terminal_by_core(
 
 pub(super) fn ensure_active_lease(
     task_pool: &TaskPool,
-    task_id: &str,
+    task_id: impl AsRef<str>,
     lease: &TaskLease,
     current_step: u64,
     action: &str,
@@ -390,7 +399,7 @@ pub(super) fn abort_all(
     task_pool: &mut TaskPool,
     current_step: u64,
     failure: RuntimeError,
-) -> Vec<String> {
+) -> Vec<mutsuki_runtime_contracts::TaskId> {
     let mut aborted = Vec::new();
     let mut finished_leases = Vec::new();
     let mut pending = Vec::new();
@@ -512,7 +521,7 @@ pub(super) fn validate_record_lease(
     let active = record.lease.as_ref();
     let expired = task_lease_expired(lease, current_step);
     let matches_active = record.status == TaskStatus::Running
-        && record.claimed_by.as_deref() == Some(lease.runner_id.as_str())
+        && record.claimed_by.as_ref() == Some(&lease.runner_id)
         && active.is_some_and(|active| active == lease);
     if matches_active && !expired {
         return Ok(());
@@ -524,11 +533,11 @@ pub(super) fn validate_record_lease(
     );
     error.evidence.insert(
         "lease_id".into(),
-        ScalarValue::String(lease.lease_id.clone()),
+        ScalarValue::String(lease.lease_id.to_string()),
     );
     error.evidence.insert(
         "executor_id".into(),
-        ScalarValue::String(lease.executor_id.clone()),
+        ScalarValue::String(lease.executor_id.to_string()),
     );
     error
         .evidence
@@ -536,11 +545,11 @@ pub(super) fn validate_record_lease(
     if let Some(active) = active {
         error.evidence.insert(
             "active_lease_id".into(),
-            ScalarValue::String(active.lease_id.clone()),
+            ScalarValue::String(active.lease_id.to_string()),
         );
         error.evidence.insert(
             "active_executor_id".into(),
-            ScalarValue::String(active.executor_id.clone()),
+            ScalarValue::String(active.executor_id.to_string()),
         );
     }
     if expired {

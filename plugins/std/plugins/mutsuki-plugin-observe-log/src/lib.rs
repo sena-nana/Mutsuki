@@ -109,7 +109,7 @@ fn accepts_protocol(protocol_id: &str) -> bool {
 }
 
 fn observe_result(task: &mutsuki_runtime_contracts::Task) -> Result<RunnerResult, RuntimeError> {
-    if accepts_protocol(&task.protocol_id) {
+    if accepts_protocol(task.protocol_id.as_str()) {
         return Ok(event_result(task));
     }
     Err(RuntimeError::new(
@@ -123,7 +123,7 @@ fn event_result(task: &mutsuki_runtime_contracts::Task) -> RunnerResult {
     let mut result = RunnerResult::completed(task.task_id.clone());
     result.events.push(DomainEvent {
         event_id: format!("event:{}:{}", task.protocol_id, task.task_id),
-        kind: task.protocol_id.clone(),
+        kind: task.protocol_id.to_string(),
         payload: task.payload.to_value(),
     });
     result
@@ -175,7 +175,7 @@ mod tests {
                     1,
                     1,
                     "executor:observe",
-                    Vec::<String>::new(),
+                    Vec::<mutsuki_runtime_contracts::TaskLeaseId>::new(),
                     "batch:observe",
                 )
                 .with_batch("batch:observe", 1),

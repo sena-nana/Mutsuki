@@ -28,9 +28,12 @@ pub(super) fn dispatch_batch_attrs(
         ),
         (
             "batch_id".into(),
-            ScalarValue::String(batch.batch_id.clone()),
+            ScalarValue::String(batch.batch_id.to_string()),
         ),
-        ("tick_id".into(), ScalarValue::String(batch.tick_id.clone())),
+        (
+            "tick_id".into(),
+            ScalarValue::String(batch.tick_id.to_string()),
+        ),
         (
             "payload_layout".into(),
             ScalarValue::String(batch.payload.layout().as_str().into()),
@@ -59,9 +62,12 @@ pub(super) fn dispatch_batch_attrs(
     if let Some(entry) = batch.entries.first() {
         attrs.insert(
             "entry_id".into(),
-            ScalarValue::String(entry.entry_id.clone()),
+            ScalarValue::String(entry.entry_id.to_string()),
         );
-        attrs.insert("task_id".into(), ScalarValue::String(entry.task_id.clone()));
+        attrs.insert(
+            "task_id".into(),
+            ScalarValue::String(entry.task_id.to_string()),
+        );
         attrs.insert(
             "lane".into(),
             ScalarValue::String(format!("{:?}", entry.lane)),
@@ -108,7 +114,7 @@ pub(super) fn build_work_batch(
         let resource_requirement_indices =
             (resource_start..resource_requirements.len()).collect::<Vec<_>>();
         entries.push(BatchEntry {
-            entry_id: task.task_id.clone(),
+            entry_id: task.task_id.as_str().into(),
             task_id: task.task_id.clone(),
             trace_id: task.trace_id.clone(),
             parent_id: None,
@@ -122,8 +128,8 @@ pub(super) fn build_work_batch(
         });
     }
     let work_set = WorkSet {
-        tick_id: tick_id.clone(),
-        batch_key: descriptor.runner_id.clone(),
+        tick_id: tick_id.clone().into(),
+        batch_key: descriptor.runner_id.as_str().into(),
         entries,
         resource_requirements,
     };
@@ -134,7 +140,7 @@ pub(super) fn build_work_batch(
         .collect();
     WorkBatch {
         batch_id: batch_id.into(),
-        tick_id,
+        tick_id: tick_id.into(),
         batch_key: work_set.batch_key,
         entries: work_set.entries,
         payload: BatchPayload::from_local_tasks(
@@ -153,7 +159,7 @@ pub(super) fn split_leased_tasks_by_resource_conflict(
 ) -> Vec<Vec<(TaskLease, Arc<Task>)>> {
     let mut groups: Vec<Vec<(TaskLease, Arc<Task>)>> = Vec::new();
     let mut current_group: Vec<(TaskLease, Arc<Task>)> = Vec::new();
-    let mut current_write_refs = HashSet::new();
+    let mut current_write_refs = HashSet::<mutsuki_runtime_contracts::RefId>::new();
     for leased_task in leased_tasks {
         let write_refs = write_requirement_refs(&leased_task.1);
         if !current_group.is_empty()
@@ -176,7 +182,7 @@ pub(super) fn split_leased_tasks_by_resource_conflict(
     groups
 }
 
-fn write_requirement_refs(task: &Task) -> Vec<String> {
+fn write_requirement_refs(task: &Task) -> Vec<mutsuki_runtime_contracts::RefId> {
     task.resource_requirements
         .iter()
         .filter(|requirement| {
@@ -194,8 +200,8 @@ fn build_work_resource_plan(
     requirement_entry_indices: &[usize],
 ) -> WorkResourcePlan {
     let mut plan = WorkResourcePlan::empty();
-    let mut read_views: BTreeMap<String, Vec<usize>> = BTreeMap::new();
-    let mut write_locks: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    let mut read_views: BTreeMap<mutsuki_runtime_contracts::RefId, Vec<usize>> = BTreeMap::new();
+    let mut write_locks: BTreeMap<mutsuki_runtime_contracts::RefId, Vec<usize>> = BTreeMap::new();
     for (index, requirement) in work_set.resource_requirements.iter().enumerate() {
         match requirement.mode {
             ResourceAccessMode::Read => {

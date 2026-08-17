@@ -341,8 +341,8 @@ pub struct Task {
 
 impl Task {
     pub fn new(
-        task_id: impl Into<String>,
-        protocol_id: impl Into<String>,
+        task_id: impl Into<TaskId>,
+        protocol_id: impl Into<ProtocolId>,
         payload: impl Into<TaskPayload>,
     ) -> Self {
         let protocol_id = protocol_id.into();
@@ -374,8 +374,8 @@ impl Task {
     /// Rebinds protocol metadata while sharing the source payload `Arc`.
     pub fn derive_with_protocol(
         &self,
-        task_id: impl Into<String>,
-        protocol_id: impl Into<String>,
+        task_id: impl Into<TaskId>,
+        protocol_id: impl Into<ProtocolId>,
     ) -> Self {
         let mut derived = Self::new(task_id, protocol_id, self.payload.clone());
         derived.priority = self.priority;
@@ -383,7 +383,7 @@ impl Task {
         derived.correlation_id = self
             .correlation_id
             .clone()
-            .or_else(|| Some(self.task_id.clone()));
+            .or_else(|| Some(self.task_id.to_string()));
         derived.idempotency_key = self.idempotency_key.clone();
         derived.input_refs = self.input_refs.clone();
         derived.expected_versions = self.expected_versions.clone();
@@ -502,4 +502,10 @@ pub struct StateDelta {
     pub expected_version: u64,
     pub patch: Value,
     pub conflict_policy: ConflictPolicy,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StateRollback {
+    pub target_ref: RefId,
+    pub to_version: u64,
 }

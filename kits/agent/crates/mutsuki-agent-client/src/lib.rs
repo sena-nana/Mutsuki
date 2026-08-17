@@ -845,7 +845,7 @@ fn validate_envelope(request: &AgentWireRequestEnvelope) -> Result<(), AgentWire
         AgentWireRequest::ReadResource {
             resource, length, ..
         } => {
-            non_empty(&resource.ref_id, "resource.ref_id")?;
+            non_empty(resource.ref_id.as_str(), "resource.ref_id")?;
             if *length == 0 || *length > MAX_RESOURCE_CHUNK_SIZE {
                 Err(protocol_error(
                     "agent.wire.resource_chunk_limit",

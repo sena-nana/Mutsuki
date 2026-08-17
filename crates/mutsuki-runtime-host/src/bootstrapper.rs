@@ -3,9 +3,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use mutsuki_runtime_contracts::{
-    CompletionBatch, ContractSurface, ContractSurfaceKind, PluginDeploymentKind, PluginManifest,
-    RequirementBinding, RequirementKind, RunnerDescriptor, RuntimeLoadPlan, RuntimeProfile,
-    WorkBatch,
+    CompletionBatch, ContractSurface, ContractSurfaceKind, PluginDeploymentKind, PluginId,
+    PluginManifest, RequirementBinding, RequirementKind, RunnerDescriptor, RuntimeLoadPlan,
+    RuntimeProfile, WorkBatch,
 };
 use mutsuki_runtime_core::{
     AsyncBatchHandler, AsyncCompletionFuture, CoreKernelRunner, CoreRuntime, Runner, RunnerContext,
@@ -31,7 +31,7 @@ use crate::scope::{PluginLifetime, PluginScopeManager, ScopeId, ServiceDependenc
 pub struct PluginScopeSet {
     manager: PluginScopeManager,
     root_scope: ScopeId,
-    plugin_scopes: BTreeMap<String, ScopeId>,
+    plugin_scopes: BTreeMap<PluginId, ScopeId>,
     activation_order: Vec<ScopeId>,
 }
 
@@ -47,8 +47,8 @@ impl PluginScopeSet {
     }
 
     #[must_use]
-    pub fn plugin_scope(&self, plugin_id: &str) -> Option<&ScopeId> {
-        self.plugin_scopes.get(plugin_id)
+    pub fn plugin_scope(&self, plugin_id: impl AsRef<str>) -> Option<&ScopeId> {
+        self.plugin_scopes.get(plugin_id.as_ref())
     }
 
     pub(crate) fn has_live_plugins(&self) -> bool {
@@ -86,7 +86,7 @@ impl PluginScopeSet {
 
     pub(crate) fn validate_reload(
         &self,
-        affected_plugins: Option<&BTreeSet<String>>,
+        affected_plugins: Option<&BTreeSet<PluginId>>,
     ) -> RuntimeResult<()> {
         for (plugin_id, scope_id) in &self.plugin_scopes {
             if affected_plugins.is_some_and(|affected| !affected.contains(plugin_id)) {
@@ -101,7 +101,7 @@ impl PluginScopeSet {
             if scope.lifetime != PluginLifetime::DrainRequired {
                 return Err(crate::error::host_failure(
                     "host.scope.reload_requires_restart",
-                    plugin_id,
+                    plugin_id.as_str(),
                 ));
             }
         }
@@ -110,12 +110,12 @@ impl PluginScopeSet {
 
     pub(crate) fn validate_reload_domain(
         &self,
-        affected_plugins: &BTreeSet<String>,
+        affected_plugins: &BTreeSet<PluginId>,
     ) -> RuntimeResult<()> {
         let snapshots = self.manager.snapshots();
         let providers = snapshots
             .iter()
-            .filter(|scope| self.plugin_scopes.contains_key(&scope.plugin_id))
+            .filter(|scope| self.plugin_scopes.contains_key(scope.plugin_id.as_str()))
             .flat_map(|scope| {
                 scope
                     .provided_services
@@ -126,13 +126,13 @@ impl PluginScopeSet {
 
         for consumer in snapshots
             .iter()
-            .filter(|scope| self.plugin_scopes.contains_key(&scope.plugin_id))
+            .filter(|scope| self.plugin_scopes.contains_key(scope.plugin_id.as_str()))
         {
             for dependency in &consumer.dependencies {
                 let Some(provider) = providers.get(dependency.service_id.as_str()) else {
                     continue;
                 };
-                if affected_plugins.contains(&consumer.plugin_id)
+                if affected_plugins.contains(consumer.plugin_id.as_str())
                     != affected_plugins.contains(*provider)
                 {
                     return Err(crate::error::host_failure(
@@ -169,8 +169,8 @@ pub struct PreparedRuntimeReload {
     pub(crate) services: Arc<HostServiceRegistry>,
     pub(crate) profile_id: String,
     pub(crate) registry_generation: u64,
-    pub(crate) runner_limits: Option<BTreeMap<String, RunnerLimits>>,
-    pub(crate) affected_plugins: Option<BTreeSet<String>>,
+    pub(crate) runner_limits: Option<BTreeMap<mutsuki_runtime_contracts::RunnerId, RunnerLimits>>,
+    pub(crate) affected_plugins: Option<BTreeSet<PluginId>>,
     pub(crate) scopes: Option<PluginScopeSet>,
 }
 
@@ -228,12 +228,12 @@ struct RegisteredAsyncHandler {
 
 #[derive(Clone)]
 struct RegisteredHostService {
-    owner_plugin_id: String,
+    owner_plugin_id: PluginId,
     service: RuntimeBootstrapperService,
 }
 
 struct RegisteredHostEffect {
-    owner_plugin_id: String,
+    owner_plugin_id: PluginId,
     effect: RuntimeBootstrapperEffect,
 }
 
@@ -424,7 +424,7 @@ impl RuntimeBootstrapper {
         self,
         profile: RuntimeProfile,
         registry_generation: u64,
-        runner_limits: BTreeMap<String, RunnerLimits>,
+        runner_limits: BTreeMap<mutsuki_runtime_contracts::RunnerId, RunnerLimits>,
     ) -> RuntimeResult<PreparedRuntimeReload> {
         self.prepare_reload_with_limits(profile, registry_generation, Some(runner_limits), None)
     }
@@ -433,7 +433,7 @@ impl RuntimeBootstrapper {
         self,
         profile: RuntimeProfile,
         registry_generation: u64,
-        runner_limits: BTreeMap<String, RunnerLimits>,
+        runner_limits: BTreeMap<mutsuki_runtime_contracts::RunnerId, RunnerLimits>,
         affected_plugins: BTreeSet<String>,
     ) -> RuntimeResult<PreparedRuntimeReload> {
         self.prepare_reload_with_limits(
@@ -448,7 +448,7 @@ impl RuntimeBootstrapper {
         self,
         profile: RuntimeProfile,
         registry_generation: u64,
-        runner_limits: Option<BTreeMap<String, RunnerLimits>>,
+        runner_limits: Option<BTreeMap<mutsuki_runtime_contracts::RunnerId, RunnerLimits>>,
         affected_plugins: Option<BTreeSet<String>>,
     ) -> RuntimeResult<PreparedRuntimeReload> {
         let mut prepared = self.prepare_runtime(profile)?;
@@ -475,7 +475,11 @@ impl RuntimeBootstrapper {
             .collect();
         prepared.registry_generation = registry_generation;
         let affected_plugins = affected_plugins.map(|requested| {
-            expand_service_reload_domain(&prepared.plan, &prepared.services, requested)
+            expand_service_reload_domain(
+                &prepared.plan,
+                &prepared.services,
+                requested.into_iter().map(PluginId::from).collect(),
+            )
         });
         let scopes = build_plugin_scopes(
             &prepared.plan,
@@ -648,7 +652,7 @@ fn validate_registered_host_services(
         else {
             return Err(crate::error::host_failure(
                 "host.services.owner_not_enabled",
-                &registered.owner_plugin_id,
+                registered.owner_plugin_id.as_str(),
             ));
         };
         let service_id = registered.service.service_id.trim();
@@ -706,7 +710,10 @@ fn build_host_service_registry(
 ) -> RuntimeResult<Arc<HostServiceRegistry>> {
     let registry = Arc::new(HostServiceRegistry::new());
     for registered in host_services {
-        registry.register_bootstrapper_service(&registered.owner_plugin_id, &registered.service)?;
+        registry.register_bootstrapper_service(
+            registered.owner_plugin_id.as_str(),
+            &registered.service,
+        )?;
     }
     registry.freeze();
     Ok(registry)
@@ -716,7 +723,7 @@ fn build_plugin_scopes(
     plan: &RuntimeLoadPlan,
     host_services: &HostServiceRegistry,
     host_effects: Vec<RegisteredHostEffect>,
-    affected_plugins: Option<&BTreeSet<String>>,
+    affected_plugins: Option<&BTreeSet<PluginId>>,
 ) -> RuntimeResult<PluginScopeSet> {
     let manager = PluginScopeManager::new();
     let root_scope = manager.create_scope(
@@ -766,7 +773,7 @@ fn build_plugin_scopes(
                     manager.declare_dependency(
                         scope,
                         ServiceDependency {
-                            service_id: requirement.surface_id.clone(),
+                            service_id: requirement.surface_id.to_string(),
                             requirement: match requirement.requirement {
                                 RequirementKind::Required => {
                                     crate::scope::ServiceRequirement::Required
@@ -791,14 +798,14 @@ fn build_plugin_scopes(
 
         for (service_id, owner_plugin_id, service, rebindable) in host_services.owned_entries() {
             if affected_plugins.is_some_and(|affected| {
-                !owner_plugin_id.is_empty() && !affected.contains(&owner_plugin_id)
+                !owner_plugin_id.is_empty() && !affected.contains(owner_plugin_id.as_str())
             }) {
                 continue;
             }
             let owner_scope = if owner_plugin_id.is_empty() {
                 &root_scope
             } else {
-                plugin_scopes.get(&owner_plugin_id).ok_or_else(|| {
+                plugin_scopes.get(owner_plugin_id.as_str()).ok_or_else(|| {
                     crate::error::host_failure(
                         "host.scope.service_owner_missing",
                         format!("{service_id}:{owner_plugin_id}"),
@@ -851,13 +858,13 @@ fn build_plugin_scopes(
 fn expand_service_reload_domain(
     plan: &RuntimeLoadPlan,
     host_services: &HostServiceRegistry,
-    mut affected: BTreeSet<String>,
-) -> BTreeSet<String> {
+    mut affected: BTreeSet<PluginId>,
+) -> BTreeSet<PluginId> {
     let owners = host_services
         .owned_entries()
         .into_iter()
         .filter_map(|(service_id, owner_plugin_id, _, _)| {
-            (!owner_plugin_id.is_empty()).then_some((service_id, owner_plugin_id))
+            (!owner_plugin_id.is_empty()).then_some((service_id, PluginId::from(owner_plugin_id)))
         })
         .collect::<BTreeMap<_, _>>();
 
@@ -868,7 +875,7 @@ fn expand_service_reload_domain(
                 if requirement.kind != ContractSurfaceKind::Service {
                     continue;
                 }
-                let Some(provider) = owners.get(&requirement.surface_id) else {
+                let Some(provider) = owners.get(requirement.surface_id.as_str()) else {
                     continue;
                 };
                 if affected.contains(&manifest.plugin_id) || affected.contains(provider) {
@@ -1118,8 +1125,8 @@ fn validate_registered_runners(
         for runner in &manifest.provides.runners {
             if !registered_runner_ids.contains(&runner.runner_id) {
                 return Err(runner_missing_for_deployment(
-                    &manifest.plugin_id,
-                    &runner.runner_id,
+                    manifest.plugin_id.as_str(),
+                    runner.runner_id.as_str(),
                     plan.plugin_deployments
                         .get(&manifest.plugin_id)
                         .expect("enabled plugin has deployment"),
@@ -1280,8 +1287,8 @@ fn validate_runner_deployment_kind(
 ) -> RuntimeResult<()> {
     let Some(planned_deployment) = plan.plugin_deployments.get(&descriptor.plugin_id) else {
         return Err(runner_for_disabled_plugin(
-            &descriptor.plugin_id,
-            &descriptor.runner_id,
+            descriptor.plugin_id.as_str(),
+            descriptor.runner_id.as_str(),
         ));
     };
     if planned_deployment == registered_deployment {
@@ -1289,7 +1296,7 @@ fn validate_runner_deployment_kind(
     }
     Err(deployment_mismatch(
         "host.plugin.runner_deployment_mismatch",
-        &descriptor.plugin_id,
+        descriptor.plugin_id.as_str(),
         registered_deployment,
         planned_deployment,
     ))

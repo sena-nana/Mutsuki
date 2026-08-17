@@ -11,6 +11,7 @@ from typing import cast
 import pytest
 
 from mutsuki_runner_kit.contracts.codec import JsonValue, to_json_dict
+from mutsuki_runner_kit.contracts.ids import TaskLeaseId
 from mutsuki_runner_kit.contracts.runner import RunnerContext, RunnerDescriptor, RunnerResult
 from mutsuki_runner_kit.contracts.task import Task
 from mutsuki_runner_kit.runners.backend import PythonRunnerBackend
@@ -79,7 +80,7 @@ async def test_stdio_runner_run_batch_dispatches_typed_request() -> None:
     backend.register_runner(runner)
     bridge = StdioBinaryBridge(backend)
     await initialize(bridge)
-    task = replace(Task.new("task-1", "raw.input"), lease_id="task-lease-test")
+    task = replace(Task.new("task-1", "raw.input"), lease_id=TaskLeaseId("task-lease-test"))
     ctx = replace(runner_context(deadline_tick=3), invocation_id="task-1", cancel_token="task-1")
     batch = single_test_batch(task)
 
@@ -224,7 +225,7 @@ async def test_stdio_runner_run_batch_returns_structured_lease_mismatch() -> Non
     backend.register_runner(EchoRunner(echo_descriptor()))
     bridge = StdioBinaryBridge(backend)
     await initialize(bridge)
-    task = replace(Task.new("task-1", "raw.input"), lease_id="task-lease-task")
+    task = replace(Task.new("task-1", "raw.input"), lease_id=TaskLeaseId("task-lease-task"))
     batch = single_test_batch(task, lease_id="task-lease-task")
     ctx = runner_context(lease_ids=("task-lease-ctx",))
 
@@ -273,7 +274,7 @@ async def test_stdio_run_batch_does_not_block_cancel_or_response_correlation() -
     backend.register_runner(runner)
     bridge = StdioBinaryBridge(backend)
     await initialize(bridge)
-    task = replace(Task.new("task-1", "raw.input"), lease_id="task-lease-test")
+    task = replace(Task.new("task-1", "raw.input"), lease_id=TaskLeaseId("task-lease-test"))
     batch = single_test_batch(task)
     run = encode_binary_request(
         2,
@@ -308,7 +309,7 @@ async def test_stdio_run_batch_does_not_block_dispose() -> None:
     backend.register_runner(runner)
     bridge = StdioBinaryBridge(backend)
     await initialize(bridge)
-    task = replace(Task.new("task-1", "raw.input"), lease_id="task-lease-test")
+    task = replace(Task.new("task-1", "raw.input"), lease_id=TaskLeaseId("task-lease-test"))
     run = encode_binary_request(
         2,
         Opcode.RUNNER_RUN_BATCH,
@@ -340,7 +341,7 @@ async def test_management_capacity_remains_available_when_work_is_saturated() ->
     )
     bridge = StdioBinaryBridge(backend, limits=limits)
     await initialize(bridge, limits)
-    task = replace(Task.new("task-1", "raw.input"), lease_id="task-lease-test")
+    task = replace(Task.new("task-1", "raw.input"), lease_id=TaskLeaseId("task-lease-test"))
     payload = {
         "runner_id": "echo.runner",
         "ctx": to_json_dict(runner_context()),
@@ -374,7 +375,7 @@ async def test_duplicate_inflight_request_id_is_rejected_without_losing_active_w
     backend.register_runner(runner)
     bridge = StdioBinaryBridge(backend)
     await initialize(bridge)
-    task = replace(Task.new("task-1", "raw.input"), lease_id="task-lease-test")
+    task = replace(Task.new("task-1", "raw.input"), lease_id=TaskLeaseId("task-lease-test"))
     run = encode_binary_request(
         2,
         Opcode.RUNNER_RUN_BATCH,
@@ -406,7 +407,7 @@ async def test_protocol_stdout_is_not_polluted_by_runner_prints() -> None:
     diagnostics = io.StringIO()
     bridge = StdioBinaryBridge(backend, diagnostics=diagnostics)
     await initialize(bridge)
-    task = replace(Task.new("task-1", "raw.input"), lease_id="task-lease-test")
+    task = replace(Task.new("task-1", "raw.input"), lease_id=TaskLeaseId("task-lease-test"))
     run = encode_binary_request(
         2,
         Opcode.RUNNER_RUN_BATCH,

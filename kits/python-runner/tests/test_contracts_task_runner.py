@@ -1,11 +1,25 @@
 from __future__ import annotations
 
 from mutsuki_runner_kit.contracts.batch import PayloadLayout
+from mutsuki_runner_kit.contracts.codec import to_json_dict
 from mutsuki_runner_kit.contracts.entry import (
     DispatchLane,
     OrderingRequirement,
     ResourceAccessMode,
     ResourceRequirement,
+)
+from mutsuki_runner_kit.contracts.ids import (
+    BatchId,
+    BindingId,
+    ExecutorId,
+    ProtocolId,
+    RefId,
+    RunnerId,
+    SurfaceId,
+    TaskId,
+    TaskLeaseId,
+    TickId,
+    TraceId,
 )
 from mutsuki_runner_kit.contracts.resource import (
     ResourceAccess,
@@ -51,28 +65,28 @@ from mutsuki_runner_kit.testing.assertions import assert_json_roundtrip
 
 def test_task_and_runner_descriptor_roundtrip() -> None:
     task = Task(
-        task_id="task-1",
-        protocol_id="raw.input",
+        task_id=TaskId("task-1"),
+        protocol_id=ProtocolId("raw.input"),
         priority=10,
         ready_at_step=2,
         payload={"actor_id": "actor-a"},
-        input_refs=("value:raw-1",),
+        input_refs=(RefId("value:raw-1"),),
         output_ref=None,
         continuation_ref=None,
-        target_binding_id="binding:raw",
-        lease_id="task-lease-1",
-        trace_id="trace-1",
-        expected_versions=(VersionExpectation(ref_id="state:actor", expected_version=1),),
+        target_binding_id=BindingId("binding:raw"),
+        lease_id=TaskLeaseId("task-lease-1"),
+        trace_id=TraceId("trace-1"),
+        expected_versions=(VersionExpectation(ref_id=RefId("state:actor"), expected_version=1),),
         correlation_id="corr-1",
         idempotency_key="idem-1",
         runner_hint="runner-a",
         registry_generation=3,
-        required_surfaces=("task_protocol:raw.input",),
+        required_surfaces=(SurfaceId("task_protocol:raw.input"),),
         dispatch_lane=DispatchLane.INTERACTIVE,
         ordering=OrderingRequirement.preserve_submit_order(),
         resource_requirements=(
             ResourceRequirement(
-                ref_id="resource:1",
+                ref_id=RefId("resource:1"),
                 mode=ResourceAccessMode.READ,
                 expected_version=1,
             ),
@@ -80,12 +94,22 @@ def test_task_and_runner_descriptor_roundtrip() -> None:
         created_sequence=4,
     )
     assert_json_roundtrip(Task, task)
+    encoded = to_json_dict(task)
+    assert encoded["task_id"] == "task-1"
+    assert encoded["input_refs"] == ["value:raw-1"]
+    decoded = Task.from_json_dict(encoded)
+    assert isinstance(decoded.task_id, TaskId)
+    assert isinstance(decoded.protocol_id, ProtocolId)
+    assert isinstance(decoded.input_refs[0], RefId)
+    assert isinstance(decoded.target_binding_id, BindingId)
+    assert isinstance(decoded.lease_id, TaskLeaseId)
+    assert decoded.task_id == "task-1"
 
     descriptor = RunnerDescriptor(
         runner_id="runner-a",
         plugin_id="plugin-a",
         plugin_generation=1,
-        accepted_protocol_ids=("raw.input",),
+        accepted_protocol_ids=(ProtocolId("raw.input"),),
         purity=RunnerPurity.PURE,
         execution_class=ExecutionClass.CPU,
         invocation_mode=InvocationMode.ASYNC_REENTRANT,
@@ -126,7 +150,7 @@ def test_task_and_runner_descriptor_roundtrip() -> None:
             timeout_granularity=TimeoutGranularity.ENTRY,
         ),
         metadata={"rank": 1},
-        contract_surfaces=("runner:runner-a",),
+        contract_surfaces=(SurfaceId("runner:runner-a"),),
     )
     assert_json_roundtrip(RunnerDescriptor, descriptor)
     assert_json_roundtrip(
@@ -134,10 +158,10 @@ def test_task_and_runner_descriptor_roundtrip() -> None:
         RunnerContext(
             registry_generation=1,
             current_step=2,
-            tick_id="tick-2",
-            batch_id="batch-1",
-            executor_id="executor-a",
-            task_lease_ids=("lease-1", "lease-2"),
+            tick_id=TickId("tick-2"),
+            batch_id=BatchId("batch-1"),
+            executor_id=ExecutorId("executor-a"),
+            task_lease_ids=(TaskLeaseId("lease-1"), TaskLeaseId("lease-2")),
             entry_count=2,
             invocation_id="inv-1",
             cancel_token="inv-1",
@@ -149,10 +173,10 @@ def test_task_and_runner_descriptor_roundtrip() -> None:
     assert_json_roundtrip(
         TaskLease,
         TaskLease(
-            lease_id="task-lease-1",
-            task_id="task-1",
-            runner_id="runner-a",
-            executor_id="executor-a",
+            lease_id=TaskLeaseId("task-lease-1"),
+            task_id=TaskId("task-1"),
+            runner_id=RunnerId("runner-a"),
+            executor_id=ExecutorId("executor-a"),
             registry_generation=3,
             acquired_at_step=2,
             expires_at_step=None,
@@ -163,7 +187,7 @@ def test_task_and_runner_descriptor_roundtrip() -> None:
 
 def test_runner_result_roundtrips_value_and_resource_refs() -> None:
     value_ref = ValueRef(
-        ref_id="value:1",
+        ref_id=RefId("value:1"),
         provider_id="python.resource",
         schema="value.small.v1",
         version=1,
@@ -174,7 +198,7 @@ def test_runner_result_roundtrips_value_and_resource_refs() -> None:
         storage=ValueStorage.LOCAL_VALUE_STORE,
     )
     resource_ref = ResourceRef(
-        ref_id="resource:1",
+        ref_id=RefId("resource:1"),
         resource_id=ResourceId(kind_id="bytes", slot_id="resource:1", generation=1, version=1),
         semantic=ResourceSemantic.FROZEN_VALUE,
         provider_id="python.resource",
@@ -195,7 +219,7 @@ def test_runner_result_roundtrips_value_and_resource_refs() -> None:
         seal_state=ResourceSealState.SEALED,
     )
     result = RunnerResult(
-        task_id="task-1",
+        task_id=TaskId("task-1"),
         output={"answer": 42},
         values=(value_ref,),
         resources=(resource_ref,),
@@ -206,11 +230,11 @@ def test_runner_result_roundtrips_value_and_resource_refs() -> None:
 
 def test_task_handle_outcome_and_await_roundtrip() -> None:
     handle = TaskHandle(
-        task_id="child-1",
-        protocol_id="child.work",
+        task_id=TaskId("child-1"),
+        protocol_id=ProtocolId("child.work"),
         target_binding_id=None,
         cancel_policy=CancelPolicy.CASCADE,
-        trace_id="trace-1",
+        trace_id=TraceId("trace-1"),
         correlation_id="corr-1",
     )
     assert_json_roundtrip(TaskHandle, handle)
@@ -221,7 +245,7 @@ def test_task_handle_outcome_and_await_roundtrip() -> None:
 
     continuation = TaskStepContinuation(
         continuation=ResourceRef(
-            ref_id="continuation:parent-1",
+            ref_id=RefId("continuation:parent-1"),
             resource_id=ResourceId(
                 kind_id="continuation",
                 slot_id="continuation:parent-1",
@@ -245,7 +269,7 @@ def test_task_handle_outcome_and_await_roundtrip() -> None:
         reason="sdk.await",
     )
     task_await = TaskAwait(
-        parent_task_id="parent-1",
+        parent_task_id=TaskId("parent-1"),
         child=handle,
         continuation=continuation,
         cancel_policy=CancelPolicy.CASCADE,
@@ -253,5 +277,9 @@ def test_task_handle_outcome_and_await_roundtrip() -> None:
     assert_json_roundtrip(TaskAwait, task_await)
     assert_json_roundtrip(
         RunnerResult,
-        RunnerResult(task_id="parent-1", task_await=task_await, status=RunnerStatus.WAITING),
+        RunnerResult(
+            task_id=TaskId("parent-1"),
+            task_await=task_await,
+            status=RunnerStatus.WAITING,
+        ),
     )

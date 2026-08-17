@@ -2,7 +2,8 @@
 
 use mutsuki_agent_contracts::{ResourceCellRef, ResourceRef};
 use mutsuki_runtime_sdk::contracts::{
-    ResourceAccess, ResourceId, ResourceLifetime, ResourceSealState, ResourceSemantic,
+    PluginId, RefId, ResourceAccess, ResourceCellId, ResourceId, ResourceLifetime,
+    ResourceSealState, ResourceSemantic,
 };
 
 fn resource_ref(
@@ -15,9 +16,9 @@ fn resource_ref(
     access: ResourceAccess,
 ) -> ResourceRef {
     let slot_id = slot_id.into();
-    let ref_id = format!("{kind}:{slot_id}");
+    let ref_id = RefId::from(format!("{kind}:{slot_id}"));
     ResourceRef {
-        ref_id: ref_id.clone(),
+        ref_id,
         resource_id: ResourceId {
             kind_id: kind.into(),
             slot_id,
@@ -59,12 +60,12 @@ pub fn memory_resource_ref(
 }
 
 pub fn memory_cell_ref(
-    owner_plugin_id: impl Into<String>,
+    owner_plugin_id: impl Into<PluginId>,
     memory_id: impl Into<String>,
 ) -> ResourceCellRef {
     let memory_id = memory_id.into();
     ResourceCellRef {
-        cell_id: format!("agent-memory-cell:{memory_id}"),
+        cell_id: ResourceCellId::from(format!("agent-memory-cell:{memory_id}")),
         resource_kind: "mutsuki.agent.memory".into(),
         owner_plugin_id: owner_plugin_id.into(),
         schema: "mutsuki.agent.memory.v1".into(),
@@ -113,12 +114,12 @@ pub fn session_resource_ref(
 }
 
 pub fn session_cell_ref(
-    owner_plugin_id: impl Into<String>,
+    owner_plugin_id: impl Into<PluginId>,
     session_id: impl Into<String>,
 ) -> ResourceCellRef {
     let session_id = session_id.into();
     ResourceCellRef {
-        cell_id: format!("agent-session-cell:{session_id}"),
+        cell_id: ResourceCellId::from(format!("agent-session-cell:{session_id}")),
         resource_kind: "mutsuki.agent.session".into(),
         owner_plugin_id: owner_plugin_id.into(),
         schema: "mutsuki.agent.session.v1".into(),

@@ -7,6 +7,7 @@ from typing import Any, Protocol
 from mutsuki_runner_kit.contracts.batch import CompletionBatch, WorkBatch
 from mutsuki_runner_kit.contracts.codec import JsonValue
 from mutsuki_runner_kit.contracts.errors import RuntimeError
+from mutsuki_runner_kit.contracts.ids import BindingId, RefId, TaskId
 from mutsuki_runner_kit.contracts.resource import (
     ResourceAccess,
     ResourceId,
@@ -141,9 +142,10 @@ class AsyncRunnerContext:
             )
         self._next_call += 1
         task_id = f"{self._parent_task.task_id}:call:{self._next_call}"
+        target_binding_id = None if binding_id is None else BindingId(binding_id)
         task = replace(
             Task.new(task_id, protocol_id, payload),
-            target_binding_id=binding_id,
+            target_binding_id=target_binding_id,
             runner_hint=runner_hint,
             trace_id=self._parent_task.trace_id,
             correlation_id=self._parent_task.correlation_id,
@@ -151,7 +153,7 @@ class AsyncRunnerContext:
         handle = TaskHandle(
             task_id=task.task_id,
             protocol_id=task.protocol_id,
-            target_binding_id=binding_id,
+            target_binding_id=target_binding_id,
             cancel_policy=cancel_policy,
             trace_id=task.trace_id,
             correlation_id=task.correlation_id,
@@ -300,7 +302,7 @@ class _Invocation:
 def _waiting_result(task_id: str, pending: PendingCall) -> RunnerResult:
     tasks = () if pending.task is None else (pending.task,)
     return RunnerResult(
-        task_id=task_id,
+        task_id=TaskId(task_id),
         tasks=tasks,
         task_await=pending.task_await,
         status=RunnerStatus.WAITING,
@@ -310,7 +312,7 @@ def _waiting_result(task_id: str, pending: PendingCall) -> RunnerResult:
 def _continuation_ref(parent_task_id: str) -> ResourceRef:
     ref_id = f"continuation:{parent_task_id}"
     return ResourceRef(
-        ref_id=ref_id,
+        ref_id=RefId(ref_id),
         resource_id=ResourceId(
             kind_id="continuation",
             slot_id=ref_id,

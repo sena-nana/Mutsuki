@@ -22,7 +22,7 @@ use mutsuki_bot_management::BilibiliManagementApi;
 use mutsuki_config_service::{ConfigProviderRegistry, ConfigService, InMemoryConfigRepository};
 use mutsuki_plugin_bot_agent_web::{
     AgentConnectionManagementResolver, BotAgentWebExtension, LocalAgentManagementResolver,
-    materialize_frontend_assets as materialize_bot_agent_assets,
+    materialize_frontend_assets as materialize_bot_agent_assets, materialize_trajectory_assets,
 };
 use mutsuki_plugin_bot_bilibili_web::{
     BilibiliWebExtension, materialize_frontend_assets as materialize_bilibili_assets,
@@ -361,9 +361,13 @@ impl ConsoleAssetDirs {
             .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
         let overview_assets = materialize_overview_assets(overview_dir.path())
             .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
+        materialize_trajectory_assets(&overview_assets)
+            .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
         let control_dir = tempfile::tempdir()
             .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
         let control_assets = materialize_control_assets(control_dir.path())
+            .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
+        materialize_trajectory_assets(&control_assets)
             .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
         copy_dir(&control_assets, &overview_assets.join("extensions/control"))
             .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
@@ -620,6 +624,11 @@ mod owner_console_tests {
         );
         assert!(
             dirs.overview_assets
+                .join("extensions/bot-agent/trajectory-view.js")
+                .is_file()
+        );
+        assert!(
+            dirs.overview_assets
                 .join("extensions/bot-flow/index.js")
                 .is_file()
         );
@@ -639,6 +648,8 @@ mod owner_console_tests {
         let dirs = ConsoleAssetDirs::materialize(false, false, false, false, false, false).unwrap();
         assert!(!dirs.overview_assets.join("extensions/bot-agent").exists());
         assert!(!dirs.overview_assets.join("extensions/bot-flow").exists());
+        assert!(dirs.overview_assets.join("trajectory-model.js").is_file());
+        assert!(dirs.overview_assets.join("trajectory-view.js").is_file());
     }
 
     #[test]

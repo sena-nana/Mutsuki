@@ -6,7 +6,7 @@ from typing import ClassVar
 import pytest
 
 from mutsuki_runner_kit.contracts.resource import ResourceSemantic, ValueRef
-from mutsuki_runner_kit.resources import ResourceClient, ResourceKind
+from mutsuki_runner_kit.resources import ResourceClient, ResourceKind, TypedResourceHandle
 from mutsuki_runner_kit.runners.protocol import RunnerInvokeError
 
 FakeResourceProvider = importlib.import_module(
@@ -124,18 +124,88 @@ def test_resource_client_builds_issue_9_example_resource_plans() -> None:
         resource_kind("db_pool", ResourceSemantic.CAPABILITY_RESOURCE),
     )
 
-    assert text.descriptor_matches_kind()
-    assert ast.descriptor_matches_kind()
-    assert facts.descriptor_matches_kind()
-    assert stream.descriptor_matches_kind()
-    assert db.descriptor_matches_kind()
-
     write = client.write_plan(text, "fail", {"replace": "all"})
     assert manager.commit_write_plan(write, b"world").new_version == 2
     assert client.read_plan(ast, "collect").resource.semantic == ResourceSemantic.VERSIONED_SNAPSHOT
     assert client.read_plan(facts, "query").resource.semantic == ResourceSemantic.READ_ONLY_FACT
+    assert client.export_plan(text, "json").target == "json"
     assert client.stream_plan(stream).operation == "open_stream"
     assert client.command_plan(db, "query", {"sql": "select 1"}).operation == "query"
+
+
+def test_resource_client_rejects_kind_and_semantic_mismatch() -> None:
+    manager = FakeResourceProvider()
+    client = ResourceClient()
+    text = manager.create_cow_state_resource("text_buffer", "text.v1", b"hello")
+
+    with pytest.raises(RunnerInvokeError) as kind_failure:
+        client.handle(text, resource_kind("other_kind", ResourceSemantic.COW_VERSIONED_STATE))
+    assert kind_failure.value.error.code == "resource.kind_mismatch"
+    assert kind_failure.value.error.source == "runtime.sdk"
+
+    with pytest.raises(RunnerInvokeError) as semantic_failure:
+        client.handle(text, resource_kind("text_buffer", ResourceSemantic.FROZEN_VALUE))
+    assert semantic_failure.value.error.code == "resource.semantic_mismatch"
+    assert semantic_failure.value.error.source == "runtime.sdk"
+
+    with pytest.raises(RunnerInvokeError) as direct_construction:
+        TypedResourceHandle(
+            resource=text,
+            kind=resource_kind("other_kind", ResourceSemantic.COW_VERSIONED_STATE),
+        )
+    assert direct_construction.value.error.code == "resource.kind_mismatch"
+
+
+def test_resource_client_gates_plan_semantics() -> None:
+    manager = FakeResourceProvider()
+    client = ResourceClient()
+    frozen = client.handle(
+        manager.create_blob_resource("blob.v1", b"hello"),
+        resource_kind("blob", ResourceSemantic.FROZEN_VALUE),
+    )
+    snapshot = client.handle(
+        manager.create_snapshot_resource("ast_snapshot", "ast.v1", frozen.resource, b"ast"),
+        resource_kind("ast_snapshot", ResourceSemantic.VERSIONED_SNAPSHOT),
+    )
+    facts = client.handle(
+        manager.create_fact_resource("project_facts", "facts.v1", {"root": "."}),
+        resource_kind("project_facts", ResourceSemantic.READ_ONLY_FACT),
+    )
+    stream = client.handle(
+        manager.create_stream_resource("model_output_stream", "token.v1", "stream://model"),
+        resource_kind("model_output_stream", ResourceSemantic.STREAM_RESOURCE),
+    )
+    capability = client.handle(
+        manager.create_capability_resource("db_pool", "db.pool.v1"),
+        resource_kind("db_pool", ResourceSemantic.CAPABILITY_RESOURCE),
+    )
+    state = client.handle(
+        manager.create_cow_state_resource("text_buffer", "text.v1", b"hello"),
+        resource_kind("text_buffer", ResourceSemantic.COW_VERSIONED_STATE),
+    )
+
+    for handle in (frozen, snapshot, facts, stream, capability):
+        with pytest.raises(RunnerInvokeError) as write_failure:
+            client.write_plan(handle, "fail", {"replace": "all"})
+        assert write_failure.value.error.code == "resource.semantic_mismatch"
+
+    for handle in (frozen, snapshot, facts, state, capability):
+        with pytest.raises(RunnerInvokeError) as stream_failure:
+            client.stream_plan(handle)
+        assert stream_failure.value.error.code == "resource.semantic_mismatch"
+
+    for handle in (frozen, snapshot, facts, state, stream):
+        with pytest.raises(RunnerInvokeError) as command_failure:
+            client.command_plan(handle, "query", {"sql": "select 1"})
+        assert command_failure.value.error.code == "resource.semantic_mismatch"
+
+    with pytest.raises(RunnerInvokeError) as capability_export:
+        client.export_plan(capability, "json")
+    assert capability_export.value.error.code == "resource.semantic_mismatch"
+
+    with pytest.raises(RunnerInvokeError) as stream_export:
+        client.export_plan(stream, "json")
+    assert stream_export.value.error.code == "resource.semantic_mismatch"
 
 
 def test_resource_manager_executes_export_command_batch_and_saga_plans() -> None:

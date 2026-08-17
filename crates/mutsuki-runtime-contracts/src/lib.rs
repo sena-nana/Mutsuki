@@ -22,14 +22,13 @@ pub use batch::{
     WorkResourcePlan, WorkSet,
 };
 pub use capability_request::{
-    CapabilityDescriptor, CapabilityPeerId, CapabilityRequestEnvelope, CapabilityRequestId,
-    DeliveryReceipt, IdempotentReceiptStore, ReceiptRetentionPolicy, ReceiptStoreStats,
-    RejectionReason,
+    CapabilityDescriptor, CapabilityRequestEnvelope, DeliveryReceipt, IdempotentReceiptStore,
+    ReceiptRetentionPolicy, ReceiptStoreStats, RejectionReason,
 };
 pub use common::{
-    BatchId, BatchKey, BindingId, EntryId, ExecutorId, PayloadIndex, PluginId, ProtocolId, RefId,
-    ResourceCellId, ResourceLeaseId, RunnerId, ScalarValue, SpanId, SurfaceId, TaskId, TaskLeaseId,
-    TickId, TraceId,
+    BatchId, BatchKey, BindingId, CapabilityPeerId, CapabilityRequestId, EntryId, ExecutorId,
+    PayloadIndex, PluginId, ProtocolId, RefId, ResourceCellId, ResourceLeaseId, RunnerId,
+    ScalarValue, SpanId, SurfaceId, TaskId, TaskLeaseId, TickId, TraceId,
 };
 pub use domain::{CrossDomainTaskRequest, DomainTaskHandle, RuntimeDomainId};
 pub use error::{
@@ -40,8 +39,9 @@ pub use error::{
     ERR_RESOURCE_NOT_FOUND, ERR_RESOURCE_UNSUPPORTED, ERR_RUNNER_AWAITABLE_UNSUPPORTED,
     ERR_RUNNER_NOT_FOUND, ERR_RUNNER_PURITY_VIOLATION, ERR_RUNTIME_ABORTED,
     ERR_RUNTIME_HOST_FAILED, ERR_RUNTIME_HOST_GENERATION_MISMATCH, ERR_RUNTIME_NOT_ACCEPTING,
-    ERR_STATE_CONFLICT, ERR_TASK_CLAIM_CONFLICT, ERR_TASK_DEAD_LETTER, ERR_TASK_DUPLICATE,
-    ERR_TASK_EXPIRED, ERR_TASK_NOT_FOUND, ERR_TASK_UNSUPPORTED, RuntimeError,
+    ERR_STATE_CONFLICT, ERR_STATE_HISTORY_DISABLED, ERR_STATE_HISTORY_UNAVAILABLE,
+    ERR_TASK_CLAIM_CONFLICT, ERR_TASK_DEAD_LETTER, ERR_TASK_DUPLICATE, ERR_TASK_EXPIRED,
+    ERR_TASK_NOT_FOUND, ERR_TASK_UNSUPPORTED, RuntimeError,
 };
 pub use event::{RuntimeEvent, RuntimeEventKind};
 pub use execution_policy::{
@@ -58,7 +58,7 @@ pub use extension::{
 };
 pub use observability::{
     DEFAULT_EVENT_CAPACITY, DEFAULT_TRACE_CAPACITY, ObservabilityOutletProfile,
-    ObservabilityOverflowPolicy, ObservabilityPage, ObservabilityProfile,
+    ObservabilityOverflowPolicy, ObservabilityPage, ObservabilityProfile, StateHistoryProfile,
 };
 pub use plugin::{
     ArtifactType, CapabilityProviderSelection, CompanionArtifact, ContractSurface,
@@ -91,8 +91,9 @@ pub use runner::{
     RunnerSideEffect, RunnerStatus, TimeoutGranularity,
 };
 pub use task::{
-    CancelPolicy, ConflictPolicy, StateDelta, StateRef, Task, TaskAwait, TaskHandle, TaskLease,
-    TaskOutcome, TaskPayload, TaskStatus, TaskStepContinuation, VersionExpectation, WakeCondition,
+    CancelPolicy, ConflictPolicy, StateDelta, StateRef, StateRollback, Task, TaskAwait, TaskHandle,
+    TaskLease, TaskOutcome, TaskPayload, TaskStatus, TaskStepContinuation, VersionExpectation,
+    WakeCondition,
 };
 pub use trace::{SpanStatus, TraceSpan};
 

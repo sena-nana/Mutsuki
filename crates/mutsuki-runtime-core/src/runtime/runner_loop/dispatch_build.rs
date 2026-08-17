@@ -29,7 +29,7 @@ pub(super) fn build_runner_dispatch(
     let trace_id = leased_tasks
         .first()
         .map(|(_, task)| dispatch_trace_id(task))
-        .unwrap_or_else(|| format!("trace-batch-{batch_id}"));
+        .unwrap_or_else(|| format!("trace-batch-{batch_id}").into());
     let batch = build_work_batch(runtime.current_step, &batch_id, descriptor, leased_tasks);
     let span =
         if runtime.load_plan.observability.dispatch_spans && runtime.traces.will_retain_next() {
@@ -78,15 +78,15 @@ pub(super) fn build_runner_dispatch(
             sequence,
             kind: RuntimeEventKind::Task,
             name: "task.started".into(),
-            subject_id: Some(lease.task_id.clone()),
+            subject_id: Some(lease.task_id.to_string()),
             attributes: std::collections::BTreeMap::from([
                 (
                     "lease_id".into(),
-                    mutsuki_runtime_contracts::ScalarValue::String(lease.lease_id.clone()),
+                    mutsuki_runtime_contracts::ScalarValue::String(lease.lease_id.to_string()),
                 ),
                 (
                     "runner_id".into(),
-                    mutsuki_runtime_contracts::ScalarValue::String(lease.runner_id.clone()),
+                    mutsuki_runtime_contracts::ScalarValue::String(lease.runner_id.to_string()),
                 ),
                 (
                     "registry_generation".into(),
@@ -102,7 +102,7 @@ pub(super) fn build_runner_dispatch(
         runtime.events.record(
             RuntimeEventKind::Trace,
             "trace.span",
-            Some(descriptor.runner_id.clone()),
+            Some(descriptor.runner_id.to_string()),
             trace_attrs(&span),
             None,
         );
@@ -115,8 +115,8 @@ pub(super) fn build_runner_dispatch(
     })
 }
 
-fn dispatch_trace_id(task: &mutsuki_runtime_contracts::Task) -> String {
+fn dispatch_trace_id(task: &mutsuki_runtime_contracts::Task) -> mutsuki_runtime_contracts::TraceId {
     task.trace_id
         .clone()
-        .unwrap_or_else(|| format!("trace-task-{}", task.task_id))
+        .unwrap_or_else(|| format!("trace-task-{}", task.task_id).into())
 }
