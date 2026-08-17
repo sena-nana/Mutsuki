@@ -154,6 +154,7 @@ where
         .map_err(|error| error.to_string())?;
     service.plugins.configured = configured_product_selections(&product, owner_selections)
         .map_err(|error| error.to_string())?;
+    apply_lilia_image_render_fonts(&mut service, root)?;
     let agent_connections = AgentConnectionRegistry::new();
     Ok(SingleInstanceProduct {
         service,
@@ -189,6 +190,85 @@ fn service_seed(root: &Path) -> ServiceConfig {
     service.plugins.configured.clear();
     apply_single_instance_boundaries(&mut service, root);
     service
+}
+
+const IMAGE_RENDER_PLUGIN_ID: &str = "mutsuki.std.image.render";
+const LILIA_FONT_FILES: &[&str] = &[
+    "noto-sans-sc-chinese-simplified-400-normal.woff2",
+    "noto-sans-sc-chinese-simplified-500-normal.woff2",
+    "noto-sans-sc-chinese-simplified-600-normal.woff2",
+];
+
+fn apply_lilia_image_render_fonts(service: &mut ServiceConfig, root: &Path) -> Result<(), String> {
+    let Some(plugin) = service
+        .plugins
+        .configured
+        .iter_mut()
+        .find(|plugin| plugin.id == IMAGE_RENDER_PLUGIN_ID)
+    else {
+        return Ok(());
+    };
+    let Some(config) = plugin.config.as_object_mut() else {
+        return Ok(());
+    };
+    if config.get("output_provider_id").is_none() {
+        return Ok(());
+    }
+    let has_fonts = config
+        .get("font_files")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|files| !files.is_empty());
+    if has_fonts {
+        return Ok(());
+    }
+    let fonts = install_lilia_fonts(root)?;
+    config.insert(
+        "font_files".into(),
+        serde_json::Value::Array(
+            fonts
+                .into_iter()
+                .map(|path| serde_json::Value::String(path.to_string_lossy().into_owned()))
+                .collect(),
+        ),
+    );
+    Ok(())
+}
+
+fn bundled_lilia_font_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/fonts")
+}
+
+fn install_lilia_fonts(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let dest = root.join("fonts");
+    std::fs::create_dir_all(&dest).map_err(|error| {
+        format!(
+            "single_instance.lilia_fonts_unavailable: failed to create {}: {error}",
+            dest.display()
+        )
+    })?;
+    let source = bundled_lilia_font_dir();
+    let mut files = Vec::with_capacity(LILIA_FONT_FILES.len());
+    for name in LILIA_FONT_FILES {
+        let target = dest.join(name);
+        if !target.is_file() {
+            let from = source.join(name);
+            if !from.is_file() {
+                return Err(format!(
+                    "single_instance.lilia_font_missing: {}",
+                    from.display()
+                ));
+            }
+            std::fs::copy(&from, &target).map_err(|error| {
+                format!(
+                    "single_instance.lilia_font_copy_failed: {} -> {}: {error}",
+                    from.display(),
+                    target.display()
+                )
+            })?;
+        }
+        files.push(target);
+    }
+    Ok(files)
 }
 
 fn apply_single_instance_boundaries(service: &mut ServiceConfig, root: &Path) {
@@ -409,6 +489,33 @@ mod tests {
             single_instance_root(Path::new("/opt/mutsuki/mutsuki-bot")).unwrap(),
             PathBuf::from("/opt/mutsuki/.mutsuki-bot")
         );
+    }
+
+    #[test]
+    fn empty_image_render_font_files_are_filled_with_lilia_fonts() {
+        let root = tempfile::tempdir().unwrap();
+        let mut service = ServiceConfig::default();
+        service
+            .plugins
+            .configured
+            .push(mutsuki_service_config::ConfiguredPluginSelection {
+                id: IMAGE_RENDER_PLUGIN_ID.into(),
+                enabled: true,
+                config: serde_json::json!({
+                    "output_provider_id": "memory",
+                    "font_files": []
+                }),
+            });
+        apply_lilia_image_render_fonts(&mut service, root.path()).unwrap();
+        let files = service.plugins.configured[0].config["font_files"]
+            .as_array()
+            .unwrap();
+        assert_eq!(files.len(), 3);
+        for file in files {
+            let path = PathBuf::from(file.as_str().unwrap());
+            assert!(path.starts_with(root.path().join("fonts")));
+            assert!(path.is_file());
+        }
     }
 
     #[test]

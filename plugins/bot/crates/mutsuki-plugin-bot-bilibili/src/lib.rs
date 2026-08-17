@@ -23,8 +23,8 @@ use mutsuki_protocol_browser::{
     BrowserSnapshot, BrowserSnapshotRequest, BrowserWaitMode, SNAPSHOT, SNAPSHOT_SCHEMA,
 };
 use mutsuki_protocol_image::{
-    CARD_RENDER, CardGradient, CardRenderRequest, ImageRenderResponse, QR_RENDER, QrRenderRequest,
-    Rgba,
+    CARD_RENDER, CardGradient, CardLayout, CardRenderRequest, ImageRenderResponse, QR_RENDER,
+    QrRenderRequest, Rgba,
 };
 #[cfg(test)]
 use mutsuki_runtime_contracts::SurfaceRequirement;
@@ -140,7 +140,7 @@ impl BilibiliQrRenderer for RuntimeBilibiliQrRenderer {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BilibiliPollKind {
     Live,
@@ -1075,9 +1075,10 @@ impl BilibiliRunner {
                 .into(),
                 image_url: item.image_url,
             };
+            let (layout, kicker, live) = layout_for_poll(kind);
             cards.push(PreparedCard {
                 target: request.target.clone(),
-                request: self.prepare_card_request(card, task)?,
+                request: self.prepare_card_request(card, task, layout, kicker, live)?,
                 route: CardRoute::Notify(request.outbound_binding.clone()),
             });
         }
@@ -1333,6 +1334,9 @@ impl BilibiliRunner {
         &mut self,
         card: ResolvedLinkCard,
         task: &Task,
+        layout: CardLayout,
+        kicker: &str,
+        live: bool,
     ) -> Result<CardRenderRequest, RuntimeError> {
         let cover = if let Some(image_url) = card.image_url {
             let bytes = self
@@ -1371,7 +1375,35 @@ impl BilibiliRunner {
                     alpha: 255,
                 },
             },
+            layout,
+            kicker: kicker.into(),
+            live,
+            ..CardRenderRequest::default()
         })
+    }
+}
+
+fn layout_for_poll(kind: BilibiliPollKind) -> (CardLayout, &'static str, bool) {
+    match kind {
+        BilibiliPollKind::Live => (CardLayout::Row, "直播", true),
+        BilibiliPollKind::Dynamic => (CardLayout::Feed, "动态", false),
+        BilibiliPollKind::Video => (CardLayout::Media, "投稿", false),
+    }
+}
+
+fn layout_for_url(url: &str) -> (CardLayout, &'static str, bool) {
+    let parsed = Url::parse(url).ok();
+    let host = parsed
+        .as_ref()
+        .and_then(|value| value.host_str())
+        .unwrap_or_default();
+    let path = parsed.as_ref().map_or("", Url::path);
+    if host.contains("live.bilibili") {
+        (CardLayout::Hero, "直播", true)
+    } else if host == "t.bilibili.com" || path.contains("/opus") || path.contains("/dynamic") {
+        (CardLayout::Feed, "动态", false)
+    } else {
+        (CardLayout::Media, "投稿", false)
     }
 }
 
@@ -1416,8 +1448,9 @@ async fn run_task_async(
                     .transport
                     .resolve(&request.url)
                     .map_err(|error| RuntimeFailure::new(bili_error(&task, error)))?;
+                let (layout, kicker, live) = layout_for_url(&card.url);
                 let card = runner
-                    .prepare_card_request(card, &task)
+                    .prepare_card_request(card, &task, layout, kicker, live)
                     .map_err(RuntimeFailure::new)?;
                 Some(PreparedCards {
                     result: RunnerResult::completed(task.task_id.clone()),
@@ -1584,6 +1617,7 @@ async fn run_management_task(
     }
     match management.preview(&actor_id, is_admin, command.args.get(1).map(String::as_str)) {
         Ok(card) => {
+            let (layout, kicker, live) = layout_for_url(&card.url);
             let request = state
                 .lock()
                 .expect("Bilibili runner mutex")
@@ -1595,6 +1629,9 @@ async fn run_management_task(
                         image_url: card.image_url,
                     },
                     &task,
+                    layout,
+                    kicker,
+                    live,
                 )
                 .map_err(RuntimeFailure::new)?;
             render_cards(
@@ -3104,6 +3141,8 @@ mod tests {
         let request: CardRenderRequest =
             serde_json::from_value(waiting.tasks[0].payload.to_value()).unwrap();
         assert_eq!(request.brand, "哔哩哔哩");
+        assert_eq!(request.layout, CardLayout::Media);
+        assert_eq!(request.kicker, "投稿");
         assert_eq!(
             request.fallback_gradient.start,
             Rgba {

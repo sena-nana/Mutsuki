@@ -5,8 +5,9 @@ use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use html_escape::encode_text;
 use image::ImageFormat;
+mod card;
+
 use mutsuki_protocol_image::{
     CARD_RENDER, COMPOSE, CardRenderRequest, ComposeRenderRequest, ImageRenderResponse, PNG_SCHEMA,
     PROTOCOL_IDS, QR_RENDER, QrRenderRequest, validate_compose,
@@ -25,18 +26,21 @@ use qrcode::QrCode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use takumi::prelude::{
-    FontResource, Fonts, FromHtmlOptions, ImageSource, OutputFormat, RenderOptions, StyleSheet,
-    Viewport,
+    FontOverride, FontResource, Fonts, FromHtmlOptions, ImageSource, OutputFormat, RenderOptions,
+    StyleSheet, Viewport,
 };
 use takumi::{from_html, render, write_image};
 
 pub const PLUGIN_ID: &str = "mutsuki.std.image.render";
 pub const RUNNER_ID: &str = "mutsuki.std.image.render.runner";
+pub const LILIA_SANS_FAMILY: &str = "Noto Sans SC";
+pub const LILIA_FONT_FILES: &[&str] = &[
+    "noto-sans-sc-chinese-simplified-400-normal.woff2",
+    "noto-sans-sc-chinese-simplified-500-normal.woff2",
+    "noto-sans-sc-chinese-simplified-600-normal.woff2",
+];
 pub const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
-const CARD_WIDTH: u32 = 1200;
-const CARD_HEIGHT: u32 = 630;
-const COVER_SRC: &str = "mutsuki-card-cover";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -71,6 +75,38 @@ impl ImageRenderConfig {
     }
 }
 
+/// Resolves the LiliaUI Noto Sans SC weights from a directory.
+///
+/// # Errors
+///
+/// Returns an error when any required Lilia font file is missing.
+pub fn lilia_font_files(dir: impl AsRef<std::path::Path>) -> Result<Vec<PathBuf>, String> {
+    let dir = dir.as_ref();
+    let mut files = Vec::with_capacity(LILIA_FONT_FILES.len());
+    for name in LILIA_FONT_FILES {
+        let path = dir.join(name);
+        if !path.is_file() {
+            return Err(format!(
+                "Lilia font file is missing or not a file: {}",
+                path.display()
+            ));
+        }
+        files.push(path.canonicalize().map_err(|error| {
+            format!(
+                "Lilia font path is not canonical: {}: {error}",
+                path.display()
+            )
+        })?);
+    }
+    Ok(files)
+}
+
+fn is_lilia_font_file(path: &std::path::Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| LILIA_FONT_FILES.contains(&name))
+}
+
 pub struct ImageRenderRunner {
     descriptor: RunnerDescriptor,
     output_provider_id: String,
@@ -96,7 +132,15 @@ impl ImageRenderRunner {
         for path in &config.font_files {
             let bytes = std::fs::read(path)
                 .map_err(|error| format!("failed to read font {}: {error}", path.display()))?;
-            let registered = fonts.register(FontResource::new(bytes)).map_err(|error| {
+            let resource = if is_lilia_font_file(path) {
+                FontResource::new(bytes).override_info(FontOverride {
+                    family_name: Some(Arc::from(LILIA_SANS_FAMILY)),
+                    ..FontOverride::default()
+                })
+            } else {
+                FontResource::new(bytes)
+            };
+            let registered = fonts.register(resource).map_err(|error| {
                 format!(
                     "invalid or unsupported font file {}: {error}",
                     path.display()
@@ -193,44 +237,17 @@ impl ImageRenderRunner {
         task: &Task,
         request: &CardRenderRequest,
     ) -> Result<(Vec<u8>, u32, u32), RuntimeError> {
+        let family = self.card_font_family();
+        let scene = card::compose_card(request, family);
         let mut images = HashMap::new();
-        let background = if let Some(cover) = &request.cover {
-            let bytes = self.load_image_bytes(task, cover)?;
+        if let Some(cover) = card::card_cover(request) {
+            let bytes = self.load_image_bytes(task, &cover)?;
             let source = ImageSource::from_bytes(&bytes)
                 .map_err(|error| render_error(task, "card.cover.decode", error.to_string()))?;
-            images.insert(Arc::<str>::from(COVER_SRC), source);
-            format!(
-                r#"<img src="{COVER_SRC}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;" />"#
-            )
-        } else {
-            let start = css_rgba(request.fallback_gradient.start);
-            let end = css_rgba(request.fallback_gradient.end);
-            format!(
-                r#"<div style="position:absolute;inset:0;background:linear-gradient(135deg,{start},{end});"></div>"#
-            )
-        };
-        let family = self
-            .font_families
-            .first()
-            .map_or("sans-serif", String::as_str);
-        let html = format!(
-            r#"<div style="width:100%;height:100%;position:relative;overflow:hidden;font-family:'{family}',sans-serif;color:#fff;">
-  {background}
-  <div style="position:absolute;left:0;right:0;bottom:0;height:45%;background:linear-gradient(to bottom,rgba(12,10,18,0),rgba(12,10,18,0.75) 35%,rgba(12,10,18,0.96));"></div>
-  <div style="position:absolute;left:48px;right:48px;bottom:40px;display:flex;flex-direction:column;gap:10px;">
-    <div style="font-size:22px;font-weight:700;line-height:1;">{brand}</div>
-    <div style="font-size:38px;font-weight:700;line-height:1.08;">{title}</div>
-    <div style="font-size:20px;font-weight:400;line-height:1.1;opacity:0.92;">{description}</div>
-    <div style="font-size:18px;font-weight:400;opacity:0.85;">{url}</div>
-  </div>
-</div>"#,
-            brand = encode_text(&request.brand),
-            title = encode_text(&request.title),
-            description = encode_text(&request.description),
-            url = encode_text(&request.url),
-        );
-        let bytes = self.render_html(task, &html, CARD_WIDTH, CARD_HEIGHT, None, images)?;
-        Ok((bytes, CARD_WIDTH, CARD_HEIGHT))
+            images.insert(Arc::<str>::from(card::COVER_SRC), source);
+        }
+        let bytes = self.render_html(task, &scene.html, scene.width, scene.height, None, images)?;
+        Ok((bytes, scene.width, scene.height))
     }
 
     fn load_image_bytes(
@@ -315,6 +332,14 @@ impl ImageRenderRunner {
     pub fn registered_font_families(&self) -> &[String] {
         &self.font_families
     }
+
+    fn card_font_family(&self) -> &str {
+        self.font_families
+            .iter()
+            .find(|family| family.eq_ignore_ascii_case(LILIA_SANS_FAMILY))
+            .or_else(|| self.font_families.first())
+            .map_or("sans-serif", String::as_str)
+    }
 }
 
 impl Runner for ImageRenderRunner {
@@ -368,16 +393,6 @@ fn render_qr(task: &Task, request: &QrRenderRequest) -> Result<(Vec<u8>, u32, u3
         .write_to(&mut bytes, ImageFormat::Png)
         .map_err(|error| render_error(task, "qr.png", error.to_string()))?;
     Ok((bytes.into_inner(), width, height))
-}
-
-fn css_rgba(color: mutsuki_protocol_image::Rgba) -> String {
-    format!(
-        "rgba({},{},{},{:.3})",
-        color.red,
-        color.green,
-        color.blue,
-        f32::from(color.alpha) / 255.0
-    )
 }
 
 #[must_use]
@@ -749,21 +764,21 @@ mod tests {
                             alpha: 255,
                         },
                     },
+                    layout: mutsuki_protocol_image::CardLayout::Profile,
+                    kicker: "画师".into(),
+                    ..CardRenderRequest::default()
                 })
                 .unwrap(),
             ))
             .unwrap();
         let card_response: ImageRenderResponse =
             serde_json::from_value(card.output.clone().unwrap()).unwrap();
-        assert_eq!(
-            (card_response.width, card_response.height),
-            (CARD_WIDTH, CARD_HEIGHT)
-        );
+        assert_eq!((card_response.width, card_response.height), (720, 466));
         assert_eq!(card_response.resource.schema, PNG_SCHEMA);
         let card_png = output_png(&resources, card, "read-card");
         assert_eq!(
             image::load_from_memory(&card_png).unwrap().dimensions(),
-            (CARD_WIDTH, CARD_HEIGHT)
+            (720, 466)
         );
 
         let qr = runner
@@ -814,5 +829,74 @@ mod tests {
             ))
             .unwrap_err();
         assert!(bad_css.route.contains("stylesheet.parse"));
+    }
+
+    #[test]
+    fn light_layouts_render_expected_canvases() {
+        use mutsuki_protocol_image::CardLayout;
+
+        let (runner, resources) = launch_ok();
+        let cover = resources
+            .create_blob_resource("memory", "image/png", fixture_png())
+            .unwrap();
+        let cases = [
+            (CardLayout::Media, 720, 644),
+            (CardLayout::Hero, 720, 450),
+            (CardLayout::Row, 720, 176),
+            (CardLayout::Feed, 720, 695),
+            (CardLayout::Profile, 720, 466),
+            (CardLayout::Art, 720, 960),
+        ];
+        for (layout, width, height) in cases {
+            let result = runner
+                .run_task(&Task::new(
+                    format!("card-{layout:?}"),
+                    CARD_RENDER,
+                    serde_json::to_value(CardRenderRequest {
+                        brand: "哔哩哔哩".into(),
+                        title: "标题".into(),
+                        description: "说明".into(),
+                        url: "https://example.com".into(),
+                        cover: Some(cover.clone()),
+                        layout,
+                        kicker: "投稿".into(),
+                        live: matches!(layout, CardLayout::Hero | CardLayout::Row),
+                        ..CardRenderRequest::default()
+                    })
+                    .unwrap(),
+                ))
+                .unwrap();
+            let response: ImageRenderResponse =
+                serde_json::from_value(result.output.unwrap()).unwrap();
+            assert_eq!(
+                (response.width, response.height),
+                (width, height),
+                "{layout:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn lilia_woff2_registers_as_noto_sans_sc() {
+        let dir =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../../products/bot/assets/fonts");
+        let files = lilia_font_files(&dir).expect("bundled Lilia fonts");
+        assert_eq!(files.len(), 3);
+        let resources = Arc::new(TestGateway::new());
+        let runner = ImageRenderRunner::launch(
+            ImageRenderConfig {
+                output_provider_id: "memory".into(),
+                font_files: files,
+            },
+            resources,
+        )
+        .unwrap();
+        let families = runner.registered_font_families();
+        assert!(
+            families
+                .iter()
+                .any(|family| family.eq_ignore_ascii_case(LILIA_SANS_FAMILY)),
+            "registered families: {families:?}"
+        );
     }
 }
