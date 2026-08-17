@@ -83,6 +83,19 @@ fn default_listen() -> String {
     "127.0.0.1:0".into()
 }
 
+fn config_navigation_item(provider_id: &str) -> ConfigNavigationItem {
+    ConfigNavigationItem {
+        provider_id: provider_id.to_string(),
+        label: match provider_id {
+            "mutsuki.product" | "product" => Some("本机工作区".into()),
+            "mutsuki.bot.adapter.qqbot" => Some("QQ 登录".into()),
+            "mutsuki.agent.runtime.local" => Some("Agent 模型".into()),
+            "mutsuki.plugin.bot.agent" => Some("回复策略".into()),
+            _ => None,
+        },
+    }
+}
+
 impl WebConsoleConfig {
     pub fn disabled() -> Self {
         Self::default()
@@ -226,21 +239,15 @@ pub fn build_console_host_with_agent(
                 .config_provider_ids
                 .iter()
                 .filter(|provider| *provider != primary)
-                .map(|provider| ConfigNavigationItem {
-                    provider_id: provider.clone(),
-                    label: None,
-                })
+                .map(|provider| config_navigation_item(provider))
                 .collect();
             extension = extension.with_navigation_groups([
                 ConfigNavigationGroup {
                     label: None,
-                    items: vec![ConfigNavigationItem {
-                        provider_id: primary.clone(),
-                        label: Some("Mutsuki".into()),
-                    }],
+                    items: vec![config_navigation_item(primary)],
                 },
                 ConfigNavigationGroup {
-                    label: Some("插件".into()),
+                    label: Some("接入".into()),
                     items: plugin_items,
                 },
             ]);
@@ -671,6 +678,32 @@ mod owner_console_tests {
                 "missing versioned {module_path}"
             );
         }
+    }
+
+    #[test]
+    fn config_navigation_labels_separate_setup_from_runtime_pages() {
+        assert_eq!(
+            config_navigation_item("mutsuki.product").label.as_deref(),
+            Some("本机工作区")
+        );
+        assert_eq!(
+            config_navigation_item("mutsuki.bot.adapter.qqbot")
+                .label
+                .as_deref(),
+            Some("QQ 登录")
+        );
+        assert_eq!(
+            config_navigation_item("mutsuki.agent.runtime.local")
+                .label
+                .as_deref(),
+            Some("Agent 模型")
+        );
+        assert_eq!(
+            config_navigation_item("mutsuki.plugin.bot.agent")
+                .label
+                .as_deref(),
+            Some("回复策略")
+        );
     }
 
     #[test]
