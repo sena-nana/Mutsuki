@@ -414,7 +414,6 @@ function mountWebUiSettings(host, theme) {
     <div class="settings-row">
       <div class="settings-row__label">
         <strong>\u4E3B\u9898</strong>
-        <div class="settings-row__hint">\u9009\u62E9 WebUI \u7684\u663E\u793A\u4E3B\u9898\u3002</div>
       </div>
       <div class="settings-row__control segmented" role="group" aria-label="\u4E3B\u9898">
         <button type="button" data-theme="system">\u8DDF\u968F\u7CFB\u7EDF</button>

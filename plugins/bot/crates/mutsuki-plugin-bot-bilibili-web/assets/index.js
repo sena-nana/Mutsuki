@@ -93,7 +93,7 @@ export function mountBilibiliPanel(host, rpc, events) {
   root.className = "bilibili-panel stack";
   host.appendChild(root);
 
-  const statusBox = section("登陆态");
+  const statusBox = section("登录");
   const qrBox = section("扫码登录");
   const listBox = section("订阅");
   const addBox = section("新增订阅");
@@ -126,12 +126,9 @@ export function mountBilibiliPanel(host, rpc, events) {
     status = await rpc.read("bilibili", "status");
     statusBox.querySelectorAll(".kv-row, .actions, .hint").forEach((n) => n.remove());
     statusBox.append(
-      kv("后端", status.backend || "—"),
-      kv("管理可用", status.available ? "是" : "否"),
-      kv("Cookie 密钥", status.cookie_secret_key || "—"),
-      kv("Cookie 状态", status.cookie_secret_state || "—"),
-      kv("内存凭据", status.credential_loaded ? "已加载" : "未加载"),
-      kv("订阅数", String(status.subscription_count ?? 0)),
+      kv("状态", status.credential_loaded ? "已登录" : "未登录"),
+      kv("管理", status.available ? "可用" : "不可用"),
+      kv("订阅", String(status.subscription_count ?? 0)),
     );
     if (status.reason) {
       const hint = document.createElement("p");
@@ -324,16 +321,16 @@ export function mountBilibiliPanel(host, rpc, events) {
     addBox.querySelectorAll("form").forEach((n) => n.remove());
     const form = document.createElement("form");
     form.className = "stack";
-    const idInput = textInput("subscription_id");
-    const uidInput = textInput("uid");
-    const bindingInput = textInput("outbound_binding");
-    const groupInput = textInput("group_id");
+    const idInput = textInput("订阅名称");
+    const uidInput = textInput("B 站 UID");
+    const bindingInput = textInput("绑定名");
+    const groupInput = textInput("群号");
     const notifyInput = textInput("live,dynamic,video", "live,dynamic,video");
     form.append(
-      field("订阅 ID", idInput),
-      field("UID", uidInput),
-      field("出站绑定", bindingInput),
-      field("群 ID（Web 仅支持群目标）", groupInput),
+      field("订阅名称", idInput),
+      field("B 站 UID", uidInput),
+      field("绑定名", bindingInput),
+      field("推送群", groupInput),
       field("通知类型", notifyInput),
     );
     const submit = button("创建订阅", "");
@@ -365,15 +362,15 @@ export function mountBilibiliPanel(host, rpc, events) {
     bindBox.querySelectorAll("form, .bind-result").forEach((n) => n.remove());
     const form = document.createElement("form");
     form.className = "stack";
-    const operatorInput = textInput("operator_user_id");
-    const uidInput = textInput("uid");
-    const groupInput = textInput("group_id");
+    const operatorInput = textInput("操作者");
+    const uidInput = textInput("B 站 UID");
+    const groupInput = textInput("群号");
     const result = document.createElement("div");
     result.className = "bind-result muted";
     form.append(
-      field("操作者用户 ID", operatorInput),
+      field("操作者", operatorInput),
       field("B 站 UID", uidInput),
-      field("验证成功后推送群 ID", groupInput),
+      field("推送群", groupInput),
     );
     const startBtn = button("发起绑定", "");
     startBtn.onclick = async (event) => {

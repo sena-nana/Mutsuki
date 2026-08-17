@@ -285,7 +285,7 @@ async fn embedded_console_demo_config_provider_is_usable() {
     )
     .await
     .unwrap();
-    assert_eq!(navigation[0]["items"][0]["label"], "本机工作区");
+    assert_eq!(navigation[0]["items"][0]["label"], "工作区");
     host.stop().await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 }
@@ -459,7 +459,7 @@ async fn embedded_console_mounts_qq_management_extension() {
     let qq_path = versioned_module_path(&options, "./extensions/qq-bot/index.js");
     let qq_js = http_get_body(&addr, &format!("/{qq_path}")).await;
     assert!(qq_js.contains("mountQqBotPanel"));
-    assert!(qq_js.contains("请到配置页填写登录信息"));
+    assert!(qq_js.contains("请到配置里填写账号"));
     assert!(!qq_js.contains("保存登录配置"));
     let snap = ws_rpc_params(&addr, "qq-bot", "snapshot", json!({}))
         .await

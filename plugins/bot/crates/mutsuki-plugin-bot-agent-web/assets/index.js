@@ -48,7 +48,7 @@ export async function mountAgentConnectionsPanel(el, rpc) {
     const snapshot = body.snapshot || body;
     revision = snapshot.revision || 0;
     const items = snapshot.connections || [];
-    list.innerHTML = items.length ? items.map((item) => `<div class="tree-item row-item"><div><strong>${item.connection_id === "local" ? "本机 Agent" : esc(item.connection_id)}</strong></div><div class="row-actions"><span class="pill ${item.state === "healthy" ? "ok" : "warn"}">${item.state === "healthy" ? "运行中" : "不可用"}</span>${item.connection_id === "local" ? "" : `<button class="ghost" data-reconnect="${esc(item.connection_id)}">重连</button>`}</div></div>`).join("") : `<div class="muted">尚未启用，请到配置页填写模型。</div>`;
+    list.innerHTML = items.length ? items.map((item) => `<div class="tree-item row-item"><div><strong>${item.connection_id === "local" ? "本机模型" : esc(item.connection_id)}</strong></div><div class="row-actions"><span class="pill ${item.state === "healthy" ? "ok" : "warn"}">${item.state === "healthy" ? "运行中" : "不可用"}</span>${item.connection_id === "local" ? "" : `<button class="ghost" data-reconnect="${esc(item.connection_id)}">重连</button>`}</div></div>`).join("") : `<div class="muted">尚未启用，请到配置里填写模型。</div>`;
     list.querySelectorAll("[data-reconnect]").forEach((button) => {
       button.onclick = async () => {
         try {
@@ -192,7 +192,7 @@ export async function mountAgentConnectionsPanel(el, rpc) {
     } catch (error) {
       el.querySelector("#agent-provider-test").hidden = true;
       el.querySelector("#agent-session-refresh").hidden = true;
-      sessionList.innerHTML = `<div class="muted">尚未启用，请到配置页打开回复策略。</div>`;
+      sessionList.innerHTML = `<div class="muted">尚未启用，请到配置里打开回复。</div>`;
     }
   }
   el.querySelector("#agent-provider-test").onclick = async (event) => {
@@ -221,7 +221,7 @@ export default {
   id: "bot-agent",
   setup(ctx) {
     ctx.pages.register({
-      id: "bot-agent.page", path: "/agent", title: "Agent 会话",
+      id: "bot-agent.page", path: "/agent", title: "会话",
       component: { mount: (el) => mountAgentConnectionsPanel(el, ctx.rpc) },
       requiredCapability: "runtime.read",
     });
@@ -229,18 +229,18 @@ export default {
       providerId: "mutsuki.agent.runtime.local",
       activityId: "bot",
       pageId: "bot-agent.page",
-      label: "打开 Agent 会话",
+      label: "查看会话",
       mode: "supplement",
     });
     registerConfigEditor({
       providerId: "mutsuki.plugin.bot.agent",
       activityId: "bot",
       pageId: "bot-agent.page",
-      label: "打开 Agent 会话",
+      label: "查看会话",
       mode: "supplement",
     });
     ctx.navigation.register({
-      id: "bot-agent.nav", activityId: "bot", pageId: "bot-agent.page", label: "Agent 会话", order: 30,
+      id: "bot-agent.nav", activityId: "bot", pageId: "bot-agent.page", label: "会话", order: 30,
       requiredCapability: "runtime.read",
     });
   },

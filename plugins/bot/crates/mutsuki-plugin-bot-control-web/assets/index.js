@@ -289,12 +289,12 @@ function mountLifecycle(host, rpc, events) {
     },
     render(body, value, controls) {
       body.innerHTML = `
-        <section class="card"><h2>服务状态</h2><ul class="kv"><li><span>运行时间</span><span>${escapeHtml(value.status?.uptime_ms ?? "—")} ms</span></li><li><span>Core</span><span>${escapeHtml(value.health?.core || "—")}</span></li></ul></section>
-        <section class="card"><h2>Core drain</h2><p class="muted">停止接受新任务并等待已接收任务完成。</p><button type="button" class="ghost" data-drain>开始 Core drain</button></section>
-        <section class="card"><h2>Service shutdown</h2><p class="muted">触发服务优雅关闭。</p><button type="button" class="ghost danger" data-shutdown>关闭 Service</button></section>
+        <section class="card"><h2>服务状态</h2><ul class="kv"><li><span>运行时间</span><span>${escapeHtml(value.status?.uptime_ms ?? "—")} ms</span></li><li><span>消息处理</span><span>${escapeHtml(value.health?.core || "—")}</span></li></ul></section>
+        <section class="card"><h2>排空任务</h2><p class="muted">停止接受新任务，并等待进行中的任务完成。</p><button type="button" class="ghost" data-drain>开始排空</button></section>
+        <section class="card"><h2>关闭服务</h2><p class="muted">保存状态后关闭服务。</p><button type="button" class="ghost danger" data-shutdown>关闭服务</button></section>
       `;
       body.querySelector("[data-drain]").onclick = async () => {
-        if (!confirmDestructive("Core drain", "DRAIN")) return;
+        if (!confirmDestructive("排空任务", "DRAIN")) return;
         try {
           await rpc.write("control", "core_begin_drain");
           await controls.refresh();
@@ -303,7 +303,7 @@ function mountLifecycle(host, rpc, events) {
         }
       };
       body.querySelector("[data-shutdown]").onclick = async () => {
-        if (!confirmDestructive("Service 关闭", "SHUTDOWN")) return;
+        if (!confirmDestructive("关闭服务", "SHUTDOWN")) return;
         try {
           await rpc.write("control", "service_shutdown");
           controls.setStatus("关闭信号已发送");

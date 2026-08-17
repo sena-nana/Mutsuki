@@ -149,13 +149,13 @@ pub fn product_descriptor() -> ConfigDescriptor {
         provider_id: ConfigProviderId::new(PRODUCT_CONFIG_PROVIDER_ID),
         schema_version: 3,
         value_version: 3,
-        title: LocalizedText::new("本机 Bot"),
+        title: LocalizedText::new("工作区"),
         description: None,
         scopes: vec![ConfigScope::global()],
         root: ConfigNode {
             key: "product".into(),
             value_type: ConfigValueType::Object,
-            title: LocalizedText::new("本机 Bot"),
+            title: LocalizedText::new("工作区"),
             description: None,
             default_value: None,
             constraints: ConfigConstraints::default(),
@@ -167,7 +167,8 @@ pub fn product_descriptor() -> ConfigDescriptor {
             children: vec![
                 bool_node(
                     "workspace_enabled",
-                    "启用本机 Bot 工作区",
+                    "启用",
+                    Some("关闭后，助手连接和流程路由会一并停用。"),
                     RestartPolicy::ApplicationRestart,
                 ),
                 hidden(ConfigNode {
@@ -193,12 +194,17 @@ pub fn product_descriptor() -> ConfigDescriptor {
     }
 }
 
-fn bool_node(key: &str, title: &str, restart_policy: RestartPolicy) -> ConfigNode {
+fn bool_node(
+    key: &str,
+    title: &str,
+    description: Option<&str>,
+    restart_policy: RestartPolicy,
+) -> ConfigNode {
     ConfigNode {
         key: key.into(),
         value_type: ConfigValueType::Bool,
         title: LocalizedText::new(title),
-        description: None,
+        description: description.map(LocalizedText::new),
         default_value: None,
         constraints: ConfigConstraints::default(),
         presentation: ConfigPresentation::default(),
