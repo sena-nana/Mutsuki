@@ -2350,3 +2350,363 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 }
+
+/* —— node-editor.css —— */
+/* Lilia node editor surface. Product pages mount `.lilia-node-editor` inside Console main. */
+
+.mutsuki-console .console-page-content:has(.lilia-node-editor) {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.mutsuki-console .console-page-content:has(.lilia-node-editor) > .page-body {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.lilia-node-editor {
+  --lilia-node-editor-palette: 232px;
+  --lilia-node-editor-inspector: 300px;
+  --lilia-region-overflow: hidden;
+  display: grid;
+  grid-template-columns:
+    var(--lilia-node-editor-palette) minmax(0, 1fr) var(--lilia-node-editor-inspector);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 480px;
+  flex: 1;
+  background: var(--lilia-surface-fill-base, var(--bg));
+}
+
+.lilia-node-editor__palette,
+.lilia-node-editor__inspector,
+.lilia-node-editor__stage {
+  min-width: 0;
+  min-height: 0;
+}
+
+.lilia-node-editor__palette,
+.lilia-node-editor__inspector {
+  background: var(--lilia-surface-fill-raised, var(--bg-elev));
+}
+
+.lilia-node-editor__palette {
+  border-inline-end: 1px solid var(--border-soft);
+}
+
+.lilia-node-editor__inspector {
+  border-inline-start: 1px solid var(--border-soft);
+}
+
+.lilia-node-editor__pane {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+  padding: 14px 12px;
+}
+
+.lilia-node-editor__pane-title {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.lilia-node-editor__catalog {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 14px;
+  overflow: auto;
+}
+
+.lilia-node-editor__catalog section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lilia-node-editor__catalog h3 {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.lilia-node-editor__type {
+  justify-content: flex-start;
+  width: 100%;
+  text-align: start;
+}
+
+.lilia-node-editor__stage-body {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.lilia-node-editor__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 8px 12px;
+  border-block-end: 1px solid var(--border-soft);
+  background: var(--lilia-surface-fill-raised, var(--bg-elev));
+}
+
+.lilia-node-editor__toolbar select {
+  min-width: 160px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.lilia-node-editor__issues {
+  padding: 0 12px;
+}
+
+.lilia-node-editor__issues:empty {
+  display: none;
+}
+
+.lilia-node-editor__issues .error-banner,
+.lilia-node-editor__issues .success-banner {
+  margin: 10px 0 0;
+}
+
+.lilia-node-editor__viewport {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  touch-action: none;
+  cursor: grab;
+  background-color: var(--lilia-surface-fill-base, var(--bg));
+  background-image: radial-gradient(var(--border-soft) 1px, transparent 1px);
+  background-size: 20px 20px;
+  background-position: var(--lilia-node-editor-grid-x, 0px) var(--lilia-node-editor-grid-y, 0px);
+}
+
+.lilia-node-editor__viewport.is-panning,
+.lilia-node-editor__node.is-dragging {
+  cursor: grabbing;
+}
+
+.lilia-node-editor__viewport.is-wiring {
+  cursor: crosshair;
+}
+
+.lilia-node-editor__world {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+}
+
+.lilia-node-editor__wires {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4000px;
+  height: 3000px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.lilia-node-editor__wire {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.lilia-node-editor__wire.error {
+  stroke: var(--err);
+  stroke-dasharray: 6 4;
+}
+
+.lilia-node-editor__wire.is-selected,
+.lilia-node-editor__wire:hover {
+  stroke-width: 3;
+}
+
+.lilia-node-editor__wire.is-draft {
+  pointer-events: none;
+  stroke: var(--accent);
+  stroke-dasharray: 5 4;
+  opacity: 0.85;
+}
+
+.lilia-node-editor__empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.lilia-node-editor__node {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  width: 220px;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--lilia-surface-fill-raised, var(--bg-elev));
+  box-shadow: var(--shadow);
+  cursor: grab;
+  user-select: none;
+}
+
+.lilia-node-editor__node.is-selected {
+  z-index: 2;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.lilia-node-editor__node.is-invalid {
+  outline: 2px solid var(--err);
+  outline-offset: 1px;
+}
+
+.lilia-node-editor__node-title {
+  margin: 0;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lilia-node-editor__node-meta {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.lilia-node-editor__ports {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
+}
+
+.lilia-node-editor__port-col {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lilia-node-editor__port-col--output {
+  align-items: flex-end;
+}
+
+.lilia-node-editor__port {
+  position: relative;
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1;
+  cursor: crosshair;
+}
+
+.lilia-node-editor__port-col--output .lilia-node-editor__port {
+  flex-direction: row-reverse;
+}
+
+.lilia-node-editor__port-dot {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  background: var(--lilia-surface-fill-raised, var(--bg-elev));
+}
+
+.lilia-node-editor__port.error .lilia-node-editor__port-dot {
+  border-color: var(--err);
+}
+
+.lilia-node-editor__port.is-active .lilia-node-editor__port-dot,
+.lilia-node-editor__port.is-target .lilia-node-editor__port-dot {
+  background: var(--accent);
+}
+
+.lilia-node-editor__port.error.is-active .lilia-node-editor__port-dot,
+.lilia-node-editor__port.error.is-target .lilia-node-editor__port-dot {
+  background: var(--err);
+}
+
+.lilia-node-editor__port-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lilia-node-editor__hint {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.success-banner {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in oklch, var(--ok) 32%, var(--border));
+  border-radius: var(--radius-md);
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+@media (max-width: 1100px) {
+  .lilia-node-editor {
+    --lilia-node-editor-palette: 196px;
+    --lilia-node-editor-inspector: 240px;
+  }
+}
+
+@media (max-width: 860px) {
+  .lilia-node-editor {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(420px, 1fr) auto;
+  }
+
+  .lilia-node-editor__palette,
+  .lilia-node-editor__inspector {
+    border: 0;
+    border-block-end: 1px solid var(--border-soft);
+    max-height: 220px;
+  }
+
+  .lilia-node-editor__inspector {
+    border-block-end: 0;
+    border-block-start: 1px solid var(--border-soft);
+    max-height: none;
+  }
+}

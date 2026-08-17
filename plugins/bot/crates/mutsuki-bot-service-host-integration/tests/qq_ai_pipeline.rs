@@ -717,21 +717,36 @@ fn agent_flow() -> BotFlowDocument {
                 }),
             ),
             flow_node(
-                "match",
-                "mutsuki.bot.match.event",
-                json!({
-                    "event_kinds": ["message_created"],
-                    "conversation_kinds": ["private"],
-                    "wake_words": ["wake"]
-                }),
+                "conversation",
+                "mutsuki.bot.match.conversation",
+                json!({ "kinds": ["private"] }),
+                None,
+            ),
+            flow_node(
+                "keyword",
+                "mutsuki.bot.match.keyword",
+                json!({ "keywords": ["wake"], "mode": "any" }),
                 None,
             ),
             flow_node("agent", BOT_AGENT_NODE_SUBMIT, json!({}), None),
             flow_node("delivery", "mutsuki.bot.delivery.reply", json!({}), None),
         ],
         edges: vec![
-            flow_edge("source-match", "source", "event", "match", "event"),
-            flow_edge("match-agent", "match", "matched", "agent", "input"),
+            flow_edge(
+                "source-conversation",
+                "source",
+                "event",
+                "conversation",
+                "event",
+            ),
+            flow_edge(
+                "conversation-keyword",
+                "conversation",
+                "matched",
+                "keyword",
+                "event",
+            ),
+            flow_edge("keyword-agent", "keyword", "matched", "agent", "input"),
             flow_edge("agent-delivery", "agent", "reply", "delivery", "reply"),
         ],
     }
@@ -750,9 +765,12 @@ fn source_manifest() -> mutsuki_runtime_contracts::PluginManifest {
                     binding: None,
                     ports: vec![BotNodePortDescriptor {
                         port_id: "event".into(),
-                        title: "事件".into(),
+                        title: "收到消息".into(),
                         direction: BotNodePortDirection::Output,
-                        event_type: BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1),
+                        event_type: BotFlowTypeRef::new(
+                            mutsuki_bot_protocol::BOT_FLOW_MESSAGE_EVENT_TYPE,
+                            1,
+                        ),
                         required: false,
                     }],
                     config_schema: json!({"type": "object", "additionalProperties": false}),

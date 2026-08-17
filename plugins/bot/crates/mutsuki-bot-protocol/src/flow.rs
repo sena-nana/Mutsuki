@@ -11,6 +11,11 @@ pub const BOT_FLOW_NODE_EXTENSION_VERSION: u32 = 1;
 pub const BOT_FLOW_EVENT_TYPE: &str = "mutsuki.bot.flow.event";
 pub const BOT_FLOW_ERROR_TYPE: &str = "mutsuki.bot.flow.error";
 pub const BOT_FLOW_BOT_EVENT_TYPE: &str = "mutsuki.bot.event";
+pub const BOT_FLOW_MESSAGE_EVENT_TYPE: &str = "mutsuki.bot.event.message";
+pub const BOT_FLOW_MESSAGE_DELETED_EVENT_TYPE: &str = "mutsuki.bot.event.message_deleted";
+pub const BOT_FLOW_REACTION_EVENT_TYPE: &str = "mutsuki.bot.event.reaction";
+pub const BOT_FLOW_MEMBER_EVENT_TYPE: &str = "mutsuki.bot.event.member";
+pub const BOT_FLOW_LIFECYCLE_EVENT_TYPE: &str = "mutsuki.bot.event.lifecycle";
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct BotFlowTypeRef {

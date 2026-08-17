@@ -644,6 +644,11 @@ mod owner_console_tests {
                 .join("extensions/bot-flow/index.js")
                 .is_file()
         );
+        assert!(
+            dirs.overview_assets
+                .join("extensions/bot-flow/lilia-node-editor.js")
+                .is_file()
+        );
         let options: serde_json::Value = serde_json::from_slice(
             &std::fs::read(dirs.overview_assets.join("console-options.json")).unwrap(),
         )

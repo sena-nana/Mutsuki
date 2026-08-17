@@ -3,11 +3,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use mutsuki_bot_conversation::qq_conversation_from_event;
 use mutsuki_bot_protocol::{
-    BOT_FLOW_BOT_EVENT_TYPE, BOT_INTERACTION_SESSION_PROTOCOL_ID, BotEvent, BotFlowEventEnvelope,
-    BotFlowPayload, BotFlowTypeRef, BotInteractionCommand, BotInteractionSession, BotNodeBinding,
-    BotNodeCatalogFragment, BotNodeDescriptor, BotNodeInvocation, BotNodeOutput,
-    BotNodePortDescriptor, BotNodePortDirection, BotNodeResult, BotNodeRole, InteractionMatch,
-    InteractionScope, InteractionStatus, InteractionWaitSpec,
+    BOT_FLOW_MESSAGE_EVENT_TYPE, BOT_INTERACTION_SESSION_PROTOCOL_ID, BotEvent,
+    BotFlowEventEnvelope, BotFlowPayload, BotFlowTypeRef, BotInteractionCommand,
+    BotInteractionSession, BotNodeBinding, BotNodeCatalogFragment, BotNodeDescriptor,
+    BotNodeInvocation, BotNodeOutput, BotNodePortDescriptor, BotNodePortDirection, BotNodeResult,
+    BotNodeRole, InteractionMatch, InteractionScope, InteractionStatus, InteractionWaitSpec,
 };
 use mutsuki_runtime_contracts::{ExecutionClass, PluginManifest, RunnerResult, Task};
 use mutsuki_runtime_core::{Runner, RuntimeFailure, RuntimeResult};
@@ -308,9 +308,9 @@ fn interaction_node_catalog() -> BotNodeCatalogFragment {
             ports: vec![
                 BotNodePortDescriptor {
                     port_id: "event".into(),
-                    title: "事件".into(),
+                    title: "消息".into(),
                     direction: BotNodePortDirection::Input,
-                    event_type: BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1),
+                    event_type: BotFlowTypeRef::new(BOT_FLOW_MESSAGE_EVENT_TYPE, 1),
                     required: true,
                 },
                 BotNodePortDescriptor {
@@ -324,7 +324,7 @@ fn interaction_node_catalog() -> BotNodeCatalogFragment {
                     port_id: "unmatched".into(),
                     title: "未匹配".into(),
                     direction: BotNodePortDirection::Output,
-                    event_type: BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1),
+                    event_type: BotFlowTypeRef::new(BOT_FLOW_MESSAGE_EVENT_TYPE, 1),
                     required: false,
                 },
                 BotNodePortDescriptor {

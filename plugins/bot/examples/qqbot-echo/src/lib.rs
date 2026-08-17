@@ -23,7 +23,7 @@ pub fn qqbot_echo_flow() -> BotFlowDocument {
         nodes: vec![
             node(
                 "source",
-                "mutsuki.bot.qq.source",
+                mutsuki_plugin_bot_adapter_qqbot::tasks::QQ_NODE_MESSAGE_CREATED,
                 json!({}),
                 Some(BotFlowSourceSelector {
                     protocol_id: BOT_EVENT_INGEST_PROTOCOL_ID.into(),

@@ -11,7 +11,11 @@ use mutsuki_bot_protocol::{
 };
 use mutsuki_bot_service_host_integration::configured_bot_plugin_catalog;
 use mutsuki_bot_testkit::{FakeQqGatewayScript, FakeQqServer};
-use mutsuki_plugin_bot_adapter_qqbot::tasks::qqbot_adapter_manifest;
+use mutsuki_plugin_bot_adapter_qqbot::tasks::{
+    QQ_NODE_BOT_CONNECTED, QQ_NODE_BOT_DISCONNECTED, QQ_NODE_MEMBER_JOINED, QQ_NODE_MEMBER_LEFT,
+    QQ_NODE_MESSAGE_CREATED, QQ_NODE_MESSAGE_DELETED, QQ_NODE_MESSAGE_UPDATED,
+    QQ_NODE_REACTION_ADDED, QQ_NODE_REACTION_REMOVED, qqbot_adapter_manifest,
+};
 use mutsuki_plugin_bot_event_router::{
     BOT_FLOW_REGISTRY_SERVICE_ID, BotFlowMatchRunner, flow_ingress_runner, flow_node_runner,
     flow_router_manifest,
@@ -190,13 +194,22 @@ async fn fake_gateway_delivers_private_group_channel_and_distinct_delete_once() 
                         protocol_id: CAPTURE_PROTOCOL_ID.into(),
                         runner_hint: Some(CAPTURE_RUNNER_ID.into()),
                     }),
-                    ports: vec![BotNodePortDescriptor {
-                        port_id: "event".into(),
-                        title: "Event".into(),
-                        direction: BotNodePortDirection::Input,
-                        event_type: BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1),
-                        required: true,
-                    }],
+                    ports: vec![
+                        capture_port("event", mutsuki_bot_protocol::BOT_FLOW_MESSAGE_EVENT_TYPE),
+                        capture_port(
+                            "deleted",
+                            mutsuki_bot_protocol::BOT_FLOW_MESSAGE_DELETED_EVENT_TYPE,
+                        ),
+                        capture_port(
+                            "reaction",
+                            mutsuki_bot_protocol::BOT_FLOW_REACTION_EVENT_TYPE,
+                        ),
+                        capture_port("member", mutsuki_bot_protocol::BOT_FLOW_MEMBER_EVENT_TYPE),
+                        capture_port(
+                            "lifecycle",
+                            mutsuki_bot_protocol::BOT_FLOW_LIFECYCLE_EVENT_TYPE,
+                        ),
+                    ],
                     config_schema: json!({"type": "object", "additionalProperties": false}),
                 }],
             }
@@ -421,6 +434,67 @@ panic_file = "panic.log"
     )
 }
 
+fn capture_port(port_id: &str, event_type: &str) -> BotNodePortDescriptor {
+    BotNodePortDescriptor {
+        port_id: port_id.into(),
+        title: port_id.into(),
+        direction: BotNodePortDirection::Input,
+        event_type: BotFlowTypeRef::new(event_type, 1),
+        required: false,
+    }
+}
+
+fn capture_source_nodes() -> Vec<BotFlowNode> {
+    [
+        (QQ_NODE_MESSAGE_CREATED, "message"),
+        (QQ_NODE_MESSAGE_UPDATED, "updated"),
+        (QQ_NODE_MESSAGE_DELETED, "deleted"),
+        (QQ_NODE_REACTION_ADDED, "reaction-add"),
+        (QQ_NODE_REACTION_REMOVED, "reaction-remove"),
+        (QQ_NODE_MEMBER_JOINED, "joined"),
+        (QQ_NODE_MEMBER_LEFT, "left"),
+        (QQ_NODE_BOT_CONNECTED, "connected"),
+        (QQ_NODE_BOT_DISCONNECTED, "disconnected"),
+    ]
+    .into_iter()
+    .map(|(node_type_id, node_id)| BotFlowNode {
+        node_id: node_id.into(),
+        node_type_id: node_type_id.into(),
+        node_type_version: 1,
+        config: json!({}),
+        source: Some(BotFlowSourceSelector {
+            protocol_id: BOT_EVENT_INGEST_PROTOCOL_ID.into(),
+            event_type: Some(BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1)),
+        }),
+        position: BotFlowNodePosition::default(),
+    })
+    .collect()
+}
+
+fn capture_source_edges() -> Vec<BotFlowEdge> {
+    [
+        ("message", "event"),
+        ("updated", "event"),
+        ("deleted", "deleted"),
+        ("reaction-add", "reaction"),
+        ("reaction-remove", "reaction"),
+        ("joined", "member"),
+        ("left", "member"),
+        ("connected", "lifecycle"),
+        ("disconnected", "lifecycle"),
+    ]
+    .into_iter()
+    .map(|(from, to_port)| BotFlowEdge {
+        edge_id: format!("{from}-capture"),
+        from_node_id: from.into(),
+        from_port_id: "event".into(),
+        to_node_id: "capture".into(),
+        to_port_id: to_port.into(),
+        kind: BotFlowEdgeKind::Event,
+    })
+    .collect()
+}
+
 fn capture_flow_registry(
     capture_manifest: &mutsuki_runtime_contracts::PluginManifest,
 ) -> Arc<BotFlowRegistry> {
@@ -439,35 +513,19 @@ fn capture_flow_registry(
                     flow_id: "issue141.capture".into(),
                     name: "capture all QQ events".into(),
                     enabled: true,
-                    nodes: vec![
-                        BotFlowNode {
-                            node_id: "source".into(),
-                            node_type_id: "mutsuki.bot.qq.source".into(),
-                            node_type_version: 1,
-                            config: json!({}),
-                            source: Some(BotFlowSourceSelector {
-                                protocol_id: BOT_EVENT_INGEST_PROTOCOL_ID.into(),
-                                event_type: Some(BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1)),
-                            }),
-                            position: BotFlowNodePosition::default(),
-                        },
-                        BotFlowNode {
+                    nodes: {
+                        let mut nodes = capture_source_nodes();
+                        nodes.push(BotFlowNode {
                             node_id: "capture".into(),
                             node_type_id: CAPTURE_PLUGIN_ID.into(),
                             node_type_version: 1,
                             config: json!({}),
                             source: None,
                             position: BotFlowNodePosition::default(),
-                        },
-                    ],
-                    edges: vec![BotFlowEdge {
-                        edge_id: "capture".into(),
-                        from_node_id: "source".into(),
-                        from_port_id: "event".into(),
-                        to_node_id: "capture".into(),
-                        to_port_id: "event".into(),
-                        kind: BotFlowEdgeKind::Event,
-                    }],
+                        });
+                        nodes
+                    },
+                    edges: capture_source_edges(),
                 }],
             },
         )

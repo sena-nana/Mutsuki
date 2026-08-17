@@ -14,7 +14,7 @@ use mutsuki_bot_conversation::{
 use mutsuki_bot_protocol::{
     AgentSessionBinding, BOT_AGENT_CANCEL_PROTOCOL_ID, BOT_AGENT_FORK_PROTOCOL_ID,
     BOT_AGENT_REGENERATE_PROTOCOL_ID, BOT_AGENT_RESET_PROTOCOL_ID, BOT_AGENT_STATUS_PROTOCOL_ID,
-    BOT_AGENT_SUBMIT_PROTOCOL_ID, BOT_FLOW_BOT_EVENT_TYPE, BOT_MEDIA_SYNTHESIZE_PROTOCOL_ID,
+    BOT_AGENT_SUBMIT_PROTOCOL_ID, BOT_FLOW_MESSAGE_EVENT_TYPE, BOT_MEDIA_SYNTHESIZE_PROTOCOL_ID,
     BOT_MEDIA_TRANSCRIBE_PROTOCOL_ID, BOT_REPLY_DELIVERY_PROTOCOL_ID, BotAgentBridgeRequest,
     BotCommandEvent, BotDeliveryContent, BotEvent, BotFlowEventEnvelope, BotFlowPayload,
     BotFlowTypeRef, BotMediaKind, BotMediaSynthesizeRequest, BotMediaSynthesizeResult,
@@ -104,7 +104,7 @@ fn agent_node_catalog() -> BotNodeCatalogFragment {
             BOT_AGENT_NODE_SUBMIT,
             "提交 Agent",
             BOT_AGENT_SUBMIT_PROTOCOL_ID,
-            BOT_FLOW_BOT_EVENT_TYPE,
+            BOT_FLOW_MESSAGE_EVENT_TYPE,
         ),
         (
             BOT_AGENT_NODE_CANCEL,
