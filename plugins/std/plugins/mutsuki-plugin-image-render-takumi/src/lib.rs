@@ -238,7 +238,7 @@ impl ImageRenderRunner {
         task: &Task,
         resource: &mutsuki_runtime_contracts::ResourceRef,
     ) -> Result<Vec<u8>, RuntimeError> {
-        if resource.ref_id.trim().is_empty() {
+        if resource.ref_id.as_str().trim().is_empty() {
             return Err(render_error(
                 task,
                 "card.cover.resource",
@@ -473,7 +473,7 @@ mod tests {
     use mutsuki_protocol_image::{CardGradient, Rgba};
     use mutsuki_runtime_contracts::resource::experimental::{CommandBatch, SagaPlan};
     use mutsuki_runtime_contracts::{
-        CommandPlan, ExportPlan, PlanReceipt, ResourceRef, SnapshotDescriptor, StreamPlan,
+        CommandPlan, ExportPlan, PlanReceipt, RefId, ResourceRef, SnapshotDescriptor, StreamPlan,
         WritePlan,
     };
     use mutsuki_runtime_core::RuntimeFailure;
@@ -483,7 +483,7 @@ mod tests {
 
     struct TestGateway {
         provider: MemoryResourceProvider,
-        descriptors: Mutex<HashMap<String, ResourceRef>>,
+        descriptors: Mutex<HashMap<RefId, ResourceRef>>,
     }
 
     impl TestGateway {

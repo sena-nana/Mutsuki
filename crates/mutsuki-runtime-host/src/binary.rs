@@ -296,7 +296,7 @@ where
     ) -> RuntimeResult<CompletionBatch> {
         validate_batch_leases(&ctx, &batch)?;
         self.transport.request(&RunBatchRequest {
-            runner_id: self.descriptor.runner_id.clone(),
+            runner_id: self.descriptor.runner_id.to_string(),
             ctx,
             batch,
         })
@@ -304,20 +304,20 @@ where
 
     fn cancel(&mut self, invocation_id: &str) -> RuntimeResult<()> {
         self.transport.request(&CancelRunnerRequest {
-            runner_id: self.descriptor.runner_id.clone(),
+            runner_id: self.descriptor.runner_id.to_string(),
             invocation_id: invocation_id.into(),
         })
     }
 
     fn dispose(&mut self) -> RuntimeResult<()> {
         self.transport.request(&DisposeRunnerRequest {
-            runner_id: self.descriptor.runner_id.clone(),
+            runner_id: self.descriptor.runner_id.to_string(),
         })
     }
 
     fn management_handle(&self) -> Option<Arc<dyn RunnerManagementHandle>> {
         Some(Arc::new(BinaryManagement {
-            runner_id: self.descriptor.runner_id.clone(),
+            runner_id: self.descriptor.runner_id.to_string(),
             transport: self.transport.clone(),
         }))
     }
@@ -367,15 +367,27 @@ fn validate_batch_leases(ctx: &RunnerContext, batch: &WorkBatch) -> RuntimeResul
         );
         error.evidence.insert(
             "ctx_task_lease_ids".into(),
-            ScalarValue::String(ctx.task_lease_ids.join(",")),
+            ScalarValue::String(
+                ctx.task_lease_ids
+                    .iter()
+                    .map(|id| id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
         );
         error.evidence.insert(
             "batch_task_lease_ids".into(),
-            ScalarValue::String(batch_lease_ids.join(",")),
+            ScalarValue::String(
+                batch_lease_ids
+                    .iter()
+                    .map(|id| id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
         );
         error.evidence.insert(
             "executor_id".into(),
-            ScalarValue::String(ctx.executor_id.clone()),
+            ScalarValue::String(ctx.executor_id.to_string()),
         );
         return Err(RuntimeFailure::new(error));
     }

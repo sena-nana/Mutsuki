@@ -7,7 +7,8 @@ use mutsuki_bot_protocol::{
     BotMediaUploadRequest, BotMessage, BotMessageRecallRequest, BotTarget,
 };
 use mutsuki_runtime_contracts::{
-    CancelPolicy, DispatchLane, OrderingRequirement, Task, TaskBatch, TaskHandle, TaskOutcome,
+    BatchId, BindingId, CancelPolicy, DispatchLane, OrderingRequirement, Task, TaskBatch,
+    TaskHandle, TaskId, TaskOutcome, TraceId,
 };
 use mutsuki_runtime_sdk::{
     RuntimeClientRef, RuntimeFailure, TaskSubmitter, TaskSubmitterRuntimeClient,
@@ -29,9 +30,9 @@ pub enum BotSdkError {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BotTaskOptions {
-    trace_id: Option<String>,
+    trace_id: Option<TraceId>,
     correlation_id: Option<String>,
-    target_binding_id: Option<String>,
+    target_binding_id: Option<BindingId>,
     runner_hint: Option<String>,
     cancel_policy: Option<CancelPolicy>,
     priority: Option<i64>,
@@ -44,7 +45,7 @@ impl BotTaskOptions {
         Self::default()
     }
 
-    pub fn trace_id(mut self, trace_id: impl Into<String>) -> Self {
+    pub fn trace_id(mut self, trace_id: impl Into<TraceId>) -> Self {
         self.trace_id = Some(trace_id.into());
         self
     }
@@ -54,7 +55,7 @@ impl BotTaskOptions {
         self
     }
 
-    pub fn target_binding_id(mut self, target_binding_id: impl Into<String>) -> Self {
+    pub fn target_binding_id(mut self, target_binding_id: impl Into<BindingId>) -> Self {
         self.target_binding_id = Some(target_binding_id.into());
         self
     }
@@ -122,9 +123,9 @@ impl BotTaskOptions {
 
 struct ResolvedBotTaskOptions {
     task_id: String,
-    trace_id: Option<String>,
+    trace_id: Option<TraceId>,
     correlation_id: Option<String>,
-    target_binding_id: Option<String>,
+    target_binding_id: Option<BindingId>,
     runner_hint: Option<String>,
     cancel_policy: CancelPolicy,
     priority: i64,
@@ -304,7 +305,7 @@ impl BotContext {
 
     pub fn submit_operations(
         &self,
-        batch_id: impl Into<String>,
+        batch_id: impl Into<BatchId>,
         operations: impl IntoIterator<Item = BotTask>,
     ) -> Result<Vec<TaskHandle>, BotSdkError> {
         let mut tasks = Vec::new();
@@ -356,7 +357,7 @@ impl BotContext {
 
 fn validate_handle_set(
     handles: &[TaskHandle],
-    policies: &BTreeMap<String, CancelPolicy>,
+    policies: &BTreeMap<TaskId, CancelPolicy>,
 ) -> Result<(), BotSdkError> {
     if handles.len() == policies.len()
         && handles
@@ -366,7 +367,11 @@ fn validate_handle_set(
         return Ok(());
     }
     Err(BotSdkError::InvalidHandles(
-        policies.keys().cloned().collect::<Vec<_>>().join(","),
+        policies
+            .keys()
+            .map(TaskId::as_str)
+            .collect::<Vec<_>>()
+            .join(","),
     ))
 }
 
@@ -387,7 +392,7 @@ mod tests {
     #[derive(Default)]
     struct RecordingRuntimeClient {
         batches: Mutex<Vec<TaskBatch>>,
-        outcomes: Mutex<BTreeMap<String, TaskOutcome>>,
+        outcomes: Mutex<BTreeMap<TaskId, TaskOutcome>>,
     }
 
     impl RuntimeClient for RecordingRuntimeClient {
@@ -439,9 +444,15 @@ mod tests {
 
         assert_eq!(handle.task_id, "bot-test:1");
         assert_eq!(handle.protocol_id, BOT_MESSAGE_SEND_PROTOCOL_ID);
-        assert_eq!(handle.target_binding_id.as_deref(), Some("binding.qqbot"));
+        assert_eq!(
+            handle.target_binding_id.as_ref().map(BindingId::as_str),
+            Some("binding.qqbot")
+        );
         assert_eq!(handle.cancel_policy, CancelPolicy::Shield);
-        assert_eq!(handle.trace_id.as_deref(), Some("trace-1"));
+        assert_eq!(
+            handle.trace_id.as_ref().map(TraceId::as_str),
+            Some("trace-1")
+        );
         assert_eq!(handle.correlation_id.as_deref(), Some("correlation-1"));
         let batches = client.batches.lock().unwrap();
         let task = &batches[0].tasks[0];
@@ -505,7 +516,7 @@ mod tests {
             batches[0]
                 .tasks
                 .iter()
-                .all(|task| task.trace_id.as_deref() == Some("trace-batch"))
+                .all(|task| task.trace_id.as_ref().map(TraceId::as_str) == Some("trace-batch"))
         );
     }
 

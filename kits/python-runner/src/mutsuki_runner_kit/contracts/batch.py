@@ -8,15 +8,15 @@ from mutsuki_runner_kit.contracts.codec import (
     JsonDict,
     JsonValue,
     ScalarValue,
+    as_id_tuple,
     as_int,
     as_json_value,
     as_mapping,
     as_scalar,
     as_str,
-    as_str_tuple,
     field_value,
+    optional_id,
     optional_int,
-    optional_str,
     sequence,
     to_json_value,
     tuple_from_json,
@@ -29,6 +29,15 @@ from mutsuki_runner_kit.contracts.entry import (
     ResourceRequirement,
 )
 from mutsuki_runner_kit.contracts.errors import ERR_TASK_CLAIM_CONFLICT, RuntimeError
+from mutsuki_runner_kit.contracts.ids import (
+    BatchId,
+    BatchKey,
+    EntryId,
+    RefId,
+    TaskId,
+    TickId,
+    TraceId,
+)
 from mutsuki_runner_kit.contracts.resource import ResourceRef
 from mutsuki_runner_kit.contracts.state import VersionExpectation
 from mutsuki_runner_kit.contracts.task import Task, TaskLease
@@ -64,10 +73,10 @@ __all__ = (
 
 @dataclass(frozen=True)
 class BatchEntry:
-    entry_id: str
-    task_id: str
-    trace_id: str | None
-    parent_id: str | None
+    entry_id: EntryId
+    task_id: TaskId
+    trace_id: TraceId | None
+    parent_id: EntryId | None
     payload_index: int
     resource_requirement_indices: tuple[int, ...]
     cancel_index: int | None
@@ -80,10 +89,10 @@ class BatchEntry:
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = as_mapping(data, "BatchEntry")
         return cls(
-            entry_id=as_str(field_value(raw, "entry_id"), "entry_id"),
-            task_id=as_str(field_value(raw, "task_id"), "task_id"),
-            trace_id=optional_str(field_value(raw, "trace_id"), "trace_id"),
-            parent_id=optional_str(field_value(raw, "parent_id"), "parent_id"),
+            entry_id=EntryId(as_str(field_value(raw, "entry_id"), "entry_id")),
+            task_id=TaskId(as_str(field_value(raw, "task_id"), "task_id")),
+            trace_id=optional_id(TraceId, field_value(raw, "trace_id"), "trace_id"),
+            parent_id=optional_id(EntryId, field_value(raw, "parent_id"), "parent_id"),
             payload_index=as_int(field_value(raw, "payload_index"), "payload_index"),
             resource_requirement_indices=_int_tuple(
                 field_value(raw, "resource_requirement_indices"),
@@ -247,14 +256,14 @@ class BatchPayload:
 
 @dataclass(frozen=True)
 class ResourceReadView:
-    ref_id: str
+    ref_id: RefId
     requirement_indices: tuple[int, ...]
 
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = as_mapping(data, "ResourceReadView")
         return cls(
-            ref_id=as_str(field_value(raw, "ref_id"), "ref_id"),
+            ref_id=RefId(as_str(field_value(raw, "ref_id"), "ref_id")),
             requirement_indices=_int_tuple(
                 field_value(raw, "requirement_indices"), "requirement_indices"
             ),
@@ -263,14 +272,14 @@ class ResourceReadView:
 
 @dataclass(frozen=True)
 class ResourceWriteLock:
-    ref_id: str
+    ref_id: RefId
     requirement_indices: tuple[int, ...]
 
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = as_mapping(data, "ResourceWriteLock")
         return cls(
-            ref_id=as_str(field_value(raw, "ref_id"), "ref_id"),
+            ref_id=RefId(as_str(field_value(raw, "ref_id"), "ref_id")),
             requirement_indices=_int_tuple(
                 field_value(raw, "requirement_indices"), "requirement_indices"
             ),
@@ -279,8 +288,8 @@ class ResourceWriteLock:
 
 @dataclass(frozen=True)
 class DeferredResourceOp:
-    entry_id: str
-    ref_id: str
+    entry_id: EntryId
+    ref_id: RefId
     operation: str
     payload: JsonValue
 
@@ -288,8 +297,8 @@ class DeferredResourceOp:
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = as_mapping(data, "DeferredResourceOp")
         return cls(
-            entry_id=as_str(field_value(raw, "entry_id"), "entry_id"),
-            ref_id=as_str(field_value(raw, "ref_id"), "ref_id"),
+            entry_id=EntryId(as_str(field_value(raw, "entry_id"), "entry_id")),
+            ref_id=RefId(as_str(field_value(raw, "ref_id"), "ref_id")),
             operation=as_str(field_value(raw, "operation"), "operation"),
             payload=as_json_value(field_value(raw, "payload")),
         )
@@ -299,12 +308,12 @@ class DeferredResourceOp:
 class WorkResourcePlan:
     read_views: tuple[ResourceReadView, ...] = ()
     write_locks: tuple[ResourceWriteLock, ...] = ()
-    parallel_groups: tuple[tuple[str, ...], ...] = ()
-    serial_groups: tuple[tuple[str, ...], ...] = ()
+    parallel_groups: tuple[tuple[EntryId, ...], ...] = ()
+    serial_groups: tuple[tuple[EntryId, ...], ...] = ()
     parallelism_limit: int = 1
     version_checks: tuple[VersionExpectation, ...] = ()
     deferred_writes: tuple[DeferredResourceOp, ...] = ()
-    conflict_entries: tuple[str, ...] = ()
+    conflict_entries: tuple[EntryId, ...] = ()
 
     @classmethod
     def empty(cls) -> Self:
@@ -316,35 +325,39 @@ class WorkResourcePlan:
         return cls(
             read_views=tuple_from_json(raw, "read_views", ResourceReadView),
             write_locks=tuple_from_json(raw, "write_locks", ResourceWriteLock),
-            parallel_groups=_str_group_tuple(
-                field_value(raw, "parallel_groups"), "parallel_groups"
+            parallel_groups=_id_group_tuple(
+                EntryId, field_value(raw, "parallel_groups"), "parallel_groups"
             ),
-            serial_groups=_str_group_tuple(field_value(raw, "serial_groups"), "serial_groups"),
+            serial_groups=_id_group_tuple(
+                EntryId, field_value(raw, "serial_groups"), "serial_groups"
+            ),
             parallelism_limit=as_int(field_value(raw, "parallelism_limit"), "parallelism_limit"),
             version_checks=tuple_from_json(raw, "version_checks", VersionExpectation),
             deferred_writes=tuple_from_json(raw, "deferred_writes", DeferredResourceOp),
-            conflict_entries=as_str_tuple(field_value(raw, "conflict_entries"), "conflict_entries"),
+            conflict_entries=as_id_tuple(
+                EntryId, field_value(raw, "conflict_entries"), "conflict_entries"
+            ),
         )
 
 
 @dataclass(frozen=True)
 class TaskBatch:
-    batch_id: str
-    tick_id: str | None
+    batch_id: BatchId
+    tick_id: TickId | None
     tasks: tuple[Task, ...]
     resource_plan: WorkResourcePlan | None = None
 
     @classmethod
     def one(cls, batch_id: str, task: Task) -> Self:
-        return cls(batch_id=batch_id, tick_id=None, tasks=(task,), resource_plan=None)
+        return cls(batch_id=BatchId(batch_id), tick_id=None, tasks=(task,), resource_plan=None)
 
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = as_mapping(data, "TaskBatch")
         resource_plan = field_value(raw, "resource_plan")
         return cls(
-            batch_id=as_str(field_value(raw, "batch_id"), "batch_id"),
-            tick_id=optional_str(field_value(raw, "tick_id"), "tick_id"),
+            batch_id=BatchId(as_str(field_value(raw, "batch_id"), "batch_id")),
+            tick_id=optional_id(TickId, field_value(raw, "tick_id"), "tick_id"),
             tasks=tuple_from_json(raw, "tasks", Task),
             resource_plan=None
             if resource_plan is None
@@ -354,8 +367,8 @@ class TaskBatch:
 
 @dataclass(frozen=True)
 class WorkSet:
-    tick_id: str
-    batch_key: str
+    tick_id: TickId
+    batch_key: BatchKey
     entries: tuple[BatchEntry, ...]
     resource_requirements: tuple[ResourceRequirement, ...]
 
@@ -363,8 +376,8 @@ class WorkSet:
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = as_mapping(data, "WorkSet")
         return cls(
-            tick_id=as_str(field_value(raw, "tick_id"), "tick_id"),
-            batch_key=as_str(field_value(raw, "batch_key"), "batch_key"),
+            tick_id=TickId(as_str(field_value(raw, "tick_id"), "tick_id")),
+            batch_key=BatchKey(as_str(field_value(raw, "batch_key"), "batch_key")),
             entries=tuple_from_json(raw, "entries", BatchEntry),
             resource_requirements=tuple_from_json(
                 raw, "resource_requirements", ResourceRequirement
@@ -374,9 +387,9 @@ class WorkSet:
 
 @dataclass(frozen=True)
 class WorkBatch:
-    batch_id: str
-    tick_id: str
-    batch_key: str
+    batch_id: BatchId
+    tick_id: TickId
+    batch_key: BatchKey
     entries: tuple[BatchEntry, ...]
     payload: BatchPayload
     resource_plan: WorkResourcePlan
@@ -386,9 +399,9 @@ class WorkBatch:
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = as_mapping(data, "WorkBatch")
         return cls(
-            batch_id=as_str(field_value(raw, "batch_id"), "batch_id"),
-            tick_id=as_str(field_value(raw, "tick_id"), "tick_id"),
-            batch_key=as_str(field_value(raw, "batch_key"), "batch_key"),
+            batch_id=BatchId(as_str(field_value(raw, "batch_id"), "batch_id")),
+            tick_id=TickId(as_str(field_value(raw, "tick_id"), "tick_id")),
+            batch_key=BatchKey(as_str(field_value(raw, "batch_key"), "batch_key")),
             entries=tuple_from_json(raw, "entries", BatchEntry),
             payload=BatchPayload.from_json_dict(as_mapping(field_value(raw, "payload"), "payload")),
             resource_plan=WorkResourcePlan.from_json_dict(
@@ -403,8 +416,8 @@ class WorkBatch:
 
 @dataclass(frozen=True)
 class EntryCompletion:
-    entry_id: str
-    task_id: str
+    entry_id: EntryId
+    task_id: TaskId
     result: RunnerResult | None = None
     error: RuntimeError | None = None
 
@@ -416,8 +429,8 @@ class EntryCompletion:
         result = field_value(raw, "result")
         error = field_value(raw, "error")
         return cls(
-            entry_id=as_str(field_value(raw, "entry_id"), "entry_id"),
-            task_id=as_str(field_value(raw, "task_id"), "task_id"),
+            entry_id=EntryId(as_str(field_value(raw, "entry_id"), "entry_id")),
+            task_id=TaskId(as_str(field_value(raw, "task_id"), "task_id")),
             result=None
             if result is None
             else RunnerResult.from_json_dict(as_mapping(result, "result")),
@@ -429,8 +442,8 @@ class EntryCompletion:
 
 @dataclass(frozen=True)
 class CompletionBatch:
-    batch_id: str
-    tick_id: str
+    batch_id: BatchId
+    tick_id: TickId
     results: tuple[EntryCompletion, ...]
     metadata: tuple[tuple[str, ScalarValue], ...] = ()
 
@@ -462,8 +475,8 @@ class CompletionBatch:
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = as_mapping(data, "CompletionBatch")
         return cls(
-            batch_id=as_str(field_value(raw, "batch_id"), "batch_id"),
-            tick_id=as_str(field_value(raw, "tick_id"), "tick_id"),
+            batch_id=BatchId(as_str(field_value(raw, "batch_id"), "batch_id")),
+            tick_id=TickId(as_str(field_value(raw, "tick_id"), "tick_id")),
             results=tuple_from_json(raw, "results", EntryCompletion),
             metadata=_metadata_pairs(field_value(raw, "metadata"), "metadata"),
         )
@@ -489,8 +502,10 @@ def _byte_tuple(value: object, field_name: str) -> tuple[int, ...]:
     return bytes_values
 
 
-def _str_group_tuple(value: object, field_name: str) -> tuple[tuple[str, ...], ...]:
-    return tuple(as_str_tuple(group, field_name) for group in sequence(value, field_name))
+def _id_group_tuple[T: str](
+    id_type: type[T], value: object, field_name: str
+) -> tuple[tuple[T, ...], ...]:
+    return tuple(as_id_tuple(id_type, group, field_name) for group in sequence(value, field_name))
 
 
 def _metadata_pairs(value: object, field_name: str) -> tuple[tuple[str, ScalarValue], ...]:

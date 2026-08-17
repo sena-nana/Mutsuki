@@ -17,6 +17,19 @@ artifact 统一从该 crate 导出。`mutsuki-runtime-contracts` 仍拥有 Task�
 - 禁止跨 runtime 边界传 callable、socket、SDK client、数据库连接、Python object、
   Rust pointer、Arc、Vec 本体或真实 handle。
 
+Identity 字段是 branded 类型，不是 typestate，也不编码 generation / lease 生命周期：
+
+- Rust / Python 使用 `TaskId`、`RefId`、`ProtocolId`、`RunnerId`、`PluginId`、
+  `ExecutorId`、`BindingId`、`TaskLeaseId`、`ResourceLeaseId`、`ResourceCellId`、
+  `TickId`、`BatchId`、`EntryId`、`BatchKey`、`SurfaceId`、`SpanId`、`TraceId`、
+  `CapabilityRequestId`、`CapabilityPeerId`。
+- JSON / wire 仍是普通 JSON string；`serde(transparent)`，roundtrip 形状不变。
+- 这些类型不实现 `Deref`。取值用 `as_str()`，构造用 `From<&str>` / `From<String>`，
+  打印用 `Display`，与字面量比较用 `PartialEq<str>`。
+- 以这些 identity 为键的 map / set 使用 branded 类型，不再用 `String` 冒充。
+- `TaskLease` / `ResourceLease` 仍是独立 descriptor；ID brand 不表示租约状态或
+  generation fence。
+
 ## 2. 核心对象
 
 | 对象 | 语义 |
@@ -85,7 +98,9 @@ artifact 统一从该 crate 导出。`mutsuki-runtime-contracts` 仍拥有 Task�
 | `SurfaceOccupancyHandle` | stream/subscription/timer 等 lifecycle 占用 descriptor |
 | `RuntimeEvent` | sequence、kind、name、subject_id、attributes、error |
 | `TraceSpan` | 单调 sequence、trace_id、span_id、parent_span_id、name、interval、attributes、status |
-| `ObservabilityProfile` | event/trace outlet 容量、drop-oldest/drop-new 策略，以及 scheduler 明细和逐 dispatch span 开关 |
+| `ObservabilityProfile` | event/trace outlet 容量、drop-oldest/drop-new 策略、scheduler 明细和逐 dispatch span 开关，以及可选 `StateHistoryProfile` |
+| `StateHistoryProfile` | 可选有界状态历史：`capacity_per_ref = 0` 关闭回退；`retain_steps` 是逻辑 step 保留周期，0 表示只受容量约束 |
+| `StateRollback` | `core.state.rollback` 的 payload：把某个 state ref 回退到仍保留的历史 version |
 | `ObservabilityPage<T>` | cursor 分页结果，包含 next/earliest/latest sequence、lost、truncated 和累计 dropped |
 
 Builtin Rust Host 通过 `HostContext` 同时公开 plan-only gateway 与 host-owned
@@ -194,10 +209,13 @@ Rust SDK；Python runner kit 位于 `kits/python-runner`。JS/TS SDK 只作为�
 新增占位包。
 
 ```text
-Rust SDK: ctx.call::<Protocol>(input).await -> TaskOutcome
-Rust SDK raw: ctx.call_raw(protocol_id, payload).await -> TaskOutcome
+Rust SDK: ctx.call::<Protocol>(input).await -> TypedTaskOutcome<P>
+Rust SDK raw: ctx.call_raw(protocol_id, payload).await -> TypedTaskOutcome
 Python runner kit: await ctx.call_raw(protocol_id, payload) -> TaskOutcome
 JS/TS SDK: future package 可包装同一 TaskHandle / TaskOutcome wire shape
+
+`TypedTaskOutcome` 可用 `.into_outcome()` 或 `impl Into<TaskOutcome>` 读成
+`TaskOutcome`；wire 形状不变。
 ```
 
 任务持久化、重放、checkpoint 与内容寻址使用独立可选 contracts，不扩展 task execute ABI。
@@ -718,6 +736,8 @@ binding 自动重新 fan-out；补跑必须显式生成 migration/backfill task�
 | `registry.unauthorized` | descriptor 超出 load plan 授权 |
 | `registry.generation_mismatch` | task/descriptor registry generation 不匹配 |
 | `state.conflict` | expected_version 不匹配 |
+| `state.history_disabled` | `StateHistoryProfile` 关闭时提交 `core.state.rollback` |
+| `state.history_unavailable` | 目标 version 已过期、被容量淘汰或不存在 |
 | `resource.not_found` | value/resource ref 不存在 |
 | `resource.lease_cross_await` | task await 前仍持有短期可变资源租约 |
 | `resource.unsupported` | resource provider 不支持该 operation、target、resource semantic 或 experimental guarantee |

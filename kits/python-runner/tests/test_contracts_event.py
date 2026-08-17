@@ -7,12 +7,15 @@ from mutsuki_runner_kit.contracts.event import (
     SpanStatus,
     TraceSpan,
 )
+from mutsuki_runner_kit.contracts.ids import RefId, SpanId, TraceId
 from mutsuki_runner_kit.contracts.observability import (
     ObservabilityOutletProfile,
     ObservabilityOverflowPolicy,
     ObservabilityPage,
     ObservabilityProfile,
+    StateHistoryProfile,
 )
+from mutsuki_runner_kit.contracts.state import StateRollback
 from mutsuki_runner_kit.testing.assertions import assert_json_roundtrip
 
 
@@ -37,8 +40,8 @@ def test_error_event_and_trace_contracts_roundtrip() -> None:
 
     span = TraceSpan(
         sequence=1,
-        trace_id="trace-1",
-        span_id="span-1",
+        trace_id=TraceId("trace-1"),
+        span_id=SpanId("span-1"),
         parent_span_id=None,
         name="runner.run_batch",
         start=1.0,
@@ -75,3 +78,13 @@ def test_observability_profile_and_cursor_page_roundtrip() -> None:
     )
     assert_json_roundtrip(ObservabilityPage, page)
     assert page.cursor_lost()
+
+
+def test_state_history_and_rollback_contracts_roundtrip() -> None:
+    history = StateHistoryProfile(capacity_per_ref=8, retain_steps=32)
+    assert_json_roundtrip(StateHistoryProfile, history)
+    assert history.is_enabled()
+    assert not StateHistoryProfile().is_enabled()
+
+    rollback = StateRollback(target_ref=RefId("state:actor"), to_version=1)
+    assert_json_roundtrip(StateRollback, rollback)

@@ -90,7 +90,7 @@ fn run_scenario(active_tasks: usize) -> ScenarioReport {
     let setup_started = Instant::now();
     let handles = host
         .submit_batch(TaskBatch {
-            batch_id: format!("benchmark-waiting-{active_tasks}"),
+            batch_id: format!("benchmark-waiting-{active_tasks}").into(),
             tick_id: None,
             tasks: (0..active_tasks)
                 .map(|index| {
@@ -197,8 +197,8 @@ fn wait_for_waiting(host: &MutsukiTauriHost, expected: usize) {
             .expect("benchmark task snapshots")
             .into_iter()
             .filter(|snapshot| {
-                snapshot.task_id.starts_with("bench-parent:")
-                    && !snapshot.task_id.ends_with(":child")
+                snapshot.task_id.as_str().starts_with("bench-parent:")
+                    && !snapshot.task_id.as_str().ends_with(":child")
                     && snapshot.status == TaskStatus::Waiting
             })
             .count();
@@ -291,7 +291,7 @@ fn waiting_result(task: &Task) -> RunnerResult {
         task_await: Some(TaskAwait {
             parent_task_id: task.task_id.clone(),
             child: TaskHandle {
-                task_id: child_id,
+                task_id: child_id.into(),
                 protocol_id: PROTOCOL_ID.into(),
                 target_binding_id: None,
                 cancel_policy: CancelPolicy::Cascade,
@@ -300,7 +300,7 @@ fn waiting_result(task: &Task) -> RunnerResult {
             },
             continuation: TaskStepContinuation {
                 continuation: ResourceRef {
-                    ref_id: continuation_ref.clone(),
+                    ref_id: continuation_ref.clone().into(),
                     resource_id: ResourceId {
                         kind_id: "continuation".into(),
                         slot_id: continuation_ref,
@@ -347,7 +347,7 @@ fn runner_descriptor() -> RunnerDescriptor {
         ordering: Default::default(),
         control: Default::default(),
         metadata: BTreeMap::new(),
-        contract_surfaces: vec![format!("task_protocol:{PROTOCOL_ID}")],
+        contract_surfaces: vec![format!("task_protocol:{PROTOCOL_ID}").into()],
     }
 }
 

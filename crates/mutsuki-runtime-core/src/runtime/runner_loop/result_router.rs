@@ -70,11 +70,12 @@ impl CoreRuntime {
 
     fn validate_waiting_result(
         &mut self,
-        task_id: &str,
+        task_id: impl AsRef<str>,
         status: &RunnerStatus,
         task_await: Option<&TaskAwait>,
         output_tasks: &[Task],
     ) -> RuntimeResult<()> {
+        let task_id = task_id.as_ref();
         if task_await.is_some() && !matches!(status, RunnerStatus::Waiting) {
             return Err(crate::runtime_failure(
                 mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
@@ -100,10 +101,11 @@ impl CoreRuntime {
 
     fn validate_await_child_descriptor(
         &self,
-        parent_task_id: &str,
+        parent_task_id: impl AsRef<str>,
         task_await: &TaskAwait,
         output_tasks: &[Task],
     ) -> RuntimeResult<()> {
+        let parent_task_id = parent_task_id.as_ref();
         let parent = self.tasks.get(parent_task_id).ok_or_else(|| {
             crate::runtime_failure(
                 ERR_TASK_NOT_FOUND,
@@ -142,9 +144,10 @@ impl CoreRuntime {
     fn route_result_outputs(
         &mut self,
         runner: &RunnerDescriptor,
-        task_id: &str,
+        task_id: impl AsRef<str>,
         outputs: ResultOutputs,
     ) -> RuntimeResult<()> {
+        let task_id = task_id.as_ref();
         let generation = self.load_plan.registry_generation;
         if runner.purity != RunnerPurity::Pure
             && (!outputs.deltas.is_empty() || !outputs.effects.is_empty())
@@ -203,7 +206,7 @@ impl CoreRuntime {
         &mut self,
         runner: &RunnerDescriptor,
         lease: &TaskLease,
-        task_id: String,
+        task_id: mutsuki_runtime_contracts::TaskId,
         status: RunnerStatus,
         task_await: Option<TaskAwait>,
         output: Option<serde_json::Value>,
@@ -226,7 +229,7 @@ impl CoreRuntime {
                 self.events.record(
                     RuntimeEventKind::Task,
                     "task.progress",
-                    Some(task_id.clone()),
+                    Some(task_id.to_string()),
                     BTreeMap::from([("status".into(), ScalarValue::String("waiting".into()))]),
                     None,
                 );
@@ -236,7 +239,7 @@ impl CoreRuntime {
                 self.events.record(
                     RuntimeEventKind::Task,
                     "task.progress",
-                    Some(task_id.clone()),
+                    Some(task_id.to_string()),
                     BTreeMap::from([("status".into(), ScalarValue::String("blocked".into()))]),
                     None,
                 );
@@ -265,11 +268,12 @@ impl CoreRuntime {
 }
 
 fn pending_output_tasks(
-    source_task_id: &str,
+    source_task_id: impl AsRef<str>,
     generation: u64,
     runner_purity: &RunnerPurity,
     outputs: &ResultOutputs,
 ) -> Vec<Task> {
+    let source_task_id = source_task_id.as_ref();
     let mut tasks = Vec::new();
     if *runner_purity == RunnerPurity::Pure {
         tasks.extend(
@@ -302,7 +306,7 @@ fn pending_output_tasks(
 // The explicit output slices mirror RunnerResult and keep validation allocation-free.
 #[allow(clippy::too_many_arguments)]
 fn validate_status_outputs(
-    task_id: &str,
+    task_id: impl AsRef<str>,
     status: &RunnerStatus,
     output: Option<&serde_json::Value>,
     deltas: &[StateDelta],
@@ -312,6 +316,7 @@ fn validate_status_outputs(
     values: &[ValueRef],
     resources: &[ResourceRef],
 ) -> RuntimeResult<()> {
+    let task_id = task_id.as_ref();
     if output.is_some() && !matches!(status, RunnerStatus::Completed) {
         return Err(crate::runtime_failure(
             mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
@@ -340,11 +345,12 @@ fn validate_status_outputs(
 }
 
 fn validate_await_child_task(
-    parent_task_id: &str,
+    parent_task_id: impl AsRef<str>,
     parent_task: &Task,
     task_await: &TaskAwait,
     child_task: &Task,
 ) -> RuntimeResult<()> {
+    let parent_task_id = parent_task_id.as_ref();
     let child = &task_await.child;
     let child_matches_handle = child.protocol_id == child_task.protocol_id
         && child.target_binding_id == child_task.target_binding_id
@@ -414,12 +420,12 @@ fn effect_task(source_task_id: &str, effect: EffectRequest, generation: u64) -> 
 }
 
 fn ref_lineage_attrs(
-    ref_id: String,
+    ref_id: mutsuki_runtime_contracts::RefId,
     schema: String,
     generation: u64,
 ) -> BTreeMap<String, ScalarValue> {
     let mut attrs = BTreeMap::new();
-    attrs.insert("ref_id".into(), ScalarValue::String(ref_id));
+    attrs.insert("ref_id".into(), ScalarValue::String(ref_id.to_string()));
     attrs.insert("schema".into(), ScalarValue::String(schema));
     attrs.insert("generation".into(), ScalarValue::Int(generation as i64));
     attrs

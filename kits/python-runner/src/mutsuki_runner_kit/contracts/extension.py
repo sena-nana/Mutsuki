@@ -13,6 +13,7 @@ from mutsuki_runner_kit.contracts.codec import (
     field_value,
     sequence,
 )
+from mutsuki_runner_kit.contracts.ids import ProtocolId
 
 
 class HostExtensionKind(StrEnum):
@@ -149,7 +150,7 @@ class SchedulerPolicyDescriptor:
 class WorkflowDescriptor:
     workflow_id: str
     state_resource_kind: str
-    runner_protocol_id: str
+    runner_protocol_id: ProtocolId
     reload_policy: str
 
     @classmethod
@@ -160,6 +161,8 @@ class WorkflowDescriptor:
             state_resource_kind=as_str(
                 field_value(raw, "state_resource_kind"), "state_resource_kind"
             ),
-            runner_protocol_id=as_str(field_value(raw, "runner_protocol_id"), "runner_protocol_id"),
+            runner_protocol_id=ProtocolId(
+                as_str(field_value(raw, "runner_protocol_id"), "runner_protocol_id")
+            ),
             reload_policy=as_str(field_value(raw, "reload_policy"), "reload_policy"),
         )

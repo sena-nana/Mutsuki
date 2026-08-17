@@ -32,6 +32,8 @@ fn console_css_declares_two_column_workspace() {
     assert!(css.contains(".page-scroll"));
     assert!(css.contains(".card"));
     assert!(css.contains(".kv"));
+    assert!(css.contains(".mutsuki-console .trajectory"));
+    assert!(css.contains(".mutsuki-console .trajectory-row"));
 }
 
 #[tokio::test]
@@ -88,10 +90,36 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
         let path = url.trim_start_matches('.');
         assert!(!http_get_body(&addr, path).await.is_empty());
     }
+    let overview_js = http_get_body(&addr, "/extensions/overview/index.js").await;
+    assert!(overview_js.contains("overview-dashboard"));
+    assert!(overview_js.contains("metric-grid"));
+    let control_js = http_get_body(&addr, "/extensions/control/index.js").await;
+    assert!(control_js.contains("mountTrajectoryView"));
+    assert!(control_js.contains("./trajectory-view.js"));
+    assert!(!control_js.contains("id=\"task-event-seq\""));
+    assert!(css.contains(".mutsuki-console .trajectory"));
+    assert!(css.contains(".mutsuki-console .trajectory-row"));
+    assert!(css.contains(".mutsuki-console .overview-dashboard"));
+    assert!(css.contains(".mutsuki-console .metric-grid"));
+    assert!(
+        http_get_body(&addr, "/trajectory-model.js")
+            .await
+            .contains("projectAgentEvents")
+    );
+    assert!(
+        http_get_body(&addr, "/trajectory-view.js")
+            .await
+            .contains("mountTrajectoryView")
+    );
 
     let html = http_get_body(&addr, "/").await;
     assert!(html.contains("mutsuki-ui.css?v="));
     assert!(html.contains("console-bootstrap.js?v="));
+    let shell = http_get_body(&addr, "/index.html").await;
+    assert!(
+        shell.contains("img-src 'self' data:"),
+        "console CSP must allow QR data: PNG"
+    );
 
     let bootstrap = http_get_body(&addr, "/console-bootstrap.js").await;
     assert!(bootstrap.contains("createWebShellRuntime"));
@@ -368,6 +396,7 @@ async fn embedded_console_mounts_qq_management_extension() {
     let local = LocalQqManagementProvider::new();
     local.upsert_account(account_view_from_config(QqAccountViewInput {
         account_id: "main".into(),
+        app_id: "app".into(),
         credential_reference: "QQBOT_CLIENT_SECRET".into(),
         credential_present: true,
         capability: QqBotCapabilityMatrix {
@@ -399,6 +428,7 @@ async fn embedded_console_mounts_qq_management_extension() {
         identified: true,
         last_heartbeat_unix_ms: Some(1),
         last_error: None,
+        reconnect_count: 0,
     }));
     let api: Arc<dyn QqBotManagementApi> = Arc::new(QqBotManagementService::local(local));
     let config = WebConsoleConfig {
@@ -429,6 +459,7 @@ async fn embedded_console_mounts_qq_management_extension() {
     let qq_path = versioned_module_path(&options, "./extensions/qq-bot/index.js");
     let qq_js = http_get_body(&addr, &format!("/{qq_path}")).await;
     assert!(qq_js.contains("mountQqBotPanel"));
+    assert!(qq_js.contains("QQ 登录"));
     let snap = ws_rpc_params(&addr, "qq-bot", "snapshot", json!({}))
         .await
         .unwrap();

@@ -61,8 +61,8 @@ async fn main() {
         let request_id = format!("req-{index}");
         let insert_started = Instant::now();
         let receipt = DeliveryReceipt::Completed {
-            request_id: request_id.clone(),
-            remote_task_id: Some(format!("task-{index}")),
+            request_id: request_id.clone().into(),
+            remote_task_id: Some(format!("task-{index}").into()),
             output: json!({"payload": "x".repeat(64)}),
         };
         let recorded = store.accept_or_duplicate(request_id.clone(), receipt);
@@ -105,7 +105,7 @@ async fn main() {
         store.accept_or_duplicate(
             newest.clone(),
             DeliveryReceipt::Accepted {
-                request_id: newest,
+                request_id: newest.into(),
                 remote_task_id: Some("ignored".into()),
             }
         ),
@@ -117,7 +117,7 @@ async fn main() {
         store.accept_or_duplicate(
             oldest.clone(),
             DeliveryReceipt::Accepted {
-                request_id: oldest,
+                request_id: oldest.into(),
                 remote_task_id: Some("fresh".into()),
             }
         ),

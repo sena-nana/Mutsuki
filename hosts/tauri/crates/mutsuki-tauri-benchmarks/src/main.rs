@@ -62,10 +62,11 @@ fn benchmark_bridge(host: &Arc<MutsukiTauriHost>, cases: &mut Vec<Value>) {
                                 FrontendTaskRequest {
                                     protocol_id: PROTOCOL_ID.into(),
                                     payload: json!({"payload": "x".repeat(payload_bytes)}),
-                                    task_id: Some(format!(
-                                        "bridge-{payload_bytes}-{concurrency}-{index}"
-                                    )),
-                                    trace_id: Some(format!("trace-{index}")),
+                                    task_id: Some(
+                                        format!("bridge-{payload_bytes}-{concurrency}-{index}")
+                                            .into(),
+                                    ),
+                                    trace_id: Some(format!("trace-{index}").into()),
                                     correlation_id: Some(format!("correlation-{index}")),
                                     idempotency_key: None,
                                     target_binding_id: None,
@@ -98,7 +99,7 @@ fn benchmark_bridge(host: &Arc<MutsukiTauriHost>, cases: &mut Vec<Value>) {
 
     for batch_size in [1_usize, 32] {
         let batch = TaskBatch {
-            batch_id: format!("bridge-batch-{batch_size}"),
+            batch_id: format!("bridge-batch-{batch_size}").into(),
             tick_id: None,
             tasks: (0..batch_size)
                 .map(|index| {
@@ -227,18 +228,22 @@ async fn benchmark_resources(host: &Arc<MutsukiTauriHost>, cases: &mut Vec<Value
         let create_ns = create_started.elapsed().as_nanos();
         let open_started = Instant::now();
         let preview = host
-            .create_preview_handle(&resource.ref_id)
+            .create_preview_handle(resource.ref_id.as_str())
             .expect("preview handle");
         let descriptor_frame = serde_json::to_vec(&resource).unwrap();
         let preview_frame = serde_json::to_vec(&preview).unwrap();
         assert!(descriptor_frame.len() < 8 * 1024);
         assert!(preview_frame.len() < 8 * 1024);
-        assert!(host.read_resource_bytes(&resource.ref_id).await.is_err());
+        assert!(
+            host.read_resource_bytes(resource.ref_id.as_str())
+                .await
+                .is_err()
+        );
         let open_ns = open_started.elapsed().as_nanos();
 
         let read_started = Instant::now();
         let chunk = host
-            .read_resource_chunk(&resource.ref_id, 0, 64 * 1024)
+            .read_resource_chunk(resource.ref_id.as_str(), 0, 64 * 1024)
             .await
             .expect("bounded resource chunk");
         let chunk_frame = serde_json::to_vec(&chunk).unwrap();
@@ -251,7 +256,7 @@ async fn benchmark_resources(host: &Arc<MutsukiTauriHost>, cases: &mut Vec<Value
                 let host = host.clone();
                 let ref_id = resource.ref_id.clone();
                 tokio::spawn(async move {
-                    host.read_resource_chunk(&ref_id, (index * 4096) as u64, 4096)
+                    host.read_resource_chunk(ref_id.as_str(), (index * 4096) as u64, 4096)
                         .await
                         .expect("concurrent resource chunk")
                 })
@@ -332,7 +337,7 @@ impl EchoRunner {
                 ordering: Default::default(),
                 control: Default::default(),
                 metadata: BTreeMap::new(),
-                contract_surfaces: vec![format!("task_protocol:{PROTOCOL_ID}")],
+                contract_surfaces: vec![format!("task_protocol:{PROTOCOL_ID}").into()],
             },
         }
     }

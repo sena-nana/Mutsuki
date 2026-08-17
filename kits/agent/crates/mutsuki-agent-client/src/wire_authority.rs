@@ -941,7 +941,7 @@ mod tests {
 
     fn resource(session_id: &str) -> ResourceRef {
         ResourceRef {
-            ref_id: format!("resource:{session_id}"),
+            ref_id: format!("resource:{session_id}").into(),
             resource_id: ResourceId {
                 kind_id: "mutsuki.agent.session".into(),
                 slot_id: session_id.into(),
@@ -965,7 +965,7 @@ mod tests {
 
     fn cell(session_id: &str, generation: u64) -> ResourceCellRef {
         ResourceCellRef {
-            cell_id: format!("cell:{session_id}"),
+            cell_id: format!("cell:{session_id}").into(),
             resource_kind: "mutsuki.agent.session".into(),
             owner_plugin_id: "test".into(),
             schema: "mutsuki.agent.session@1".into(),

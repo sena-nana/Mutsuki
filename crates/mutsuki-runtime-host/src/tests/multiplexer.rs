@@ -160,13 +160,7 @@ fn run_request() -> RunBatchRequest {
     };
     RunBatchRequest {
         runner_id: "binary.runner".into(),
-        ctx: RunnerContext::new(
-            1,
-            1,
-            "executor:test",
-            Some("lease-1".into()),
-            "invocation:test",
-        ),
+        ctx: RunnerContext::new(1, 1, "executor:test", Some("lease-1"), "invocation:test"),
         batch,
     }
 }

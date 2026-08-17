@@ -79,12 +79,12 @@ fn baseline_derive(task: &Task) -> RunnerResult {
     effect_task.correlation_id = task
         .correlation_id
         .clone()
-        .or_else(|| Some(task.task_id.clone()));
+        .or_else(|| Some(task.task_id.to_string()));
     let mut result = RunnerResult::completed(task.task_id.clone());
     result.tasks.push(effect_task);
     result.events.push(DomainEvent {
         event_id: format!("event:{}:queued", task.task_id),
-        kind: task.protocol_id.clone(),
+        kind: task.protocol_id.to_string(),
         payload: json!({"effect_task_id": format!("{}:effect", task.task_id)}),
     });
     result
@@ -113,7 +113,7 @@ fn measure(
     let tasks: Vec<Task> = (0..entries)
         .map(|index| {
             let mut task = Task::new(format!("task-{index}"), FS_READ_PROTOCOL, payload.clone());
-            task.trace_id = Some(format!("trace-{index}"));
+            task.trace_id = Some(format!("trace-{index}").into());
             task
         })
         .collect();

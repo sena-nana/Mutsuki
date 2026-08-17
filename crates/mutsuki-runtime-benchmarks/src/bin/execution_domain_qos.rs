@@ -329,7 +329,7 @@ fn descriptor(
         ordering: Default::default(),
         control: Default::default(),
         metadata: BTreeMap::new(),
-        contract_surfaces: vec![format!("runner:{runner_id}")],
+        contract_surfaces: vec![format!("runner:{runner_id}").into()],
     }
 }
 

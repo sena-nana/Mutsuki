@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use mutsuki_runtime_contracts::PluginManifest;
+use mutsuki_runtime_contracts::{PluginManifest, RunnerId};
 use mutsuki_runtime_core::{Runner, RuntimeResult};
 use mutsuki_runtime_wire::{
     AnyWireRequest, BINARY_CODEC_ID, DecodedWireRequest, InitializedPlugin, Opcode, ProtocolHello,
@@ -15,7 +15,7 @@ use super::error::{abi_failure, encode_binary_result};
 
 pub(super) struct PluginGuest {
     manifest: PluginManifest,
-    runners: BTreeMap<String, Box<dyn Runner>>,
+    runners: BTreeMap<RunnerId, Box<dyn Runner>>,
     providers: BTreeMap<String, Arc<dyn ResourceProviderGateway>>,
     initialized: bool,
 }
@@ -54,9 +54,9 @@ impl PluginGuest {
         }
         let mut runners = BTreeMap::new();
         for runner in plugin.runners {
-            let runner_id = runner.descriptor().runner_id.clone();
+            let runner_id = RunnerId::from(runner.descriptor().runner_id.clone());
             if runners.insert(runner_id.clone(), runner).is_some() {
-                return Err(abi_failure("abi.runner_duplicate", runner_id));
+                return Err(abi_failure("abi.runner_duplicate", runner_id.to_string()));
             }
         }
         let mut providers = BTreeMap::new();

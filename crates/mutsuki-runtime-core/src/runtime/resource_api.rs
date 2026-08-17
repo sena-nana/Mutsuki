@@ -28,7 +28,7 @@ impl CoreRuntime {
             .create_stream_resource(stream_id, schema, provider_id, endpoint))
     }
 
-    pub fn close_stream(&mut self, ref_id: &str) -> RuntimeResult<()> {
+    pub fn close_stream(&mut self, ref_id: impl AsRef<str>) -> RuntimeResult<()> {
         self.resources.close_stream_resource(ref_id)?;
         Ok(())
     }
@@ -65,11 +65,19 @@ impl CoreRuntime {
         Ok(synced)
     }
 
-    pub fn build_read_plan(&self, ref_id: &str, operation: &str) -> RuntimeResult<ReadPlan> {
+    pub fn build_read_plan(
+        &self,
+        ref_id: impl AsRef<str>,
+        operation: &str,
+    ) -> RuntimeResult<ReadPlan> {
         self.resources.build_read_plan(ref_id, operation)
     }
 
-    pub fn build_export_plan(&self, ref_id: &str, target: &str) -> RuntimeResult<ExportPlan> {
+    pub fn build_export_plan(
+        &self,
+        ref_id: impl AsRef<str>,
+        target: &str,
+    ) -> RuntimeResult<ExportPlan> {
         self.resources.build_export_plan(ref_id, target)
     }
 
@@ -79,7 +87,7 @@ impl CoreRuntime {
 
     pub fn build_command_plan(
         &self,
-        ref_id: &str,
+        ref_id: impl AsRef<str>,
         operation: &str,
         args: Value,
         idempotency_key: Option<String>,
@@ -90,7 +98,7 @@ impl CoreRuntime {
 
     pub fn build_write_plan(
         &self,
-        ref_id: &str,
+        ref_id: impl AsRef<str>,
         conflict_policy: &str,
         operations: Value,
     ) -> RuntimeResult<WritePlan> {
@@ -98,13 +106,13 @@ impl CoreRuntime {
             .build_write_plan(ref_id, conflict_policy, operations)
     }
 
-    pub fn open_resource(&self, ref_id: &str) -> RuntimeResult<ResourceRef> {
+    pub fn open_resource(&self, ref_id: impl AsRef<str>) -> RuntimeResult<ResourceRef> {
         self.resources.open_resource(ref_id)
     }
 
     pub fn lock_resource(
         &mut self,
-        ref_id: &str,
+        ref_id: impl AsRef<str>,
         owner: &str,
         expires_at_step: Option<u64>,
     ) -> RuntimeResult<ExclusiveWriteLease> {
@@ -119,9 +127,9 @@ impl CoreRuntime {
 
     pub fn create_resource_cell(
         &mut self,
-        cell_id: &str,
+        cell_id: impl AsRef<str>,
         resource_kind: &str,
-        owner_plugin_id: &str,
+        owner_plugin_id: impl AsRef<str>,
         schema: &str,
         reload_policy: &str,
     ) -> RuntimeResult<ResourceCellRef> {
@@ -137,9 +145,9 @@ impl CoreRuntime {
 
     pub fn acquire_resource_lease(
         &mut self,
-        cell_id: &str,
-        borrower_task_id: &str,
-        borrower_executor_id: &str,
+        cell_id: impl AsRef<str>,
+        borrower_task_id: impl AsRef<str>,
+        borrower_executor_id: impl AsRef<str>,
         mode: &str,
         expires_at_step: Option<u64>,
     ) -> RuntimeResult<ResourceLease> {

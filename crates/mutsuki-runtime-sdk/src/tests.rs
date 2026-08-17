@@ -11,15 +11,25 @@ use mutsuki_runtime_contracts::{
     RuntimeLoadPlan, RuntimeProfileMode, SchedulerPolicyDescriptor, WorkflowDescriptor,
 };
 use mutsuki_runtime_contracts::{
-    BatchPayload, ColumnPayload, ExecutionClass, InvocationMode, PayloadLayout, RunnerConcurrency,
-    RunnerPurity, RuntimeError,
+    BatchPayload, ColumnPayload, ExecutionClass, InvocationMode, PayloadLayout, ProtocolId,
+    RunnerConcurrency, RunnerPurity, RuntimeError, SurfaceId, TaskId, TaskLeaseId,
 };
+use serde::Deserialize;
 use serde_json::json;
 
 struct ChildWork;
 
 impl SdkProtocol for ChildWork {
     const PROTOCOL_ID: &'static str = "child.work";
+}
+
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+struct ChildOutput {
+    from: String,
+}
+
+impl SdkProtocolOutput for ChildWork {
+    type Output = ChildOutput;
 }
 
 struct ParentWork;
@@ -31,7 +41,7 @@ impl SdkProtocol for ParentWork {
 #[test]
 #[allow(clippy::result_large_err)]
 fn batch_entry_mapping_uses_payload_index_and_rejects_task_id_mismatch() {
-    let ctx = RunnerContext::new(1, 1, "executor", Some("lease-1".into()), "invocation");
+    let ctx = RunnerContext::new(1, 1, "executor", Some("lease-1"), "invocation");
     let mut batch = single_entry_batch(&ctx, Task::new("task-a", "sim.work", json!({})));
     batch.entries[0].task_id = "task-b".into();
     let mut invoked = false;
@@ -135,7 +145,7 @@ fn async_descriptor() -> RunnerDescriptor {
 }
 
 struct ManualClient {
-    outcomes: Mutex<HashMap<String, TaskOutcome>>,
+    outcomes: Mutex<HashMap<TaskId, TaskOutcome>>,
 }
 
 impl RuntimeClient for ManualClient {
@@ -198,6 +208,88 @@ fn task_handle_future_polls_until_outcome() {
     assert!(matches!(future.as_mut().poll(&mut cx), Poll::Ready(Ok(_))));
 }
 
+fn sample_handle(protocol_id: &str) -> TaskHandle {
+    TaskHandle {
+        task_id: "task-1".into(),
+        protocol_id: protocol_id.into(),
+        target_binding_id: None,
+        cancel_policy: CancelPolicy::Cascade,
+        trace_id: None,
+        correlation_id: None,
+    }
+}
+
+#[test]
+fn typed_task_handle_rejects_protocol_mismatch() {
+    let error =
+        TypedTaskHandle::<ChildWork>::try_from_handle(sample_handle("other.work")).unwrap_err();
+    assert_eq!(error.error().code, "task.protocol_mismatch");
+    assert_eq!(error.error().source, "runtime.sdk");
+
+    let handle =
+        TypedTaskHandle::<ChildWork>::try_from_handle(sample_handle("child.work")).unwrap();
+    assert_eq!(handle.as_handle().protocol_id, ChildWork::PROTOCOL_ID);
+}
+
+#[test]
+fn typed_task_outcome_decodes_completed_json_output() {
+    let outcome = TypedTaskOutcome::<ChildWork>::from_outcome(TaskOutcome::Completed {
+        task_id: "task-1".into(),
+        output: Some(json!({"from": "parent-1"})),
+        output_ref: None,
+    });
+    assert_eq!(
+        outcome.decode::<ChildOutput>().unwrap(),
+        ChildOutput {
+            from: "parent-1".into()
+        }
+    );
+    assert_eq!(
+        outcome.decode_output().unwrap(),
+        ChildOutput {
+            from: "parent-1".into()
+        }
+    );
+}
+
+#[test]
+fn typed_task_outcome_decode_fails_for_failed_and_cancelled() {
+    let failed = TypedTaskOutcome::<ChildWork>::from_outcome(TaskOutcome::Failed {
+        task_id: "task-1".into(),
+        error: RuntimeError::new("child.failed", "runtime.test", "task.outcome.task-1"),
+    });
+    let cancelled = TypedTaskOutcome::<ChildWork>::from_outcome(TaskOutcome::Cancelled {
+        task_id: "task-1".into(),
+        reason: Some("parent cancelled".into()),
+    });
+    let missing_output = TypedTaskOutcome::<ChildWork>::from_outcome(TaskOutcome::Completed {
+        task_id: "task-1".into(),
+        output: None,
+        output_ref: None,
+    });
+
+    assert_eq!(
+        failed.decode::<ChildOutput>().unwrap_err().error().code,
+        "child.failed"
+    );
+    assert_eq!(
+        cancelled.decode::<ChildOutput>().unwrap_err().error().code,
+        "sdk.decode_failed"
+    );
+    assert_eq!(
+        missing_output
+            .decode::<ChildOutput>()
+            .unwrap_err()
+            .error()
+            .code,
+        "sdk.decode_failed"
+    );
+    assert_eq!(
+        failed.decode_output().unwrap_err().error().source,
+        "runtime.test"
+    );
+}
+
 #[test]
 fn task_await_runner_adapter_suspends_and_resumes_call() {
     let client = Arc::new(ManualClient {
@@ -210,7 +302,7 @@ fn task_await_runner_adapter_suspends_and_resumes_call() {
         Box::new(|ctx, task| {
             Box::pin(async move {
                 let outcome = ctx.call::<ChildWork>(json!({"from": task.task_id})).await?;
-                match outcome {
+                match outcome.into_outcome() {
                     TaskOutcome::Completed { .. } => Ok(RunnerResult::completed(task.task_id)),
                     TaskOutcome::Failed { error, .. } => {
                         Err(mutsuki_runtime_core::RuntimeFailure::new(error))
@@ -229,13 +321,7 @@ fn task_await_runner_adapter_suspends_and_resumes_call() {
 
     let first = adapter
         .run_one_for_test(
-            RunnerContext::new(
-                1,
-                1,
-                "executor:test",
-                Some("lease:test".into()),
-                "invocation:test",
-            ),
+            RunnerContext::new(1, 1, "executor:test", Some("lease:test"), "invocation:test"),
             Task::new("parent-1", "parent.work", json!({})),
         )
         .unwrap();
@@ -261,7 +347,7 @@ fn task_await_runner_adapter_suspends_and_resumes_call() {
                 1,
                 2,
                 "executor:test",
-                Some("lease:test-2".into()),
+                Some("lease:test-2"),
                 "invocation:test-2",
             ),
             Task::new("parent-1", "parent.work", json!({})),
@@ -298,7 +384,7 @@ fn task_await_runner_adapter_submits_independent_calls_as_one_batch() {
             1,
             step,
             "executor:test",
-            Some(format!("lease:test:{step}")),
+            Some(TaskLeaseId::from(format!("lease:test:{step}"))),
             format!("invocation:test:{step}"),
         )
     };
@@ -326,7 +412,7 @@ fn task_await_runner_adapter_submits_independent_calls_as_one_batch() {
 
     let mut outcomes = client.outcomes.lock().expect("outcomes mutex poisoned");
     for index in 1..=3 {
-        let task_id = format!("parent-batch:call:{index}");
+        let task_id = TaskId::from(format!("parent-batch:call:{index}"));
         outcomes.insert(
             task_id.clone(),
             TaskOutcome::Completed {
@@ -366,13 +452,7 @@ fn task_await_runner_adapter_cancel_removes_invocation_by_invocation_id() {
 
     let first = adapter
         .run_one_for_test(
-            RunnerContext::new(
-                1,
-                1,
-                "executor:test",
-                Some("lease:test".into()),
-                "invocation:one",
-            ),
+            RunnerContext::new(1, 1, "executor:test", Some("lease:test"), "invocation:one"),
             Task::new("parent-1", "parent.work", json!({})),
         )
         .unwrap();
@@ -398,7 +478,7 @@ fn task_await_runner_adapter_cancel_removes_invocation_by_invocation_id() {
                 1,
                 2,
                 "executor:test",
-                Some("lease:test-2".into()),
+                Some("lease:test-2"),
                 "invocation:two",
             ),
             Task::new("parent-1", "parent.work", json!({})),
@@ -431,24 +511,24 @@ fn task_await_runner_adapter_emits_generic_child_task_with_trace_context() {
 
     let first = adapter
         .run_one_for_test(
-            RunnerContext::new(
-                1,
-                1,
-                "executor:test",
-                Some("lease:test".into()),
-                "invocation:test",
-            ),
+            RunnerContext::new(1, 1, "executor:test", Some("lease:test"), "invocation:test"),
             task,
         )
         .unwrap();
 
     assert_eq!(first.status, RunnerStatus::Waiting);
     assert_eq!(first.tasks[0].protocol_id, "child.work");
-    assert_eq!(first.tasks[0].trace_id.as_deref(), Some("trace-1"));
+    assert_eq!(
+        first.tasks[0].trace_id.as_ref().map(|id| id.as_str()),
+        Some("trace-1")
+    );
     assert_eq!(first.tasks[0].correlation_id.as_deref(), Some("corr-1"));
     let task_await = first.task_await.as_ref().unwrap();
     assert_eq!(task_await.cancel_policy, CancelPolicy::Cascade);
-    assert_eq!(task_await.child.trace_id.as_deref(), Some("trace-1"));
+    assert_eq!(
+        task_await.child.trace_id.as_ref().map(|id| id.as_str()),
+        Some("trace-1")
+    );
     assert_eq!(task_await.child.correlation_id.as_deref(), Some("corr-1"));
 }
 
@@ -475,13 +555,7 @@ fn task_await_runner_adapter_emits_explicit_cancel_policy_descriptor() {
 
     let first = adapter
         .run_one_for_test(
-            RunnerContext::new(
-                1,
-                1,
-                "executor:test",
-                Some("lease:test".into()),
-                "invocation:test",
-            ),
+            RunnerContext::new(1, 1, "executor:test", Some("lease:test"), "invocation:test"),
             Task::new("parent-1", "parent.work", json!({})),
         )
         .unwrap();
@@ -517,13 +591,7 @@ fn task_await_runner_adapter_rejects_self_call_when_policy_disallows_it() {
 
     let error = adapter
         .run_one_for_test(
-            RunnerContext::new(
-                1,
-                1,
-                "executor:test",
-                Some("lease:test".into()),
-                "invocation:test",
-            ),
+            RunnerContext::new(1, 1, "executor:test", Some("lease:test"), "invocation:test"),
             Task::new("parent-1", "parent.work", json!({})),
         )
         .unwrap_err();
@@ -549,13 +617,7 @@ fn task_await_runner_adapter_rejects_external_future_without_wake_source() {
 
     let error = adapter
         .run_one_for_test(
-            RunnerContext::new(
-                1,
-                1,
-                "executor:test",
-                Some("lease:test".into()),
-                "invocation:test",
-            ),
+            RunnerContext::new(1, 1, "executor:test", Some("lease:test"), "invocation:test"),
             Task::new("parent-1", "parent.work", json!({})),
         )
         .unwrap_err();
@@ -574,7 +636,7 @@ fn task_await_runner_adapter_rejects_undeclared_outbound_protocol() {
     let mut descriptor = async_descriptor();
     descriptor
         .contract_surfaces
-        .retain(|surface| !surface.starts_with("requires:task_protocol:"));
+        .retain(|surface| !surface.as_str().starts_with("requires:task_protocol:"));
     let mut adapter = TaskAwaitRunnerAdapter::new(
         descriptor,
         client,
@@ -588,13 +650,7 @@ fn task_await_runner_adapter_rejects_undeclared_outbound_protocol() {
 
     let error = adapter
         .run_one_for_test(
-            RunnerContext::new(
-                1,
-                1,
-                "executor:test",
-                Some("lease:test".into()),
-                "invocation:test",
-            ),
+            RunnerContext::new(1, 1, "executor:test", Some("lease:test"), "invocation:test"),
             Task::new("parent-1", "parent.work", json!({})),
         )
         .unwrap_err();
@@ -630,20 +686,17 @@ fn task_await_runner_adapter_emits_targeted_child_task_descriptor() {
 
     let first = adapter
         .run_one_for_test(
-            RunnerContext::new(
-                1,
-                1,
-                "executor:test",
-                Some("lease:test".into()),
-                "invocation:test",
-            ),
+            RunnerContext::new(1, 1, "executor:test", Some("lease:test"), "invocation:test"),
             Task::new("parent-1", "parent.work", json!({})),
         )
         .unwrap();
 
     assert_eq!(first.status, RunnerStatus::Waiting);
     assert_eq!(
-        first.tasks[0].target_binding_id.as_deref(),
+        first.tasks[0]
+            .target_binding_id
+            .as_ref()
+            .map(|id| id.as_str()),
         Some("binding:child")
     );
     assert_eq!(first.tasks[0].runner_hint.as_deref(), Some("child.runner"));
@@ -654,7 +707,8 @@ fn task_await_runner_adapter_emits_targeted_child_task_descriptor() {
             .unwrap()
             .child
             .target_binding_id
-            .as_deref(),
+            .as_ref()
+            .map(|id| id.as_str()),
         Some("binding:child")
     );
 }
@@ -750,8 +804,14 @@ fn descriptor_builders_create_sdk_authoring_surfaces() {
             .build();
 
     assert_eq!(protocol.version, "2.0.0");
-    assert_eq!(runner.accepted_protocol_ids, vec!["macro.echo".to_string()]);
-    assert_eq!(runner.contract_surfaces, vec!["runner:builder.runner"]);
+    assert_eq!(
+        runner.accepted_protocol_ids,
+        vec![ProtocolId::from("macro.echo")]
+    );
+    assert_eq!(
+        runner.contract_surfaces,
+        vec![SurfaceId::from("runner:builder.runner")]
+    );
     assert_eq!(runner.batch.preferred_batch_size, 32);
     assert_eq!(runner.batch.max_batch_entries, 128);
     assert_eq!(runner.payload.preferred_layout, PayloadLayout::BinaryPacked);
@@ -778,7 +838,10 @@ fn batch_helpers_build_submit_and_payload_protocol_shapes() {
         .build();
 
     assert_eq!(batch.batch_id, "batch:sdk");
-    assert_eq!(batch.tick_id.as_deref(), Some("tick:42"));
+    assert_eq!(
+        batch.tick_id.as_ref().map(|id| id.as_str()),
+        Some("tick:42")
+    );
     assert_eq!(batch.tasks.len(), 2);
     assert_eq!(
         batch.tasks[0].resource_requirements[0],
@@ -829,7 +892,10 @@ fn derive_macros_generate_protocol_resource_and_runner_descriptors() {
     assert_eq!(resource.operations, vec!["collect", "patch"]);
     assert_eq!(runner.runner_id, "macro.echo.runner");
     assert_eq!(runner.plugin_id, "macro.plugin");
-    assert_eq!(runner.accepted_protocol_ids, vec!["macro.echo".to_string()]);
+    assert_eq!(
+        runner.accepted_protocol_ids,
+        vec![ProtocolId::from("macro.echo")]
+    );
 }
 
 #[test]
@@ -841,13 +907,7 @@ fn macro_generated_runner_adapter_suspends_with_child_task_and_await() {
 
     let first = adapter
         .run_one_for_test(
-            RunnerContext::new(
-                1,
-                1,
-                "executor:test",
-                Some("lease:test".into()),
-                "invocation:test",
-            ),
+            RunnerContext::new(1, 1, "executor:test", Some("lease:test"), "invocation:test"),
             Task::new("macro-parent", "macro.echo", json!({})),
         )
         .unwrap();
@@ -1010,12 +1070,12 @@ fn task_submitter_adapter_preserves_task_handle_and_outcome_contract() {
     assert_eq!(handle.task_id, "task-1");
     assert!(matches!(
         client.task_outcome(&handle).unwrap(),
-        Some(TaskOutcome::Completed { output_ref, .. }) if output_ref.as_deref() == Some("value:1")
+        Some(TaskOutcome::Completed { output_ref, .. }) if output_ref.as_ref().map(|id| id.as_str()) == Some("value:1")
     ));
     submitter.cancel_task(&handle).unwrap();
     assert_eq!(
         *submitter.cancelled.lock().expect("cancel mutex poisoned"),
-        vec!["task-1".to_string()]
+        vec![TaskId::from("task-1")]
     );
 }
 
@@ -1048,8 +1108,8 @@ impl Runner for TestRunner {
 }
 
 struct ManualSubmitter {
-    outcomes: Mutex<HashMap<String, TaskOutcome>>,
-    cancelled: Mutex<Vec<String>>,
+    outcomes: Mutex<HashMap<TaskId, TaskOutcome>>,
+    cancelled: Mutex<Vec<TaskId>>,
 }
 
 impl TaskSubmitter for ManualSubmitter {

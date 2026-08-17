@@ -8,12 +8,14 @@ from typing import Self
 from mutsuki_runner_kit.contracts.codec import (
     JsonDict,
     JsonValue,
+    as_id,
+    as_id_tuple,
     as_int,
     as_json_value,
     as_mapping,
     as_str,
-    as_str_tuple,
     field_value,
+    optional_id,
     optional_str,
     to_json_value,
     tuple_from_json,
@@ -24,6 +26,17 @@ from mutsuki_runner_kit.contracts.entry import (
     ResourceRequirement,
 )
 from mutsuki_runner_kit.contracts.errors import RuntimeError
+from mutsuki_runner_kit.contracts.ids import (
+    BindingId,
+    ExecutorId,
+    ProtocolId,
+    RefId,
+    RunnerId,
+    SurfaceId,
+    TaskId,
+    TaskLeaseId,
+    TraceId,
+)
 from mutsuki_runner_kit.contracts.resource import ResourceRef
 from mutsuki_runner_kit.contracts.state import VersionExpectation
 
@@ -49,23 +62,23 @@ class CancelPolicy(StrEnum):
 
 @dataclass(frozen=True)
 class Task:
-    task_id: str
-    protocol_id: str
+    task_id: TaskId
+    protocol_id: ProtocolId
     priority: int
     ready_at_step: int | None
     payload: JsonValue
-    input_refs: tuple[str, ...]
-    output_ref: str | None
-    continuation_ref: str | None
-    target_binding_id: str | None
-    lease_id: str | None
-    trace_id: str | None
+    input_refs: tuple[RefId, ...]
+    output_ref: RefId | None
+    continuation_ref: RefId | None
+    target_binding_id: BindingId | None
+    lease_id: TaskLeaseId | None
+    trace_id: TraceId | None
     expected_versions: tuple[VersionExpectation, ...]
     correlation_id: str | None
     idempotency_key: str | None
     runner_hint: str | None
     registry_generation: int
-    required_surfaces: tuple[str, ...]
+    required_surfaces: tuple[SurfaceId, ...]
     dispatch_lane: DispatchLane
     ordering: OrderingRequirement
     resource_requirements: tuple[ResourceRequirement, ...]
@@ -74,8 +87,8 @@ class Task:
     @classmethod
     def new(cls, task_id: str, protocol_id: str, payload: JsonValue = None) -> Self:
         return cls(
-            task_id=task_id,
-            protocol_id=protocol_id,
+            task_id=TaskId(task_id),
+            protocol_id=ProtocolId(protocol_id),
             priority=0,
             ready_at_step=None,
             payload=payload,
@@ -110,21 +123,17 @@ class Task:
         lease_id = field_value(raw, "lease_id")
         trace_id = field_value(raw, "trace_id")
         return cls(
-            task_id=as_str(field_value(raw, "task_id"), "task_id"),
-            protocol_id=as_str(field_value(raw, "protocol_id"), "protocol_id"),
+            task_id=TaskId(as_str(field_value(raw, "task_id"), "task_id")),
+            protocol_id=ProtocolId(as_str(field_value(raw, "protocol_id"), "protocol_id")),
             priority=as_int(field_value(raw, "priority"), "priority"),
             ready_at_step=None if ready_at_step is None else as_int(ready_at_step, "ready_at_step"),
             payload=as_json_value(field_value(raw, "payload")),
-            input_refs=as_str_tuple(field_value(raw, "input_refs"), "input_refs"),
-            output_ref=None if output_ref is None else as_str(output_ref, "output_ref"),
-            continuation_ref=None
-            if continuation_ref is None
-            else as_str(continuation_ref, "continuation_ref"),
-            target_binding_id=None
-            if target_binding_id is None
-            else as_str(target_binding_id, "target_binding_id"),
-            lease_id=None if lease_id is None else as_str(lease_id, "lease_id"),
-            trace_id=None if trace_id is None else as_str(trace_id, "trace_id"),
+            input_refs=as_id_tuple(RefId, field_value(raw, "input_refs"), "input_refs"),
+            output_ref=optional_id(RefId, output_ref, "output_ref"),
+            continuation_ref=optional_id(RefId, continuation_ref, "continuation_ref"),
+            target_binding_id=optional_id(BindingId, target_binding_id, "target_binding_id"),
+            lease_id=optional_id(TaskLeaseId, lease_id, "lease_id"),
+            trace_id=optional_id(TraceId, trace_id, "trace_id"),
             expected_versions=tuple_from_json(raw, "expected_versions", VersionExpectation),
             correlation_id=None
             if correlation_id is None
@@ -136,8 +145,8 @@ class Task:
             registry_generation=as_int(
                 field_value(raw, "registry_generation"), "registry_generation"
             ),
-            required_surfaces=as_str_tuple(
-                field_value(raw, "required_surfaces"), "required_surfaces"
+            required_surfaces=as_id_tuple(
+                SurfaceId, field_value(raw, "required_surfaces"), "required_surfaces"
             ),
             dispatch_lane=DispatchLane(as_str(field_value(raw, "dispatch_lane"), "dispatch_lane")),
             ordering=OrderingRequirement.from_json_dict(
@@ -152,10 +161,10 @@ class Task:
 
 @dataclass(frozen=True)
 class TaskLease:
-    lease_id: str
-    task_id: str
-    runner_id: str
-    executor_id: str
+    lease_id: TaskLeaseId
+    task_id: TaskId
+    runner_id: RunnerId
+    executor_id: ExecutorId
     registry_generation: int
     acquired_at_step: int
     expires_at_step: int | None
@@ -166,11 +175,11 @@ class TaskLease:
         raw = as_mapping(data, "TaskLease")
         expires_at_step = field_value(raw, "expires_at_step")
         return cls(
-            lease_id=as_str(field_value(raw, "lease_id"), "lease_id"),
-            task_id=as_str(field_value(raw, "task_id"), "task_id"),
+            lease_id=TaskLeaseId(as_str(field_value(raw, "lease_id"), "lease_id")),
+            task_id=TaskId(as_str(field_value(raw, "task_id"), "task_id")),
             attempt_generation=as_int(raw.get("attempt_generation", 0), "attempt_generation"),
-            runner_id=as_str(field_value(raw, "runner_id"), "runner_id"),
-            executor_id=as_str(field_value(raw, "executor_id"), "executor_id"),
+            runner_id=RunnerId(as_str(field_value(raw, "runner_id"), "runner_id")),
+            executor_id=ExecutorId(as_str(field_value(raw, "executor_id"), "executor_id")),
             registry_generation=as_int(
                 field_value(raw, "registry_generation"), "registry_generation"
             ),
@@ -183,24 +192,24 @@ class TaskLease:
 
 @dataclass(frozen=True)
 class TaskHandle:
-    task_id: str
-    protocol_id: str
-    target_binding_id: str | None
+    task_id: TaskId
+    protocol_id: ProtocolId
+    target_binding_id: BindingId | None
     cancel_policy: CancelPolicy
-    trace_id: str | None
+    trace_id: TraceId | None
     correlation_id: str | None
 
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = as_mapping(data, "TaskHandle")
         return cls(
-            task_id=as_str(field_value(raw, "task_id"), "task_id"),
-            protocol_id=as_str(field_value(raw, "protocol_id"), "protocol_id"),
-            target_binding_id=optional_str(
-                field_value(raw, "target_binding_id"), "target_binding_id"
+            task_id=TaskId(as_str(field_value(raw, "task_id"), "task_id")),
+            protocol_id=ProtocolId(as_str(field_value(raw, "protocol_id"), "protocol_id")),
+            target_binding_id=optional_id(
+                BindingId, field_value(raw, "target_binding_id"), "target_binding_id"
             ),
             cancel_policy=CancelPolicy(as_str(field_value(raw, "cancel_policy"), "cancel_policy")),
-            trace_id=optional_str(field_value(raw, "trace_id"), "trace_id"),
+            trace_id=optional_id(TraceId, field_value(raw, "trace_id"), "trace_id"),
             correlation_id=optional_str(field_value(raw, "correlation_id"), "correlation_id"),
         )
 
@@ -208,9 +217,9 @@ class TaskHandle:
 @dataclass(frozen=True)
 class TaskOutcome:
     status: TaskStatus
-    task_id: str
+    task_id: TaskId
     output: JsonValue = None
-    output_ref: str | None = None
+    output_ref: RefId | None = None
     error: RuntimeError | None = None
     reason: str | None = None
 
@@ -224,28 +233,28 @@ class TaskOutcome:
     ) -> Self:
         return cls(
             status=TaskStatus.COMPLETED,
-            task_id=task_id,
+            task_id=TaskId(task_id),
             output=output,
-            output_ref=output_ref,
+            output_ref=None if output_ref is None else RefId(output_ref),
         )
 
     @classmethod
     def failed(cls, task_id: str, error: RuntimeError) -> Self:
-        return cls(status=TaskStatus.FAILED, task_id=task_id, error=error)
+        return cls(status=TaskStatus.FAILED, task_id=TaskId(task_id), error=error)
 
     @classmethod
     def cancelled(cls, task_id: str, reason: str | None = None) -> Self:
-        return cls(status=TaskStatus.CANCELLED, task_id=task_id, reason=reason)
+        return cls(status=TaskStatus.CANCELLED, task_id=TaskId(task_id), reason=reason)
 
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = as_mapping(data, "TaskOutcome")
         status = TaskStatus(as_str(field_value(raw, "status"), "status"))
-        task_id = as_str(field_value(raw, "task_id"), "task_id")
+        task_id = TaskId(as_str(field_value(raw, "task_id"), "task_id"))
         if status == TaskStatus.COMPLETED:
             return cls.completed(
                 task_id,
-                optional_str(field_value(raw, "output_ref"), "output_ref"),
+                optional_id(RefId, field_value(raw, "output_ref"), "output_ref"),
                 output=as_json_value(raw.get("output")),
             )
         if status == TaskStatus.FAILED:
@@ -286,7 +295,7 @@ class TaskOutcome:
 class WakeCondition:
     type: str
     ready_at_step: int | None = None
-    ref_id: str | None = None
+    ref_id: RefId | None = None
     signal_id: str | None = None
 
     @classmethod
@@ -299,7 +308,7 @@ class WakeCondition:
 
     @classmethod
     def resource_event(cls, ref_id: str) -> Self:
-        return cls(type="resource_event", ref_id=ref_id)
+        return cls(type="resource_event", ref_id=RefId(ref_id))
 
     @classmethod
     def external_signal(cls, signal_id: str) -> Self:
@@ -319,7 +328,7 @@ class WakeCondition:
                 ready_at_step=as_int(field_value(raw, "ready_at_step"), "ready_at_step"),
             )
         if kind == "resource_event":
-            return cls.resource_event(as_str(field_value(raw, "ref_id"), "ref_id"))
+            return cls.resource_event(as_id(RefId, field_value(raw, "ref_id"), "ref_id"))
         if kind == "external_signal":
             return cls.external_signal(as_str(field_value(raw, "signal_id"), "signal_id"))
         if kind == "manual_wake":
@@ -365,7 +374,7 @@ class TaskStepContinuation:
 
 @dataclass(frozen=True)
 class TaskAwait:
-    parent_task_id: str
+    parent_task_id: TaskId
     child: TaskHandle
     continuation: TaskStepContinuation
     cancel_policy: CancelPolicy
@@ -374,7 +383,7 @@ class TaskAwait:
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = as_mapping(data, "TaskAwait")
         return cls(
-            parent_task_id=as_str(field_value(raw, "parent_task_id"), "parent_task_id"),
+            parent_task_id=TaskId(as_str(field_value(raw, "parent_task_id"), "parent_task_id")),
             child=TaskHandle.from_json_dict(as_mapping(field_value(raw, "child"), "child")),
             continuation=TaskStepContinuation.from_json_dict(
                 as_mapping(field_value(raw, "continuation"), "continuation")

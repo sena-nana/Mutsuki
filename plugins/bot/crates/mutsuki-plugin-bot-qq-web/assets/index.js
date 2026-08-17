@@ -1,3 +1,5 @@
+const QQ_PROVIDER_ID = "mutsuki.bot.adapter.qqbot";
+
 const text = (value) => String(value ?? "—");
 
 const labels = {
@@ -23,6 +25,7 @@ const labels = {
   waiting: "等待处理",
   completed: "已完成",
   expired: "已过期",
+  keep: "已保存",
 };
 
 const productLabel = (value) => labels[value] || text(value);
@@ -34,16 +37,86 @@ function element(tag, className, content) {
   return node;
 }
 
-function errorMessage(error, fallback = "操作失败，请稍后重试") {
+function parsedError(error) {
   const raw = error?.message || String(error ?? "");
   const start = raw.indexOf("{");
   if (start >= 0) {
     try {
       const parsed = JSON.parse(raw.slice(start));
-      if (typeof parsed.message === "string" && parsed.message.trim()) return parsed.message;
+      return {
+        code: parsed.code || parsed.kind || "",
+        message: typeof parsed.message === "string" ? parsed.message : raw,
+      };
     } catch (_) {}
   }
-  return raw.startsWith("extension ") || raw.includes("rpc ") ? fallback : raw || fallback;
+  return { code: "", message: raw };
+}
+
+function errorMessage(error, fallback = "操作失败，请稍后重试") {
+  const { message } = parsedError(error);
+  return message.startsWith("extension ") || message.includes("rpc ") ? fallback : message || fallback;
+}
+
+function isOwnerUnavailable(error) {
+  const { code, message } = parsedError(error);
+  return code === "qq.owner_unavailable" || message.includes("尚未连接") || message.includes("尚未启用");
+}
+
+function formatTime(unixMs) {
+  const value = Number(unixMs);
+  if (!unixMs || Number.isNaN(value) || value <= 0) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString();
+}
+
+function goPage(page) {
+  const routes = {
+    config: "/config/config.page",
+    "bot-flow": "/automation/bot-flow.page",
+    "agent-connections": "/bot/bot-agent.page",
+  };
+  if (routes[page]) {
+    location.hash = routes[page];
+    return;
+  }
+  const url = new URL(location.href);
+  if (page === "overview") url.searchParams.delete("page");
+  else url.searchParams.set("page", page);
+  url.searchParams.delete("tab");
+  history.pushState({}, "", url);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
+function wireToPlain(value) {
+  if (!value || typeof value !== "object") return value;
+  if (["bool", "integer", "float", "string"].includes(value.type)) return value.value;
+  if (value.type === "secret") return value.value;
+  if (value.type === "array") return (value.value || []).map(wireToPlain);
+  if (value.type === "object") {
+    const out = {};
+    for (const [key, child] of Object.entries(value.value || {})) out[key] = wireToPlain(child);
+    return out;
+  }
+  if (value.state) return value;
+  if (!("type" in value)) {
+    const out = {};
+    for (const [key, child] of Object.entries(value)) out[key] = wireToPlain(child);
+    return out;
+  }
+  return value;
+}
+
+function snapshotDraft(snapshot) {
+  return wireToPlain(snapshot?.value) || {};
+}
+
+async function optionalCall(rpc, namespace, method, params) {
+  try {
+    return { ok: true, value: await rpc.call(namespace, method, params || {}) };
+  } catch (error) {
+    return { ok: false, error };
+  }
 }
 
 function actionButton(label, action, state, rpc, refresh, options = {}) {
@@ -61,7 +134,7 @@ function actionButton(label, action, state, rpc, refresh, options = {}) {
         confirmed: options.confirm !== false,
         request: {
           operation_id: operationId,
-          expected_revision: state.snapshot.revision,
+          expected_revision: state.snapshot?.revision ?? 0,
           action: resolved,
         },
       });
@@ -81,11 +154,13 @@ function accountCard(account, state, rpc, refresh) {
   const card = element("article", "panel nested");
   card.dataset.accountId = account.account_id;
   card.append(
-    element("h3", "", account.account_id),
+    element("h3", "", account.account_id || "QQ 账号"),
     element("p", "muted", `${productLabel(account.health)} · ${productLabel(account.connection_state)}`),
-    element("p", "", `心跳 ${text(account.last_heartbeat_unix_ms)} · 分片 ${account.shard.join("/")}`),
+    element("p", "", `App ID ${text(account.app_id)} · 分片 ${account.shard.join("/")}`),
+    element("p", "", `心跳 ${formatTime(account.last_heartbeat_unix_ms)} · 重连 ${text(account.reconnect_count)} 次`),
     element("p", "", `凭据 ${productLabel(account.credential_status)} · 发送状态 ${productLabel(account.rate_limit_status)}`),
   );
+  if (account.last_error) card.append(element("p", "error-banner", account.last_error));
   const actions = element("div", "actions");
   actions.append(
     actionButton("健康检查", { action: "account_health_check", account_id: account.account_id }, state, rpc, refresh),
@@ -189,9 +264,104 @@ function withLoadMore(section, cursor, load) {
   return section;
 }
 
+function linkButton(label, page) {
+  const button = element("button", "ghost", label);
+  button.type = "button";
+  button.onclick = () => goPage(page);
+  return button;
+}
+
+function field(label, control) {
+  const wrap = element("label", "form-field");
+  wrap.append(control, document.createTextNode(` ${label}`));
+  return wrap;
+}
+
+function loginCard(state, refresh) {
+  const section = element("section", "panel");
+  section.append(element("h2", "", "QQ 登录"));
+  if (state.ownerUnavailable) {
+    section.append(element("p", "muted", "尚未启用 QQ Bot。填写 App ID 与 Client Secret 并启用后才会连接。"));
+  }
+  if (!state.configAvailable) {
+    section.append(element("p", "muted", "配置页不可用。"));
+    section.append(linkButton("打开配置页", "config"));
+    return section;
+  }
+  const draft = state.loginDraft || {};
+  const enabled = Object.assign(element("input"), { type: "checkbox", checked: !!draft.enabled });
+  const appId = Object.assign(element("input"), { type: "text", placeholder: "开放平台 App ID", value: draft.app_id || "" });
+  const secret = Object.assign(element("input"), {
+    type: "password",
+    placeholder: draft.client_secret?.state === "configured" || draft.client_secret?.state === "keep"
+      ? "已保存，留空则不更改"
+      : "Client Secret",
+  });
+  const privateGroup = Object.assign(element("input"), { type: "checkbox", checked: draft.receive_private_and_group !== false });
+  const guild = Object.assign(element("input"), { type: "checkbox", checked: !!draft.receive_guild });
+  const apply = element("button", "primary", "保存登录配置");
+  apply.type = "button";
+  apply.onclick = async () => {
+    apply.disabled = true;
+    try {
+      await state.rpc.call("config", "apply", {
+        provider_id: QQ_PROVIDER_ID,
+        context: { scope: "mutsuki.global" },
+        request: {
+          candidate: {
+            enabled: enabled.checked,
+            app_id: appId.value.trim(),
+            client_secret: secret.value.trim() ? { state: "set", value: secret.value.trim() } : { state: "keep" },
+            receive_private_and_group: privateGroup.checked,
+            receive_guild: guild.checked,
+            runtime_config: draft.runtime_config || {},
+          },
+          expected_revision: state.loginRevision ?? 0,
+          dry_run: false,
+        },
+      });
+      secret.value = "";
+      await refresh();
+    } catch (error) {
+      state.reportError?.(error);
+    } finally {
+      apply.disabled = false;
+    }
+  };
+  section.append(
+    field("启用 QQ Bot", enabled),
+    element("p", "muted", `凭据 ${productLabel(draft.client_secret?.state)} · 保存后不会再次显示`),
+    appId,
+    secret,
+    field("接收私聊和群消息", privateGroup),
+    field("接收频道消息", guild),
+  );
+  const actions = element("div", "actions");
+  actions.append(apply, linkButton("打开配置页", "config"));
+  section.append(actions);
+  return section;
+}
+
+function relatedCard() {
+  const section = element("section", "panel");
+  section.append(
+    element("h2", "", "相关管理"),
+    element("p", "muted", "会话策略、命令匹配和 Agent 会话由各自页面编辑。"),
+  );
+  const actions = element("div", "actions");
+  actions.append(
+    linkButton("会话策略", "config"),
+    linkButton("命令与流程", "bot-flow"),
+    linkButton("Agent", "agent-connections"),
+  );
+  section.append(actions);
+  return section;
+}
+
 /** Mount the QQ operations panel into the shared console shell. */
 export function mountQqBotPanel(host, rpc, events, options = {}) {
   const state = {
+    rpc,
     snapshot: null,
     deliveries: [],
     interactions: [],
@@ -200,6 +370,10 @@ export function mountQqBotPanel(host, rpc, events, options = {}) {
     deliveryExpanded: false,
     interactionExpanded: false,
     actorId: options.actorId || "web-console",
+    configAvailable: false,
+    loginDraft: null,
+    loginRevision: 0,
+    ownerUnavailable: false,
   };
   host.innerHTML = "";
   const root = element("div", "qq-bot-panel stack");
@@ -229,7 +403,8 @@ export function mountQqBotPanel(host, rpc, events, options = {}) {
       drafts.set(card.dataset.accountId, values);
     });
     root.querySelectorAll("section, article").forEach((node) => node.remove());
-    state.snapshot.accounts.forEach((account) => {
+    root.append(loginCard(state, refresh));
+    (state.snapshot?.accounts || []).forEach((account) => {
       const card = accountCard(account, state, rpc, refresh);
       const values = drafts.get(account.account_id);
       if (values) {
@@ -240,6 +415,7 @@ export function mountQqBotPanel(host, rpc, events, options = {}) {
       }
       root.append(card);
     });
+    root.append(relatedCard());
     const deliveries = tableSection("主动投递", state.deliveries, [
       ["投递记录", (row) => row.receipt.delivery_id],
       ["状态", (row) => productLabel(row.receipt.status)],
@@ -281,7 +457,7 @@ export function mountQqBotPanel(host, rpc, events, options = {}) {
       state.deliveryExpanded = true;
       render();
     } catch (error) {
-      state.reportError(error);
+      if (!isOwnerUnavailable(error)) state.reportError(error);
     }
   }
 
@@ -293,8 +469,22 @@ export function mountQqBotPanel(host, rpc, events, options = {}) {
       state.interactionExpanded = true;
       render();
     } catch (error) {
-      state.reportError(error);
+      if (!isOwnerUnavailable(error)) state.reportError(error);
     }
+  }
+
+  async function loadLogin() {
+    const snapshot = await optionalCall(rpc, "config", "snapshot.read", {
+      provider_id: QQ_PROVIDER_ID,
+      context: { scope: "mutsuki.global" },
+    });
+    state.configAvailable = snapshot.ok;
+    if (!snapshot.ok) {
+      state.loginDraft = null;
+      return;
+    }
+    state.loginDraft = snapshotDraft(snapshot.value);
+    state.loginRevision = snapshot.value?.revision ?? 0;
   }
 
   const mergeRows = (fresh, existing, key) => {
@@ -324,28 +514,42 @@ export function mountQqBotPanel(host, rpc, events, options = {}) {
     const query = search.value;
     inFlight = (async () => {
       try {
-      const [snapshot, deliveries, interactions] = await Promise.all([
-        rpc.read("qq-bot", "snapshot", { query }),
-        rpc.read("qq-bot", "deliveries.list", { query, limit: 50 }),
-        rpc.read("qq-bot", "interactions.list", { query, limit: 50 }),
-      ]);
-      if (disposed || query !== search.value) return;
-      state.snapshot = snapshot;
-      state.deliveries = merge && state.deliveryExpanded
-        ? mergeRows(deliveries.items, state.deliveries, (item) => item.receipt.delivery_id)
-        : deliveries.items;
-      state.interactions = merge && state.interactionExpanded
-        ? mergeRows(interactions.items, state.interactions, (item) => item.session_id)
-        : interactions.items;
-      if (!state.deliveryExpanded || !merge) state.deliveryCursor = deliveries.next_cursor;
-      if (!state.interactionExpanded || !merge) state.interactionCursor = interactions.next_cursor;
-      status.className = "muted";
-      if (root.contains(document.activeElement) && document.activeElement?.matches?.("[data-draft-field]")) {
-        status.textContent = "正在编辑，数据将在离开输入框后更新";
-      } else {
-        status.textContent = "";
-        render();
-      }
+        await loadLogin();
+        try {
+          const [snapshot, deliveries, interactions] = await Promise.all([
+            rpc.read("qq-bot", "snapshot", { query }),
+            rpc.read("qq-bot", "deliveries.list", { query, limit: 50 }),
+            rpc.read("qq-bot", "interactions.list", { query, limit: 50 }),
+          ]);
+          if (disposed || query !== search.value) return;
+          state.snapshot = snapshot;
+          state.deliveries = merge && state.deliveryExpanded
+            ? mergeRows(deliveries.items, state.deliveries, (item) => item.receipt.delivery_id)
+            : deliveries.items;
+          state.interactions = merge && state.interactionExpanded
+            ? mergeRows(interactions.items, state.interactions, (item) => item.session_id)
+            : interactions.items;
+          if (!state.deliveryExpanded || !merge) state.deliveryCursor = deliveries.next_cursor;
+          if (!state.interactionExpanded || !merge) state.interactionCursor = interactions.next_cursor;
+          state.ownerUnavailable = false;
+        } catch (error) {
+          if (!isOwnerUnavailable(error)) throw error;
+          if (disposed || query !== search.value) return;
+          state.snapshot = { revision: 0, accounts: [] };
+          state.deliveries = [];
+          state.interactions = [];
+          state.deliveryCursor = null;
+          state.interactionCursor = null;
+          state.ownerUnavailable = true;
+        }
+        if (disposed || query !== search.value) return;
+        status.className = "muted";
+        if (root.contains(document.activeElement) && document.activeElement?.matches?.("[data-draft-field]")) {
+          status.textContent = "正在编辑，数据将在离开输入框后更新";
+        } else {
+          status.textContent = state.ownerUnavailable ? "QQ Bot 尚未启用，可先完成登录配置" : "";
+          render();
+        }
       } catch (error) {
         if (!disposed) state.reportError(error);
       }
@@ -376,7 +580,7 @@ export function mountQqBotPanel(host, rpc, events, options = {}) {
     if (!event.target?.matches?.("[data-draft-field]")) return;
     setTimeout(() => {
       if (!disposed && !(root.contains(document.activeElement) && document.activeElement?.matches?.("[data-draft-field]"))) {
-        status.textContent = "";
+        status.textContent = state.ownerUnavailable ? "QQ Bot 尚未启用，可先完成登录配置" : "";
         render();
       }
     }, 0);

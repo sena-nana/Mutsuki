@@ -54,9 +54,9 @@ Full Web Console and chat management require `backend.type = web_cookie` and
 
 ## Web Console
 
-When Bilibili management is assembled (`web_cookie` + `management.enabled`),
-`BilibiliConsoleBridge` publishes the management service and the embedded console mounts the
-`bilibili` WebExtension plus an overview nav entry **B站推送**.
+When the Bilibili management service is registered, the embedded console injects the `bilibili`
+WebExtension and the overview shows **B站推送**. Static enablement stays in the product file
+and `security.secret_file`; it is not a Config-page form.
 
 Auth:
 
@@ -66,6 +66,8 @@ Auth:
 - Web `subscribe` requires explicit `target` and `outbound_binding` (chat still uses the current
   conversation target and `self_binding_outbound_binding`).
 - Web `preview` returns card JSON only; it does not submit an outbound Bot message.
+- Web `login.start` returns only `qr_png_base64`.
+- Web `credential.clear` and `subscriptions.unsubscribe` require `confirmed: true`.
 - Cookie secret values never enter RPC responses, logs, or frontend markup. QR confirmation
   returns a base64 PNG only.
 

@@ -16,8 +16,10 @@ use mutsuki_config_service::{
     MapKeyStrategy, MemoryConfigProvider, RestartPolicy, capability,
 };
 use mutsuki_plugin_bot_adapter_qqbot::{
-    QQ_CLIENT_SECRET_FIELD, QQ_CLIENT_SECRET_KEY, QQBOT_ADAPTER_PLUGIN_ID, QqBotConfig,
-    qq_config_descriptor, qq_config_value,
+    QQ_CLIENT_SECRET_FIELD, QQ_CLIENT_SECRET_KEY, QQ_RECEIVE_GUILD_FIELD,
+    QQ_RECEIVE_PRIVATE_AND_GROUP_FIELD, QQBOT_ADAPTER_PLUGIN_ID, QqBotConfig,
+    apply_receive_intents, qq_config_descriptor, qq_config_value, receive_guild,
+    receive_private_and_group,
 };
 use mutsuki_plugin_bot_agent::{
     BOT_AGENT_BRIDGE_PLUGIN_ID, BotAgentConfig, bot_agent_config_schema,
@@ -429,13 +431,15 @@ pub(crate) fn configured_plugin_selection_from_value(
             } else {
                 config.account_id
             };
-            config.app_id = string_field(object, "app_id")?;
+            config.app_id = optional_string_field(object, "app_id");
             config.client_secret_key = QQ_CLIENT_SECRET_KEY.into();
-            config.gateway_intents = unsigned_field(object, "gateway_intents")?;
-            config.shard = [
-                unsigned_field(object, "shard_index")?,
-                unsigned_field(object, "shard_count")?,
-            ];
+            if let (Ok(index), Ok(count)) = (
+                unsigned_field(object, "shard_index"),
+                unsigned_field(object, "shard_count"),
+            ) {
+                config.shard = [index, count];
+            }
+            config.gateway_intents = qq_gateway_intents(object, config.gateway_intents)?;
             let enabled = bool_field(object, "enabled")?;
             if enabled {
                 config
@@ -491,6 +495,43 @@ pub(crate) fn configured_plugin_selection_from_value(
             reason: format!("未知产品配置 `{provider_id}`"),
         }),
     }
+}
+
+fn qq_gateway_intents(
+    object: &serde_json::Map<String, serde_json::Value>,
+    current: u64,
+) -> Result<u64, ConfigError> {
+    let private = optional_bool_field(object, QQ_RECEIVE_PRIVATE_AND_GROUP_FIELD);
+    let guild = optional_bool_field(object, QQ_RECEIVE_GUILD_FIELD);
+    if private.is_some() || guild.is_some() {
+        return Ok(apply_receive_intents(
+            current,
+            private.unwrap_or_else(|| receive_private_and_group(current)),
+            guild.unwrap_or_else(|| receive_guild(current)),
+        ));
+    }
+    if object.contains_key("gateway_intents") {
+        return unsigned_field(object, "gateway_intents");
+    }
+    Ok(current)
+}
+
+fn optional_bool_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Option<bool> {
+    object.get(field).and_then(serde_json::Value::as_bool)
+}
+
+fn optional_string_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> String {
+    object
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_owned()
 }
 
 fn bool_field(
@@ -550,4 +591,83 @@ fn provider_context(provider_id: &str) -> ConfigContext {
 
 fn register_error(error: ConfigError) -> ProductConfigError {
     ProductConfigError::Register(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mutsuki_plugin_bot_adapter_qqbot::{
+        DEFAULT_QQBOT_INTENTS, QQ_INTENT_GROUP_AND_C2C, QQ_INTENT_PUBLIC_GUILD,
+    };
+
+    fn select(value: ConfigValue) -> ConfiguredPluginSelection {
+        configured_plugin_selection_from_value(QQBOT_ADAPTER_PLUGIN_ID, &value, None).unwrap()
+    }
+
+    #[test]
+    fn disabled_login_allows_empty_app_id() {
+        let selected = select(qq_config_value(false, &QqBotConfig::default()));
+        assert!(!selected.enabled);
+        let config: QqBotConfig = serde_json::from_value(selected.config).unwrap();
+        assert!(config.app_id.is_empty());
+    }
+
+    #[test]
+    fn enabled_login_requires_app_id() {
+        let error = configured_plugin_selection_from_value(
+            QQBOT_ADAPTER_PLUGIN_ID,
+            &qq_config_value(true, &QqBotConfig::default()),
+            None,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("app_id"));
+    }
+
+    #[test]
+    fn receive_switches_update_only_known_intent_bits() {
+        let extra = 1 << 1;
+        let mut config = QqBotConfig::new("local", "app");
+        config.gateway_intents = DEFAULT_QQBOT_INTENTS | extra;
+        let ConfigValue::Object(mut object) = qq_config_value(true, &config) else {
+            panic!("QQ login document must be an object");
+        };
+        object.insert(QQ_RECEIVE_GUILD_FIELD.into(), ConfigValue::Bool(false));
+        let selected = select(ConfigValue::Object(object));
+        let restored: QqBotConfig = serde_json::from_value(selected.config).unwrap();
+        assert_eq!(
+            restored.gateway_intents & QQ_INTENT_PUBLIC_GUILD,
+            0,
+            "guild receive switch must clear only the guild bit"
+        );
+        assert_eq!(restored.gateway_intents & extra, extra);
+        assert_eq!(
+            restored.gateway_intents & QQ_INTENT_GROUP_AND_C2C,
+            QQ_INTENT_GROUP_AND_C2C
+        );
+    }
+
+    #[test]
+    fn legacy_gateway_intents_are_still_accepted() {
+        let mut config = QqBotConfig::new("local", "app");
+        config.gateway_intents = QQ_INTENT_GROUP_AND_C2C;
+        let value = ConfigValue::Object(
+            [
+                ("enabled".into(), ConfigValue::Bool(true)),
+                ("app_id".into(), ConfigValue::String("app".into())),
+                (
+                    "gateway_intents".into(),
+                    ConfigValue::Integer(i64::try_from(config.gateway_intents).unwrap()),
+                ),
+                (
+                    "runtime_config".into(),
+                    ConfigValue::from_json(&serde_json::to_value(&config).unwrap()),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        let selected = select(value);
+        let restored: QqBotConfig = serde_json::from_value(selected.config).unwrap();
+        assert_eq!(restored.gateway_intents, QQ_INTENT_GROUP_AND_C2C);
+    }
 }

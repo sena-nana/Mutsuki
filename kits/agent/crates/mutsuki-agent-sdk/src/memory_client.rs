@@ -15,15 +15,18 @@ impl MemoryClient {
         Self { ctx }
     }
 
-    pub fn query(&self, request: AgentMemoryQueryRequest) -> CallFuture {
+    pub fn query(&self, request: AgentMemoryQueryRequest) -> CallFuture<AgentMemoryQueryProtocol> {
         self.ctx.call::<AgentMemoryQueryProtocol>(request)
     }
 
-    pub fn write(&self, request: AgentMemoryWriteRequest) -> CallFuture {
+    pub fn write(&self, request: AgentMemoryWriteRequest) -> CallFuture<AgentMemoryWriteProtocol> {
         self.ctx.call::<AgentMemoryWriteProtocol>(request)
     }
 
-    pub fn activate(&self, request: AgentMemoryActivateRequest) -> CallFuture {
+    pub fn activate(
+        &self,
+        request: AgentMemoryActivateRequest,
+    ) -> CallFuture<AgentMemoryActivateProtocol> {
         self.ctx.call::<AgentMemoryActivateProtocol>(request)
     }
 }

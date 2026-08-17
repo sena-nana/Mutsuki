@@ -174,8 +174,8 @@ fn versions_match(
 pub struct ExecutionVariant {
     pub variant_id: String,
     pub task_type: ProtocolId,
-    pub runner_id: String,
-    pub plugin_id: String,
+    pub runner_id: crate::RunnerId,
+    pub plugin_id: crate::PluginId,
     pub implementation_version: String,
     pub requirements: RequirementSet,
     pub quality_level: u8,
@@ -421,7 +421,7 @@ pub struct ExecutionProfileAccumulator {
 
 impl ExecutionProfileAccumulator {
     pub fn new(
-        task_type: impl Into<String>,
+        task_type: impl Into<crate::ProtocolId>,
         variant_id: impl Into<String>,
         input_bucket: impl Into<String>,
     ) -> Self {
@@ -518,7 +518,7 @@ mod tests {
         ExecutionVariant {
             variant_id: id.into(),
             task_type: "image.infer".into(),
-            runner_id: format!("runner.{id}"),
+            runner_id: format!("runner.{id}").into(),
             plugin_id: "plugin.infer".into(),
             implementation_version: "1.0.0".into(),
             requirements: RequirementSet {

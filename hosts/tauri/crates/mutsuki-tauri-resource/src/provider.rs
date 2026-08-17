@@ -2,7 +2,7 @@ use crate::error::{ResourceBridgeError, ResourceEntry};
 use mutsuki_runtime_contracts::resource::experimental::{CommandBatch, SagaPlan};
 use mutsuki_runtime_contracts::{
     CommandPlan, ERR_RESOURCE_GENERATION_MISMATCH, ERR_RESOURCE_NOT_FOUND, ExportPlan, PlanReceipt,
-    ReadPlan, ResourceAccess, ResourceId, ResourceLifetime, ResourceRef, ResourceSealState,
+    ReadPlan, RefId, ResourceAccess, ResourceId, ResourceLifetime, ResourceRef, ResourceSealState,
     ResourceSemantic, RuntimeError, SnapshotDescriptor, StreamPlan, WritePlan,
 };
 use mutsuki_runtime_core::{RuntimeFailure, RuntimeResult};
@@ -22,7 +22,7 @@ const STORE_ID: &str = "mutsuki-tauri-resource";
 #[derive(Debug)]
 struct ProviderInner {
     root: PathBuf,
-    entries: BTreeMap<String, ResourceEntry>,
+    entries: BTreeMap<RefId, ResourceEntry>,
 }
 
 /// Runtime `ResourceProviderGateway` / `ResourcePlanGateway` for desktop host resources.
@@ -83,7 +83,7 @@ impl TauriResourceProvider {
             key,
         );
         self.inner.write().entries.insert(
-            ref_id,
+            RefId::from(ref_id),
             ResourceEntry {
                 descriptor: descriptor.clone(),
                 media_type,
@@ -159,7 +159,7 @@ impl TauriResourceProvider {
         updated.size_hint = Some(bytes.len() as u64);
         updated.content_hash = Some(content_hash(&bytes));
         self.inner.write().entries.insert(
-            ref_id.to_string(),
+            RefId::from(ref_id),
             ResourceEntry {
                 descriptor: updated.clone(),
                 media_type: entry.media_type,
@@ -190,7 +190,7 @@ impl TauriResourceProvider {
 impl ResourcePlanGateway for TauriResourceProvider {
     fn collect_read_plan(&self, plan: &ReadPlan) -> RuntimeResult<Vec<u8>> {
         ensure_provider(&plan.resource, "resource.tauri.read")?;
-        let entry = runtime_entry(self, &plan.resource.ref_id)?;
+        let entry = runtime_entry(self, plan.resource.ref_id.as_str())?;
         ensure_descriptor_current(&plan.resource, &entry.descriptor, "resource.tauri.read")?;
         std::fs::read(&entry.path).map_err(runtime_io_failure)
     }
@@ -230,7 +230,7 @@ impl ResourcePlanGateway for TauriResourceProvider {
 
     fn execute_export_plan(&self, plan: &ExportPlan) -> RuntimeResult<PlanReceipt> {
         ensure_provider(&plan.resource, "resource.tauri.export")?;
-        let entry = runtime_entry(self, &plan.resource.ref_id)?;
+        let entry = runtime_entry(self, plan.resource.ref_id.as_str())?;
         ensure_descriptor_current(&plan.resource, &entry.descriptor, "resource.tauri.export")?;
         std::fs::copy(&entry.path, &plan.target).map_err(runtime_io_failure)?;
         Ok(receipt(
@@ -244,7 +244,7 @@ impl ResourcePlanGateway for TauriResourceProvider {
 
     fn commit_write_plan(&self, plan: &WritePlan, bytes: Vec<u8>) -> RuntimeResult<PlanReceipt> {
         ensure_provider(&plan.resource, "resource.tauri.write")?;
-        let mut entry = runtime_entry(self, &plan.resource.ref_id)?;
+        let mut entry = runtime_entry(self, plan.resource.ref_id.as_str())?;
         ensure_descriptor_current(&plan.resource, &entry.descriptor, "resource.tauri.write")?;
         if plan.base_version != entry.descriptor.version
             || plan.patch.base_version != entry.descriptor.version
@@ -332,7 +332,7 @@ impl ResourceProviderGateway for TauriResourceProvider {
     ) -> RuntimeResult<ResourceRef> {
         let ref_id = format!("resource:tauri:{}", Uuid::new_v4());
         let descriptor = ResourceRef {
-            ref_id: ref_id.clone(),
+            ref_id: RefId::from(ref_id.clone()),
             resource_id: ResourceId {
                 kind_id: kind_id.into(),
                 slot_id: ref_id,
@@ -385,7 +385,7 @@ fn blocking_create_blob(
         key,
     );
     provider.inner.write().entries.insert(
-        ref_id,
+        RefId::from(ref_id),
         ResourceEntry {
             descriptor: descriptor.clone(),
             media_type: None,

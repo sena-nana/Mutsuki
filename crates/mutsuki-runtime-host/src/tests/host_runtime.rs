@@ -823,18 +823,26 @@ fn task_snapshots_return_live_task_metadata_in_actor_order() {
     assert_eq!(snapshots[0].status, TaskStatus::Running);
     assert_eq!(snapshots[1].status, TaskStatus::Ready);
     assert_eq!(snapshots[0].priority, 7);
-    assert_eq!(snapshots[0].trace_id.as_deref(), Some("trace-1"));
-    assert_eq!(snapshots[0].input_refs, vec!["input:1".to_string()]);
     assert_eq!(
-        snapshots[0].required_surfaces,
-        vec!["surface:snapshot".to_string()]
+        snapshots[0].trace_id.as_ref().map(|id| id.as_str()),
+        Some("trace-1")
     );
     assert_eq!(
-        snapshots[0].claimed_by.as_deref(),
+        snapshots[0].input_refs,
+        vec![mutsuki_runtime_contracts::RefId::from("input:1")]
+    );
+    assert_eq!(
+        snapshots[0].required_surfaces,
+        vec![mutsuki_runtime_contracts::SurfaceId::from(
+            "surface:snapshot"
+        )]
+    );
+    assert_eq!(
+        snapshots[0].claimed_by.as_ref().map(|id| id.as_str()),
         Some("snapshot.blocking.runner")
     );
     assert_eq!(
-        snapshots[0].owner_runner.as_deref(),
+        snapshots[0].owner_runner.as_ref().map(|id| id.as_str()),
         Some("snapshot.blocking.runner")
     );
     assert!(snapshots[0].lease_id.is_some());
@@ -1118,7 +1126,7 @@ fn host_runtime_reload_applies_replaced_runner_limits() {
     }));
     let mut initial_limits = std::collections::BTreeMap::new();
     initial_limits.insert(
-        runner_descriptor.runner_id.clone(),
+        runner_descriptor.runner_id.as_str().into(),
         RunnerLimits {
             wall_clock_deadline: Some(Duration::from_millis(20)),
             ..RunnerLimits::default()
@@ -1148,7 +1156,7 @@ fn host_runtime_reload_applies_replaced_runner_limits() {
     }));
     let mut replaced_limits = std::collections::BTreeMap::new();
     replaced_limits.insert(
-        runner_descriptor.runner_id.clone(),
+        runner_descriptor.runner_id.as_str().into(),
         RunnerLimits {
             wall_clock_deadline: Some(Duration::from_millis(500)),
             ..RunnerLimits::default()

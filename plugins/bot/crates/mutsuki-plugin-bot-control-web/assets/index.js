@@ -347,11 +347,12 @@ function mountTasks(host, rpc, events) {
   host.innerHTML = `
     <div class="toolbar row-item"><button type="button" class="ghost" data-refresh>刷新</button><span class="muted" data-state></span></div>
     <div class="tasks-layout"><section class="card"><h2>任务表</h2><div data-table>加载中…</div></section><section class="card"><h2>任务详情</h2><div data-detail class="muted">选择任务</div></section></div>
-    <section class="card"><h2>事件时间线</h2><div class="toolbar nested"><label>sequence <input data-sequence type="number" min="0" value="0"></label><label>limit <input data-limit type="number" min="1" value="32"></label><button type="button" class="ghost" data-events>拉取</button></div><div data-event-output class="muted">尚未拉取</div></section>
+    <section class="card"><h2>事件时间线</h2><p class="muted">按任务聚焦当前窗口中的 RuntimeEvent。无时间戳时按序号投影。</p><div data-trajectory class="trajectory"></div></section>
     <details class="card advanced-fold"><summary>高级 / 调试 · submit_batch</summary><textarea data-submit-json class="log-block" rows="8">${escapeHtml(DEFAULT_TASK_BATCH_JSON)}</textarea><div class="toolbar nested"><button type="button" class="ghost" data-submit>提交 batch</button></div><div data-submit-output class="muted"></div></details>
   `;
   const tableHost = host.querySelector("[data-table]");
   const detailHost = host.querySelector("[data-detail]");
+  const trajHost = host.querySelector("[data-trajectory]");
   const status = host.querySelector("[data-state]");
   let selectedTaskId = null;
   let disposed = false;
@@ -361,11 +362,134 @@ function mountTasks(host, rpc, events) {
   let pending = false;
   let lastRevision = 0;
   let opened = false;
+  let traj = null;
+  let loadedEvents = [];
+  let earliestAvailable = 0;
+  let pageLimit = 100;
+
+  async function ensureTrajectory() {
+    if (traj) return traj;
+    const [
+      { mountTrajectoryView },
+      { projectRuntimeEvents, mergeBySequence, sequenceOf, trimWindow, EVENT_WINDOW_LIMIT },
+    ] = await Promise.all([
+      import("./trajectory-view.js"),
+      import("./trajectory-model.js"),
+    ]);
+    if (disposed) return null;
+    function project() {
+      return projectRuntimeEvents(loadedEvents, { focusSubjectId: selectedTaskId });
+    }
+    function firstSequence() {
+      const values = loadedEvents.map(sequenceOf).filter((value) => value != null);
+      return values.length ? Math.min(...values) : earliestAvailable + 1;
+    }
+    traj = mountTrajectoryView(trajHost, {
+      ...project(),
+      hasOlder: false,
+      emptyText: "当前窗口没有该任务的事件",
+      onInspect: async (record) =>
+        loadedEvents.filter((event) => (record.sequences || []).includes(sequenceOf(event))),
+      onLoadOlder: async () => {
+        await loadTaskEvents({ reset: false });
+      },
+    });
+    traj._project = project;
+    traj._mergeBySequence = mergeBySequence;
+    traj._sequenceOf = sequenceOf;
+    traj._firstSequence = firstSequence;
+    traj._trimWindow = trimWindow;
+    traj._windowLimit = EVENT_WINDOW_LIMIT;
+    return traj;
+  }
+
+  async function loadTaskEvents({ reset }) {
+    const view = await ensureTrajectory();
+    if (!view || disposed) return;
+    try {
+      if (reset) {
+        loadedEvents = [];
+        view.update({ loading: true, records: [], groups: [], emptyText: "正在加载时间线…" });
+      } else {
+        view.update({ loadingOlder: true });
+      }
+      const probe = reset
+        ? await rpc.read("control", "task_events_after", { sequence: 0, limit: 1 })
+        : null;
+      if (disposed) return;
+      if (probe) {
+        earliestAvailable = Number(probe.earliest_available_sequence || 0);
+        const latest = Number(probe.latest_sequence || 0);
+        pageLimit = 100;
+        const after = Math.max(
+          Math.max(0, earliestAvailable ? earliestAvailable - 1 : 0),
+          latest > pageLimit ? latest - pageLimit : Math.max(0, earliestAvailable ? earliestAvailable - 1 : 0),
+        );
+        const page = await rpc.read("control", "task_events_after", {
+          sequence: after,
+          limit: pageLimit,
+        });
+        if (disposed) return;
+        loadedEvents = page?.events || page?.items || [];
+        view.update({
+          ...view._project(),
+          loading: false,
+          loadingOlder: false,
+          hasOlder: view._firstSequence() > (earliestAvailable || 1),
+          lost: Number(page?.lost || probe.lost || 0),
+          dropped: Number(page?.dropped || probe.dropped || 0),
+          truncated: !!(page?.has_more || page?.truncated),
+          emptyText: "当前窗口没有该任务的事件",
+        });
+        return;
+      }
+      const first = view._firstSequence();
+      if (first <= (earliestAvailable || 1)) {
+        view.update({ loadingOlder: false, hasOlder: false });
+        return;
+      }
+      const after = Math.max(
+        Math.max(0, earliestAvailable ? earliestAvailable - 1 : 0),
+        first - pageLimit - 1,
+      );
+      const page = await rpc.read("control", "task_events_after", {
+        sequence: after,
+        limit: pageLimit,
+      });
+      if (disposed) return;
+      const older = (page?.events || page?.items || []).filter((event) => {
+        const seq = view._sequenceOf(event);
+        return seq != null && seq < first;
+      });
+      loadedEvents = view._trimWindow(
+        view._mergeBySequence(loadedEvents, older),
+        view._windowLimit,
+        "older",
+      );
+      view.update({
+        ...view._project(),
+        loadingOlder: false,
+        hasOlder: view._firstSequence() > (earliestAvailable || 1),
+        lost: Number(page?.lost || 0),
+        dropped: Number(page?.dropped || 0),
+        truncated: !!(page?.has_more || page?.truncated),
+      });
+    } catch (error) {
+      if (!disposed) {
+        view.update({
+          loading: false,
+          loadingOlder: false,
+          emptyText: formatError(error),
+        });
+      }
+    }
+  }
 
   const renderTasks = (tasks) => {
     if (!tasks.length) {
       tableHost.innerHTML = empty("暂无任务");
       detailHost.innerHTML = empty("选择任务");
+      void loadTaskEvents({ reset: true });
       return;
     }
     const selected = tasks.find((task) => task.task_id === selectedTaskId) || tasks[0];
@@ -377,7 +501,7 @@ function mountTasks(host, rpc, events) {
         renderTasks(tasks);
       };
     });
-    detailHost.innerHTML = `<ul class="kv"><li><span>task_id</span><span class="mono">${escapeHtml(selected.task_id)}</span></li><li><span>protocol</span><span>${escapeHtml(selected.protocol_id)}</span></li><li><span>status</span><span>${escapeHtml(selected.status)}</span></li><li><span>runner</span><span>${escapeHtml(selected.owner_runner || selected.runner_hint || "—")}</span></li></ul><button type="button" class="ghost" data-cancel>取消任务</button>`;
+    detailHost.innerHTML = `<ul class="kv"><li><span>task_id</span><span class="mono">${escapeHtml(selected.task_id)}</span></li><li><span>protocol</span><span>${escapeHtml(selected.protocol_id)}</span></li><li><span>status</span><span>${escapeHtml(selected.status)}</span></li><li><span>runner</span><span>${escapeHtml(selected.owner_runner || selected.runner_hint || "—")}</span></li><li><span>correlation</span><span>${escapeHtml(selected.correlation_id || "—")}</span></li><li><span>trace</span><span>${escapeHtml(selected.trace_id || "—")}</span></li></ul><button type="button" class="ghost" data-cancel>取消任务</button>`;
     detailHost.querySelector("[data-cancel]").onclick = async () => {
       if (!confirmAction(`确认取消任务 ${selected.task_id}？`)) return;
       try {
@@ -387,6 +511,7 @@ function mountTasks(host, rpc, events) {
         status.textContent = formatError(error);
       }
     };
+    void loadTaskEvents({ reset: true });
   };
   const schedule = () => {
     clearTimeout(timer);
@@ -441,18 +566,6 @@ function mountTasks(host, rpc, events) {
     opened = true;
   });
   host.querySelector("[data-refresh]").onclick = () => void refresh();
-  host.querySelector("[data-events]").onclick = async () => {
-    const output = host.querySelector("[data-event-output]");
-    try {
-      const page = await rpc.read("control", "task_events_after", {
-        sequence: Number(host.querySelector("[data-sequence]").value || 0),
-        limit: Number(host.querySelector("[data-limit]").value || 32),
-      });
-      output.innerHTML = `<pre class="log-block">${escapeHtml(JSON.stringify(page, null, 2))}</pre>`;
-    } catch (error) {
-      output.textContent = formatError(error);
-    }
-  };
   host.querySelector("[data-submit]").onclick = async () => {
     const output = host.querySelector("[data-submit-output]");
     try {
@@ -473,6 +586,7 @@ function mountTasks(host, rpc, events) {
       eventSubscription.dispose();
       connectionSubscription?.dispose();
       document.removeEventListener("visibilitychange", visibility);
+      traj?.destroy?.();
     },
   };
 }

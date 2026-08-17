@@ -5,6 +5,7 @@ from dataclasses import replace
 
 import pytest
 
+from mutsuki_runner_kit.contracts.ids import ProtocolId, SurfaceId, TraceId
 from mutsuki_runner_kit.contracts.runner import (
     ExecutionClass,
     RunnerDescriptor,
@@ -34,10 +35,10 @@ def async_descriptor() -> RunnerDescriptor:
         runner_id="async.runner",
         plugin_id="plugin-a",
         plugin_generation=1,
-        accepted_protocol_ids=("parent.work",),
+        accepted_protocol_ids=(ProtocolId("parent.work"),),
         purity=RunnerPurity.PURE,
         execution_class=ExecutionClass.CPU,
-        contract_surfaces=("runner:async.runner",),
+        contract_surfaces=(SurfaceId("runner:async.runner"),),
     )
 
 
@@ -90,7 +91,7 @@ async def test_task_await_runner_adapter_suspends_and_resumes_call() -> None:
     adapter = TaskAwaitRunnerAdapter(async_descriptor(), client, run)
     task = replace(
         Task.new("parent-1", "parent.work"),
-        trace_id="trace-1",
+        trace_id=TraceId("trace-1"),
         correlation_id="corr-1",
     )
 

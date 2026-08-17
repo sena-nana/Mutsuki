@@ -5,8 +5,8 @@
 #![allow(clippy::missing_errors_doc, clippy::must_use_candidate)]
 
 use mutsuki_runtime_contracts::{
-    CapabilitySet, ContentId, ExecutionMobility, PortabilityCatalog, PortableTask, RequirementSet,
-    RetrySafety, TaskHandle,
+    CapabilitySet, ContentId, ExecutionMobility, PortabilityCatalog, PortableTask, ProtocolId,
+    RefId, RequirementSet, RetrySafety, RunnerId, TaskHandle, TaskId, TaskLeaseId,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -335,19 +335,19 @@ pub struct WorkerFailure {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct LocalTaskSnapshot {
-    pub task_id: String,
-    pub protocol_id: String,
+    pub task_id: TaskId,
+    pub protocol_id: ProtocolId,
     pub status: String,
     pub registry_generation: u64,
-    pub runner_id: Option<String>,
-    pub lease_id: Option<String>,
+    pub runner_id: Option<RunnerId>,
+    pub lease_id: Option<TaskLeaseId>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct LocalTaskOutcome {
-    pub task_id: String,
+    pub task_id: TaskId,
     pub status: String,
-    pub output_ref: Option<String>,
+    pub output_ref: Option<RefId>,
     pub reason: Option<String>,
     pub error_code: Option<String>,
 }

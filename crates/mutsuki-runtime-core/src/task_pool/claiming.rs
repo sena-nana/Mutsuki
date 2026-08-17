@@ -41,18 +41,19 @@ pub(super) fn claim_ready_for_executor_with_budget(
                 lease_id: format!(
                     "task-lease-{step}-{}-{}",
                     record.task.task_id, record.attempt_generation
-                ),
+                )
+                .into(),
                 task_id: record.task.task_id.clone(),
                 attempt_generation: record.attempt_generation,
-                runner_id: runner.runner_id.clone(),
+                runner_id: runner.runner_id.as_str().into(),
                 executor_id: executor_id.clone(),
                 registry_generation,
                 acquired_at_step: step,
                 expires_at_step,
             };
             record.status = TaskStatus::Running;
-            record.claimed_by = Some(runner.runner_id.clone());
-            record.owner_runner = Some(runner.runner_id.clone());
+            record.claimed_by = Some(runner.runner_id.as_str().into());
+            record.owner_runner = Some(runner.runner_id.as_str().into());
             record.lease = Some(lease.clone());
             Arc::make_mut(&mut record.task).lease_id = Some(lease.lease_id.clone());
             (lease, record.task.clone())

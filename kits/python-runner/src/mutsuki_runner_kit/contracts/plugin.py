@@ -29,6 +29,7 @@ from mutsuki_runner_kit.contracts.extension import (
     SchedulerPolicyDescriptor,
     WorkflowDescriptor,
 )
+from mutsuki_runner_kit.contracts.ids import BindingId, PluginId, ProtocolId, SurfaceId
 from mutsuki_runner_kit.contracts.observability import ObservabilityProfile
 from mutsuki_runner_kit.contracts.resource import ResourceTypeDescriptor
 from mutsuki_runner_kit.contracts.runner import RunnerDescriptor
@@ -76,7 +77,7 @@ class RequirementBinding(StrEnum):
 @dataclass(frozen=True)
 class SurfaceRequirement:
     kind: ContractSurfaceKind
-    surface_id: str
+    surface_id: SurfaceId
     version: str | None = None
     requirement: RequirementKind = RequirementKind.REQUIRED
     binding: RequirementBinding = RequirementBinding.STATIC
@@ -87,7 +88,7 @@ class SurfaceRequirement:
         version = raw.get("version")
         return cls(
             kind=ContractSurfaceKind(as_str(field_value(raw, "kind"), "kind")),
-            surface_id=as_str(field_value(raw, "surface_id"), "surface_id"),
+            surface_id=SurfaceId(as_str(field_value(raw, "surface_id"), "surface_id")),
             version=None if version is None else as_str(version, "version"),
             requirement=RequirementKind(
                 as_str(raw.get("requirement", "required"), "requirement")
@@ -96,10 +97,10 @@ class SurfaceRequirement:
         )
 
 
-def as_plugin_deployments(value: object, field: str) -> dict[str, PluginDeploymentKind]:
+def as_plugin_deployments(value: object, field: str) -> dict[PluginId, PluginDeploymentKind]:
     raw = as_mapping(value, field)
     return {
-        str(plugin_id): PluginDeploymentKind(as_str(deployment, field))
+        PluginId(str(plugin_id)): PluginDeploymentKind(as_str(deployment, field))
         for plugin_id, deployment in raw.items()
     }
 
@@ -156,7 +157,7 @@ class LifecyclePolicy:
 
 @dataclass(frozen=True)
 class ProtocolDescriptor:
-    protocol_id: str
+    protocol_id: ProtocolId
     version: str
     input_schema: JsonValue
     output_schema: JsonValue
@@ -168,7 +169,7 @@ class ProtocolDescriptor:
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = as_mapping(data, "ProtocolDescriptor")
         return cls(
-            protocol_id=as_str(field_value(raw, "protocol_id"), "protocol_id"),
+            protocol_id=ProtocolId(as_str(field_value(raw, "protocol_id"), "protocol_id")),
             version=as_str(field_value(raw, "version"), "version"),
             input_schema=as_json_value(field_value(raw, "input_schema")),
             output_schema=as_json_value(field_value(raw, "output_schema")),
@@ -180,10 +181,10 @@ class ProtocolDescriptor:
 
 @dataclass(frozen=True)
 class HandlerBinding:
-    binding_id: str
-    plugin_id: str
-    protocol_id: str
-    target_protocol_id: str
+    binding_id: BindingId
+    plugin_id: PluginId
+    protocol_id: ProtocolId
+    target_protocol_id: ProtocolId
     target_runner_hint: str | None
     pool_id: str
     priority: int
@@ -195,10 +196,12 @@ class HandlerBinding:
         raw = as_mapping(data, "HandlerBinding")
         target_runner_hint = field_value(raw, "target_runner_hint")
         return cls(
-            binding_id=as_str(field_value(raw, "binding_id"), "binding_id"),
-            plugin_id=as_str(field_value(raw, "plugin_id"), "plugin_id"),
-            protocol_id=as_str(field_value(raw, "protocol_id"), "protocol_id"),
-            target_protocol_id=as_str(field_value(raw, "target_protocol_id"), "target_protocol_id"),
+            binding_id=BindingId(as_str(field_value(raw, "binding_id"), "binding_id")),
+            plugin_id=PluginId(as_str(field_value(raw, "plugin_id"), "plugin_id")),
+            protocol_id=ProtocolId(as_str(field_value(raw, "protocol_id"), "protocol_id")),
+            target_protocol_id=ProtocolId(
+                as_str(field_value(raw, "target_protocol_id"), "target_protocol_id")
+            ),
             target_runner_hint=None
             if target_runner_hint is None
             else as_str(target_runner_hint, "target_runner_hint"),
@@ -263,7 +266,7 @@ class PluginProvides:
         default_factory=tuple,
         metadata={"skip_serializing_if_empty": True},
     )
-    protocol_classes: dict[str, ProtocolClass] = field(
+    protocol_classes: dict[ProtocolId, ProtocolClass] = field(
         default_factory=dict,
         metadata={"skip_serializing_if_empty": True},
     )
@@ -300,7 +303,7 @@ class PluginProvides:
                 raw, "extensions", PluginExtensionDescriptor
             ) if "extensions" in raw else (),
             protocol_classes={
-                str(protocol_id): ProtocolClass(as_str(value, "protocol_classes"))
+                ProtocolId(str(protocol_id)): ProtocolClass(as_str(value, "protocol_classes"))
                 for protocol_id, value in protocol_classes.items()
             },
         )
@@ -308,7 +311,7 @@ class PluginProvides:
 
 @dataclass(frozen=True)
 class PluginManifest:
-    plugin_id: str
+    plugin_id: PluginId
     version: str
     api_version: str
     artifact: PluginArtifact
@@ -322,7 +325,7 @@ class PluginManifest:
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = as_mapping(data, "PluginManifest")
         return cls(
-            plugin_id=as_str(field_value(raw, "plugin_id"), "plugin_id"),
+            plugin_id=PluginId(as_str(field_value(raw, "plugin_id"), "plugin_id")),
             version=as_str(field_value(raw, "version"), "version"),
             api_version=as_str(field_value(raw, "api_version"), "api_version"),
             artifact=PluginArtifact.from_json_dict(
@@ -350,9 +353,9 @@ class PluginManifest:
 class RuntimeProfile:
     profile_id: str
     mode: RuntimeProfileMode
-    enabled_plugins: tuple[str, ...]
+    enabled_plugins: tuple[PluginId, ...]
     bindings: dict[str, str]
-    plugin_deployments: dict[str, PluginDeploymentKind]
+    plugin_deployments: dict[PluginId, PluginDeploymentKind]
     observability: ObservabilityProfile
     allow_dynamic_registration: bool
     allow_hot_reload: bool
@@ -368,7 +371,10 @@ class RuntimeProfile:
         return cls(
             profile_id=as_str(field_value(raw, "profile_id"), "profile_id"),
             mode=RuntimeProfileMode(as_str(field_value(raw, "mode"), "mode")),
-            enabled_plugins=as_str_tuple(field_value(raw, "enabled_plugins"), "enabled_plugins"),
+            enabled_plugins=tuple(
+                PluginId(item)
+                for item in as_str_tuple(field_value(raw, "enabled_plugins"), "enabled_plugins")
+            ),
             bindings=as_str_dict(raw, "bindings"),
             surface_bindings=as_str_dict(raw, "surface_bindings")
             if "surface_bindings" in raw
@@ -392,9 +398,9 @@ class RuntimeProfile:
 @dataclass(frozen=True)
 class CapabilityProviderSelection:
     capability: str
-    provider_plugin_id: str
+    provider_plugin_id: PluginId
     provider_version: str | None
-    surface_id: str
+    surface_id: SurfaceId
     reason: str
 
     @classmethod
@@ -403,18 +409,20 @@ class CapabilityProviderSelection:
         provider_version = field_value(raw, "provider_version")
         return cls(
             capability=as_str(field_value(raw, "capability"), "capability"),
-            provider_plugin_id=as_str(field_value(raw, "provider_plugin_id"), "provider_plugin_id"),
+            provider_plugin_id=PluginId(
+                as_str(field_value(raw, "provider_plugin_id"), "provider_plugin_id")
+            ),
             provider_version=None
             if provider_version is None
             else as_str(provider_version, "provider_version"),
-            surface_id=as_str(field_value(raw, "surface_id"), "surface_id"),
+            surface_id=SurfaceId(as_str(field_value(raw, "surface_id"), "surface_id")),
             reason=as_str(field_value(raw, "reason"), "reason"),
         )
 
 
 @dataclass(frozen=True)
 class PermissionAuditEntry:
-    plugin_id: str
+    plugin_id: PluginId
     permission_kind: str
     permission: str
     granted: bool
@@ -426,7 +434,7 @@ class PermissionAuditEntry:
         raw = as_mapping(data, "PermissionAuditEntry")
         provider_capability = field_value(raw, "provider_capability")
         return cls(
-            plugin_id=as_str(field_value(raw, "plugin_id"), "plugin_id"),
+            plugin_id=PluginId(as_str(field_value(raw, "plugin_id"), "plugin_id")),
             permission_kind=as_str(field_value(raw, "permission_kind"), "permission_kind"),
             permission=as_str(field_value(raw, "permission"), "permission"),
             granted=as_bool(field_value(raw, "granted"), "granted"),
@@ -506,9 +514,9 @@ class RuntimeLoadPlan:
     profile_hash: str
     registry_generation: int
     plugins: tuple[PluginManifest, ...]
-    load_order: tuple[str, ...]
+    load_order: tuple[PluginId, ...]
     runner_bindings: dict[str, str]
-    plugin_deployments: dict[str, PluginDeploymentKind]
+    plugin_deployments: dict[PluginId, PluginDeploymentKind]
     observability: ObservabilityProfile
     capability_graph: RuntimeCapabilityGraph
     contract_surfaces: tuple[ContractSurface, ...]
@@ -525,7 +533,9 @@ class RuntimeLoadPlan:
                 field_value(raw, "registry_generation"), "registry_generation"
             ),
             plugins=tuple_from_json(raw, "plugins", PluginManifest),
-            load_order=as_str_tuple(field_value(raw, "load_order"), "load_order"),
+            load_order=tuple(
+                PluginId(item) for item in as_str_tuple(field_value(raw, "load_order"), "load_order")
+            ),
             runner_bindings=as_str_dict(raw, "runner_bindings"),
             plugin_deployments=as_plugin_deployments(
                 field_value(raw, "plugin_deployments"), "plugin_deployments"

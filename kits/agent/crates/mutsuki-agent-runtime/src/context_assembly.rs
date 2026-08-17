@@ -237,7 +237,7 @@ impl ContextBuilder {
             provenance: ContextProvenance {
                 provider_id: "mutsuki.agent.context".into(),
                 source_kind: "transcript".into(),
-                source_id: source_snapshot.ref_id.clone(),
+                source_id: source_snapshot.ref_id.to_string(),
                 source_version: request.messages.len().to_string(),
             },
             required: true,
@@ -320,7 +320,7 @@ impl ContextBuilder {
                 provenance: ContextProvenance {
                     provider_id: summary.provider_id,
                     source_kind: "model_summary".into(),
-                    source_id: source_snapshot.ref_id.clone(),
+                    source_id: source_snapshot.ref_id.to_string(),
                     source_version: transcript.dropped_message_count.to_string(),
                 },
             })

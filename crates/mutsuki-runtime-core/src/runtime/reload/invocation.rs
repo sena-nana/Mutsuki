@@ -15,9 +15,10 @@ impl CoreRuntime {
 
     pub fn cancel_invocation(
         &mut self,
-        runner_id: &str,
+        runner_id: impl AsRef<str>,
         invocation_id: &str,
     ) -> RuntimeResult<usize> {
+        let runner_id = runner_id.as_ref();
         self.registry.cancel_runner(runner_id, invocation_id)?;
         let returned =
             self.tasks
@@ -41,15 +42,15 @@ impl CoreRuntime {
                 let invocation_id = record
                     .lease
                     .as_ref()
-                    .map(|lease| lease.lease_id.clone())
-                    .unwrap_or_else(|| record.task.task_id.clone());
+                    .map(|lease| lease.lease_id.to_string())
+                    .unwrap_or_else(|| record.task.task_id.to_string());
                 let descriptor = self.registry.descriptor(runner_id);
                 Some(match descriptor {
                     Some(descriptor) => RunningInvocationDisposition {
                         task_id: record.task.task_id.clone(),
                         invocation_id: invocation_id.clone(),
                         runner_id: runner_id.clone(),
-                        plugin_id: descriptor.plugin_id.clone(),
+                        plugin_id: descriptor.plugin_id.as_str().into(),
                         plugin_generation: descriptor.plugin_generation,
                         pollution: classify_pollution(
                             &record.task,
@@ -74,7 +75,7 @@ impl CoreRuntime {
 fn classify_pollution(
     task: &Task,
     runner: &RunnerDescriptor,
-    protocol_classes: &BTreeMap<String, ProtocolClass>,
+    protocol_classes: &BTreeMap<mutsuki_runtime_contracts::ProtocolId, ProtocolClass>,
 ) -> InvocationPollution {
     match protocol_classes.get(&task.protocol_id) {
         Some(ProtocolClass::Effect | ProtocolClass::Core | ProtocolClass::Control) => {
@@ -117,7 +118,7 @@ pub(super) fn cancel_attrs(
     let mut attrs = BTreeMap::new();
     attrs.insert(
         "runner_id".into(),
-        ScalarValue::String(disposition.runner_id.clone()),
+        ScalarValue::String(disposition.runner_id.to_string()),
     );
     attrs.insert(
         "invocation_id".into(),
@@ -125,7 +126,7 @@ pub(super) fn cancel_attrs(
     );
     attrs.insert(
         "plugin_id".into(),
-        ScalarValue::String(disposition.plugin_id.clone()),
+        ScalarValue::String(disposition.plugin_id.to_string()),
     );
     attrs.insert(
         "plugin_generation".into(),

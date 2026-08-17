@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use mutsuki_runtime_contracts::{
     CapabilityProviderSelection, ExtensionProjection, PermissionAuditEntry, PluginDeploymentKind,
-    PluginManifest, ProtocolClass, RequirementKind, ResourceTypeDescriptor, RuntimeCapabilityGraph,
-    RuntimeProfile, RuntimeProfileMode, SurfaceRequirement,
+    PluginId, PluginManifest, ProtocolClass, RequirementKind, ResourceTypeDescriptor,
+    RuntimeCapabilityGraph, RuntimeProfile, RuntimeProfileMode, SurfaceId, SurfaceRequirement,
 };
 use mutsuki_runtime_core::RuntimeResult;
 
@@ -14,15 +14,15 @@ use crate::error::{
 
 #[derive(Clone, Debug)]
 struct CapabilityProvider {
-    provider_plugin_id: String,
+    provider_plugin_id: PluginId,
     provider_version: Option<String>,
-    surface_id: String,
+    surface_id: SurfaceId,
 }
 
 pub(super) fn capability_graph_for(
     profile: &RuntimeProfile,
     manifests: &[PluginManifest],
-    deployments: &BTreeMap<String, PluginDeploymentKind>,
+    deployments: &BTreeMap<PluginId, PluginDeploymentKind>,
 ) -> RuntimeResult<RuntimeCapabilityGraph> {
     let prune_extensions = matches!(
         profile.mode,
@@ -267,7 +267,7 @@ fn collect_base_capabilities(
         active,
         providers,
         "plugin",
-        &manifest.plugin_id,
+        manifest.plugin_id.as_str(),
         Some(manifest.version.clone()),
     );
     for runner in &manifest.provides.runners {
@@ -277,7 +277,7 @@ fn collect_base_capabilities(
             active,
             providers,
             "runner",
-            &runner.runner_id,
+            runner.runner_id.as_str(),
             Some(runner.plugin_generation.to_string()),
         );
         for protocol_id in &runner.accepted_protocol_ids {
@@ -287,7 +287,7 @@ fn collect_base_capabilities(
                 active,
                 providers,
                 "task_protocol",
-                protocol_id,
+                protocol_id.as_str(),
                 None,
             );
         }
@@ -299,7 +299,7 @@ fn collect_base_capabilities(
             active,
             providers,
             "protocol",
-            &protocol.protocol_id,
+            protocol.protocol_id.as_str(),
             Some(protocol.version.clone()),
         );
     }
@@ -310,7 +310,7 @@ fn collect_base_capabilities(
             active,
             providers,
             "handler_binding",
-            &binding.binding_id,
+            binding.binding_id.as_str(),
             None,
         );
     }
@@ -338,7 +338,7 @@ fn collect_base_capabilities(
             active,
             providers,
             "effect",
-            protocol_id,
+            protocol_id.as_str(),
             None,
         );
     }
@@ -464,7 +464,7 @@ fn collect_system_extension_capabilities(
 }
 
 fn deployment_is_used(
-    deployments: &BTreeMap<String, PluginDeploymentKind>,
+    deployments: &BTreeMap<PluginId, PluginDeploymentKind>,
     candidates: &[PluginDeploymentKind],
 ) -> bool {
     candidates.iter().any(|candidate| {
@@ -615,7 +615,7 @@ fn select_provider<'a>(
         )));
     }
     for provider in candidates {
-        if bound_provider.is_some_and(|plugin_id| plugin_id != &provider.provider_plugin_id) {
+        if bound_provider.is_some_and(|plugin_id| provider.provider_plugin_id != *plugin_id) {
             continue;
         }
         if let Some(constraint) = version_constraint {
@@ -734,9 +734,9 @@ fn add_provider(
     let provider = CapabilityProvider {
         provider_plugin_id: manifest.plugin_id.clone(),
         provider_version,
-        surface_id: capability,
+        surface_id: SurfaceId::from(capability.as_str()),
     };
-    let candidates = providers.entry(provider.surface_id.clone()).or_default();
+    let candidates = providers.entry(capability).or_default();
     if !candidates.iter().any(|candidate| {
         candidate.provider_plugin_id == provider.provider_plugin_id
             && candidate.provider_version == provider.provider_version
@@ -794,7 +794,7 @@ fn permission_audit_for(
             let capability = format!("effect:{effect}");
             if !active.contains(&capability) {
                 return Err(permission_unauthorized(
-                    &manifest.plugin_id,
+                    manifest.plugin_id.as_str(),
                     "effect",
                     effect,
                 ));
@@ -816,7 +816,7 @@ fn permission_audit_for(
                 active_resource_providers,
             ) else {
                 return Err(permission_unauthorized(
-                    &manifest.plugin_id,
+                    manifest.plugin_id.as_str(),
                     "resource",
                     resource,
                 ));

@@ -13,8 +13,12 @@ use mutsuki_config_service::{
 };
 
 pub const DEFAULT_QQBOT_INTENTS: u64 = 1_325_405_185;
+pub const QQ_INTENT_GROUP_AND_C2C: u64 = 1 << 25;
+pub const QQ_INTENT_PUBLIC_GUILD: u64 = 1 << 30;
 pub const QQ_CLIENT_SECRET_FIELD: &str = "client_secret";
 pub const QQ_CLIENT_SECRET_KEY: &str = "QQBOT_CLIENT_SECRET";
+pub const QQ_RECEIVE_PRIVATE_AND_GROUP_FIELD: &str = "receive_private_and_group";
+pub const QQ_RECEIVE_GUILD_FIELD: &str = "receive_guild";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -166,10 +170,8 @@ impl QqBotConfig {
 
     /// Returns only capabilities that are enabled by this account's intents and Host resources.
     pub fn capability_matrix(&self) -> QqBotCapabilityMatrix {
-        const PUBLIC_GUILD_MESSAGES: u64 = 1 << 30;
-        const GROUP_AND_C2C_EVENT: u64 = 1 << 25;
-        let group_c2c_enabled = self.gateway_intents & GROUP_AND_C2C_EVENT != 0;
-        let guild_enabled = self.gateway_intents & PUBLIC_GUILD_MESSAGES != 0;
+        let group_c2c_enabled = receive_private_and_group(self.gateway_intents);
+        let guild_enabled = receive_guild(self.gateway_intents);
         let mut conversation_kinds = Vec::new();
         let mut required_intents = Vec::new();
         let mut required_permissions = Vec::new();
@@ -301,10 +303,12 @@ impl QqBotConfig {
 pub fn qq_config_descriptor(provider_id: &str) -> ConfigDescriptor {
     ConfigDescriptor {
         provider_id: ConfigProviderId::new(provider_id),
-        schema_version: 2,
-        value_version: 2,
+        schema_version: 3,
+        value_version: 3,
         title: LocalizedText::new("QQ Bot"),
-        description: Some(LocalizedText::new("连接一个 QQ Bot 账号并管理消息能力")),
+        description: Some(LocalizedText::new(
+            "用开放平台 App ID 和 Client Secret 登录一个 QQ Bot",
+        )),
         scopes: vec![ConfigScope::global()],
         root: ConfigNode {
             key: ConfigKey::new("qq"),
@@ -319,12 +323,23 @@ pub fn qq_config_descriptor(provider_id: &str) -> ConfigDescriptor {
             mutability: ConfigMutability::ReadWrite,
             restart_policy: RestartPolicy::PluginReload,
             children: vec![
-                bool_node("enabled", "启用 QQ Bot"),
-                string_node("app_id", "App ID", false),
+                bool_node(
+                    "enabled",
+                    "启用 QQ Bot",
+                    Some("启用后才会连接 QQ Gateway；关闭时不会校验完整登录信息"),
+                ),
+                app_id_node(),
                 secret_node(QQ_CLIENT_SECRET_FIELD, "Client Secret"),
-                integer_node("gateway_intents", "接收事件范围", 1.0, u64::MAX as f64),
-                integer_node("shard_index", "分片序号", 0.0, u32::MAX as f64),
-                integer_node("shard_count", "分片总数", 1.0, u32::MAX as f64),
+                bool_node(
+                    QQ_RECEIVE_PRIVATE_AND_GROUP_FIELD,
+                    "接收私聊和群消息",
+                    Some("对应开放平台群/C2C 事件 intent"),
+                ),
+                bool_node(
+                    QQ_RECEIVE_GUILD_FIELD,
+                    "接收频道消息",
+                    Some("对应开放平台频道 @ 消息 intent"),
+                ),
                 hidden_object_node("runtime_config", "QQ Runtime Config"),
             ],
         },
@@ -343,16 +358,12 @@ pub fn qq_config_value(enabled: bool, config: &QqBotConfig) -> ConfigValue {
                 ConfigValue::Secret(SecretState::Keep),
             ),
             (
-                "gateway_intents".into(),
-                ConfigValue::Integer(i64::try_from(config.gateway_intents).unwrap_or(i64::MAX)),
+                QQ_RECEIVE_PRIVATE_AND_GROUP_FIELD.into(),
+                ConfigValue::Bool(receive_private_and_group(config.gateway_intents)),
             ),
             (
-                "shard_index".into(),
-                ConfigValue::Integer(i64::try_from(config.shard[0]).unwrap_or(i64::MAX)),
-            ),
-            (
-                "shard_count".into(),
-                ConfigValue::Integer(i64::try_from(config.shard[1]).unwrap_or(i64::MAX)),
+                QQ_RECEIVE_GUILD_FIELD.into(),
+                ConfigValue::Bool(receive_guild(config.gateway_intents)),
             ),
             (
                 "runtime_config".into(),
@@ -364,6 +375,29 @@ pub fn qq_config_value(enabled: bool, config: &QqBotConfig) -> ConfigValue {
         .into_iter()
         .collect(),
     )
+}
+
+#[must_use]
+pub fn receive_private_and_group(intents: u64) -> bool {
+    intents & QQ_INTENT_GROUP_AND_C2C != 0
+}
+
+#[must_use]
+pub fn receive_guild(intents: u64) -> bool {
+    intents & QQ_INTENT_PUBLIC_GUILD != 0
+}
+
+/// Updates only the product-facing receive bits and preserves any other configured intents.
+#[must_use]
+pub fn apply_receive_intents(intents: u64, private_and_group: bool, guild: bool) -> u64 {
+    let mut next = intents & !(QQ_INTENT_GROUP_AND_C2C | QQ_INTENT_PUBLIC_GUILD);
+    if private_and_group {
+        next |= QQ_INTENT_GROUP_AND_C2C;
+    }
+    if guild {
+        next |= QQ_INTENT_PUBLIC_GUILD;
+    }
+    next
 }
 
 fn hidden_object_node(key: &str, title: &str) -> ConfigNode {
@@ -379,41 +413,32 @@ fn hidden_object_node(key: &str, title: &str) -> ConfigNode {
     node
 }
 
-fn bool_node(key: &str, title: &str) -> ConfigNode {
-    field_node(
+fn bool_node(key: &str, title: &str, description: Option<&str>) -> ConfigNode {
+    let mut node = field_node(
         key,
         title,
         ConfigValueType::Bool,
         ConfigConstraints::default(),
-    )
+    );
+    node.description = description.map(LocalizedText::new);
+    node
 }
 
-fn string_node(key: &str, title: &str, multiline: bool) -> ConfigNode {
-    field_node(
-        key,
-        title,
-        ConfigValueType::String { multiline },
+fn app_id_node() -> ConfigNode {
+    let mut node = field_node(
+        "app_id",
+        "App ID",
+        ConfigValueType::String { multiline: false },
         ConfigConstraints {
-            required: true,
-            min_length: Some(1),
+            required: false,
             max_length: Some(2_048),
             ..ConfigConstraints::default()
         },
-    )
-}
-
-fn integer_node(key: &str, title: &str, min: f64, max: f64) -> ConfigNode {
-    field_node(
-        key,
-        title,
-        ConfigValueType::Integer,
-        ConfigConstraints {
-            required: true,
-            min: Some(min),
-            max: Some(max),
-            ..ConfigConstraints::default()
-        },
-    )
+    );
+    node.description = Some(LocalizedText::new(
+        "QQ 开放平台机器人 AppID；启用前必须填写",
+    ));
+    node
 }
 
 fn secret_node(key: &str, title: &str) -> ConfigNode {
@@ -422,11 +447,13 @@ fn secret_node(key: &str, title: &str) -> ConfigNode {
         title,
         ConfigValueType::Secret,
         ConfigConstraints {
-            required: true,
+            required: false,
             ..ConfigConstraints::default()
         },
     );
-    node.description = Some(LocalizedText::new("保存后不会再次显示"));
+    node.description = Some(LocalizedText::new(
+        "QQ 开放平台 Client Secret。保存后不会再次显示",
+    ));
     node.presentation.secret = true;
     node
 }
@@ -507,4 +534,52 @@ fn validate_http_url(name: &str, value: &str, allow_insecure: bool) -> Result<()
         )));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn product_descriptor_exposes_login_switches_instead_of_intent_bits() {
+        let descriptor = qq_config_descriptor("mutsuki.bot.adapter.qqbot");
+        assert_eq!(descriptor.schema_version, 3);
+        assert_eq!(descriptor.value_version, 3);
+        let keys = descriptor
+            .root
+            .children
+            .iter()
+            .map(|node| node.key.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            keys,
+            [
+                "enabled",
+                "app_id",
+                QQ_CLIENT_SECRET_FIELD,
+                QQ_RECEIVE_PRIVATE_AND_GROUP_FIELD,
+                QQ_RECEIVE_GUILD_FIELD,
+                "runtime_config",
+            ]
+        );
+    }
+
+    #[test]
+    fn config_value_derives_receive_switches_from_intents() {
+        let mut config = QqBotConfig::new("local", "app");
+        config.gateway_intents = QQ_INTENT_GROUP_AND_C2C;
+        let value = qq_config_value(true, &config).to_json();
+        assert_eq!(value["receive_private_and_group"], true);
+        assert_eq!(value["receive_guild"], false);
+        assert!(value.get("gateway_intents").is_none());
+    }
+
+    #[test]
+    fn apply_receive_intents_preserves_unrelated_bits() {
+        let extra = 1 << 1;
+        let next = apply_receive_intents(extra | QQ_INTENT_PUBLIC_GUILD, true, false);
+        assert_eq!(next, extra | QQ_INTENT_GROUP_AND_C2C);
+        assert!(receive_private_and_group(next));
+        assert!(!receive_guild(next));
+    }
 }

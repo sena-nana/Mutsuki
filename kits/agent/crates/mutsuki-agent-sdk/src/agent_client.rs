@@ -13,7 +13,7 @@ impl AgentClient {
         Self { ctx }
     }
 
-    pub fn run(&self, request: AgentRunRequest) -> CallFuture {
+    pub fn run(&self, request: AgentRunRequest) -> CallFuture<AgentRunProtocol> {
         self.ctx.call::<AgentRunProtocol>(request)
     }
 
@@ -66,7 +66,7 @@ impl AgentRunCall {
         self
     }
 
-    pub fn call(self) -> CallFuture {
+    pub fn call(self) -> CallFuture<AgentRunProtocol> {
         self.ctx.call::<AgentRunProtocol>(self.request)
     }
 }

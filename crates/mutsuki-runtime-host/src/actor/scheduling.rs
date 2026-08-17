@@ -4,7 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
 use mutsuki_runtime_contracts::{
-    AsyncInvocation, CancelPolicy, DispatchLane, ExecutionClass, InvocationMode, TaskHandle,
+    AsyncInvocation, CancelPolicy, DispatchLane, ExecutionClass, InvocationMode, RunnerId,
+    TaskHandle, TaskId,
 };
 use mutsuki_runtime_core::{
     CoreRuntime, RunnerCompletion, RunnerDispatchTarget, RunnerLoopReport, RuntimeResult,
@@ -49,7 +50,7 @@ impl DriverState {
     pub(super) fn next_wake_deadline(
         &self,
         config: &HostRuntimeConfig,
-        running_batches_by_task: &BTreeMap<String, RunningBatch>,
+        running_batches_by_task: &BTreeMap<TaskId, RunningBatch>,
     ) -> Option<Instant> {
         if !config.event_driven {
             return None;
@@ -81,7 +82,7 @@ impl DriverState {
         &self,
         core: &CoreRuntime,
         config: &HostRuntimeConfig,
-        running_batches_by_task: &BTreeMap<String, RunningBatch>,
+        running_batches_by_task: &BTreeMap<TaskId, RunningBatch>,
     ) -> HostRuntimeDriveState {
         HostRuntimeDriveState {
             current_step: core.current_step(),
@@ -94,7 +95,7 @@ impl DriverState {
 
 pub(super) fn next_required_tick(
     core: &CoreRuntime,
-    running_batches_by_task: &BTreeMap<String, RunningBatch>,
+    running_batches_by_task: &BTreeMap<TaskId, RunningBatch>,
 ) -> Option<u64> {
     let current_step = core.current_step();
     core.next_required_step()
@@ -120,12 +121,12 @@ fn task_handle(task: &mutsuki_runtime_contracts::Task) -> TaskHandle {
 }
 
 fn running_batch_count_for_runner(
-    running_batches_by_task: &BTreeMap<String, RunningBatch>,
-    runner_id: &str,
+    running_batches_by_task: &BTreeMap<TaskId, RunningBatch>,
+    runner_id: &RunnerId,
 ) -> usize {
     running_batches_by_task
         .values()
-        .filter(|task| task.runner_id == runner_id)
+        .filter(|task| &task.runner_id == runner_id)
         .map(|task| task.batch_id.clone())
         .collect::<BTreeSet<_>>()
         .len()
@@ -135,7 +136,7 @@ pub(super) fn schedule_ready(
     core: &mut CoreRuntime,
     config: &HostRuntimeConfig,
     pools: &mut WorkerPools,
-    running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
+    running_batches_by_task: &mut BTreeMap<TaskId, RunningBatch>,
 ) -> RuntimeResult<RunnerLoopReport> {
     let target_step = core.current_step().saturating_add(1);
     schedule_ready_at(target_step, core, config, pools, running_batches_by_task)
@@ -148,7 +149,7 @@ pub(super) fn schedule_ready_at(
     core: &mut CoreRuntime,
     config: &HostRuntimeConfig,
     pools: &mut WorkerPools,
-    running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
+    running_batches_by_task: &mut BTreeMap<TaskId, RunningBatch>,
 ) -> RuntimeResult<RunnerLoopReport> {
     let scheduler_started = Instant::now();
     let mut domain_lane_demand: BTreeMap<String, BTreeMap<DispatchLane, usize>> = BTreeMap::new();
@@ -177,7 +178,7 @@ pub(super) fn schedule_ready_at(
         |descriptor, load, current_step, registry_generation| {
             let limits = config
                 .runner_limits
-                .get(&descriptor.runner_id)
+                .get(descriptor.runner_id.as_str())
                 .unwrap_or(&config.default_runner_limits);
             let async_invocation = matches!(
                 descriptor.invocation_mode,
@@ -187,6 +188,13 @@ pub(super) fn schedule_ready_at(
                 &mut async_reservations
             } else {
                 if descriptor.execution_class == ExecutionClass::Control {
+                    if descriptor.runner_id.as_str() == "core.kernel" {
+                        return Ok(mutsuki_runtime_core::ScheduleDecision::new(
+                            "host.default",
+                            1,
+                            "control.kernel.inline",
+                        ));
+                    }
                     return Ok(mutsuki_runtime_core::ScheduleDecision::new(
                         "host.default",
                         0,
@@ -300,7 +308,7 @@ pub(super) fn schedule_ready_at(
         let runner_id = dispatch.target.descriptor().runner_id.clone();
         let limits = config
             .runner_limits
-            .get(&runner_id)
+            .get(runner_id.as_str())
             .unwrap_or(&config.default_runner_limits);
         dispatch.ctx.deadline_tick = limits
             .deadline_ticks
@@ -539,7 +547,10 @@ mod tests {
         );
 
         assert_eq!(
-            running_batch_count_for_runner(&running_batches_by_task, "batch.runner"),
+            running_batch_count_for_runner(
+                &running_batches_by_task,
+                &RunnerId::from("batch.runner")
+            ),
             2
         );
     }

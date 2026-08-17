@@ -16,7 +16,7 @@ use std::sync::atomic::Ordering as AtomicOrdering;
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
-use mutsuki_runtime_contracts::AsyncInvocation;
+use mutsuki_runtime_contracts::{AsyncInvocation, RunnerId, TaskId};
 use mutsuki_runtime_core::{CoreRuntime, RunnerLoopReport, RuntimeResult, TaskRecord};
 use mutsuki_runtime_sdk::{HostTaskFailureSummary, HostTaskSnapshot};
 
@@ -40,14 +40,14 @@ struct CoreActor {
     pools: WorkerPools,
     management: ManagementExecutor,
     completion_hub: Arc<TaskCompletionHub>,
-    pending_cancels: BTreeMap<String, Vec<String>>,
-    running_batches_by_task: BTreeMap<String, RunningBatch>,
+    pending_cancels: BTreeMap<RunnerId, Vec<String>>,
+    running_batches_by_task: BTreeMap<TaskId, RunningBatch>,
     draining_invocations: BTreeMap<String, DrainingInvocation>,
     driver: DriverState,
     terminal_revision: u64,
     task_revision: u64,
     control_burst: usize,
-    submitted_at: BTreeMap<String, Instant>,
+    submitted_at: BTreeMap<TaskId, Instant>,
     pending_task_waits: Vec<PendingTaskWait>,
 }
 
@@ -461,12 +461,16 @@ fn handle_command(
                 );
             }
             for (task_id, runner_id) in cancellation_targets {
+                let task_id = TaskId::from(task_id);
+                let runner_id = RunnerId::from(runner_id);
                 if !running_batches_by_task.contains_key(&task_id)
-                    && core.cancel_runner_invocation(&runner_id, &task_id).is_err()
+                    && core
+                        .cancel_runner_invocation(runner_id.as_str(), task_id.as_str())
+                        .is_err()
                 {
                     let pending = pending_cancels.entry(runner_id).or_default();
-                    if !pending.contains(&task_id) {
-                        pending.push(task_id);
+                    if !pending.contains(&task_id.to_string()) {
+                        pending.push(task_id.into_string());
                     }
                 }
             }
@@ -757,8 +761,8 @@ fn start_async_resource_command(
         .and_then(|deadline| u64::try_from(deadline.as_millis()).ok());
     let invocation = AsyncInvocation {
         invocation_id: invocation_id.clone(),
-        batch_id: invocation_id.clone(),
-        runner_id: format!("resource:{provider_id}"),
+        batch_id: invocation_id.clone().into(),
+        runner_id: format!("resource:{provider_id}").into(),
         task_ids: Vec::new(),
         task_lease_ids: Vec::new(),
         attempt_generations: Vec::new(),

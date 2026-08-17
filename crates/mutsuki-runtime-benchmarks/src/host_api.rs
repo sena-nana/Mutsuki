@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use mutsuki_runtime_contracts::{
     ObservabilityOutletProfile, ObservabilityOverflowPolicy, ObservabilityPage,
-    ObservabilityProfile, Task, TaskBatch, TaskHandle,
+    ObservabilityProfile, StateHistoryProfile, Task, TaskBatch, TaskHandle,
 };
 use mutsuki_runtime_host::{
     HostRuntime, HostRuntimeCommand, HostRuntimeConfig, HostRuntimeReply, RunnerLimits,
@@ -36,7 +36,7 @@ fn batch_round_trip(entries: usize) -> Result<Vec<CaseResult>, String> {
     let measurement = ALLOCATOR.measurement();
     let reply = runtime
         .dispatch(HostRuntimeCommand::SubmitBatch(Box::new(TaskBatch {
-            batch_id: format!("host-submit-{entries}"),
+            batch_id: format!("host-submit-{entries}").into(),
             tick_id: None,
             tasks,
             resource_plan: None,
@@ -168,6 +168,7 @@ fn host_runtime(max_batch_entries: usize) -> Result<HostRuntime, String> {
         traces: ObservabilityOutletProfile::new(4_096, ObservabilityOverflowPolicy::DropOldest),
         detailed_scheduler_decisions: true,
         dispatch_spans: true,
+        state_history: StateHistoryProfile::default(),
     };
     let config = HostRuntimeConfig {
         worker_threads: 1,

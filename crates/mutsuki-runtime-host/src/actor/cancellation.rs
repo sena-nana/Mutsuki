@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
+use mutsuki_runtime_contracts::{RunnerId, TaskId};
+
 use crate::management::ManagementExecutor;
 
 use super::RunningBatch;
@@ -8,8 +10,8 @@ use super::RunningBatch;
 pub(super) fn request_running_cancel(
     invocation_id: &str,
     management: &ManagementExecutor,
-    running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
-    pending_cancels: &mut BTreeMap<String, Vec<String>>,
+    running_batches_by_task: &mut BTreeMap<TaskId, RunningBatch>,
+    pending_cancels: &mut BTreeMap<RunnerId, Vec<String>>,
 ) {
     if running_batches_by_task
         .values()
@@ -27,7 +29,7 @@ pub(super) fn request_running_cancel(
     };
     let delivered = handle.as_ref().is_some_and(|handle| {
         management
-            .cancel(runner_id.clone(), invocation_id.into(), handle.clone())
+            .cancel(runner_id.to_string(), invocation_id.into(), handle.clone())
             .is_ok()
     });
     if !delivered {
@@ -41,8 +43,8 @@ pub(super) fn request_running_cancel(
 pub(super) fn queue_management_retry(
     runner_id: String,
     invocation_id: String,
-    running_batches_by_task: &BTreeMap<String, RunningBatch>,
-    pending_cancels: &mut BTreeMap<String, Vec<String>>,
+    running_batches_by_task: &BTreeMap<TaskId, RunningBatch>,
+    pending_cancels: &mut BTreeMap<RunnerId, Vec<String>>,
 ) {
     if !running_batches_by_task
         .values()
@@ -50,7 +52,9 @@ pub(super) fn queue_management_retry(
     {
         return;
     }
-    let pending = pending_cancels.entry(runner_id).or_default();
+    let pending = pending_cancels
+        .entry(RunnerId::from(runner_id))
+        .or_default();
     if !pending.contains(&invocation_id) {
         pending.push(invocation_id);
     }
@@ -58,7 +62,7 @@ pub(super) fn queue_management_retry(
 
 fn mark_cancel_requested(
     invocation_id: &str,
-    running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
+    running_batches_by_task: &mut BTreeMap<TaskId, RunningBatch>,
 ) {
     let now = Instant::now();
     for task in running_batches_by_task.values_mut() {

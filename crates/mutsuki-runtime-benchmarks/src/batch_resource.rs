@@ -60,7 +60,7 @@ fn run_case(entries: usize, pattern: ResourcePattern) -> Result<Vec<CaseResult>,
         .collect::<Vec<_>>();
     runtime
         .submit_batch(TaskBatch {
-            batch_id: format!("batch-{}-{}", pattern.as_str(), entries),
+            batch_id: format!("batch-{}-{}", pattern.as_str(), entries).into(),
             tick_id: None,
             tasks,
             resource_plan: None,

@@ -113,7 +113,7 @@ async fn run_task(
         BOT_MESSAGE_SEND_PROTOCOL_ID,
         serde_json::to_value(message).map_err(|error| fail(&task, error))?,
     );
-    outbound.target_binding_id = Some(request.outbound_binding);
+    outbound.target_binding_id = Some(request.outbound_binding.into());
     let mut result = RunnerResult::completed(task.task_id);
     result.tasks.push(outbound);
     Ok(result)
@@ -145,10 +145,10 @@ async fn acquire_profile_snapshot(
             .map_err(|error| fail(task, error))?,
         )
         .await?;
-    if !matches!(outcome, TaskOutcome::Completed { .. }) {
+    if !matches!(outcome.into_outcome(), TaskOutcome::Completed { .. }) {
         return Err(fail(task, "browser snapshot child task failed"));
     }
-    let latest = resources.open_resource_descriptor(&output.ref_id)?;
+    let latest = resources.open_resource_descriptor(output.ref_id.as_str())?;
     let bytes = resources.collect_read_plan(&ReadPlan {
         plan_id: format!("mihuashi.snapshot.read.{}", task.task_id),
         resource: latest,
@@ -201,8 +201,8 @@ fn media_http_request(image_url: &str) -> HttpRequest {
     request
 }
 
-fn decode_http_image(task: &Task, outcome: TaskOutcome) -> RuntimeResult<HttpResponse> {
-    match outcome {
+fn decode_http_image(task: &Task, outcome: impl Into<TaskOutcome>) -> RuntimeResult<HttpResponse> {
+    match outcome.into() {
         TaskOutcome::Completed {
             output: Some(output),
             ..
@@ -274,7 +274,8 @@ async fn render_profile_card(
             })
             .map_err(|error| fail(task, error))?,
         )
-        .await?;
+        .await?
+        .into_outcome();
     match render_outcome {
         TaskOutcome::Completed {
             output: Some(output),

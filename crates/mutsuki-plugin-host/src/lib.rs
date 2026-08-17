@@ -63,7 +63,7 @@ pub struct PluginSession {
     manifest: PluginManifest,
     initialized: mutsuki_runtime_wire::InitializedPlugin,
     connection: Arc<PluginConnection>,
-    runners: BTreeMap<String, PluginRunnerHandle>,
+    runners: BTreeMap<mutsuki_runtime_contracts::RunnerId, PluginRunnerHandle>,
     disposed: Mutex<bool>,
 }
 
@@ -78,7 +78,7 @@ impl PluginSession {
         validate_expected_manifest(&request.expected_manifest)?;
         let plugin_id = request.expected_manifest.plugin_id.clone();
         let connection = Arc::new(PluginConnection::open(
-            &plugin_id,
+            plugin_id.as_str(),
             request.library_path,
             request.host_context,
             request.host_config,
@@ -108,7 +108,7 @@ impl PluginSession {
             .iter()
             .cloned()
             .map(|descriptor| {
-                let id = descriptor.runner_id.clone();
+                let id = mutsuki_runtime_contracts::RunnerId::from(descriptor.runner_id.clone());
                 (
                     id,
                     PluginRunnerHandle {
@@ -150,7 +150,7 @@ impl PluginSession {
         }
         for runner_id in self.runners.keys() {
             self.connection.request(&DisposeRunnerRequest {
-                runner_id: runner_id.clone(),
+                runner_id: runner_id.to_string(),
             })?;
         }
         *disposed = true;
@@ -197,7 +197,7 @@ impl PluginRunnerHandle {
             ));
         }
         self.connection.request(&RunBatchRequest {
-            runner_id: self.descriptor.runner_id.clone(),
+            runner_id: self.descriptor.runner_id.to_string(),
             ctx,
             batch,
         })
@@ -205,7 +205,7 @@ impl PluginRunnerHandle {
 
     pub fn cancel(&self, invocation_id: &str) -> PluginResult<()> {
         self.connection.request(&CancelRunnerRequest {
-            runner_id: self.descriptor.runner_id.clone(),
+            runner_id: self.descriptor.runner_id.to_string(),
             invocation_id: invocation_id.into(),
         })
     }
@@ -516,21 +516,34 @@ fn invoke_plugin(lifetime: &PluginLifetime, frame: &[u8]) -> Vec<u8> {
     if ok { bytes } else { Vec::new() }
 }
 
-fn plugin_failure(plugin_id: &str, route: &str, detail: impl Into<String>) -> PluginHostError {
+fn plugin_failure(
+    plugin_id: impl AsRef<str>,
+    route: &str,
+    detail: impl Into<String>,
+) -> PluginHostError {
     let mut error = plugin_error(route, detail);
-    error.error.source = format!("plugin:{plugin_id}");
+    error.error.source = format!("plugin:{}", plugin_id.as_ref());
     error
 }
 
 fn plugin_failure_code(
-    plugin_id: &str,
+    plugin_id: impl AsRef<str>,
     code: &str,
     route: &str,
     detail: impl Into<String>,
 ) -> PluginHostError {
-    PluginHostError::new(code, format!("plugin:{plugin_id}"), route, detail)
+    PluginHostError::new(
+        code,
+        format!("plugin:{}", plugin_id.as_ref()),
+        route,
+        detail,
+    )
 }
 
-fn with_context(error: PluginHostError, plugin_id: &str, route: &str) -> PluginHostError {
-    plugin_failure(plugin_id, route, format!("{}", error))
+fn with_context(
+    error: PluginHostError,
+    plugin_id: impl AsRef<str>,
+    route: &str,
+) -> PluginHostError {
+    plugin_failure(plugin_id, route, format!("{error}"))
 }

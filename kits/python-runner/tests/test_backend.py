@@ -4,6 +4,7 @@ from dataclasses import replace
 
 import pytest
 
+from mutsuki_runner_kit.contracts.ids import TaskLeaseId
 from mutsuki_runner_kit.contracts.runner import RunnerContext, RunnerDescriptor, RunnerResult
 from mutsuki_runner_kit.contracts.task import Task
 from mutsuki_runner_kit.runners.backend import PythonRunnerBackend
@@ -27,7 +28,7 @@ async def test_python_runner_backend_runs_registered_runner_batch() -> None:
     backend = PythonRunnerBackend()
     runner = EchoRunner(echo_descriptor())
     backend.register_runner(runner)
-    task = replace(Task.new("task-1", "raw.input"), lease_id="task-lease-test")
+    task = replace(Task.new("task-1", "raw.input"), lease_id=TaskLeaseId("task-lease-test"))
 
     completion = await backend.run_batch_runner(
         "echo.runner",
@@ -60,7 +61,7 @@ async def test_python_runner_backend_propagates_prior_cancel_into_next_batch_con
     backend = PythonRunnerBackend()
     runner = CaptureContextRunner(echo_descriptor())
     backend.register_runner(runner)
-    task = replace(Task.new("task-1", "raw.input"), lease_id="task-lease-test")
+    task = replace(Task.new("task-1", "raw.input"), lease_id=TaskLeaseId("task-lease-test"))
 
     await backend.cancel_runner("echo.runner", "task-1")
     completion = await backend.run_batch_runner(
@@ -78,7 +79,7 @@ async def test_python_runner_backend_propagates_prior_cancel_into_next_batch_con
 async def test_python_runner_backend_rejects_task_lease_mismatch() -> None:
     backend = PythonRunnerBackend()
     backend.register_runner(EchoRunner(echo_descriptor()))
-    task = replace(Task.new("task-1", "raw.input"), lease_id="task-lease-task")
+    task = replace(Task.new("task-1", "raw.input"), lease_id=TaskLeaseId("task-lease-task"))
 
     with pytest.raises(RunnerInvokeError) as exc_info:
         await backend.run_batch_runner(
@@ -123,7 +124,7 @@ async def test_pending_cancel_is_scoped_by_runner_and_bounded() -> None:
         await backend.cancel_runner("runner-b", "other-invocation")
 
     assert exc_info.value.error.code == "capability.exhausted"
-    task = replace(Task.new("task-1", "raw.input"), lease_id="task-lease-test")
+    task = replace(Task.new("task-1", "raw.input"), lease_id=TaskLeaseId("task-lease-test"))
     await backend.run_batch_runner(
         "runner-b",
         replace(runner_context(), invocation_id="shared-invocation"),

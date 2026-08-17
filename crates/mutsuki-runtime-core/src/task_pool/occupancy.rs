@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, HashMap};
 
 use mutsuki_runtime_contracts::{
-    DispatchLane, ProtocolClass, RunnerDescriptor, SurfaceOccupancy, Task, TaskStatus,
+    DispatchLane, ProtocolClass, ProtocolId, RunnerDescriptor, SurfaceId, SurfaceOccupancy, Task,
+    TaskStatus,
 };
 
 use super::claiming;
@@ -40,9 +41,9 @@ pub(super) fn runner_load(
 
 pub(super) fn surface_occupancy(
     task_pool: &TaskPool,
-    protocol_classes: &BTreeMap<String, ProtocolClass>,
+    protocol_classes: &BTreeMap<ProtocolId, ProtocolClass>,
 ) -> Vec<SurfaceOccupancy> {
-    let mut occupancy: HashMap<String, SurfaceOccupancy> = HashMap::new();
+    let mut occupancy: HashMap<SurfaceId, SurfaceOccupancy> = HashMap::new();
     for record in task_pool.tasks.values() {
         for surface_id in surface_ids_for_record(record, protocol_classes) {
             let entry = occupancy
@@ -72,35 +73,35 @@ pub(super) fn surface_occupancy(
 
 fn surface_ids_for_record(
     record: &TaskRecord,
-    protocol_classes: &BTreeMap<String, ProtocolClass>,
-) -> Vec<String> {
+    protocol_classes: &BTreeMap<ProtocolId, ProtocolClass>,
+) -> Vec<SurfaceId> {
     surface_ids_for_task(&record.task, protocol_classes)
 }
 
 pub(super) fn surface_ids_for_task(
     task: &Task,
-    protocol_classes: &BTreeMap<String, ProtocolClass>,
-) -> Vec<String> {
+    protocol_classes: &BTreeMap<ProtocolId, ProtocolClass>,
+) -> Vec<SurfaceId> {
     let mut surface_ids = task.required_surfaces.clone();
-    surface_ids.push(format!("task_protocol:{}", task.protocol_id));
+    surface_ids.push(format!("task_protocol:{}", task.protocol_id).into());
     if is_effect(task, protocol_classes) {
-        surface_ids.push(format!("effect:{}", task.protocol_id));
+        surface_ids.push(format!("effect:{}", task.protocol_id).into());
     }
     if let Some(runner_hint) = &task.runner_hint {
-        surface_ids.push(format!("runner:{runner_hint}"));
+        surface_ids.push(format!("runner:{runner_hint}").into());
     }
     surface_ids.sort();
     surface_ids.dedup();
     surface_ids
 }
 
-fn is_effect(task: &Task, protocol_classes: &BTreeMap<String, ProtocolClass>) -> bool {
+fn is_effect(task: &Task, protocol_classes: &BTreeMap<ProtocolId, ProtocolClass>) -> bool {
     protocol_classes.get(&task.protocol_id) == Some(&ProtocolClass::Effect)
 }
 
-fn zero_occupancy(surface_id: &str) -> SurfaceOccupancy {
+fn zero_occupancy(surface_id: &SurfaceId) -> SurfaceOccupancy {
     SurfaceOccupancy {
-        surface_id: surface_id.into(),
+        surface_id: surface_id.clone(),
         ready_tasks: 0,
         running_invocations: 0,
         resource_refs: 0,

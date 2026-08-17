@@ -1,5 +1,6 @@
 use mutsuki_runtime_contracts::{
-    ResourceRef, RuntimeError, RuntimeEvent, ScalarValue, Task, TaskOutcome, TaskStatus, TraceSpan,
+    BindingId, ProtocolId, RefId, ResourceRef, RuntimeError, RuntimeEvent, ScalarValue, Task,
+    TaskId, TaskOutcome, TaskStatus, TraceId, TraceSpan,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -85,23 +86,23 @@ pub struct FrontendContext {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FrontendTaskRequest {
-    pub protocol_id: String,
+    pub protocol_id: ProtocolId,
     #[serde(default)]
     pub payload: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub task_id: Option<String>,
+    pub task_id: Option<TaskId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub trace_id: Option<String>,
+    pub trace_id: Option<TraceId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub correlation_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target_binding_id: Option<String>,
+    pub target_binding_id: Option<BindingId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runner_hint: Option<String>,
     #[serde(default)]
-    pub input_refs: Vec<String>,
+    pub input_refs: Vec<RefId>,
     #[serde(default)]
     pub priority: i64,
     #[serde(default)]
@@ -112,7 +113,7 @@ impl FrontendTaskRequest {
     pub fn into_task(self) -> Task {
         let task_id = self
             .task_id
-            .unwrap_or_else(|| format!("tauri-task:{}", Uuid::new_v4()));
+            .unwrap_or_else(|| TaskId::from(format!("tauri-task:{}", Uuid::new_v4())));
         let mut task = Task::new(task_id, self.protocol_id, self.payload);
         task.trace_id = self.trace_id;
         task.correlation_id = self.correlation_id;
@@ -127,7 +128,7 @@ impl FrontendTaskRequest {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FrontendTaskResult {
-    pub task_id: String,
+    pub task_id: TaskId,
     pub status: Option<TaskStatus>,
     pub outcome: Option<TaskOutcome>,
     pub events: Vec<RuntimeEvent>,
@@ -139,17 +140,17 @@ pub struct FrontendTaskResult {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FrontendTaskRun {
-    pub task_id: String,
+    pub task_id: TaskId,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskResultRequest {
-    pub task_id: String,
+    pub task_id: TaskId,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskCancelRequest {
-    pub task_id: String,
+    pub task_id: TaskId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }
@@ -173,13 +174,13 @@ pub struct ResourceChunk {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResourceText {
-    pub ref_id: String,
+    pub ref_id: RefId,
     pub text: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PreviewHandle {
-    pub ref_id: String,
+    pub ref_id: RefId,
     pub token: String,
     pub url: String,
     pub expires_at_unix_secs: u64,
@@ -194,7 +195,7 @@ pub enum ApprovalDecision {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApprovalAttribution {
-    pub trace_id: String,
+    pub trace_id: TraceId,
     pub correlation_id: String,
     #[serde(default)]
     pub context: FrontendContext,
@@ -207,7 +208,7 @@ pub struct ApprovalRequest {
     pub requester: String,
     pub operation: String,
     pub risk: String,
-    pub trace_id: String,
+    pub trace_id: TraceId,
     pub correlation_id: String,
     #[serde(default)]
     pub payload: Value,
@@ -223,7 +224,7 @@ pub struct ApprovalResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub trace_id: Option<String>,
+    pub trace_id: Option<TraceId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub correlation_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -329,7 +330,7 @@ pub struct FrontendLogRecord {
     pub message: String,
     pub timestamp_ms: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub trace_id: Option<String>,
+    pub trace_id: Option<TraceId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub correlation_id: Option<String>,
     #[serde(default)]
@@ -359,7 +360,7 @@ pub enum MutsukiFrontendEvent {
         dropped: u64,
     },
     Task {
-        task_id: String,
+        task_id: TaskId,
         event: RuntimeEvent,
     },
     Runtime {
@@ -372,7 +373,7 @@ pub enum MutsukiFrontendEvent {
         record: FrontendLogRecord,
     },
     Resource {
-        ref_id: String,
+        ref_id: RefId,
         operation: String,
     },
     Approval {
@@ -590,7 +591,7 @@ mod tests {
         let task = request.into_task();
 
         assert_eq!(
-            task.target_binding_id.as_deref(),
+            task.target_binding_id.as_ref().map(|id| id.as_str()),
             Some("binding:fixture.plugin:fixture.route")
         );
         assert_eq!(task.runner_hint.as_deref(), Some("fixture.plugin.runner"));

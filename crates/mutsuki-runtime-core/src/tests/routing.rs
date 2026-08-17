@@ -533,7 +533,11 @@ fn waiting_task_is_woken_when_child_reaches_terminal_state() {
     assert_eq!(parent_record.status, TaskStatus::Waiting);
     assert!(parent_record.lease.is_none());
     assert_eq!(
-        parent_record.task.continuation_ref.as_deref(),
+        parent_record
+            .task
+            .continuation_ref
+            .as_ref()
+            .map(|id| id.as_str()),
         Some("continuation:parent")
     );
     runtime.tick_once().unwrap();

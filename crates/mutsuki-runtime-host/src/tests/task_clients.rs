@@ -29,7 +29,10 @@ fn host_task_clients_share_task_contract_across_local_and_abi_backends() {
 
     assert_eq!(local_handle.task_id, "local-client-task");
     assert_eq!(local_handle.protocol_id, "raw.input");
-    assert_eq!(local_handle.trace_id.as_deref(), Some("trace-local"));
+    assert_eq!(
+        local_handle.trace_id.as_ref().map(|id| id.as_str()),
+        Some("trace-local")
+    );
     assert_eq!(local_handle.correlation_id.as_deref(), Some("corr-local"));
 
     local.cancel_task(&local_handle).unwrap();
@@ -76,7 +79,10 @@ fn host_task_clients_share_task_contract_across_local_and_abi_backends() {
         decode_binary_request::<SubmitTaskBatchRequest>(frames[1], DEFAULT_WIRE_LIMITS).unwrap();
 
     assert_eq!(submitted.task_id, "abi-client-task");
-    assert_eq!(submitted.trace_id.as_deref(), Some("trace-abi"));
+    assert_eq!(
+        submitted.trace_id.as_ref().map(|id| id.as_str()),
+        Some("trace-abi")
+    );
     assert!(matches!(
         outcome,
         Some(TaskOutcome::Cancelled { task_id, .. }) if task_id == "abi-client-task"
@@ -103,7 +109,10 @@ fn host_task_clients_share_task_contract_across_local_and_abi_backends() {
         Opcode::TaskOutcome
     );
     assert_eq!(
-        submit_request.batch.tasks[0].trace_id.as_deref(),
+        submit_request.batch.tasks[0]
+            .trace_id
+            .as_ref()
+            .map(|id| id.as_str()),
         Some("trace-abi")
     );
 }

@@ -41,7 +41,7 @@ pub struct TaskRecord {
     pub task: Arc<Task>,
     pub output: Option<Value>,
     pub status: TaskStatus,
-    pub claimed_by: Option<String>,
+    pub claimed_by: Option<RunnerId>,
     pub owner_runner: Option<RunnerId>,
     pub lease: Option<TaskLease>,
     pub failure: Option<RuntimeError>,
@@ -120,7 +120,7 @@ pub struct TaskPool {
     waits_by_child: HashMap<TaskId, Vec<TaskAwait>>,
     waits_by_parent: HashMap<TaskId, Vec<TaskAwait>>,
     indexes: TaskIndexes,
-    ready_selector_cache: RefCell<HashMap<String, [ReadySelector; 4]>>,
+    ready_selector_cache: RefCell<HashMap<RunnerId, [ReadySelector; 4]>>,
     payload_wire_bytes: HashMap<TaskId, usize>,
     terminal_order: VecDeque<TaskId>,
     evicted_task_ids: HashSet<TaskId>,
@@ -185,11 +185,12 @@ impl TaskPool {
         Ok(task_id)
     }
 
-    pub fn get(&self, task_id: &str) -> Option<&TaskRecord> {
-        self.tasks.get(task_id)
+    pub fn get(&self, task_id: impl AsRef<str>) -> Option<&TaskRecord> {
+        self.tasks.get(task_id.as_ref())
     }
 
-    pub(crate) fn contains_task_id(&self, task_id: &str) -> bool {
+    pub(crate) fn contains_task_id(&self, task_id: impl AsRef<str>) -> bool {
+        let task_id = task_id.as_ref();
         self.tasks.contains_key(task_id) || self.evicted_task_ids.contains(task_id)
     }
 
@@ -238,7 +239,8 @@ impl TaskPool {
     }
 
     #[cfg(test)]
-    pub fn get_mut_for_test(&mut self, task_id: &str) -> &mut TaskRecord {
+    pub fn get_mut_for_test(&mut self, task_id: impl AsRef<str>) -> &mut TaskRecord {
+        let task_id = task_id.as_ref();
         self.tasks
             .get_mut(task_id)
             .expect("test task record must exist")
@@ -280,7 +282,8 @@ impl TaskPool {
         records
     }
 
-    pub fn running_records_for_runner(&self, runner_id: &str) -> Vec<&TaskRecord> {
+    pub fn running_records_for_runner(&self, runner_id: impl AsRef<str>) -> Vec<&TaskRecord> {
+        let runner_id = runner_id.as_ref();
         let mut records = self
             .running_task_ids(runner_id)
             .into_iter()
@@ -291,7 +294,8 @@ impl TaskPool {
         records
     }
 
-    pub fn waiting_records_for_runner(&self, runner_id: &str) -> Vec<&TaskRecord> {
+    pub fn waiting_records_for_runner(&self, runner_id: impl AsRef<str>) -> Vec<&TaskRecord> {
+        let runner_id = runner_id.as_ref();
         let mut records = self
             .waiting_task_ids(runner_id)
             .into_iter()
@@ -463,7 +467,7 @@ impl TaskPool {
         transitions::block(self, lease, current_step)
     }
 
-    pub fn wake(&mut self, task_id: &str, current_step: u64) -> RuntimeResult<()> {
+    pub fn wake(&mut self, task_id: impl AsRef<str>, current_step: u64) -> RuntimeResult<()> {
         transitions::wake(self, task_id, current_step)
     }
 
@@ -471,14 +475,18 @@ impl TaskPool {
         transitions::wake_due_tasks(self, current_step)
     }
 
-    pub fn reject_ready(&mut self, task_id: &str, failure: RuntimeError) -> RuntimeResult<()> {
+    pub fn reject_ready(
+        &mut self,
+        task_id: impl AsRef<str>,
+        failure: RuntimeError,
+    ) -> RuntimeResult<()> {
         transitions::reject_ready(self, task_id, failure)
     }
 
     pub fn cancel_running_invocation(
         &mut self,
-        runner_id: &str,
-        invocation_id: &str,
+        runner_id: impl AsRef<str>,
+        invocation_id: impl AsRef<str>,
         current_step: u64,
     ) -> usize {
         transitions::cancel_running_invocation(self, runner_id, invocation_id, current_step)
@@ -488,7 +496,11 @@ impl TaskPool {
         transitions::cancel_task(self, lease, current_step)
     }
 
-    pub fn cancel_by_core(&mut self, task_id: &str, current_step: u64) -> RuntimeResult<()> {
+    pub fn cancel_by_core(
+        &mut self,
+        task_id: impl AsRef<str>,
+        current_step: u64,
+    ) -> RuntimeResult<()> {
         transitions::terminal_by_core(
             self,
             task_id,
@@ -501,15 +513,15 @@ impl TaskPool {
 
     pub(crate) fn request_cancel_by_core(
         &mut self,
-        task_id: &str,
+        task_id: impl AsRef<str>,
         current_step: u64,
         failure: Option<RuntimeError>,
     ) -> RuntimeResult<bool> {
         transitions::request_cancel_by_core(self, task_id, current_step, failure)
     }
 
-    pub(crate) fn cancellation_requested(&self, task_id: &str) -> bool {
-        self.pending_cancellations.contains_key(task_id)
+    pub(crate) fn cancellation_requested(&self, task_id: impl AsRef<str>) -> bool {
+        self.pending_cancellations.contains_key(task_id.as_ref())
     }
 
     pub(crate) fn finalize_requested_cancellation(
@@ -522,7 +534,7 @@ impl TaskPool {
 
     pub fn expire_by_core(
         &mut self,
-        task_id: &str,
+        task_id: impl AsRef<str>,
         failure: RuntimeError,
         current_step: u64,
     ) -> RuntimeResult<()> {
@@ -538,7 +550,7 @@ impl TaskPool {
 
     pub fn dead_letter_by_core(
         &mut self,
-        task_id: &str,
+        task_id: impl AsRef<str>,
         failure: RuntimeError,
         current_step: u64,
     ) -> RuntimeResult<()> {
@@ -558,7 +570,7 @@ impl TaskPool {
 
     pub(crate) fn ensure_active_lease(
         &self,
-        task_id: &str,
+        task_id: impl AsRef<str>,
         lease: &TaskLease,
         current_step: u64,
         action: &str,
@@ -574,18 +586,18 @@ impl TaskPool {
         &self,
         task: &Task,
         protocol_classes: &std::collections::BTreeMap<
-            String,
+            mutsuki_runtime_contracts::ProtocolId,
             mutsuki_runtime_contracts::ProtocolClass,
         >,
-    ) -> Vec<String> {
+    ) -> Vec<mutsuki_runtime_contracts::SurfaceId> {
         occupancy::surface_ids_for_task(task, protocol_classes)
     }
 
-    pub fn awaits_for_parent(&self, task_id: &str) -> Vec<TaskAwait> {
+    pub fn awaits_for_parent(&self, task_id: impl AsRef<str>) -> Vec<TaskAwait> {
         awaits::awaits_for_parent(self, task_id)
     }
 
-    pub fn take_waits_for_child(&mut self, child_task_id: &str) -> Vec<TaskAwait> {
+    pub fn take_waits_for_child(&mut self, child_task_id: impl AsRef<str>) -> Vec<TaskAwait> {
         let waits = awaits::take_waits_for_child(self, child_task_id);
         self.compact_terminal_history();
         waits
@@ -598,14 +610,15 @@ impl TaskPool {
     pub(crate) fn surface_occupancy(
         &self,
         protocol_classes: &std::collections::BTreeMap<
-            String,
+            mutsuki_runtime_contracts::ProtocolId,
             mutsuki_runtime_contracts::ProtocolClass,
         >,
     ) -> Vec<SurfaceOccupancy> {
         occupancy::surface_occupancy(self, protocol_classes)
     }
 
-    fn record(&self, task_id: &str) -> RuntimeResult<&TaskRecord> {
+    fn record(&self, task_id: impl AsRef<str>) -> RuntimeResult<&TaskRecord> {
+        let task_id = task_id.as_ref();
         self.tasks.get(task_id).ok_or_else(|| {
             crate::runtime_failure(
                 ERR_TASK_NOT_FOUND,
@@ -615,16 +628,17 @@ impl TaskPool {
         })
     }
 
-    fn payload_wire_bytes(&self, task_id: &str) -> usize {
+    fn payload_wire_bytes(&self, task_id: impl AsRef<str>) -> usize {
         self.payload_wire_bytes
-            .get(task_id)
+            .get(task_id.as_ref())
             .copied()
             .expect("enqueued task must have a cached payload wire size")
     }
 
-    pub(super) fn record_terminal_task(&mut self, task_id: &str) {
+    pub(super) fn record_terminal_task(&mut self, task_id: impl AsRef<str>) {
         if self.history_retention.is_some() {
-            self.terminal_order.push_back(task_id.to_string());
+            self.terminal_order
+                .push_back(TaskId::from(task_id.as_ref()));
             self.compact_terminal_history();
         }
     }
@@ -684,15 +698,16 @@ impl TaskPool {
     }
 
     #[cfg(test)]
-    pub(crate) fn payload_wire_bytes_for_test(&self, task_id: &str) -> usize {
+    pub(crate) fn payload_wire_bytes_for_test(&self, task_id: impl AsRef<str>) -> usize {
         self.payload_wire_bytes(task_id)
     }
 
     fn mutate_record_indexed<R>(
         &mut self,
-        task_id: &str,
+        task_id: impl AsRef<str>,
         mutate: impl FnOnce(&mut TaskRecord) -> RuntimeResult<R>,
     ) -> RuntimeResult<R> {
+        let task_id = task_id.as_ref();
         if !self.tasks.contains_key(task_id) {
             return Err(crate::runtime_failure(
                 ERR_TASK_NOT_FOUND,
