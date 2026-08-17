@@ -179,7 +179,7 @@ function snapshotToDraft(value) {
 function plainToWire(node, plain) {
   const kind = node.value_type?.kind;
   if (kind === "secret" || node.presentation?.secret) {
-    return plain || { state: "keep" };
+    return { type: "secret", value: plain || { state: "keep" } };
   }
   if (kind === "bool") return { type: "bool", value: !!plain };
   if (kind === "integer") return { type: "integer", value: Number(plain || 0) };
