@@ -3,8 +3,9 @@
 The Command plugin contributes the `mutsuki.bot.command.match@1` Match node. It does not own a
 global prefix or command directory and does not generate business bindings from command names.
 
-Each node instance stores its own prefixes, command path, aliases, typed argument descriptors and
-case-sensitivity in the published graph. It consumes `mutsuki.bot.event@1` and emits exactly one of:
+Each node instance stores its own prefixes, command path, aliases, typed arguments and
+case-sensitivity in the published graph. The editor shows these as command fields, not protocol or
+node identifiers. It consumes `mutsuki.bot.event@1` and emits exactly one of:
 
 - `matched`: a typed `mutsuki.bot.command.event@1` envelope;
 - `unmatched`: the unchanged input event.

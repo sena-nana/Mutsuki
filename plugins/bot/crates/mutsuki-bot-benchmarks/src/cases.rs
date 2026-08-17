@@ -299,7 +299,7 @@ fn benchmark_fanout_registry(branch_count: usize) -> Arc<BotFlowRegistry> {
     let catalog = BotNodeCatalog::from_manifests(&manifests).unwrap();
     let mut nodes = vec![BotFlowNode {
         node_id: "source".into(),
-        node_type_id: "mutsuki.bot.qq.source".into(),
+        node_type_id: mutsuki_plugin_bot_adapter_qqbot::tasks::QQ_NODE_MESSAGE_CREATED.into(),
         node_type_version: 1,
         config: json!({}),
         source: Some(BotFlowSourceSelector {

@@ -36,6 +36,7 @@ const entries = [
   require.resolve("@lilia/theme/styles/sidebar.css"),
   require.resolve("@lilia/theme/styles/page.css"),
   path.join(stylesDir, "console.css"),
+  path.join(stylesDir, "node-editor.css"),
 ];
 
 const bundled = entries

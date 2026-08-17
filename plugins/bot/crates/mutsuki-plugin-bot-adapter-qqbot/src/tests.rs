@@ -873,6 +873,61 @@ fn text_only_descriptor_does_not_claim_media_upload() {
 }
 
 #[test]
+fn qq_sources_are_split_by_received_kind() {
+    use mutsuki_bot_protocol::{
+        BOT_FLOW_MESSAGE_EVENT_TYPE, BOT_FLOW_NODE_EXTENSION_ID, BotNodeCatalogFragment,
+    };
+
+    let manifest = qqbot_adapter_manifest(1, false);
+    let fragment = manifest
+        .provides
+        .extensions
+        .iter()
+        .find(|extension| extension.extension_id == BOT_FLOW_NODE_EXTENSION_ID)
+        .and_then(|extension| {
+            BotNodeCatalogFragment::from_plugin_extension(extension)
+                .ok()
+                .flatten()
+        })
+        .expect("QQ node catalog");
+    let titles = fragment
+        .nodes
+        .iter()
+        .filter(|node| node.role == mutsuki_bot_protocol::BotNodeRole::Source)
+        .map(|node| node.title.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        titles,
+        [
+            "收到消息",
+            "消息更新",
+            "消息删除",
+            "添加表情",
+            "取消表情",
+            "成员加入",
+            "成员离开",
+            "机器人上线",
+            "机器人下线",
+        ]
+    );
+    let message = fragment
+        .nodes
+        .iter()
+        .find(|node| node.node_type_id == crate::QQ_NODE_MESSAGE_CREATED)
+        .unwrap();
+    assert_eq!(
+        message.ports[0].event_type.type_id,
+        BOT_FLOW_MESSAGE_EVENT_TYPE
+    );
+    assert!(
+        !fragment
+            .nodes
+            .iter()
+            .any(|node| node.node_type_id == "mutsuki.bot.qq.source")
+    );
+}
+
+#[test]
 fn qqbot_config_deserializes_defaults_and_rejects_unknown_fields() {
     let config: QqBotConfig = serde_json::from_value(json!({
         "account_id": "main",

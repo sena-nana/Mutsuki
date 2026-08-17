@@ -190,13 +190,21 @@ fn load_manifest(root: &Path) -> Result<ExtensionManifest, ExtensionError> {
 pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::Error> {
     std::fs::create_dir_all(out_dir)?;
     let js = include_str!("../assets/index.js");
+    let editor = include_str!("../assets/lilia-node-editor.js");
     std::fs::write(out_dir.join("index.js"), js)?;
-    let encoded = serde_json::to_vec_pretty(&manifest(vec![AssetEntry {
-        path: "index.js".into(),
-        content_hash: content_hash(js.as_bytes()),
-        bytes: js.len() as u64,
-    }]))
-    .map_err(std::io::Error::other)?;
+    std::fs::write(out_dir.join("lilia-node-editor.js"), editor)?;
+    let assets = [
+        ("index.js", js.as_bytes()),
+        ("lilia-node-editor.js", editor.as_bytes()),
+    ]
+    .into_iter()
+    .map(|(path, bytes)| AssetEntry {
+        path: path.into(),
+        content_hash: content_hash(bytes),
+        bytes: bytes.len() as u64,
+    })
+    .collect();
+    let encoded = serde_json::to_vec_pretty(&manifest(assets)).map_err(std::io::Error::other)?;
     std::fs::write(out_dir.join("manifest.json"), encoded)?;
     Ok(out_dir.to_path_buf())
 }
@@ -293,5 +301,34 @@ mod tests {
         .unwrap_err();
         assert!(error.to_string().contains("revision conflict"));
         assert_eq!(flow.active().revision, 1);
+    }
+
+    #[test]
+    fn assets_include_lilia_node_editor() {
+        let root = tempfile::tempdir().unwrap();
+        materialize_frontend_assets(root.path()).unwrap();
+        assert!(root.path().join("index.js").is_file());
+        assert!(root.path().join("lilia-node-editor.js").is_file());
+        assert!(root.path().join("manifest.json").is_file());
+        assert!(include_str!("../assets/index.js").contains("lilia-node-editor"));
+        assert!(include_str!("../assets/lilia-node-editor.js").contains("mountLiliaNodeEditor"));
+        assert!(!include_str!("../assets/index.js").contains("节点 ID"));
+        assert!(!include_str!("../assets/index.js").contains("输入事件协议"));
+    }
+
+    #[test]
+    fn node_editor_geometry_and_port_types() {
+        let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("assets/lilia-node-editor.test.mjs");
+        let output = std::process::Command::new("node")
+            .arg(&script)
+            .output()
+            .expect("node must be available to verify the Lilia node editor");
+        assert!(
+            output.status.success(),
+            "stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }

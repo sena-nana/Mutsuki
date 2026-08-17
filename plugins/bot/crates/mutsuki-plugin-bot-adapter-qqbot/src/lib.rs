@@ -15,8 +15,10 @@ pub use config::{
 pub use gateway::*;
 pub use inbound_media::*;
 pub use tasks::{
-    QQBOT_ADAPTER_PLUGIN_ID, QqGatewayMapRunner, QqOpenApiRunner, openapi_descriptor,
-    qqbot_adapter_manifest, qqbot_runners,
+    QQ_NODE_BOT_CONNECTED, QQ_NODE_BOT_DISCONNECTED, QQ_NODE_MEMBER_JOINED, QQ_NODE_MEMBER_LEFT,
+    QQ_NODE_MESSAGE_CREATED, QQ_NODE_MESSAGE_DELETED, QQ_NODE_MESSAGE_UPDATED,
+    QQ_NODE_REACTION_ADDED, QQ_NODE_REACTION_REMOVED, QQBOT_ADAPTER_PLUGIN_ID, QqGatewayMapRunner,
+    QqOpenApiRunner, openapi_descriptor, qqbot_adapter_manifest, qqbot_runners,
 };
 
 #[cfg(test)]

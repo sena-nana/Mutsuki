@@ -98,7 +98,10 @@ fn command_node_catalog() -> BotNodeCatalogFragment {
                     port_id: "event".into(),
                     title: "消息事件".into(),
                     direction: BotNodePortDirection::Input,
-                    event_type: BotFlowTypeRef::new(BOT_EVENT_TYPE_ID, 1),
+                    event_type: BotFlowTypeRef::new(
+                        mutsuki_bot_protocol::BOT_FLOW_MESSAGE_EVENT_TYPE,
+                        1,
+                    ),
                     required: true,
                 },
                 BotNodePortDescriptor {
@@ -112,7 +115,10 @@ fn command_node_catalog() -> BotNodeCatalogFragment {
                     port_id: "unmatched".into(),
                     title: "未匹配".into(),
                     direction: BotNodePortDirection::Output,
-                    event_type: BotFlowTypeRef::new(BOT_EVENT_TYPE_ID, 1),
+                    event_type: BotFlowTypeRef::new(
+                        mutsuki_bot_protocol::BOT_FLOW_MESSAGE_EVENT_TYPE,
+                        1,
+                    ),
                     required: false,
                 },
             ],
@@ -126,17 +132,16 @@ fn command_node_catalog() -> BotNodeCatalogFragment {
                     "aliases": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}, "title": "别名"},
                     "arguments": {
                         "type": "array",
-                        "title": "类型化参数",
+                        "title": "参数",
                         "items": {
                             "type": "object",
                             "required": ["name", "kind"],
                             "additionalProperties": false,
                             "properties": {
-                                "name": {"type": "string", "minLength": 1},
-                                "kind": {"type": "string", "enum": ["string", "integer", "number", "boolean"]},
-                                "optional": {"type": "boolean", "default": false},
-                                "variadic": {"type": "boolean", "default": false},
-                                "default": {}
+                                "name": {"type": "string", "minLength": 1, "title": "参数名"},
+                                "kind": {"type": "string", "title": "类型", "enum": ["string", "integer", "number", "boolean"], "enumTitles": ["文本", "整数", "数字", "开关"]},
+                                "optional": {"type": "boolean", "default": false, "title": "可选"},
+                                "variadic": {"type": "boolean", "default": false, "title": "可重复"}
                             }
                         }
                     },

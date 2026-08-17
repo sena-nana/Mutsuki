@@ -5,8 +5,9 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use mutsuki_bot_web_console::{
-    SecretKeyResolver, SecretMonitor, WebConsoleConfig, WebConsolePaths, WebConsoleSecrets,
-    build_console_host, demo_config_service, empty_config_service,
+    BotAgentConsoleServices, SecretKeyResolver, SecretMonitor, WebConsoleConfig, WebConsolePaths,
+    WebConsoleSecrets, build_console_host, build_console_host_with_agent, demo_config_service,
+    empty_config_service,
 };
 use mutsuki_plugin_bot_control_web::FixtureControlHandler;
 use mutsuki_web_host::WebHost;
@@ -34,6 +35,9 @@ fn console_css_declares_two_column_workspace() {
     assert!(css.contains(".kv"));
     assert!(css.contains(".mutsuki-console .trajectory"));
     assert!(css.contains(".mutsuki-console .trajectory-row"));
+    assert!(css.contains(".lilia-node-editor"));
+    assert!(css.contains(".lilia-node-editor__viewport"));
+    assert!(css.contains(".lilia-node-editor__wire"));
 }
 
 #[tokio::test]
@@ -467,6 +471,62 @@ async fn embedded_console_mounts_qq_management_extension() {
     assert_eq!(snap["accounts"][0]["account_id"], "main");
     assert_eq!(snap["accounts"][0]["credential_status"], "configured");
     assert!(!dirs.qq_assets.as_os_str().is_empty());
+    host.stop().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+}
+
+#[tokio::test]
+async fn embedded_console_serves_lilia_flow_node_editor() {
+    use mutsuki_bot_flow::{BotFlowConfigProvider, BotFlowRegistry, BotNodeCatalog};
+    use mutsuki_config_service::{ConfigProviderRegistry, ConfigService, InMemoryConfigRepository};
+
+    let flow = Arc::new(BotFlowRegistry::new(BotNodeCatalog::default()));
+    let providers = Arc::new(ConfigProviderRegistry::default());
+    providers
+        .register(Arc::new(BotFlowConfigProvider::new(flow.clone())))
+        .unwrap();
+    let service = Arc::new(
+        ConfigService::new(providers, Arc::new(InMemoryConfigRepository::default())).unwrap(),
+    );
+    let config = WebConsoleConfig {
+        enabled: true,
+        listen: "127.0.0.1:0".into(),
+        auth_token_key: None,
+        extensions: vec!["bot-flow-editor".into()],
+        ..Default::default()
+    };
+    let secrets = WebConsoleSecrets {
+        auth_token: "local-dev".into(),
+    };
+    let (mut host, dirs) = build_console_host_with_agent(
+        &config,
+        &secrets,
+        Arc::new(FixtureControlHandler::default()),
+        "local-dev",
+        Some(service),
+        None,
+        &WebConsolePaths::default(),
+        None,
+        None,
+        BotAgentConsoleServices {
+            flow: Some(flow),
+            ..BotAgentConsoleServices::default()
+        },
+    )
+    .unwrap();
+    host.start().await.unwrap();
+    let addr = host.listen_addr().unwrap().to_string();
+    let options = http_get_body(&addr, "/console-options.json").await;
+    let flow_path = versioned_module_path(&options, "./extensions/bot-flow/index.js");
+    let flow_js = http_get_body(&addr, &format!("/{flow_path}")).await;
+    assert!(flow_js.contains("lilia-node-editor"));
+    assert!(flow_js.contains("mountLiliaNodeEditor"));
+    let editor_js = http_get_body(&addr, "/extensions/bot-flow/lilia-node-editor.js").await;
+    assert!(editor_js.contains("export function mountLiliaNodeEditor"));
+    let css = http_get_body(&addr, "/mutsuki-ui.css").await;
+    assert!(css.contains(".lilia-node-editor__viewport"));
+    assert!(css.contains(".lilia-node-editor__wire"));
+    assert!(!dirs.bot_flow_assets.as_os_str().is_empty());
     host.stop().await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 }

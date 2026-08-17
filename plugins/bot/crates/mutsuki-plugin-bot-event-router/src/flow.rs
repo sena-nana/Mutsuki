@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use mutsuki_bot_flow::BotFlowRegistry;
 use mutsuki_bot_protocol::{
-    BOT_FLOW_ERROR_TYPE, BOT_FLOW_INGRESS_PROTOCOL_ID, BOT_FLOW_NODE_EXECUTE_PROTOCOL_ID,
+    BOT_FLOW_ERROR_TYPE, BOT_FLOW_INGRESS_PROTOCOL_ID, BOT_FLOW_NODE_EXECUTE_PROTOCOL_ID, BotEvent,
     BotFlowEdge, BotFlowEdgeKind, BotFlowErrorEvent, BotFlowEventEnvelope, BotFlowNode,
     BotFlowNodeExecution, BotFlowPayload, BotFlowTypeRef, BotNodeInvocation, BotNodeResult,
 };
@@ -21,8 +21,8 @@ use serde::{Serialize, Serializer};
 use serde_json::json;
 
 use crate::{
-    BOT_FLOW_EVENT_MATCH_PROTOCOL_ID, BOT_FLOW_MATCH_RUNNER_ID, BOT_FLOW_RATE_LIMIT_PROTOCOL_ID,
-    match_descriptor, match_node_catalog,
+    BOT_FLOW_MATCH_RUNNER_ID, MATCH_PROTOCOL_IDS, event_matches_source_types, match_descriptor,
+    match_node_catalog, source_kinds_for_node,
 };
 
 pub const BOT_FLOW_ROUTER_PLUGIN_ID: &str = "mutsuki.bot.router.flow";
@@ -39,7 +39,7 @@ pub fn flow_router_manifest() -> PluginManifest {
 pub fn flow_router_manifest_for_catalog(
     catalog: &[mutsuki_bot_protocol::BotNodeDescriptor],
 ) -> PluginManifest {
-    PluginBuilder::new(BOT_FLOW_ROUTER_PLUGIN_ID)
+    let mut builder = PluginBuilder::new(BOT_FLOW_ROUTER_PLUGIN_ID)
         .runner_descriptor(ingress_descriptor())
         .runner_descriptor(node_descriptor(catalog))
         .runner_descriptor(match_descriptor())
@@ -60,25 +60,15 @@ pub fn flow_router_manifest_for_catalog(
             ),
             BOT_FLOW_NODE_RUNNER_ID,
             "bot-flow-node",
-        )
-        .protocol_handler(
-            protocol_descriptor(
-                BOT_FLOW_EVENT_MATCH_PROTOCOL_ID,
-                &["event", "condition"],
-                &["matched"],
-            ),
+        );
+    for protocol in MATCH_PROTOCOL_IDS {
+        builder = builder.protocol_handler(
+            protocol_descriptor(protocol, &["event"], &["matched"]),
             BOT_FLOW_MATCH_RUNNER_ID,
-            "bot-flow-event-match",
-        )
-        .protocol_handler(
-            protocol_descriptor(
-                BOT_FLOW_RATE_LIMIT_PROTOCOL_ID,
-                &["key", "limit", "window_ms"],
-                &["allowed"],
-            ),
-            BOT_FLOW_MATCH_RUNNER_ID,
-            "bot-flow-rate-limit",
-        )
+            (*protocol).to_string(),
+        );
+    }
+    builder
         .extension(
             match_node_catalog()
                 .into_plugin_extension()
@@ -228,6 +218,7 @@ impl Runner for BotFlowIngressRunner {
                             .event_type
                             .as_ref()
                             .is_some_and(|event_type| event_type != &envelope.payload.event_type)
+                        || !source_accepts_envelope(source, &envelope)
                     {
                         continue;
                     }
@@ -272,6 +263,15 @@ impl Runner for BotFlowIngressRunner {
             Ok(result)
         })
     }
+}
+
+fn source_accepts_envelope(source: &BotFlowNode, envelope: &BotFlowEventEnvelope) -> bool {
+    let types = source_kinds_for_node(&source.node_type_id);
+    if types.is_empty() {
+        return true;
+    }
+    serde_json::from_value::<BotEvent>(envelope.payload.value.clone())
+        .is_ok_and(|event| event_matches_source_types(&event, types))
 }
 
 async fn run_node(

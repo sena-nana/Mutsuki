@@ -3,9 +3,10 @@ use std::collections::BTreeMap;
 use mutsuki_bot_protocol::{
     BOT_EVENT_INGEST_PROTOCOL_ID, BOT_FLOW_BOT_EVENT_TYPE, BOT_FLOW_INGRESS_PROTOCOL_ID,
     BOT_MEDIA_UPLOAD_PROTOCOL_ID, BOT_MESSAGE_RECALL_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID,
-    BotFlowContext, BotFlowEventEnvelope, BotFlowPayload, BotFlowTypeRef, BotMediaUploadRequest,
-    BotMessage, BotMessageRecallRequest, BotNodeBinding, BotNodeCatalogFragment, BotNodeDescriptor,
-    BotNodeInvocation, BotNodePortDescriptor, BotNodePortDirection, BotNodeResult, BotNodeRole,
+    BotEvent, BotFlowContext, BotFlowEventEnvelope, BotFlowPayload, BotFlowTypeRef,
+    BotMediaUploadRequest, BotMessage, BotMessageRecallRequest, BotNodeBinding,
+    BotNodeCatalogFragment, BotNodeDescriptor, BotNodeInvocation, BotNodePortDescriptor,
+    BotNodePortDirection, BotNodeResult, BotNodeRole, MessageSegment,
     QQBOT_ACCOUNT_GET_PROTOCOL_ID, QQBOT_CAPABILITY_GET_PROTOCOL_ID,
     QQBOT_GATEWAY_STATUS_PROTOCOL_ID, QQBOT_RAW_CALL_PROTOCOL_ID, QqBotAccountGetRequest,
     QqBotCapabilityGetRequest, QqBotGatewayStatusRequest,
@@ -104,30 +105,112 @@ fn qqbot_protocol_descriptor(
         .build()
 }
 
+pub const QQ_NODE_MESSAGE_CREATED: &str = "mutsuki.bot.qq.message.created";
+pub const QQ_NODE_MESSAGE_UPDATED: &str = "mutsuki.bot.qq.message.updated";
+pub const QQ_NODE_MESSAGE_DELETED: &str = "mutsuki.bot.qq.message.deleted";
+pub const QQ_NODE_REACTION_ADDED: &str = "mutsuki.bot.qq.reaction.added";
+pub const QQ_NODE_REACTION_REMOVED: &str = "mutsuki.bot.qq.reaction.removed";
+pub const QQ_NODE_MEMBER_JOINED: &str = "mutsuki.bot.qq.member.joined";
+pub const QQ_NODE_MEMBER_LEFT: &str = "mutsuki.bot.qq.member.left";
+pub const QQ_NODE_BOT_CONNECTED: &str = "mutsuki.bot.qq.bot.connected";
+pub const QQ_NODE_BOT_DISCONNECTED: &str = "mutsuki.bot.qq.bot.disconnected";
+
 fn qqbot_node_catalog(media_enabled: bool) -> BotNodeCatalogFragment {
-    let event_type = BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1);
-    let mut nodes = vec![BotNodeDescriptor {
-        node_type_id: "mutsuki.bot.qq.source".into(),
+    use mutsuki_bot_protocol::{
+        BOT_FLOW_LIFECYCLE_EVENT_TYPE, BOT_FLOW_MEMBER_EVENT_TYPE,
+        BOT_FLOW_MESSAGE_DELETED_EVENT_TYPE, BOT_FLOW_MESSAGE_EVENT_TYPE,
+        BOT_FLOW_REACTION_EVENT_TYPE,
+    };
+    let mut nodes = vec![
+        qq_source(
+            QQ_NODE_MESSAGE_CREATED,
+            "收到消息",
+            BOT_FLOW_MESSAGE_EVENT_TYPE,
+        ),
+        qq_source(
+            QQ_NODE_MESSAGE_UPDATED,
+            "消息更新",
+            BOT_FLOW_MESSAGE_EVENT_TYPE,
+        ),
+        qq_source(
+            QQ_NODE_MESSAGE_DELETED,
+            "消息删除",
+            BOT_FLOW_MESSAGE_DELETED_EVENT_TYPE,
+        ),
+        qq_source(
+            QQ_NODE_REACTION_ADDED,
+            "添加表情",
+            BOT_FLOW_REACTION_EVENT_TYPE,
+        ),
+        qq_source(
+            QQ_NODE_REACTION_REMOVED,
+            "取消表情",
+            BOT_FLOW_REACTION_EVENT_TYPE,
+        ),
+        qq_source(
+            QQ_NODE_MEMBER_JOINED,
+            "成员加入",
+            BOT_FLOW_MEMBER_EVENT_TYPE,
+        ),
+        qq_source(QQ_NODE_MEMBER_LEFT, "成员离开", BOT_FLOW_MEMBER_EVENT_TYPE),
+        qq_source(
+            QQ_NODE_BOT_CONNECTED,
+            "机器人上线",
+            BOT_FLOW_LIFECYCLE_EVENT_TYPE,
+        ),
+        qq_source(
+            QQ_NODE_BOT_DISCONNECTED,
+            "机器人下线",
+            BOT_FLOW_LIFECYCLE_EVENT_TYPE,
+        ),
+    ];
+    nodes.push(BotNodeDescriptor {
+        node_type_id: "mutsuki.bot.qq.send".into(),
         version: 1,
-        title: "QQ 事件".into(),
+        title: "发送消息".into(),
         category: "QQ".into(),
-        role: BotNodeRole::Source,
-        binding: None,
-        ports: vec![BotNodePortDescriptor {
-            port_id: "event".into(),
-            title: "事件".into(),
-            direction: BotNodePortDirection::Output,
-            event_type,
-            required: false,
-        }],
-        config_schema: json!({"type": "object", "additionalProperties": false}),
-    }];
-    nodes.push(sink_node(
-        "mutsuki.bot.qq.send",
-        "发送消息",
-        BOT_MESSAGE_SEND_PROTOCOL_ID,
-        "mutsuki.bot.message.send",
-    ));
+        role: BotNodeRole::Sink,
+        binding: Some(BotNodeBinding {
+            binding_id: format!("binding:{BOT_MESSAGE_SEND_PROTOCOL_ID}"),
+            protocol_id: BOT_MESSAGE_SEND_PROTOCOL_ID.into(),
+            runner_hint: Some(QQBOT_OPENAPI_RUNNER_ID.into()),
+        }),
+        ports: vec![
+            BotNodePortDescriptor {
+                port_id: "input".into(),
+                title: "消息".into(),
+                direction: BotNodePortDirection::Input,
+                event_type: BotFlowTypeRef::new("mutsuki.bot.message.send", 1),
+                required: false,
+            },
+            BotNodePortDescriptor {
+                port_id: "event".into(),
+                title: "消息".into(),
+                direction: BotNodePortDirection::Input,
+                event_type: BotFlowTypeRef::new(
+                    mutsuki_bot_protocol::BOT_FLOW_MESSAGE_EVENT_TYPE,
+                    1,
+                ),
+                required: false,
+            },
+        ],
+        config_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "title": "消息内容",
+                    "description": "留空则发送上游内容"
+                },
+                "reply": {
+                    "type": "boolean",
+                    "title": "回复原消息",
+                    "default": false
+                }
+            }
+        }),
+    });
     nodes.push(sink_node(
         "mutsuki.bot.qq.recall",
         "撤回消息",
@@ -168,6 +251,25 @@ fn sink_node(
             direction: BotNodePortDirection::Input,
             event_type: BotFlowTypeRef::new(event_type, 1),
             required: true,
+        }],
+        config_schema: json!({"type": "object", "additionalProperties": false}),
+    }
+}
+
+fn qq_source(node_type_id: &str, title: &str, output_type: &str) -> BotNodeDescriptor {
+    BotNodeDescriptor {
+        node_type_id: node_type_id.into(),
+        version: 1,
+        title: title.into(),
+        category: "QQ".into(),
+        role: BotNodeRole::Source,
+        binding: None,
+        ports: vec![BotNodePortDescriptor {
+            port_id: "event".into(),
+            title: title.into(),
+            direction: BotNodePortDirection::Output,
+            event_type: BotFlowTypeRef::new(output_type, 1),
+            required: false,
         }],
         config_schema: json!({"type": "object", "additionalProperties": false}),
     }
@@ -286,10 +388,10 @@ impl Runner for QqOpenApiRunner {
     ) -> RuntimeResult<CompletionBatch> {
         let account_id = self.service.account_id().to_owned();
         map_work_batch_entries(&batch, |task| {
-            let (payload, node_invocation) = node_payload(task)?;
+            let (payload, invocation) = node_payload(task)?;
             let response = match task.protocol_id.as_str() {
                 BOT_MESSAGE_SEND_PROTOCOL_ID => {
-                    let message: BotMessage = serde_json::from_value(payload.clone())
+                    let message = message_from_node_payload(&payload, invocation.as_ref())
                         .map_err(|error| failure("mutsuki.bot.message.send.decode", error))?;
                     self.service.send_bot_message(message)
                 }
@@ -353,7 +455,7 @@ impl Runner for QqOpenApiRunner {
             );
 
             let mut result = RunnerResult::completed(task.task_id.clone());
-            result.output = Some(if node_invocation {
+            result.output = Some(if invocation.is_some() {
                 serde_json::to_value(BotNodeResult {
                     outputs: Vec::new(),
                     metadata: BTreeMap::from([("receipt".into(), response.clone())]),
@@ -368,12 +470,56 @@ impl Runner for QqOpenApiRunner {
     }
 }
 
-fn node_payload(task: &Task) -> Result<(Value, bool), RuntimeError> {
+fn node_payload(task: &Task) -> Result<(Value, Option<BotNodeInvocation>), RuntimeError> {
     let value = task.payload.to_value();
     match serde_json::from_value::<BotNodeInvocation>(value.clone()) {
-        Ok(invocation) => Ok((invocation.input.payload.value, true)),
-        Err(_) => Ok((value, false)),
+        Ok(invocation) => Ok((invocation.input.payload.value.clone(), Some(invocation))),
+        Err(_) => Ok((value, None)),
     }
+}
+
+fn message_from_node_payload(
+    payload: &Value,
+    invocation: Option<&BotNodeInvocation>,
+) -> Result<BotMessage, serde_json::Error> {
+    let text = invocation
+        .and_then(|item| item.config.get("text"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    let reply = invocation
+        .and_then(|item| item.config.get("reply"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if let Ok(mut message) = serde_json::from_value::<BotMessage>(payload.clone()) {
+        if let Some(text) = text {
+            message.segments = vec![MessageSegment::text(text)];
+        }
+        if reply && message.reply_to.is_none() {
+            message.reply_to = incoming_reply_to(invocation);
+        }
+        return Ok(message);
+    }
+    let event: BotEvent = serde_json::from_value(payload.clone())?;
+    let body = text
+        .or_else(|| event.message.as_ref().map(BotMessage::plain_text))
+        .unwrap_or_default();
+    let mut message = BotMessage::text(event.target.clone(), body);
+    if reply {
+        message.reply_to = event
+            .message
+            .as_ref()
+            .and_then(|item| item.message_id.clone());
+    }
+    Ok(message)
+}
+
+fn incoming_reply_to(invocation: Option<&BotNodeInvocation>) -> Option<String> {
+    let payload = invocation?.input.payload.value.clone();
+    serde_json::from_value::<BotEvent>(payload)
+        .ok()
+        .and_then(|event| event.message.and_then(|item| item.message_id))
 }
 
 pub(crate) fn flow_envelope(

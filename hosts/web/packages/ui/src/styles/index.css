@@ -3,3 +3,4 @@
 @import "@lilia/theme/styles/sidebar.css";
 @import "@lilia/theme/styles/page.css";
 @import "./console.css";
+@import "./node-editor.css";
