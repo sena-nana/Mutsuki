@@ -43,7 +43,7 @@ async fn empty_single_instance_is_seeded_once_and_restored() {
     }
     assert_eq!(
         first.console.extensions,
-        vec!["config", "qq", "agent", "bot-flow-editor"]
+        vec!["config", "qq", "agent", "bot-flow-editor", "sandbox"]
     );
     assert_eq!(
         first.service.secret(CONSOLE_AUTH_TOKEN_KEY).as_deref(),

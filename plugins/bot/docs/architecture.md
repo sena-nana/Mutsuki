@@ -57,6 +57,8 @@ reconnect and last-error snapshot through the standard health control surface.
 - `mutsuki-bot-delivery`: attempt, receipt, retry, CAS claim and reply-part delivery behavior.
 - `mutsuki-bot-state-db`: durable session, delivery and interaction repository; historical Flow
   tables are neither read nor destructively removed.
+- `mutsuki-bot-sandbox`: in-memory QQ conversation sandbox and live inbound projection.
+- `mutsuki-plugin-bot-sandbox-web`: WebExtension for simulate/live conversation console.
 - `mutsuki-plugin-bot-adapter-qqbot`: QQBot platform translation and OpenAPI side effects.
 - `mutsuki-bot-service-host-integration`: EventSource, health and ServiceRuntime assembly only.
 - `examples/bot-echo`: platform-neutral example business plugin over `mutsuki.bot.*` only.

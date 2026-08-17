@@ -476,6 +476,47 @@ async fn embedded_console_mounts_qq_management_extension() {
 }
 
 #[tokio::test]
+async fn embedded_console_serves_sandbox_panel() {
+    let config = WebConsoleConfig {
+        enabled: true,
+        listen: "127.0.0.1:0".into(),
+        auth_token_key: None,
+        extensions: vec!["sandbox".into()],
+        ..Default::default()
+    };
+    let secrets = WebConsoleSecrets {
+        auth_token: "local-dev".into(),
+    };
+    let (mut host, dirs) = build_console_host(
+        &config,
+        &secrets,
+        Arc::new(FixtureControlHandler::default()),
+        "local-dev",
+        None,
+        None,
+        &WebConsolePaths::default(),
+        None,
+        None,
+    )
+    .unwrap();
+    host.start().await.unwrap();
+    let addr = host.listen_addr().unwrap().to_string();
+    let options = http_get_body(&addr, "/console-options.json").await;
+    let path = versioned_module_path(&options, "./extensions/sandbox/index.js");
+    let js = http_get_body(&addr, &format!("/{path}")).await;
+    assert!(js.contains("mountSandboxPanel"));
+    assert!(js.contains("真实数据"));
+    let snap = ws_rpc_params(&addr, "sandbox", "snapshot", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(snap["mode"], "simulate");
+    assert!(!snap["conversations"].as_array().unwrap().is_empty());
+    assert!(!dirs.sandbox_assets.as_os_str().is_empty());
+    host.stop().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+}
+
+#[tokio::test]
 async fn embedded_console_serves_lilia_flow_node_editor() {
     use mutsuki_bot_flow::{BotFlowConfigProvider, BotFlowRegistry, BotNodeCatalog};
     use mutsuki_config_service::{ConfigProviderRegistry, ConfigService, InMemoryConfigRepository};
@@ -506,6 +547,7 @@ async fn embedded_console_serves_lilia_flow_node_editor() {
         Some(service),
         None,
         &WebConsolePaths::default(),
+        None,
         None,
         None,
         BotAgentConsoleServices {

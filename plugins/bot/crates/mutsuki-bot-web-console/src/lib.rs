@@ -19,6 +19,7 @@ pub use watch_bridge::{
 
 use mutsuki_bot_flow::BotFlowRegistry;
 use mutsuki_bot_management::BilibiliManagementApi;
+use mutsuki_bot_sandbox::{SandboxApi, SandboxService};
 use mutsuki_config_service::{ConfigProviderRegistry, ConfigService, InMemoryConfigRepository};
 use mutsuki_plugin_bot_agent_web::{
     AgentConnectionManagementResolver, BotAgentWebExtension, LocalAgentManagementResolver,
@@ -39,6 +40,9 @@ use mutsuki_plugin_bot_overview_web::{
 };
 use mutsuki_plugin_bot_qq_web::{
     QqBotManagementApi, QqBotWebExtension, materialize_frontend_assets as materialize_qq_assets,
+};
+use mutsuki_plugin_bot_sandbox_web::{
+    SandboxWebExtension, materialize_frontend_assets as materialize_sandbox_assets,
 };
 use mutsuki_plugin_bot_upgrade_web::{
     UpgradeWebExtension, materialize_frontend_assets as materialize_upgrade_assets,
@@ -180,6 +184,7 @@ pub fn build_console_host(
         paths,
         bilibili,
         qq,
+        None,
         BotAgentConsoleServices::default(),
     )
 }
@@ -204,6 +209,7 @@ pub fn build_console_host_with_agent(
     paths: &WebConsolePaths,
     bilibili: Option<Arc<dyn BilibiliManagementApi>>,
     qq: Option<Arc<dyn QqBotManagementApi>>,
+    sandbox: Option<Arc<dyn SandboxApi>>,
     bot_agent: BotAgentConsoleServices,
 ) -> WebHostResult<(MutsukiWebHost, ConsoleAssetDirs)> {
     if !config.enabled {
@@ -219,6 +225,7 @@ pub fn build_console_host_with_agent(
         config.has_extension("qq"),
         config.has_extension("agent"),
         config.has_extension("bot-flow-editor"),
+        config.has_extension("sandbox"),
     )?;
     let caller = ControlRpcCaller::new(control, control_token);
     let mut builder = base_builder(config, secrets, &asset_dirs);
@@ -277,6 +284,12 @@ pub fn build_console_host_with_agent(
         })?;
         builder = builder
             .extension(QqBotWebExtension::new(api).with_frontend_assets(&asset_dirs.qq_assets));
+    }
+    if config.has_extension("sandbox") {
+        let api = sandbox.unwrap_or_else(|| Arc::new(SandboxService::new()));
+        builder = builder.extension(
+            SandboxWebExtension::new(api).with_frontend_assets(&asset_dirs.sandbox_assets),
+        );
     }
     if config.has_extension("agent") {
         if bot_agent.connections.is_none() && bot_agent.sessions.is_none() {
@@ -346,6 +359,7 @@ pub struct ConsoleAssetDirs {
     pub _upgrade_dir: Option<tempfile::TempDir>,
     pub _bilibili_dir: Option<tempfile::TempDir>,
     pub _qq_dir: Option<tempfile::TempDir>,
+    pub _sandbox_dir: Option<tempfile::TempDir>,
     pub _bot_agent_dir: Option<tempfile::TempDir>,
     pub _bot_flow_dir: Option<tempfile::TempDir>,
     pub _shell_dir: tempfile::TempDir,
@@ -355,6 +369,7 @@ pub struct ConsoleAssetDirs {
     pub upgrade_assets: PathBuf,
     pub bilibili_assets: PathBuf,
     pub qq_assets: PathBuf,
+    pub sandbox_assets: PathBuf,
     pub bot_agent_assets: PathBuf,
     pub bot_flow_assets: PathBuf,
     pub shell_root: PathBuf,
@@ -368,6 +383,7 @@ impl ConsoleAssetDirs {
         include_qq: bool,
         include_agent_connections: bool,
         include_bot_flow: bool,
+        include_sandbox: bool,
     ) -> WebHostResult<Self> {
         let overview_dir = tempfile::tempdir()
             .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
@@ -433,6 +449,18 @@ impl ConsoleAssetDirs {
             (None, PathBuf::new())
         };
 
+        let (sandbox_dir, sandbox_assets) = if include_sandbox {
+            let dir = tempfile::tempdir()
+                .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
+            let assets = materialize_sandbox_assets(dir.path())
+                .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
+            copy_dir(&assets, &overview_assets.join("extensions/sandbox"))
+                .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
+            (Some(dir), assets)
+        } else {
+            (None, PathBuf::new())
+        };
+
         let (bot_agent_dir, bot_agent_assets) = if include_agent_connections {
             let dir = tempfile::tempdir()
                 .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
@@ -465,6 +493,7 @@ impl ConsoleAssetDirs {
             include_qq,
             include_agent_connections,
             include_bot_flow,
+            include_sandbox,
         )
         .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
 
@@ -477,6 +506,7 @@ impl ConsoleAssetDirs {
             upgrade_assets,
             bilibili_assets,
             qq_assets,
+            sandbox_assets,
             bot_agent_assets,
             bot_flow_assets,
             shell_root: shell_dir.path().to_path_buf(),
@@ -486,6 +516,7 @@ impl ConsoleAssetDirs {
             _upgrade_dir: upgrade_dir,
             _bilibili_dir: bilibili_dir,
             _qq_dir: qq_dir,
+            _sandbox_dir: sandbox_dir,
             _bot_agent_dir: bot_agent_dir,
             _bot_flow_dir: bot_flow_dir,
             _shell_dir: shell_dir,
@@ -510,6 +541,7 @@ pub(crate) fn materialize_console_shell(
     include_qq: bool,
     include_agent_connections: bool,
     include_bot_flow: bool,
+    include_sandbox: bool,
 ) -> std::io::Result<()> {
     let index_template = include_str!("../assets/console-shell-overview.html");
     let bootstrap_name = "console-bootstrap.js";
@@ -559,6 +591,7 @@ pub(crate) fn materialize_console_shell(
         ("upgrade", "extensions/upgrade/index.js", include_upgrade),
         ("bilibili", "extensions/bilibili/index.js", include_bilibili),
         ("qq-bot", "extensions/qq-bot/index.js", include_qq),
+        ("sandbox", "extensions/sandbox/index.js", include_sandbox),
         (
             "bot-agent",
             "extensions/bot-agent/index.js",
@@ -628,7 +661,8 @@ mod owner_console_tests {
 
     #[test]
     fn owner_pages_are_materialized_only_for_registered_services() {
-        let dirs = ConsoleAssetDirs::materialize(false, false, false, false, true, true).unwrap();
+        let dirs =
+            ConsoleAssetDirs::materialize(false, false, false, false, true, true, false).unwrap();
         assert!(
             dirs.overview_assets
                 .join("extensions/bot-agent/index.js")
@@ -662,7 +696,8 @@ mod owner_console_tests {
         assert!(ids.contains(&"bot-agent"));
         assert!(ids.contains(&"bot-flow-editor"));
 
-        let dirs = ConsoleAssetDirs::materialize(false, false, false, false, false, false).unwrap();
+        let dirs =
+            ConsoleAssetDirs::materialize(false, false, false, false, false, false, false).unwrap();
         assert!(!dirs.overview_assets.join("extensions/bot-agent").exists());
         assert!(!dirs.overview_assets.join("extensions/bot-flow").exists());
         assert!(dirs.overview_assets.join("trajectory-model.js").is_file());
@@ -671,13 +706,15 @@ mod owner_console_tests {
 
     #[test]
     fn enabled_panel_modules_use_their_materialized_content_versions() {
-        let dirs = ConsoleAssetDirs::materialize(true, false, true, true, true, true).unwrap();
+        let dirs =
+            ConsoleAssetDirs::materialize(true, false, true, true, true, true, true).unwrap();
         let options =
             std::fs::read_to_string(dirs.overview_assets.join("console-options.json")).unwrap();
         for module_path in [
             "extensions/config/index.js",
             "extensions/bilibili/index.js",
             "extensions/qq-bot/index.js",
+            "extensions/sandbox/index.js",
             "extensions/bot-agent/index.js",
             "extensions/bot-flow/index.js",
         ] {
@@ -737,8 +774,9 @@ mod owner_console_tests {
     fn enabled_panel_with_missing_assets_fails_materialization() {
         let root = tempfile::tempdir().unwrap();
         materialize_overview_assets(root.path()).unwrap();
-        let error = materialize_console_shell(root.path(), true, false, false, false, false, false)
-            .unwrap_err();
+        let error =
+            materialize_console_shell(root.path(), true, false, false, false, false, false, false)
+                .unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
     }
 }

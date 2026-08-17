@@ -14,11 +14,12 @@ pub use console_bridge::{
     AgentConnectionConsoleBridge, AgentConnectionRegistryConsoleBridge,
     BILIBILI_MANAGEMENT_SERVICE_ID, BilibiliConsoleBridge, BotAgentConfigConsoleBridge,
     BotFlowConsoleBridge, LocalAgentConsoleBridge, QQ_MANAGEMENT_SERVICE_ID, QqConsoleBridge,
+    SANDBOX_SERVICE_ID, SandboxConsoleBridge,
 };
 pub use delivery_recovery::{
     BOT_REPLY_DELIVERY_RECOVERY_SOURCE_ID, BotReplyDeliveryRecoveryEventSource,
 };
 pub use event_source::{
     QQBOT_GATEWAY_SOURCE_ID, QqGatewayControlHandle, QqGatewayEventSource, QqGatewayHealthHandle,
-    QqGatewayHealthSnapshot,
+    QqGatewayHealthSnapshot, QqInboundObserveHandle,
 };

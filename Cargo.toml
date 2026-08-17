@@ -181,6 +181,7 @@ mutsuki-bot-link-parser = { path = "plugins/bot/crates/mutsuki-bot-link-parser" 
 mutsuki-bot-interaction = { path = "plugins/bot/crates/mutsuki-bot-interaction" }
 mutsuki-bot-state-db = { path = "plugins/bot/crates/mutsuki-bot-state-db" }
 mutsuki-bot-protocol = { path = "plugins/bot/crates/mutsuki-bot-protocol" }
+mutsuki-bot-sandbox = { path = "plugins/bot/crates/mutsuki-bot-sandbox" }
 mutsuki-bot-sdk = { path = "plugins/bot/crates/mutsuki-bot-sdk" }
 mutsuki-bot-service-host-integration = { path = "plugins/bot/crates/mutsuki-bot-service-host-integration" }
 mutsuki-bot-testkit = { path = "plugins/bot/crates/mutsuki-bot-testkit" }
@@ -200,6 +201,7 @@ mutsuki-plugin-bot-media = { path = "plugins/bot/crates/mutsuki-plugin-bot-media
 mutsuki-plugin-bot-mihuashi = { path = "plugins/bot/crates/mutsuki-plugin-bot-mihuashi" }
 mutsuki-plugin-bot-overview-web = { path = "plugins/bot/crates/mutsuki-plugin-bot-overview-web" }
 mutsuki-plugin-bot-qq-web = { path = "plugins/bot/crates/mutsuki-plugin-bot-qq-web" }
+mutsuki-plugin-bot-sandbox-web = { path = "plugins/bot/crates/mutsuki-plugin-bot-sandbox-web" }
 mutsuki-plugin-bot-upgrade-web = { path = "plugins/bot/crates/mutsuki-plugin-bot-upgrade-web" }
 mutsuki-plugin-catalog = { path = "plugins/bot/crates/mutsuki-plugin-catalog" }
 

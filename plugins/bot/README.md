@@ -77,6 +77,8 @@ Console 的库依赖。
   `connection_id`; AgentKit supplies the selected `agent_connection:<id>`.
 - `mutsuki-plugin-bot-agent-web`: authenticated Agent connection management only; event matching
   is edited in the Flow page.
+- `mutsuki-bot-sandbox`: in-memory QQ conversation sandbox and live inbound projection.
+- `mutsuki-plugin-bot-sandbox-web`: WebExtension for simulate/live QQ conversation console.
 - `mutsuki-plugin-bot-adapter-qqbot`: QQBot platform adapter for gateway events and message/media OpenAPI tasks.
 - `mutsuki-bot-service-host-integration`: configured native factories and QQ EventSource bundle.
 - `mutsuki-bot-testkit`: reusable fake QQ HTTP/WebSocket boundary for downstream product E2E.

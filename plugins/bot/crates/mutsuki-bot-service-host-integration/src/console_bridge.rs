@@ -11,12 +11,14 @@ use mutsuki_agent_service_host_integration::{
 };
 use mutsuki_bot_flow::BotFlowRegistry;
 use mutsuki_bot_management::{BilibiliManagementApi, QqBotManagementService};
+use mutsuki_bot_sandbox::{SandboxApi, SandboxService};
 use mutsuki_plugin_bot_agent::{BOT_AGENT_CONFIG_SERVICE_ID, BotAgentConfigHandle};
 use mutsuki_plugin_bot_event_router::BOT_FLOW_REGISTRY_SERVICE_ID;
 use mutsuki_service_runtime::{ServiceRuntime, ServiceRuntimeHandle};
 
 pub const BILIBILI_MANAGEMENT_SERVICE_ID: &str = "mutsuki.bot.bilibili.management";
 pub const QQ_MANAGEMENT_SERVICE_ID: &str = "mutsuki.bot.qq.management";
+pub use mutsuki_bot_sandbox::SANDBOX_SERVICE_ID;
 
 pub struct BilibiliConsoleBridge;
 
@@ -143,6 +145,70 @@ impl QqConsoleBridge {
         runtime: &ServiceRuntime,
     ) -> Option<Arc<dyn mutsuki_bot_management::QqBotManagementApi>> {
         Some(Arc::new(GenerationAwareQqManagement {
+            runtime: runtime.handle(),
+        }))
+    }
+}
+
+pub struct SandboxConsoleBridge;
+
+struct GenerationAwareSandbox {
+    runtime: ServiceRuntimeHandle,
+}
+
+#[async_trait]
+impl SandboxApi for GenerationAwareSandbox {
+    fn subscribe_changes(&self) -> Option<mutsuki_bot_sandbox::SandboxChangeSubscription> {
+        self.service().ok()?.subscribe_changes()
+    }
+
+    async fn snapshot(
+        &self,
+        query: &str,
+    ) -> Result<mutsuki_bot_sandbox::SandboxSnapshot, mutsuki_bot_sandbox::SandboxError> {
+        self.service()?.snapshot(query).await
+    }
+
+    async fn write(
+        &self,
+        actor_id: &str,
+        request: mutsuki_bot_sandbox::SandboxWriteRequest,
+    ) -> Result<mutsuki_bot_sandbox::SandboxWriteResult, mutsuki_bot_sandbox::SandboxError> {
+        self.service()?.write(actor_id, request).await
+    }
+
+    async fn messages(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Vec<mutsuki_bot_sandbox::SandboxMessageView>, mutsuki_bot_sandbox::SandboxError>
+    {
+        self.service()?.messages(conversation_id).await
+    }
+
+    fn observe_event(&self, event: mutsuki_bot_protocol::BotEvent) {
+        if let Ok(service) = self.service() {
+            service.observe_event(event);
+        }
+    }
+}
+
+impl GenerationAwareSandbox {
+    fn service(&self) -> Result<Arc<SandboxService>, mutsuki_bot_sandbox::SandboxError> {
+        self.runtime.host_service(SANDBOX_SERVICE_ID).map_err(|_| {
+            mutsuki_bot_sandbox::SandboxError::new(
+                "sandbox.owner_unavailable",
+                "沙盒服务当前不可用",
+            )
+        })
+    }
+}
+
+impl SandboxConsoleBridge {
+    pub fn get(runtime: &ServiceRuntime) -> Option<Arc<dyn SandboxApi>> {
+        runtime
+            .host_service::<SandboxService>(SANDBOX_SERVICE_ID)
+            .ok()?;
+        Some(Arc::new(GenerationAwareSandbox {
             runtime: runtime.handle(),
         }))
     }

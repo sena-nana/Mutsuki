@@ -16,6 +16,7 @@ mutsuki-bot-flow.workspace = true
 mutsuki-config-service.workspace = true
 mutsuki-bot-interaction.workspace = true
 mutsuki-bot-management.workspace = true
+mutsuki-bot-sandbox.workspace = true
 mutsuki-bot-state-db.workspace = true
 mutsuki-agent-contracts.workspace = true
 mutsuki-agent-client.workspace = true
