@@ -103,14 +103,18 @@ function enumOptionLabel(opt) {
 function restartPolicyHint(node) {
   switch (node.restart_policy) {
     case "plugin_reload":
-      return "更改后将重载插件";
+      return "保存后会重载对应功能";
     case "application_restart":
-      return "更改后需要重启应用";
+      return "保存后需要重启应用";
     case "host_restart":
-      return "更改后需要重启宿主";
+      return "保存后需要重启服务";
     default:
       return "";
   }
+}
+
+function formRestartHints(nodes) {
+  return [...new Set(nodes.map(restartPolicyHint).filter(Boolean))];
 }
 
 function isStackedField(node) {
@@ -227,25 +231,12 @@ function appendFieldChrome(label, node) {
   const title = document.createElement("strong");
   title.textContent = node.title?.default || node.key;
   if (node.presentation?.unit) title.textContent += ` (${node.presentation.unit})`;
-  if (node.presentation?.format) {
-    const fmt = document.createElement("span");
-    fmt.className = "settings-row__hint";
-    fmt.textContent = ` · ${node.presentation.format}`;
-    title.appendChild(fmt);
-  }
   label.appendChild(title);
   if (node.description?.default) {
     const help = document.createElement("div");
     help.className = "settings-row__hint";
     help.textContent = node.description.default;
     label.appendChild(help);
-  }
-  const restart = restartPolicyHint(node);
-  if (restart) {
-    const hint = document.createElement("div");
-    hint.className = "settings-row__hint";
-    hint.textContent = restart;
-    label.appendChild(hint);
   }
 }
 
@@ -549,12 +540,7 @@ function collectFormGroups(schema) {
   for (const [id, grouped] of buckets) {
     groups.push({ title: id, nodes: grouped });
   }
-  if (ungrouped.length) {
-    groups.push({
-      title: schema.title?.default || "基本",
-      nodes: ungrouped,
-    });
-  }
+  if (ungrouped.length) groups.push({ title: "", nodes: ungrouped });
   return groups;
 }
 
@@ -563,9 +549,11 @@ function appendGroupCard(parent, title, nodes, draft, onChange) {
   if (!visible.length) return;
   const card = document.createElement("section");
   card.className = "card card--outlined";
-  const heading = document.createElement("h2");
-  heading.textContent = title;
-  card.appendChild(heading);
+  if (title) {
+    const heading = document.createElement("h2");
+    heading.textContent = title;
+    card.appendChild(heading);
+  }
   for (const node of visible) {
     appendSettingsRow(card, node, draft, node.key, onChange);
   }
@@ -575,39 +563,32 @@ function appendGroupCard(parent, title, nodes, draft, onChange) {
 function buildForm(schema, draft, onChange) {
   const root = document.createElement("div");
   root.className = "config-form";
-  for (const group of collectFormGroups(schema)) {
+  const groups = collectFormGroups(schema);
+  const visible = groups.flatMap((group) => group.nodes.filter((node) => isVisible(node, draft)));
+  for (const text of formRestartHints(visible)) {
+    const hint = document.createElement("p");
+    hint.className = "settings-row__hint";
+    hint.textContent = text;
+    root.appendChild(hint);
+  }
+  for (const group of groups) {
     appendGroupCard(root, group.title, group.nodes, draft, onChange);
   }
   return root;
 }
 
-function appendEditorCard(parent, schema, editor) {
-  const card = document.createElement("section");
-  card.className = "card card--outlined";
-  const titleText = schema?.title?.default;
-  if (titleText) {
-    const heading = document.createElement("h2");
-    heading.textContent = titleText;
-    card.appendChild(heading);
-  }
-  if (schema?.description?.default) {
-    const hint = document.createElement("div");
-    hint.className = "settings-row__hint";
-    hint.textContent = schema.description.default;
-    card.appendChild(hint);
-  }
+function appendEditorCard(parent, editor) {
   const actions = document.createElement("div");
   actions.className = "actions";
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "primary";
+  button.className = "ghost";
   button.textContent = editor.label;
   button.onclick = () => {
     location.hash = editor.activityId ? `#/${editor.activityId}/${editor.pageId}` : `#/${editor.pageId}`;
   };
   actions.appendChild(button);
-  card.appendChild(actions);
-  parent.appendChild(card);
+  parent.appendChild(actions);
 }
 
 /** Embeddable config panel (no outer console shell). Used by the unified overview shell. */
@@ -676,7 +657,7 @@ export function mountConfigPanel(host, rpc, events, fixedProviderId = null) {
     if (!state.selected) {
       const card = document.createElement("section");
       card.className = "card";
-      card.innerHTML = "<h2>功能配置</h2>";
+      card.innerHTML = "<h2>配置</h2>";
       const list = document.createElement("div");
       list.className = "provider-list";
       for (const provider of state.providers) {
@@ -710,7 +691,7 @@ export function mountConfigPanel(host, rpc, events, fixedProviderId = null) {
     }
 
     const editor = configEditorStore().get(state.selected);
-    if (editor) appendEditorCard(root, state.schema, editor);
+    if (editor) appendEditorCard(root, editor);
     const replaceForm = editor?.mode === "replace";
 
     if (!replaceForm) {
@@ -867,7 +848,7 @@ function createConsoleApp(rpc) {
         <div class="page-header">
           <div>
             <h1>配置</h1>
-            <p>管理账号、模型与回复策略</p>
+            <p>登录、模型与回复</p>
           </div>
         </div>
         <section id="content" class="page-body"></section>

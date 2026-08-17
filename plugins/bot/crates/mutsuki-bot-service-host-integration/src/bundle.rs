@@ -374,7 +374,7 @@ impl QqManagementProvider for OwnerBackedQqManagementProvider {
         match action {
             QqManagementAction::AccountSetEnabled { .. } => Err(QqManagementError {
                 code: "configuration.required".into(),
-                message: "请在 QQ Bot 配置页启用或停用账号".into(),
+                message: "请在配置里启用或停用账号".into(),
             }),
             QqManagementAction::AccountHealthCheck { account_id } => {
                 self.require_account(account_id)?;

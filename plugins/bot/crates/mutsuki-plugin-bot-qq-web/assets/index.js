@@ -258,7 +258,7 @@ export function mountQqBotPanel(host, rpc, events, options = {}) {
     });
     root.querySelectorAll("section, article").forEach((node) => node.remove());
     if (state.ownerUnavailable) {
-      root.append(element("p", "muted", "尚未启用 QQ Bot，请到配置页填写登录信息。"));
+      root.append(element("p", "muted", "尚未登录 QQ，请到配置里填写账号。"));
       return;
     }
     (state.snapshot?.accounts || []).forEach((account) => {
@@ -388,7 +388,7 @@ export function mountQqBotPanel(host, rpc, events, options = {}) {
         if (root.contains(document.activeElement) && document.activeElement?.matches?.("[data-draft-field]")) {
           status.textContent = "正在编辑，数据将在离开输入框后更新";
         } else {
-          status.textContent = state.ownerUnavailable ? "QQ Bot 尚未启用，请到配置页完成登录" : "";
+          status.textContent = state.ownerUnavailable ? "尚未登录 QQ，请到配置里填写账号" : "";
           render();
         }
       } catch (error) {
@@ -421,7 +421,7 @@ export function mountQqBotPanel(host, rpc, events, options = {}) {
     if (!event.target?.matches?.("[data-draft-field]")) return;
     setTimeout(() => {
       if (!disposed && !(root.contains(document.activeElement) && document.activeElement?.matches?.("[data-draft-field]"))) {
-        status.textContent = state.ownerUnavailable ? "QQ Bot 尚未启用，请到配置页完成登录" : "";
+        status.textContent = state.ownerUnavailable ? "尚未登录 QQ，请到配置里填写账号" : "";
         render();
       }
     }, 0);
@@ -475,7 +475,7 @@ export default {
       providerId: QQ_PROVIDER_ID,
       activityId: "bot",
       pageId: "qq-bot.page",
-      label: "打开 QQ 连接",
+      label: "查看连接状态",
       mode: "supplement",
     });
     ctx.navigation.register({

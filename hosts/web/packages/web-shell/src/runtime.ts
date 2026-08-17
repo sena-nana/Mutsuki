@@ -507,7 +507,6 @@ function mountWebUiSettings(
     <div class="settings-row">
       <div class="settings-row__label">
         <strong>主题</strong>
-        <div class="settings-row__hint">选择 WebUI 的显示主题。</div>
       </div>
       <div class="settings-row__control segmented" role="group" aria-label="主题">
         <button type="button" data-theme="system">跟随系统</button>

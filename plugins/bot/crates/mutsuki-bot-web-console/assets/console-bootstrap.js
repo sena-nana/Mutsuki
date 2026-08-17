@@ -54,9 +54,9 @@ function mountLogin(message = "") {
           Mutsuki
         </div>
         <h1 id="console-login-title">登录管理台</h1>
-        <p class="console-login__description">输入产品配置的访问令牌。</p>
+        <p class="console-login__description">输入启动时设置的管理口令。</p>
         <label class="console-login__field">
-          <span>访问令牌</span>
+          <span>管理口令</span>
           <input
             name="token"
             type="password"
@@ -89,7 +89,7 @@ function mountLogin(message = "") {
     try {
       await authenticate(token);
     } catch (error) {
-      mountLogin(error?.message === "auth_failed" ? "访问令牌无效，请重试。" : "控制台加载失败，请重试。");
+      mountLogin(error?.message === "auth_failed" ? "口令不正确，请重试。" : "控制台加载失败，请重试。");
     }
   });
 }

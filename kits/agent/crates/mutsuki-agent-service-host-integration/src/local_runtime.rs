@@ -30,7 +30,7 @@ use mutsuki_agent_contracts::{
 };
 use mutsuki_agent_runtime::SessionPersistence;
 use mutsuki_config_service::{
-    ConfigConstraints, ConfigDescriptor, ConfigKey, ConfigMutability, ConfigNode,
+    ConfigConstraints, ConfigDescriptor, ConfigExpr, ConfigKey, ConfigMutability, ConfigNode,
     ConfigPresentation, ConfigProviderId, ConfigScope, ConfigValue, ConfigValueType, LocalizedText,
     RestartPolicy, SecretState,
 };
@@ -118,13 +118,13 @@ pub fn local_agent_config_descriptor() -> ConfigDescriptor {
         provider_id: ConfigProviderId::new(LOCAL_AGENT_CONFIG_PROVIDER_ID),
         schema_version: 1,
         value_version: 1,
-        title: LocalizedText::new("Agent"),
-        description: Some(LocalizedText::new("配置默认助手使用的模型服务")),
+        title: LocalizedText::new("模型"),
+        description: None,
         scopes: vec![ConfigScope::global()],
         root: ConfigNode {
             key: ConfigKey::new("agent"),
             value_type: ConfigValueType::Object,
-            title: LocalizedText::new("Agent"),
+            title: LocalizedText::new("模型"),
             description: None,
             default_value: None,
             constraints: ConfigConstraints::default(),
@@ -134,25 +134,28 @@ pub fn local_agent_config_descriptor() -> ConfigDescriptor {
             mutability: ConfigMutability::ReadWrite,
             restart_policy: RestartPolicy::PluginReload,
             children: vec![
-                local_agent_field("enabled", "启用 Agent", ConfigValueType::Bool, false),
-                local_agent_field(
+                local_agent_field("enabled", "启用", ConfigValueType::Bool, false),
+                gated_field(
                     "endpoint",
                     "接口地址",
                     ConfigValueType::String { multiline: false },
-                    true,
+                    Some("兼容 OpenAI 的接口地址。"),
+                    Some("https://api.openai.com/v1"),
                 ),
-                local_agent_field(
+                gated_field(
                     "model",
-                    "模型",
+                    "模型名称",
                     ConfigValueType::String { multiline: false },
-                    true,
+                    Some("服务商提供的模型名称。"),
+                    None,
                 ),
-                local_agent_secret_field(),
-                local_agent_field(
+                when_enabled(local_agent_secret_field()),
+                gated_field(
                     "assistant_instruction",
-                    "助手指令",
+                    "系统提示",
                     ConfigValueType::String { multiline: true },
-                    true,
+                    Some("助手的默认人设和规则。"),
+                    None,
                 ),
             ],
         },
@@ -211,6 +214,26 @@ fn local_agent_field(
     }
 }
 
+fn gated_field(
+    key: &str,
+    title: &str,
+    value_type: ConfigValueType,
+    description: Option<&str>,
+    placeholder: Option<&str>,
+) -> ConfigNode {
+    let mut node = when_enabled(local_agent_field(key, title, value_type, true));
+    node.description = description.map(LocalizedText::new);
+    node.presentation.placeholder = placeholder.map(str::to_owned);
+    node
+}
+
+fn when_enabled(mut node: ConfigNode) -> ConfigNode {
+    node.enabled_if = Some(ConfigExpr::Field {
+        key: ConfigKey::new("enabled"),
+    });
+    node
+}
+
 fn local_agent_secret_field() -> ConfigNode {
     let mut node = local_agent_field(
         LOCAL_AGENT_API_KEY_FIELD,
@@ -218,7 +241,6 @@ fn local_agent_secret_field() -> ConfigNode {
         ConfigValueType::Secret,
         true,
     );
-    node.description = Some(LocalizedText::new("保存后不会再次显示"));
     node.presentation.secret = true;
     node
 }

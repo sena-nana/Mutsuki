@@ -28,52 +28,93 @@ pub const BOT_AGENT_MAX_TIMEOUT_MS: u64 = 600_000;
 )]
 #[config(
     provider_id = "mutsuki.plugin.bot.agent",
-    title = "Bot Agent",
+    title = "回复",
     schema_version = 1,
     value_version = 1
 )]
 #[serde(default, deny_unknown_fields)]
 pub struct BotAgentConfig {
     #[config(
-        title = "启用 Bot Agent",
-        description = "允许通过已授权的 Bot 会话提交 Agent 请求",
+        title = "启用",
         default = false,
         restart = "plugin_reload",
-        group = "基本"
+        group = "对话"
     )]
     pub enabled: bool,
     #[config(
-        title = "Agent 连接",
-        description = "选择由 Agent owner catalog 管理的连接标识；Bot 不保存 endpoint 或认证配置",
-        default = "",
-        max_length = 128,
-        restart = "plugin_reload",
-        group = "基本",
-        enabled_if = "enabled"
-    )]
-    pub connection_id: String,
-    #[config(
-        title = "默认 Agent 配置",
-        description = "未在会话策略中指定时使用的 Agent 配置标识；留空表示必须由会话策略指定",
-        default = "",
-        max_length = 256,
-        restart = "plugin_reload",
-        group = "基本",
-        enabled_if = "enabled"
-    )]
-    pub default_profile_id: String,
-    #[config(
-        title = "会话作用域",
-        description = "选择同一对话共享 Agent 会话，或按对话中的用户隔离",
+        title = "会话范围",
         default = "shared_conversation",
         restart = "plugin_reload",
-        group = "基本",
+        group = "对话",
         enabled_if = "enabled"
     )]
     pub session_scope: String,
     #[config(
-        title = "语音转写",
-        description = "在 Agent 执行前转写输入音频",
+        title = "模型连接",
+        description = "本机模型一般填 local。",
+        default = "",
+        max_length = 128,
+        restart = "plugin_reload",
+        group = "对话",
+        enabled_if = "enabled"
+    )]
+    pub connection_id: String,
+    #[config(
+        title = "默认配置",
+        description = "会话未指定时使用。留空则必须在会话里指定。",
+        default = "",
+        max_length = 256,
+        restart = "plugin_reload",
+        group = "对话",
+        enabled_if = "enabled"
+    )]
+    pub default_profile_id: String,
+    #[config(
+        title = "发送方式",
+        default = "final_only",
+        restart = "plugin_reload",
+        group = "发送",
+        enabled_if = "enabled"
+    )]
+    pub streaming: String,
+    #[config(
+        title = "单条上限",
+        description = "超出会拆成多条发送。",
+        default = 1800,
+        min = 4,
+        max = 1800,
+        unit = "字节",
+        restart = "plugin_reload",
+        group = "发送",
+        enabled_if = "enabled"
+    )]
+    pub max_message_bytes: usize,
+    #[config(
+        title = "并行对话",
+        description = "同时处理的对话数。",
+        default = 1,
+        min = 1,
+        max = 64,
+        restart = "plugin_reload",
+        group = "发送",
+        enabled_if = "enabled"
+    )]
+    pub max_concurrency: usize,
+    #[config(
+        title = "等待超时",
+        description = "单轮回复最长等待时间。",
+        default = 120000,
+        min = 1,
+        max = 600000,
+        unit = "毫秒",
+        restart = "plugin_reload",
+        group = "发送",
+        enabled_if = "enabled"
+    )]
+    pub timeout_ms: u64,
+    #[config(
+        title = "识别语音",
+        description = "收到语音时先转成文字。",
         default = false,
         restart = "plugin_reload",
         group = "语音",
@@ -81,8 +122,8 @@ pub struct BotAgentConfig {
     )]
     pub stt_enabled: bool,
     #[config(
-        title = "语音回复",
-        description = "在 Agent 执行后合成回复音频",
+        title = "语音播报",
+        description = "把文字回复合成语音。",
         default = false,
         restart = "plugin_reload",
         group = "语音",
@@ -90,8 +131,7 @@ pub struct BotAgentConfig {
     )]
     pub tts_enabled: bool,
     #[config(
-        title = "语音回复策略",
-        description = "仅文本、文本与语音或仅语音",
+        title = "回复内容",
         default = "text_only",
         restart = "plugin_reload",
         group = "语音",
@@ -99,8 +139,8 @@ pub struct BotAgentConfig {
     )]
     pub speech_reply_policy: String,
     #[config(
-        title = "STT Provider",
-        description = "可选的语音转写 provider selector",
+        title = "识别服务",
+        description = "留空使用默认服务。",
         default = "",
         restart = "plugin_reload",
         group = "语音",
@@ -109,8 +149,8 @@ pub struct BotAgentConfig {
     )]
     pub stt_selector_id: String,
     #[config(
-        title = "TTS Provider",
-        description = "可选的语音合成 provider selector",
+        title = "合成服务",
+        description = "留空使用默认服务。",
         default = "",
         restart = "plugin_reload",
         group = "语音",
@@ -118,51 +158,6 @@ pub struct BotAgentConfig {
         visible_if = "tts_enabled"
     )]
     pub tts_selector_id: String,
-    #[config(
-        title = "回复方式",
-        description = "选择发送完整回复，或按长度切分后连续发送",
-        default = "final_only",
-        restart = "plugin_reload",
-        group = "运行",
-        enabled_if = "enabled"
-    )]
-    pub streaming: String,
-    #[config(
-        title = "会话并行数",
-        description = "Agent bridge 同时处理的会话数量",
-        default = 1,
-        min = 1,
-        max = 64,
-        unit = "个",
-        restart = "plugin_reload",
-        group = "运行",
-        enabled_if = "enabled"
-    )]
-    pub max_concurrency: usize,
-    #[config(
-        title = "单轮响应超时",
-        description = "单轮 Agent 请求允许占用的最长时间",
-        default = 120000,
-        min = 1,
-        max = 600000,
-        unit = "ms",
-        restart = "plugin_reload",
-        group = "运行",
-        enabled_if = "enabled"
-    )]
-    pub timeout_ms: u64,
-    #[config(
-        title = "单条回复最大长度",
-        description = "超出此长度的文本会被按 UTF-8 字符边界拆分",
-        default = 1800,
-        min = 4,
-        max = 1800,
-        unit = "bytes",
-        restart = "plugin_reload",
-        group = "运行",
-        enabled_if = "enabled"
-    )]
-    pub max_message_bytes: usize,
 }
 
 impl Default for BotAgentConfig {
@@ -422,7 +417,7 @@ mod tests {
                 .iter()
                 .map(|group| group.id.as_str())
                 .collect::<Vec<_>>(),
-            ["基本", "语音", "运行"]
+            ["对话", "发送", "语音"]
         );
         let field = |key: &str| {
             schema
@@ -453,7 +448,7 @@ mod tests {
         );
         assert_eq!(
             field("connection_id").presentation.group.as_deref(),
-            Some("基本")
+            Some("对话")
         );
         assert_eq!(
             field("stt_selector_id").presentation.group.as_deref(),
@@ -461,7 +456,7 @@ mod tests {
         );
         assert_eq!(
             field("streaming").presentation.group.as_deref(),
-            Some("运行")
+            Some("发送")
         );
         assert!(field("stt_selector_id").visibility.is_some());
         assert!(field("connection_id").enabled_if.is_some());

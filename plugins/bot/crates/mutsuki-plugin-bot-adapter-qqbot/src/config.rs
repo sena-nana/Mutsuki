@@ -305,15 +305,13 @@ pub fn qq_config_descriptor(provider_id: &str) -> ConfigDescriptor {
         provider_id: ConfigProviderId::new(provider_id),
         schema_version: 3,
         value_version: 3,
-        title: LocalizedText::new("QQ Bot"),
-        description: Some(LocalizedText::new(
-            "用开放平台 App ID 和 Client Secret 登录一个 QQ Bot",
-        )),
+        title: LocalizedText::new("QQ 登录"),
+        description: None,
         scopes: vec![ConfigScope::global()],
         root: ConfigNode {
             key: ConfigKey::new("qq"),
             value_type: ConfigValueType::Object,
-            title: LocalizedText::new("QQ Bot"),
+            title: LocalizedText::new("QQ 登录"),
             description: None,
             default_value: None,
             constraints: ConfigConstraints::default(),
@@ -323,23 +321,19 @@ pub fn qq_config_descriptor(provider_id: &str) -> ConfigDescriptor {
             mutability: ConfigMutability::ReadWrite,
             restart_policy: RestartPolicy::PluginReload,
             children: vec![
-                bool_node(
-                    "enabled",
-                    "启用 QQ Bot",
-                    Some("启用后才会连接 QQ Gateway；关闭时不会校验完整登录信息"),
-                ),
-                app_id_node(),
-                secret_node(QQ_CLIENT_SECRET_FIELD, "Client Secret"),
-                bool_node(
+                bool_node("enabled", "启用", Some("关闭后不会连接 QQ。")),
+                when_enabled(app_id_node()),
+                when_enabled(secret_node(QQ_CLIENT_SECRET_FIELD, "AppSecret")),
+                when_enabled(bool_node(
                     QQ_RECEIVE_PRIVATE_AND_GROUP_FIELD,
-                    "接收私聊和群消息",
-                    Some("对应开放平台群/C2C 事件 intent"),
-                ),
-                bool_node(
+                    "私聊和群聊",
+                    None,
+                )),
+                when_enabled(bool_node(
                     QQ_RECEIVE_GUILD_FIELD,
-                    "接收频道消息",
-                    Some("对应开放平台频道 @ 消息 intent"),
-                ),
+                    "频道消息",
+                    Some("只接收 @ 到机器人的消息。"),
+                )),
                 hidden_object_node("runtime_config", "QQ Runtime Config"),
             ],
         },
@@ -435,9 +429,7 @@ fn app_id_node() -> ConfigNode {
             ..ConfigConstraints::default()
         },
     );
-    node.description = Some(LocalizedText::new(
-        "QQ 开放平台机器人 AppID；启用前必须填写",
-    ));
+    node.description = Some(LocalizedText::new("在开放平台机器人详情中查看。"));
     node
 }
 
@@ -451,10 +443,14 @@ fn secret_node(key: &str, title: &str) -> ConfigNode {
             ..ConfigConstraints::default()
         },
     );
-    node.description = Some(LocalizedText::new(
-        "QQ 开放平台 Client Secret。保存后不会再次显示",
-    ));
     node.presentation.secret = true;
+    node
+}
+
+fn when_enabled(mut node: ConfigNode) -> ConfigNode {
+    node.enabled_if = Some(ConfigExpr::Field {
+        key: ConfigKey::new("enabled"),
+    });
     node
 }
 
@@ -562,6 +558,8 @@ mod tests {
                 "runtime_config",
             ]
         );
+        assert_eq!(descriptor.title.default, "QQ 登录");
+        assert!(descriptor.description.is_none());
     }
 
     #[test]

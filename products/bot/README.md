@@ -48,7 +48,7 @@ cargo run --locked -p mutsuki-bot
 - 鉴权 Console 固定监听 `127.0.0.1:8787`。
 
 旧 `local.toml`、旧 bootstrap、旧 SQLite 和旧 secret 不读取、不迁移；升级后需在新实例中重新
-配置。QQ 登录、模型接口和回复策略只在配置页填写；Bot 页只显示连接、投递和会话。系统不会
+配置。QQ 登录、模型和回复只在配置页填写；Bot 页只显示连接、投递和会话。系统不会
 自动生成 Flow。
 
 已有 document 永不被种子覆盖。产品插件选择、WebExtension 选择以及各 owner 配置均保存到

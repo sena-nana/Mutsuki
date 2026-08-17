@@ -87,13 +87,33 @@ fn config_navigation_item(provider_id: &str) -> ConfigNavigationItem {
     ConfigNavigationItem {
         provider_id: provider_id.to_string(),
         label: match provider_id {
-            "mutsuki.product" | "product" => Some("本机工作区".into()),
+            "mutsuki.product" | "product" => Some("工作区".into()),
             "mutsuki.bot.adapter.qqbot" => Some("QQ 登录".into()),
-            "mutsuki.agent.runtime.local" => Some("Agent 模型".into()),
-            "mutsuki.plugin.bot.agent" => Some("回复策略".into()),
+            "mutsuki.agent.runtime.local" => Some("模型".into()),
+            "mutsuki.plugin.bot.agent" => Some("回复".into()),
             _ => None,
         },
     }
+}
+
+fn config_navigation_groups(primary: &str) -> [ConfigNavigationGroup; 3] {
+    [
+        ConfigNavigationGroup {
+            label: None,
+            items: vec![config_navigation_item(primary)],
+        },
+        ConfigNavigationGroup {
+            label: Some("接入".into()),
+            items: vec![config_navigation_item("mutsuki.bot.adapter.qqbot")],
+        },
+        ConfigNavigationGroup {
+            label: Some("助手".into()),
+            items: vec![
+                config_navigation_item("mutsuki.agent.runtime.local"),
+                config_navigation_item("mutsuki.plugin.bot.agent"),
+            ],
+        },
+    ]
 }
 
 impl WebConsoleConfig {
@@ -235,22 +255,7 @@ pub fn build_console_host_with_agent(
             extension = extension.with_visible_providers(config.config_provider_ids.clone());
         }
         if let Some(primary) = &config.primary_config_provider_id {
-            let plugin_items = config
-                .config_provider_ids
-                .iter()
-                .filter(|provider| *provider != primary)
-                .map(|provider| config_navigation_item(provider))
-                .collect();
-            extension = extension.with_navigation_groups([
-                ConfigNavigationGroup {
-                    label: None,
-                    items: vec![config_navigation_item(primary)],
-                },
-                ConfigNavigationGroup {
-                    label: Some("接入".into()),
-                    items: plugin_items,
-                },
-            ]);
+            extension = extension.with_navigation_groups(config_navigation_groups(primary));
         }
         builder = builder.extension(extension);
     }
@@ -684,7 +689,7 @@ mod owner_console_tests {
     fn config_navigation_labels_separate_setup_from_runtime_pages() {
         assert_eq!(
             config_navigation_item("mutsuki.product").label.as_deref(),
-            Some("本机工作区")
+            Some("工作区")
         );
         assert_eq!(
             config_navigation_item("mutsuki.bot.adapter.qqbot")
@@ -696,13 +701,30 @@ mod owner_console_tests {
             config_navigation_item("mutsuki.agent.runtime.local")
                 .label
                 .as_deref(),
-            Some("Agent 模型")
+            Some("模型")
         );
         assert_eq!(
             config_navigation_item("mutsuki.plugin.bot.agent")
                 .label
                 .as_deref(),
-            Some("回复策略")
+            Some("回复")
+        );
+    }
+
+    #[test]
+    fn config_navigation_groups_split_access_and_assistant() {
+        let groups = config_navigation_groups("mutsuki.product");
+        assert_eq!(groups[0].items[0].label.as_deref(), Some("工作区"));
+        assert_eq!(groups[1].label.as_deref(), Some("接入"));
+        assert_eq!(groups[1].items[0].label.as_deref(), Some("QQ 登录"));
+        assert_eq!(groups[2].label.as_deref(), Some("助手"));
+        assert_eq!(
+            groups[2]
+                .items
+                .iter()
+                .filter_map(|item| item.label.as_deref())
+                .collect::<Vec<_>>(),
+            ["模型", "回复"]
         );
     }
 
