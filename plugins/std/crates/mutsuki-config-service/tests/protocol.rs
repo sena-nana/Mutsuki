@@ -14,6 +14,18 @@ struct ExampleConfig {
     mode: String,
 }
 
+#[derive(MutsukiConfig)]
+#[config(provider_id = "example.grouped", title = "Grouped")]
+#[allow(dead_code)]
+struct GroupedExampleConfig {
+    #[config(title = "Name", group = "basic")]
+    name: String,
+    #[config(title = "Mode", group = "basic")]
+    mode: String,
+    #[config(title = "Extra")]
+    extra: String,
+}
+
 fn value(name: &str, mode: &str) -> ConfigValue {
     ConfigValue::Object(BTreeMap::from([
         ("name".into(), ConfigValue::String(name.into())),
@@ -44,6 +56,27 @@ fn derive_schema_round_trips_from_the_protocol_owner() {
     let encoded = rmp_serde::to_vec_named(&schema).unwrap();
     let decoded: ConfigDescriptor = rmp_serde::from_slice(&encoded).unwrap();
     assert_eq!(decoded, schema);
+}
+
+#[test]
+fn derive_schema_emits_unique_groups_in_first_seen_order() {
+    let schema = GroupedExampleConfig::schema();
+    assert_eq!(schema.groups.len(), 1);
+    assert_eq!(schema.groups[0].id, "basic");
+    assert_eq!(schema.groups[0].title, LocalizedText::new("basic"));
+    assert_eq!(schema.groups[0].order, 0);
+
+    let child = |key: &str| {
+        schema
+            .root
+            .children
+            .iter()
+            .find(|node| node.key.as_str() == key)
+            .unwrap()
+    };
+    assert_eq!(child("name").presentation.group.as_deref(), Some("basic"));
+    assert_eq!(child("mode").presentation.group.as_deref(), Some("basic"));
+    assert_eq!(child("extra").presentation.group, None);
 }
 
 #[test]

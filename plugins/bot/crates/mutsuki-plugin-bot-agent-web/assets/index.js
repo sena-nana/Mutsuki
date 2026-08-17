@@ -213,6 +213,10 @@ export async function mountAgentConnectionsPanel(el, rpc) {
   await Promise.all([refresh(), refreshSessions()]);
 }
 
+function registerConfigEditor(entry) {
+  (globalThis.__mutsukiConfigEditors ??= new Map()).set(entry.providerId, entry);
+}
+
 export default {
   id: "bot-agent",
   setup(ctx) {
@@ -220,6 +224,20 @@ export default {
       id: "bot-agent.page", path: "/agent", title: "Agent",
       component: { mount: (el) => mountAgentConnectionsPanel(el, ctx.rpc) },
       requiredCapability: "runtime.read",
+    });
+    registerConfigEditor({
+      providerId: "mutsuki.agent.runtime.local",
+      activityId: "bot",
+      pageId: "bot-agent.page",
+      label: "打开连接管理",
+      mode: "supplement",
+    });
+    registerConfigEditor({
+      providerId: "mutsuki.plugin.bot.agent",
+      activityId: "bot",
+      pageId: "bot-agent.page",
+      label: "打开 Agent",
+      mode: "supplement",
     });
     ctx.navigation.register({
       id: "bot-agent.nav", activityId: "bot", pageId: "bot-agent.page", label: "Agent", order: 30,

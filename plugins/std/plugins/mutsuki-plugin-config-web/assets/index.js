@@ -10,6 +10,23 @@ export function registerConfigRenderer(format, renderer) {
   rendererRegistry.set(String(format), renderer);
 }
 
+function configEditorStore() {
+  return (globalThis.__mutsukiConfigEditors ??= new Map());
+}
+
+export function registerConfigEditor(entry) {
+  if (!entry?.providerId || !entry?.pageId) {
+    throw new Error("registerConfigEditor requires providerId and pageId");
+  }
+  configEditorStore().set(entry.providerId, {
+    providerId: entry.providerId,
+    activityId: entry.activityId || "",
+    pageId: entry.pageId,
+    label: entry.label || "打开管理界面",
+    mode: entry.mode === "replace" ? "replace" : "supplement",
+  });
+}
+
 function deepEqual(a, b) {
   return JSON.stringify(a) === JSON.stringify(b);
 }
@@ -57,6 +74,57 @@ function isVisible(node, draft) {
   } catch {
     return true;
   }
+}
+
+function isEnabled(node, draft) {
+  if (node.mutability === "read_only" || node.mutability === "computed") return false;
+  if (!node.enabled_if) return true;
+  try {
+    return evalConfigExpr(node.enabled_if, draft);
+  } catch {
+    return true;
+  }
+}
+
+function sortNodes(nodes) {
+  return nodes
+    .map((node, index) => ({ node, index }))
+    .sort((a, b) => {
+      const order = (a.node.presentation?.order ?? 0) - (b.node.presentation?.order ?? 0);
+      return order !== 0 ? order : a.index - b.index;
+    })
+    .map((item) => item.node);
+}
+
+function enumOptionLabel(opt) {
+  return opt.label?.default || opt.title?.default || opt.value;
+}
+
+function restartPolicyHint(node) {
+  switch (node.restart_policy) {
+    case "plugin_reload":
+      return "更改后将重载插件";
+    case "application_restart":
+      return "更改后需要重启应用";
+    case "host_restart":
+      return "更改后需要重启宿主";
+    default:
+      return "";
+  }
+}
+
+function isStackedField(node) {
+  const kind = node.value_type?.kind;
+  return kind === "object" || kind === "array" || kind === "map" || !!node.value_type?.multiline;
+}
+
+function applyEnabledState(el, enabled) {
+  if (enabled || !el) return el;
+  if (el.matches?.("input, select, textarea, button")) el.disabled = true;
+  el.querySelectorAll?.("input, select, textarea, button").forEach((node) => {
+    node.disabled = true;
+  });
+  return el;
 }
 
 function normalizeProviders(list) {
@@ -155,29 +223,62 @@ function draftToCandidate(draft, schema) {
   return { type: "object", value: obj };
 }
 
-function appendFieldChrome(wrap, node) {
-  const title = document.createElement("div");
-  title.className = "field-title";
+function appendFieldChrome(label, node) {
+  const title = document.createElement("strong");
   title.textContent = node.title?.default || node.key;
   if (node.presentation?.unit) title.textContent += ` (${node.presentation.unit})`;
   if (node.presentation?.format) {
     const fmt = document.createElement("span");
-    fmt.className = "field-format";
+    fmt.className = "settings-row__hint";
     fmt.textContent = ` · ${node.presentation.format}`;
     title.appendChild(fmt);
   }
-  wrap.appendChild(title);
+  label.appendChild(title);
   if (node.description?.default) {
     const help = document.createElement("div");
-    help.className = "field-help";
+    help.className = "settings-row__hint";
     help.textContent = node.description.default;
-    wrap.appendChild(help);
+    label.appendChild(help);
+  }
+  const restart = restartPolicyHint(node);
+  if (restart) {
+    const hint = document.createElement("div");
+    hint.className = "settings-row__hint";
+    hint.textContent = restart;
+    label.appendChild(hint);
   }
 }
 
-function buildNodeInput(node, draft, key, onChange) {
+function applyPlaceholder(el, node, fallback) {
+  const placeholder = node.presentation?.placeholder || fallback;
+  if (placeholder) el.placeholder = placeholder;
+}
+
+function appendSettingsRow(parent, node, draft, key, onChange, ancestorEnabled = true) {
+  const row = document.createElement("div");
+  row.className = "settings-row settings-row--divided";
+  const stacked = isStackedField(node);
+  if (stacked) row.classList.add("settings-row--stacked");
+  const label = document.createElement("div");
+  label.className = "settings-row__label";
+  appendFieldChrome(label, node);
+  const control = document.createElement("div");
+  control.className = "settings-row__control";
+  if (stacked) {
+    control.style.width = "100%";
+    control.style.alignSelf = "stretch";
+  }
+  control.appendChild(buildNodeInput(node, draft, key, onChange, ancestorEnabled));
+  row.append(label, control);
+  parent.appendChild(row);
+  return row;
+}
+
+function buildNodeInput(node, draft, key, onChange, ancestorEnabled = true) {
   const kind = node.value_type?.kind;
   const format = node.presentation?.format;
+  const enabled = ancestorEnabled && isEnabled(node, draft);
+  const readOnly = !enabled;
   if (format && rendererRegistry.has(format)) {
     const host = document.createElement("div");
     host.className = "custom-renderer";
@@ -190,14 +291,14 @@ function buildNodeInput(node, draft, key, onChange) {
       },
       host,
     });
-    return host;
+    return applyEnabledState(host, enabled);
   }
 
   if (kind === "bool") {
     const input = document.createElement("input");
     input.type = "checkbox";
     input.checked = !!draft[key];
-    input.disabled = node.mutability === "read_only";
+    input.disabled = readOnly;
     input.addEventListener("change", () => {
       draft[key] = input.checked;
       onChange();
@@ -208,8 +309,10 @@ function buildNodeInput(node, draft, key, onChange) {
   if (kind === "integer" || kind === "float") {
     const input = document.createElement("input");
     input.type = "number";
+    input.className = "ui-input";
+    applyPlaceholder(input, node);
     input.value = draft[key] ?? node.default_value?.value ?? "";
-    input.disabled = node.mutability === "read_only";
+    input.disabled = readOnly;
     input.addEventListener("change", () => {
       draft[key] = kind === "integer" ? parseInt(input.value, 10) : Number(input.value);
       onChange();
@@ -229,24 +332,25 @@ function buildNodeInput(node, draft, key, onChange) {
         const input = document.createElement("input");
         input.type = "checkbox";
         input.checked = selected.has(opt.value);
-        input.disabled = node.mutability === "read_only";
+        input.disabled = readOnly;
         input.addEventListener("change", () => {
           if (input.checked) selected.add(opt.value);
           else selected.delete(opt.value);
           draft[key] = [...selected];
           onChange();
         });
-        row.append(input, document.createTextNode(opt.title?.default || opt.value));
+        row.append(input, document.createTextNode(enumOptionLabel(opt)));
         box.appendChild(row);
       }
-      return box;
+      return applyEnabledState(box, enabled);
     }
     const select = document.createElement("select");
-    select.disabled = node.mutability === "read_only";
+    select.className = "ui-input";
+    select.disabled = readOnly;
     for (const opt of options) {
       const option = document.createElement("option");
       option.value = opt.value;
-      option.textContent = opt.title?.default || opt.value;
+      option.textContent = enumOptionLabel(opt);
       select.appendChild(option);
     }
     select.value = draft[key] ?? options[0]?.value ?? "";
@@ -265,8 +369,10 @@ function buildNodeInput(node, draft, key, onChange) {
     status.textContent = configured ? "已配置" : "尚未配置";
     const input = document.createElement("input");
     input.type = "password";
+    input.className = "ui-input";
     input.autocomplete = "new-password";
-    input.placeholder = configured ? "输入新密钥以替换" : "输入密钥";
+    applyPlaceholder(input, node, configured ? "输入新密钥以替换" : "输入密钥");
+    input.disabled = readOnly;
     input.addEventListener("input", () => {
       draft[key] = input.value
         ? { state: "set", value: input.value }
@@ -274,7 +380,7 @@ function buildNodeInput(node, draft, key, onChange) {
       onChange();
     });
     row.append(status, input);
-    return row;
+    return applyEnabledState(row, enabled);
   }
 
   if (kind === "array") {
@@ -294,10 +400,11 @@ function buildNodeInput(node, draft, key, onChange) {
       const input = buildNodeInput(itemNode, itemDraft, String(index), () => {
         draft[key][index] = itemDraft[String(index)];
         onChange();
-      });
+      }, enabled);
       const remove = document.createElement("button");
       remove.type = "button";
       remove.textContent = "删除";
+      remove.disabled = readOnly;
       remove.onclick = () => {
         draft[key].splice(index, 1);
         onChange();
@@ -308,31 +415,24 @@ function buildNodeInput(node, draft, key, onChange) {
     const add = document.createElement("button");
     add.type = "button";
     add.textContent = "添加";
+    add.disabled = readOnly;
     add.onclick = () => {
       draft[key].push("");
       onChange();
     };
     box.appendChild(add);
-    return box;
+    return applyEnabledState(box, enabled);
   }
 
   if (kind === "object") {
     if (!draft[key] || typeof draft[key] !== "object") draft[key] = {};
-    const nested = document.createElement("div");
-    nested.className = "nested-object";
-    for (const child of node.children || []) {
+    const nested = document.createElement("section");
+    nested.className = "card card--outlined";
+    for (const child of sortNodes(node.children || [])) {
       if (!isVisible(child, draft[key])) continue;
-      const wrap = document.createElement("label");
-      wrap.className = "field nested";
-      appendFieldChrome(wrap, child);
-      wrap.appendChild(
-        buildNodeInput(child, draft[key], child.key, () => {
-          onChange();
-        }),
-      );
-      nested.appendChild(wrap);
+      appendSettingsRow(nested, child, draft[key], child.key, onChange, enabled);
     }
-    return nested;
+    return applyEnabledState(nested, enabled);
   }
 
   if (kind === "map") {
@@ -343,8 +443,10 @@ function buildNodeInput(node, draft, key, onChange) {
       const row = document.createElement("div");
       row.className = "map-row";
       const keyInput = document.createElement("input");
+      keyInput.className = "ui-input";
       keyInput.value = mapKey;
       keyInput.placeholder = "key";
+      keyInput.disabled = readOnly;
       const valueNode = {
         key: mapKey,
         value_type: node.value_type.value,
@@ -355,10 +457,11 @@ function buildNodeInput(node, draft, key, onChange) {
       const valueInput = buildNodeInput(valueNode, valueDraft, mapKey, () => {
         draft[key][mapKey] = valueDraft[mapKey];
         onChange();
-      });
+      }, enabled);
       const remove = document.createElement("button");
       remove.type = "button";
       remove.textContent = "删除";
+      remove.disabled = readOnly;
       remove.onclick = () => {
         delete draft[key][mapKey];
         onChange();
@@ -376,6 +479,7 @@ function buildNodeInput(node, draft, key, onChange) {
     const add = document.createElement("button");
     add.type = "button";
     add.textContent = "添加条目";
+    add.disabled = readOnly;
     add.onclick = () => {
       let i = 1;
       while (draft[key][`key${i}`] != null) i += 1;
@@ -383,15 +487,16 @@ function buildNodeInput(node, draft, key, onChange) {
       onChange();
     };
     box.appendChild(add);
-    return box;
+    return applyEnabledState(box, enabled);
   }
 
   if (kind === "file_ref" || kind === "directory_ref") {
     const input = document.createElement("input");
     input.type = "text";
-    input.placeholder = kind === "directory_ref" ? "目录路径" : "文件路径";
+    input.className = "ui-input";
+    applyPlaceholder(input, node, kind === "directory_ref" ? "目录路径" : "文件路径");
     input.value = draft[key] ?? "";
-    input.disabled = node.mutability === "read_only";
+    input.disabled = readOnly;
     input.addEventListener("change", () => {
       draft[key] = input.value;
       onChange();
@@ -401,8 +506,11 @@ function buildNodeInput(node, draft, key, onChange) {
 
   const input = document.createElement(node.value_type?.multiline ? "textarea" : "input");
   if (input.tagName === "INPUT") input.type = "text";
+  input.className = input.tagName === "TEXTAREA" ? "ui-input ui-textarea" : "ui-input";
+  applyPlaceholder(input, node);
+  if (input.tagName === "TEXTAREA") input.style.width = "100%";
   input.value = draft[key] ?? node.default_value?.value ?? "";
-  input.disabled = node.mutability === "read_only";
+  input.disabled = readOnly;
   input.addEventListener("change", () => {
     draft[key] = input.value;
     onChange();
@@ -410,18 +518,96 @@ function buildNodeInput(node, draft, key, onChange) {
   return input;
 }
 
+function collectFormGroups(schema) {
+  const nodes = sortNodes(schema.root?.children || []);
+  const declared = (schema.groups || [])
+    .map((group, index) => ({ group, index }))
+    .sort((a, b) => {
+      const order = (a.group.order ?? 0) - (b.group.order ?? 0);
+      return order !== 0 ? order : a.index - b.index;
+    })
+    .map((item) => item.group);
+  const buckets = new Map();
+  const ungrouped = [];
+  for (const node of nodes) {
+    const groupId = node.presentation?.group;
+    if (!groupId) {
+      ungrouped.push(node);
+      continue;
+    }
+    if (!buckets.has(groupId)) buckets.set(groupId, []);
+    buckets.get(groupId).push(node);
+  }
+  const groups = [];
+  for (const group of declared) {
+    groups.push({
+      title: group.title?.default || group.id,
+      nodes: buckets.get(group.id) || [],
+    });
+    buckets.delete(group.id);
+  }
+  for (const [id, grouped] of buckets) {
+    groups.push({ title: id, nodes: grouped });
+  }
+  if (ungrouped.length) {
+    groups.push({
+      title: schema.title?.default || "基本",
+      nodes: ungrouped,
+    });
+  }
+  return groups;
+}
+
+function appendGroupCard(parent, title, nodes, draft, onChange) {
+  const visible = nodes.filter((node) => isVisible(node, draft));
+  if (!visible.length) return;
+  const card = document.createElement("section");
+  card.className = "card card--outlined";
+  const heading = document.createElement("h2");
+  heading.textContent = title;
+  card.appendChild(heading);
+  for (const node of visible) {
+    appendSettingsRow(card, node, draft, node.key, onChange);
+  }
+  parent.appendChild(card);
+}
+
 function buildForm(schema, draft, onChange) {
   const root = document.createElement("div");
   root.className = "config-form";
-  for (const node of schema.root.children || []) {
-    if (!isVisible(node, draft)) continue;
-    const wrap = document.createElement("label");
-    wrap.className = "field";
-    appendFieldChrome(wrap, node);
-    wrap.appendChild(buildNodeInput(node, draft, node.key, onChange));
-    root.appendChild(wrap);
+  for (const group of collectFormGroups(schema)) {
+    appendGroupCard(root, group.title, group.nodes, draft, onChange);
   }
   return root;
+}
+
+function appendEditorCard(parent, schema, editor) {
+  const card = document.createElement("section");
+  card.className = "card card--outlined";
+  const titleText = schema?.title?.default;
+  if (titleText) {
+    const heading = document.createElement("h2");
+    heading.textContent = titleText;
+    card.appendChild(heading);
+  }
+  if (schema?.description?.default) {
+    const hint = document.createElement("div");
+    hint.className = "settings-row__hint";
+    hint.textContent = schema.description.default;
+    card.appendChild(hint);
+  }
+  const actions = document.createElement("div");
+  actions.className = "actions";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "primary";
+  button.textContent = editor.label;
+  button.onclick = () => {
+    location.hash = editor.activityId ? `#/${editor.activityId}/${editor.pageId}` : `#/${editor.pageId}`;
+  };
+  actions.appendChild(button);
+  card.appendChild(actions);
+  parent.appendChild(card);
 }
 
 /** Embeddable config panel (no outer console shell). Used by the unified overview shell. */
@@ -439,7 +625,7 @@ export function mountConfigPanel(host, rpc, events, fixedProviderId = null) {
   };
 
   const root = document.createElement("div");
-  root.className = "config-panel";
+  root.className = "config-panel settings-page";
   host.innerHTML = "";
   host.appendChild(root);
 
@@ -508,104 +694,40 @@ export function mountConfigPanel(host, rpc, events, fixedProviderId = null) {
       return;
     }
 
-    const card = document.createElement("section");
-    card.className = "card";
-    const title = document.createElement("h2");
-    title.textContent = state.schema?.title?.default || "配置";
-    card.appendChild(title);
-
     if (state.conflict) {
       const banner = document.createElement("div");
       banner.className = "conflict";
       banner.textContent = "配置已在其他页面更新，请重新加载后再提交。";
       const reload = document.createElement("button");
+      reload.type = "button";
       reload.textContent = "重新加载";
       reload.onclick = () => {
         const selected = state.providers.find((provider) => provider.id === state.selected);
         return openProvider(selected || { id: state.selected, schema: state.schema });
       };
       banner.appendChild(reload);
-      card.appendChild(banner);
+      root.appendChild(banner);
     }
 
-    const formHost = document.createElement("div");
-    const rebuild = () => {
-      formHost.innerHTML = "";
-      formHost.appendChild(buildForm(state.schema, state.draft, rebuild));
-    };
-    rebuild();
-    card.appendChild(formHost);
+    const editor = configEditorStore().get(state.selected);
+    if (editor) appendEditorCard(root, state.schema, editor);
+    const replaceForm = editor?.mode === "replace";
+
+    if (!replaceForm) {
+      const formHost = document.createElement("div");
+      const rebuild = () => {
+        formHost.innerHTML = "";
+        formHost.appendChild(buildForm(state.schema, state.draft, rebuild));
+      };
+      rebuild();
+      root.appendChild(formHost);
+    }
 
     const actions = document.createElement("div");
     actions.className = "actions";
-    const validateBtn = document.createElement("button");
-    validateBtn.textContent = "验证";
-    validateBtn.onclick = async () => {
-      const context = defaultContext(state.schema);
-      const result = await rpc.call("config", "validate", {
-        provider_id: state.selected,
-        candidate: draftToCandidate(state.draft, state.schema),
-        context,
-      });
-      state.message = result.ok ? "验证通过" : JSON.stringify(result.issues || result);
-      renderMessage();
-    };
-    const applyBtn = document.createElement("button");
-    applyBtn.className = "primary";
-    applyBtn.textContent = "应用";
-    applyBtn.onclick = async () => {
-      state.applyInFlight = true;
-      state.pendingRevision = null;
-      try {
-        const context = defaultContext(state.schema);
-        const result = await rpc.call("config", "apply", {
-          provider_id: state.selected,
-          context,
-          request: {
-            candidate: draftToCandidate(state.draft, state.schema),
-            expected_revision: state.snapshot?.revision ?? 0,
-            dry_run: false,
-          },
-        });
-        state.conflict = null;
-        const pendingActions = Array.isArray(result?.pending_actions) ? result.pending_actions : [];
-        const restartRequired = pendingActions.includes("application_restart_scheduled") ||
-          pendingActions.includes("host_restart_scheduled");
-        state.message = restartRequired ? "配置已保存，请重启应用后继续设置。" : "配置已生效";
-        const selected = state.providers.find((provider) => provider.id === state.selected);
-        await openProvider(selected || { id: state.selected, schema: state.schema });
-        state.applyInFlight = false;
-        const pendingRevision = state.pendingRevision;
-        state.pendingRevision = null;
-        const currentRevision = state.snapshot?.revision;
-        if (pendingRevision != null && currentRevision != null && Number(pendingRevision) !== Number(currentRevision)) {
-          state.conflict = { current: pendingRevision, expected: currentRevision };
-          state.message = "检测到配置已在其他页面更新";
-          render();
-          return;
-        }
-        renderMessage();
-      } catch (error) {
-        state.applyInFlight = false;
-        state.pendingRevision = null;
-        const text = String(error?.message || error);
-        try {
-          const parsed = JSON.parse(text);
-          if (parsed.kind === "revision_conflict") {
-            state.conflict = parsed;
-            state.message = "配置已发生变化，请重新加载";
-            render();
-            return;
-          }
-        } catch {
-          /* not structured */
-        }
-        state.message = text;
-        renderMessage();
-      }
-    };
     if (!fixedProviderId) {
       const backBtn = document.createElement("button");
+      backBtn.type = "button";
       backBtn.textContent = "返回";
       backBtn.onclick = () => {
         state.selected = null;
@@ -613,17 +735,86 @@ export function mountConfigPanel(host, rpc, events, fixedProviderId = null) {
       };
       actions.appendChild(backBtn);
     }
-    actions.append(validateBtn, applyBtn);
-    card.appendChild(actions);
+    if (!replaceForm) {
+      const validateBtn = document.createElement("button");
+      validateBtn.type = "button";
+      validateBtn.textContent = "验证";
+      validateBtn.onclick = async () => {
+        const context = defaultContext(state.schema);
+        const result = await rpc.call("config", "validate", {
+          provider_id: state.selected,
+          candidate: draftToCandidate(state.draft, state.schema),
+          context,
+        });
+        state.message = result.ok ? "验证通过" : JSON.stringify(result.issues || result);
+        renderMessage();
+      };
+      const applyBtn = document.createElement("button");
+      applyBtn.type = "button";
+      applyBtn.className = "primary";
+      applyBtn.textContent = "应用";
+      applyBtn.onclick = async () => {
+        state.applyInFlight = true;
+        state.pendingRevision = null;
+        try {
+          const context = defaultContext(state.schema);
+          const result = await rpc.call("config", "apply", {
+            provider_id: state.selected,
+            context,
+            request: {
+              candidate: draftToCandidate(state.draft, state.schema),
+              expected_revision: state.snapshot?.revision ?? 0,
+              dry_run: false,
+            },
+          });
+          state.conflict = null;
+          const pendingActions = Array.isArray(result?.pending_actions) ? result.pending_actions : [];
+          const restartRequired = pendingActions.includes("application_restart_scheduled") ||
+            pendingActions.includes("host_restart_scheduled");
+          state.message = restartRequired ? "配置已保存，请重启应用后继续设置。" : "配置已生效";
+          const selected = state.providers.find((provider) => provider.id === state.selected);
+          await openProvider(selected || { id: state.selected, schema: state.schema });
+          state.applyInFlight = false;
+          const pendingRevision = state.pendingRevision;
+          state.pendingRevision = null;
+          const currentRevision = state.snapshot?.revision;
+          if (pendingRevision != null && currentRevision != null && Number(pendingRevision) !== Number(currentRevision)) {
+            state.conflict = { current: pendingRevision, expected: currentRevision };
+            state.message = "检测到配置已在其他页面更新";
+            render();
+            return;
+          }
+          renderMessage();
+        } catch (error) {
+          state.applyInFlight = false;
+          state.pendingRevision = null;
+          const text = String(error?.message || error);
+          try {
+            const parsed = JSON.parse(text);
+            if (parsed.kind === "revision_conflict") {
+              state.conflict = parsed;
+              state.message = "配置已发生变化，请重新加载";
+              render();
+              return;
+            }
+          } catch {
+            /* not structured */
+          }
+          state.message = text;
+          renderMessage();
+        }
+      };
+      actions.append(validateBtn, applyBtn);
+    }
+    if (actions.childNodes.length) root.appendChild(actions);
     const msg = document.createElement("div");
     msg.id = "message";
     msg.className = "message";
     msg.textContent = state.message;
-    card.appendChild(msg);
-    root.appendChild(card);
+    root.appendChild(msg);
 
     function renderMessage() {
-      const el = card.querySelector("#message");
+      const el = root.querySelector("#message");
       if (el) el.textContent = state.message;
     }
   }
