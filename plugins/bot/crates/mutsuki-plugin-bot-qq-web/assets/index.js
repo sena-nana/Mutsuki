@@ -151,7 +151,7 @@ function actionButton(label, action, state, rpc, refresh, options = {}) {
 }
 
 function accountCard(account, state, rpc, refresh) {
-  const card = element("article", "panel nested");
+  const card = element("article", "card card--outlined");
   card.dataset.accountId = account.account_id;
   card.append(
     element("h3", "", account.account_id || "QQ 账号"),
@@ -169,7 +169,7 @@ function accountCard(account, state, rpc, refresh) {
   card.append(actions);
   if (!account.capability?.active_message) return card;
   const sendForm = element("div", "toolbar nested");
-  const scene = element("select");
+  const scene = element("select", "ui-input");
   scene.dataset.draftField = "scene";
   const activeKinds = new Set(account.capability?.active_message_kinds || []);
   [["private", "私聊"], ["group", "群聊"], ["channel", "频道"]]
@@ -180,14 +180,14 @@ function accountCard(account, state, rpc, refresh) {
     scene.append(option);
   });
   if (!scene.options.length) return card;
-  const target = element("input");
+  const target = element("input", "ui-input");
   target.dataset.draftField = "target";
   target.placeholder = "用户 OpenID";
-  const channel = element("input");
+  const channel = element("input", "ui-input");
   channel.dataset.draftField = "channel";
   channel.placeholder = "频道 ID";
   channel.hidden = true;
-  const message = element("input");
+  const message = element("input", "ui-input");
   message.dataset.draftField = "message";
   message.placeholder = "测试消息";
   const sendResult = element("span", "muted");
@@ -220,7 +220,7 @@ function accountCard(account, state, rpc, refresh) {
 }
 
 function tableSection(title, rows, columns, actions) {
-  const section = element("section", "panel");
+  const section = element("section", "card card--outlined");
   section.append(element("h2", "", title));
   if (!rows.length) {
     section.append(element("p", "muted", "暂无记录"));
@@ -271,32 +271,35 @@ function linkButton(label, page) {
   return button;
 }
 
-function field(label, control) {
-  const wrap = element("label", "form-field");
-  wrap.append(control, document.createTextNode(` ${label}`));
-  return wrap;
+function settingsRow(label, hint, control) {
+  const row = element("div", "settings-row settings-row--divided");
+  const title = element("div", "settings-row__label");
+  title.append(element("strong", "", label));
+  if (hint) title.append(element("div", "settings-row__hint", hint));
+  const host = element("div", "settings-row__control");
+  host.append(control);
+  row.append(title, host);
+  return row;
 }
 
 function loginCard(state, refresh) {
-  const section = element("section", "panel");
+  const section = element("section", "card card--outlined");
   section.append(element("h2", "", "QQ 登录"));
   if (state.ownerUnavailable) {
     section.append(element("p", "muted", "尚未启用 QQ Bot。填写 App ID 与 Client Secret 并启用后才会连接。"));
   }
   if (!state.configAvailable) {
-    section.append(element("p", "muted", "配置页不可用。"));
-    section.append(linkButton("打开配置页", "config"));
+    section.append(element("p", "muted", "登录配置不可用。"));
     return section;
   }
   const draft = state.loginDraft || {};
+  const secretConfigured = draft.client_secret?.state === "configured" || draft.client_secret?.state === "keep";
   const enabled = Object.assign(element("input"), { type: "checkbox", checked: !!draft.enabled });
-  const appId = Object.assign(element("input"), { type: "text", placeholder: "开放平台 App ID", value: draft.app_id || "" });
-  const secret = Object.assign(element("input"), {
-    type: "password",
-    placeholder: draft.client_secret?.state === "configured" || draft.client_secret?.state === "keep"
-      ? "已保存，留空则不更改"
-      : "Client Secret",
-  });
+  const appId = Object.assign(element("input", "ui-input"), { type: "text", value: draft.app_id || "" });
+  appId.placeholder = "开放平台 App ID";
+  const secret = Object.assign(element("input", "ui-input"), { type: "password" });
+  secret.placeholder = secretConfigured ? "已保存，留空则不更改" : "Client Secret";
+  secret.autocomplete = "new-password";
   const privateGroup = Object.assign(element("input"), { type: "checkbox", checked: draft.receive_private_and_group !== false });
   const guild = Object.assign(element("input"), { type: "checkbox", checked: !!draft.receive_guild });
   const apply = element("button", "primary", "保存登录配置");
@@ -329,21 +332,20 @@ function loginCard(state, refresh) {
     }
   };
   section.append(
-    field("启用 QQ Bot", enabled),
-    element("p", "muted", `凭据 ${productLabel(draft.client_secret?.state)} · 保存后不会再次显示`),
-    appId,
-    secret,
-    field("接收私聊和群消息", privateGroup),
-    field("接收频道消息", guild),
+    settingsRow("启用 QQ Bot", "启用后才会连接 QQ Gateway", enabled),
+    settingsRow("App ID", "QQ 开放平台机器人 AppID；启用前必须填写", appId),
+    settingsRow("Client Secret", `当前${productLabel(draft.client_secret?.state)}，保存后不会再次显示`, secret),
+    settingsRow("接收私聊和群消息", "对应开放平台群/C2C 事件 intent", privateGroup),
+    settingsRow("接收频道消息", "对应开放平台频道 @ 消息 intent", guild),
   );
   const actions = element("div", "actions");
-  actions.append(apply, linkButton("打开配置页", "config"));
+  actions.append(apply);
   section.append(actions);
   return section;
 }
 
 function relatedCard() {
-  const section = element("section", "panel");
+  const section = element("section", "card card--outlined");
   section.append(
     element("h2", "", "相关管理"),
     element("p", "muted", "会话策略、命令匹配和 Agent 会话由各自页面编辑。"),
@@ -376,7 +378,7 @@ export function mountQqBotPanel(host, rpc, events, options = {}) {
     ownerUnavailable: false,
   };
   host.innerHTML = "";
-  const root = element("div", "qq-bot-panel stack");
+  const root = element("div", "qq-bot-panel settings-page stack");
   const search = element("input", "");
   search.type = "search";
   search.placeholder = "搜索账号、会话或投递";
