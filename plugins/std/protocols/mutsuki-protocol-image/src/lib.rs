@@ -34,7 +34,20 @@ pub struct ComposeRenderRequest {
     pub stylesheet: Option<String>,
 }
 
-/// Content and brand styling for the standard 1200x630 social link card.
+/// Shared chrome with a content-specific layout. The renderer owns the canvas size.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CardLayout {
+    #[default]
+    Media,
+    Hero,
+    Row,
+    Feed,
+    Profile,
+    Art,
+}
+
+/// Content and brand styling for a light link card.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CardRenderRequest {
     pub brand: String,
@@ -44,6 +57,41 @@ pub struct CardRenderRequest {
     #[serde(default)]
     pub cover: Option<ResourceRef>,
     pub fallback_gradient: CardGradient,
+    #[serde(default)]
+    pub layout: CardLayout,
+    #[serde(default)]
+    pub kicker: String,
+    #[serde(default)]
+    pub live: bool,
+}
+
+impl Default for CardRenderRequest {
+    fn default() -> Self {
+        Self {
+            brand: String::new(),
+            title: String::new(),
+            description: String::new(),
+            url: String::new(),
+            cover: None,
+            fallback_gradient: CardGradient {
+                start: Rgba {
+                    red: 238,
+                    green: 240,
+                    blue: 246,
+                    alpha: 255,
+                },
+                end: Rgba {
+                    red: 213,
+                    green: 218,
+                    blue: 230,
+                    alpha: 255,
+                },
+            },
+            layout: CardLayout::Media,
+            kicker: String::new(),
+            live: false,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -137,7 +185,13 @@ pub fn input_schema(protocol_id: &str) -> Option<Value> {
                 "description": {"type": "string"},
                 "url": {"type": "string"},
                 "cover": {"type": ["object", "null"]},
-                "fallback_gradient": {"type": "object"}
+                "fallback_gradient": {"type": "object"},
+                "layout": {
+                    "type": "string",
+                    "enum": ["media", "hero", "row", "feed", "profile", "art"]
+                },
+                "kicker": {"type": "string"},
+                "live": {"type": "boolean"}
             }
         })),
         QR_RENDER => Some(json!({
@@ -242,12 +296,29 @@ mod tests {
                     alpha: 255,
                 },
             },
+            layout: CardLayout::Profile,
+            kicker: "画师".into(),
+            ..CardRenderRequest::default()
         };
         assert_eq!(
             serde_json::from_value::<CardRenderRequest>(serde_json::to_value(&card).unwrap())
                 .unwrap(),
             card
         );
+
+        let legacy = serde_json::json!({
+            "brand": "哔哩哔哩",
+            "title": "Video",
+            "description": "投稿",
+            "url": "https://www.bilibili.com/video/BV1",
+            "fallback_gradient": {
+                "start": {"red": 251, "green": 114, "blue": 153, "alpha": 255},
+                "end": {"red": 0, "green": 174, "blue": 236, "alpha": 255}
+            }
+        });
+        let decoded = serde_json::from_value::<CardRenderRequest>(legacy).unwrap();
+        assert_eq!(decoded.layout, CardLayout::Media);
+        assert!(!decoded.live);
 
         let qr = QrRenderRequest {
             content: "https://www.bilibili.com".into(),

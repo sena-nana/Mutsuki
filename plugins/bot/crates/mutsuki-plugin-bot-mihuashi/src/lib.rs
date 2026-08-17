@@ -9,7 +9,7 @@ use mutsuki_protocol_browser::{
 };
 use mutsuki_protocol_http::{HttpRequest, HttpResponse, REQUEST as HTTP_REQUEST};
 use mutsuki_protocol_image::{
-    CARD_RENDER, CardGradient, CardRenderRequest, ImageRenderResponse, Rgba,
+    CARD_RENDER, CardGradient, CardLayout, CardRenderRequest, ImageRenderResponse, Rgba,
 };
 #[cfg(test)]
 use mutsuki_runtime_contracts::{ContractSurfaceKind, SurfaceRequirement};
@@ -271,6 +271,9 @@ async fn render_profile_card(
                         alpha: 255,
                     },
                 },
+                layout: mihuashi_layout(final_url),
+                kicker: mihuashi_kicker(final_url).into(),
+                ..CardRenderRequest::default()
             })
             .map_err(|error| fail(task, error))?,
         )
@@ -351,6 +354,25 @@ fn descriptor() -> RunnerDescriptor {
         .metadata("domain", ScalarValue::String("mihuashi".into()))
         .build()
 }
+fn mihuashi_layout(url: &str) -> CardLayout {
+    if Url::parse(url)
+        .ok()
+        .is_some_and(|parsed| parsed.path().contains("/profiles/"))
+    {
+        CardLayout::Profile
+    } else {
+        CardLayout::Art
+    }
+}
+
+fn mihuashi_kicker(url: &str) -> &'static str {
+    if matches!(mihuashi_layout(url), CardLayout::Profile) {
+        "画师"
+    } else {
+        "作品"
+    }
+}
+
 fn ensure_mihuashi_url(value: &str) -> Result<(), String> {
     let url = Url::parse(value).map_err(|error| error.to_string())?;
     if !url.username().is_empty() || url.password().is_some() {
@@ -564,6 +586,14 @@ mod tests {
         let parsed = parse_profile(html, "https://www.mihuashi.com/profiles/1").unwrap();
         assert_eq!(parsed.0, "Painter");
         assert_eq!(parsed.1, "Window");
+        assert_eq!(
+            mihuashi_layout("https://www.mihuashi.com/profiles/1"),
+            CardLayout::Profile
+        );
+        assert_eq!(
+            mihuashi_layout("https://www.mihuashi.com/artworks/9"),
+            CardLayout::Art
+        );
     }
 
     #[test]
@@ -642,7 +672,7 @@ mod tests {
         submit_and_wait(&runtime, snapshot.final_url).await;
         let CapturedSend { message, png } = wait_for_capture(&captured).await;
         let decoded = image::load_from_memory(&png).unwrap();
-        assert_eq!((decoded.width(), decoded.height()), (1200, 630));
+        assert_eq!((decoded.width(), decoded.height()), (720, 466));
         let MessageSegment::Image { resource } = &message.segments[0] else {
             panic!("first segment must be rendered image")
         };
