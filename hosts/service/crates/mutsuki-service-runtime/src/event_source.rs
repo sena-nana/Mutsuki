@@ -258,11 +258,12 @@ impl SourceStatus {
         let mut status = self.value.lock().expect("event source status mutex");
         let before = (status.health.clone(), status.last_error.clone());
         status.health = health.label().into();
-        if let HostEventSourceHealth::Degraded(error) | HostEventSourceHealth::Unhealthy(error) =
-            health
-        {
-            status.last_error = Some(error);
-        }
+        status.last_error = match health {
+            HostEventSourceHealth::Degraded(error) | HostEventSourceHealth::Unhealthy(error) => {
+                Some(error)
+            }
+            HostEventSourceHealth::Healthy => None,
+        };
         if before != (status.health.clone(), status.last_error.clone()) {
             drop(status);
             (self.changed)();
@@ -780,6 +781,26 @@ mod tests {
 
         wait_for_state(&supervisor, "failed").await;
         supervisor.shutdown(Duration::from_millis(100)).await;
+    }
+
+    #[test]
+    fn recovered_health_clears_the_previous_degraded_error() {
+        let status = SourceStatus::new(
+            &HostEventSourceDescriptor::new("recover", "test.plugin"),
+            Arc::new(|| {}),
+        );
+        status.update_health(HostEventSourceHealth::Degraded(
+            "handshake incomplete".into(),
+        ));
+        assert_eq!(
+            status.snapshot().last_error.as_deref(),
+            Some("handshake incomplete")
+        );
+
+        status.update_health(HostEventSourceHealth::Healthy);
+        let snapshot = status.snapshot();
+        assert_eq!(snapshot.health, "healthy");
+        assert_eq!(snapshot.last_error, None);
     }
 
     #[tokio::test]
