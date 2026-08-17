@@ -64,6 +64,7 @@ fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let title = container.title.unwrap_or_else(|| ident.to_string());
 
     let mut children = Vec::new();
+    let mut group_ids = Vec::new();
     for (index, field) in fields.named.iter().enumerate() {
         let name = field.ident.as_ref().unwrap();
         let mut attr = FieldAttr {
@@ -71,6 +72,11 @@ fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
             ..FieldAttr::default()
         };
         parse_attrs(&field.attrs, &mut attr)?;
+        if let Some(group_id) = &attr.group {
+            if !group_ids.iter().any(|seen| seen == group_id) {
+                group_ids.push(group_id.clone());
+            }
+        }
         let field_title = attr.title.clone().unwrap_or_else(|| name.to_string());
         let ty_tokens = type_to_value_type(&field.ty, &attr)?;
         let required = attr.required;
@@ -146,6 +152,17 @@ fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
         });
     }
 
+    let groups = group_ids.iter().enumerate().map(|(index, id)| {
+        let order = index as i32;
+        quote! {
+            ::mutsuki_config_service::ConfigGroup {
+                id: #id.to_string(),
+                title: ::mutsuki_config_service::LocalizedText::new(#id),
+                order: #order,
+            }
+        }
+    });
+
     Ok(quote! {
         impl ::mutsuki_config_service::MutsukiConfigSchema for #ident {
             fn schema() -> ::mutsuki_config_service::ConfigDescriptor {
@@ -170,7 +187,7 @@ fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                         restart_policy: ::mutsuki_config_service::RestartPolicy::None,
                         children: vec![#(#children),*],
                     },
-                    groups: Vec::new(),
+                    groups: vec![#(#groups),*],
                 };
                 descriptor.validate_default_budgets().expect("schema budgets");
                 descriptor

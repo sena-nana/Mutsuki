@@ -618,6 +618,10 @@ export function mountQqBotPanel(host, rpc, events, options = {}) {
   };
 }
 
+function registerConfigEditor(entry) {
+  (globalThis.__mutsukiConfigEditors ??= new Map()).set(entry.providerId, entry);
+}
+
 export default {
   id: "qq-bot",
   setup(ctx) {
@@ -625,6 +629,13 @@ export default {
       id: "qq-bot.page", path: "/qq-bot", title: "QQ 管理",
       component: { mount(el) { const panel = mountQqBotPanel(el, ctx.rpc, ctx.events); return { dispose: () => panel.destroy() }; } },
       requiredCapability: "bot.read",
+    });
+    registerConfigEditor({
+      providerId: "mutsuki.bot.adapter.qqbot",
+      activityId: "bot",
+      pageId: "qq-bot.page",
+      label: "打开 QQ 管理",
+      mode: "supplement",
     });
     ctx.navigation.register({
       id: "qq-bot.nav", activityId: "bot", pageId: "qq-bot.page", label: "QQ 管理", order: 10,

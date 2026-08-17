@@ -38,7 +38,8 @@ pub struct BotAgentConfig {
         title = "启用 Bot Agent",
         description = "允许通过已授权的 Bot 会话提交 Agent 请求",
         default = false,
-        restart = "plugin_reload"
+        restart = "plugin_reload",
+        group = "基本"
     )]
     pub enabled: bool,
     #[config(
@@ -46,7 +47,9 @@ pub struct BotAgentConfig {
         description = "选择由 Agent owner catalog 管理的连接标识；Bot 不保存 endpoint 或认证配置",
         default = "",
         max_length = 128,
-        restart = "plugin_reload"
+        restart = "plugin_reload",
+        group = "基本",
+        enabled_if = "enabled"
     )]
     pub connection_id: String,
     #[config(
@@ -54,56 +57,74 @@ pub struct BotAgentConfig {
         description = "未在会话策略中指定时使用的 Agent 配置标识；留空表示必须由会话策略指定",
         default = "",
         max_length = 256,
-        restart = "plugin_reload"
+        restart = "plugin_reload",
+        group = "基本",
+        enabled_if = "enabled"
     )]
     pub default_profile_id: String,
     #[config(
         title = "会话作用域",
         description = "选择同一对话共享 Agent 会话，或按对话中的用户隔离",
         default = "shared_conversation",
-        restart = "plugin_reload"
+        restart = "plugin_reload",
+        group = "基本",
+        enabled_if = "enabled"
     )]
     pub session_scope: String,
     #[config(
         title = "语音转写",
         description = "在 Agent 执行前转写输入音频",
         default = false,
-        restart = "plugin_reload"
+        restart = "plugin_reload",
+        group = "语音",
+        enabled_if = "enabled"
     )]
     pub stt_enabled: bool,
     #[config(
         title = "语音回复",
         description = "在 Agent 执行后合成回复音频",
         default = false,
-        restart = "plugin_reload"
+        restart = "plugin_reload",
+        group = "语音",
+        enabled_if = "enabled"
     )]
     pub tts_enabled: bool,
     #[config(
         title = "语音回复策略",
         description = "仅文本、文本与语音或仅语音",
         default = "text_only",
-        restart = "plugin_reload"
+        restart = "plugin_reload",
+        group = "语音",
+        enabled_if = "enabled"
     )]
     pub speech_reply_policy: String,
     #[config(
         title = "STT Provider",
         description = "可选的语音转写 provider selector",
         default = "",
-        restart = "plugin_reload"
+        restart = "plugin_reload",
+        group = "语音",
+        enabled_if = "enabled",
+        visible_if = "stt_enabled"
     )]
     pub stt_selector_id: String,
     #[config(
         title = "TTS Provider",
         description = "可选的语音合成 provider selector",
         default = "",
-        restart = "plugin_reload"
+        restart = "plugin_reload",
+        group = "语音",
+        enabled_if = "enabled",
+        visible_if = "tts_enabled"
     )]
     pub tts_selector_id: String,
     #[config(
         title = "回复方式",
         description = "选择发送完整回复，或按长度切分后连续发送",
         default = "final_only",
-        restart = "plugin_reload"
+        restart = "plugin_reload",
+        group = "运行",
+        enabled_if = "enabled"
     )]
     pub streaming: String,
     #[config(
@@ -113,7 +134,9 @@ pub struct BotAgentConfig {
         min = 1,
         max = 64,
         unit = "个",
-        restart = "plugin_reload"
+        restart = "plugin_reload",
+        group = "运行",
+        enabled_if = "enabled"
     )]
     pub max_concurrency: usize,
     #[config(
@@ -123,7 +146,9 @@ pub struct BotAgentConfig {
         min = 1,
         max = 600000,
         unit = "ms",
-        restart = "plugin_reload"
+        restart = "plugin_reload",
+        group = "运行",
+        enabled_if = "enabled"
     )]
     pub timeout_ms: u64,
     #[config(
@@ -133,7 +158,9 @@ pub struct BotAgentConfig {
         min = 4,
         max = 1800,
         unit = "bytes",
-        restart = "plugin_reload"
+        restart = "plugin_reload",
+        group = "运行",
+        enabled_if = "enabled"
     )]
     pub max_message_bytes: usize,
 }
@@ -333,27 +360,49 @@ impl BotAgentConfigHandle {
 #[must_use]
 pub fn bot_agent_config_schema() -> ConfigDescriptor {
     let mut descriptor = BotAgentConfig::schema();
+    patch_enum_field(
+        &mut descriptor,
+        "streaming",
+        &[("final_only", "完整回复"), ("segment_messages", "分段回复")],
+    );
+    patch_enum_field(
+        &mut descriptor,
+        "session_scope",
+        &[
+            ("shared_conversation", "同一对话共享"),
+            ("actor_in_conversation", "按用户隔离"),
+        ],
+    );
+    patch_enum_field(
+        &mut descriptor,
+        "speech_reply_policy",
+        &[
+            ("text_only", "仅文本"),
+            ("text_and_voice", "文本与语音"),
+            ("voice_only", "仅语音"),
+        ],
+    );
+    descriptor
+}
+
+fn patch_enum_field(descriptor: &mut ConfigDescriptor, key: &str, options: &[(&str, &str)]) {
     if let Some(node) = descriptor
         .root
         .children
         .iter_mut()
-        .find(|node| node.key.as_str() == "streaming")
+        .find(|node| node.key.as_str() == key)
     {
         node.value_type = ConfigValueType::Enum {
-            options: vec![
-                EnumOption {
-                    value: "final_only".into(),
-                    label: LocalizedText::new("完整回复"),
-                },
-                EnumOption {
-                    value: "segment_messages".into(),
-                    label: LocalizedText::new("分段回复"),
-                },
-            ],
+            options: options
+                .iter()
+                .map(|(value, label)| EnumOption {
+                    value: (*value).into(),
+                    label: LocalizedText::new(*label),
+                })
+                .collect(),
             multi: false,
         };
     }
-    descriptor
 }
 
 #[cfg(test)]
@@ -367,18 +416,56 @@ mod tests {
         assert!(!config.enabled);
         assert!(config.connection_id.is_empty());
         let schema = bot_agent_config_schema();
-        let streaming = schema
-            .root
-            .children
-            .iter()
-            .find(|node| node.key.as_str() == "streaming")
-            .unwrap();
-        assert!(matches!(
-            streaming.value_type,
-            ConfigValueType::Enum { ref options, multi: false }
-                if options.iter().map(|option| option.value.as_str()).collect::<Vec<_>>()
-                    == ["final_only", "segment_messages"]
-        ));
+        assert_eq!(
+            schema
+                .groups
+                .iter()
+                .map(|group| group.id.as_str())
+                .collect::<Vec<_>>(),
+            ["基本", "语音", "运行"]
+        );
+        let field = |key: &str| {
+            schema
+                .root
+                .children
+                .iter()
+                .find(|node| node.key.as_str() == key)
+                .unwrap()
+        };
+        let enum_values = |key: &str| match &field(key).value_type {
+            ConfigValueType::Enum {
+                options,
+                multi: false,
+            } => options
+                .iter()
+                .map(|option| option.value.as_str())
+                .collect::<Vec<_>>(),
+            other => panic!("{key} should be a single-select enum, got {other:?}"),
+        };
+        assert_eq!(enum_values("streaming"), ["final_only", "segment_messages"]);
+        assert_eq!(
+            enum_values("session_scope"),
+            ["shared_conversation", "actor_in_conversation"]
+        );
+        assert_eq!(
+            enum_values("speech_reply_policy"),
+            ["text_only", "text_and_voice", "voice_only"]
+        );
+        assert_eq!(
+            field("connection_id").presentation.group.as_deref(),
+            Some("基本")
+        );
+        assert_eq!(
+            field("stt_selector_id").presentation.group.as_deref(),
+            Some("语音")
+        );
+        assert_eq!(
+            field("streaming").presentation.group.as_deref(),
+            Some("运行")
+        );
+        assert!(field("stt_selector_id").visibility.is_some());
+        assert!(field("connection_id").enabled_if.is_some());
+        assert!(field("enabled").enabled_if.is_none());
     }
 
     #[test]
