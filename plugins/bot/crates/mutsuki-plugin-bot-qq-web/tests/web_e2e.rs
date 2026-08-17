@@ -86,8 +86,8 @@ async fn qq_management_rpc_uses_authenticated_capabilities_confirmation_and_fixe
     let shell_dir = tempfile::tempdir().unwrap();
     let assets = materialize_frontend_assets(assets_dir.path()).unwrap();
     let frontend = std::fs::read_to_string(assets.join("index.js")).unwrap();
-    assert!(frontend.contains("QQ 登录"));
-    assert!(frontend.contains("尚未启用 QQ Bot") || frontend.contains("QQ 尚未连接"));
+    assert!(frontend.contains("请到配置页填写登录信息"));
+    assert!(!frontend.contains("保存登录配置"));
     std::fs::write(
         shell_dir.path().join("index.html"),
         "<!doctype html><main></main>",
