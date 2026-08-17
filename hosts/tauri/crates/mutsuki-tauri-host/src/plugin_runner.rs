@@ -238,7 +238,7 @@ pub(crate) fn scan_plugin_runners(
                 continue;
             };
             claimed_runner_specs.insert(descriptor.runner_id.clone());
-            if located.spec.plugin_id != plugin_id {
+            if plugin_id != located.spec.plugin_id {
                 plugin_error = Some(format!(
                     "runner {} belongs to plugin {}",
                     descriptor.runner_id, located.spec.plugin_id

@@ -534,7 +534,8 @@ class RuntimeLoadPlan:
             ),
             plugins=tuple_from_json(raw, "plugins", PluginManifest),
             load_order=tuple(
-                PluginId(item) for item in as_str_tuple(field_value(raw, "load_order"), "load_order")
+                PluginId(item)
+                for item in as_str_tuple(field_value(raw, "load_order"), "load_order")
             ),
             runner_bindings=as_str_dict(raw, "runner_bindings"),
             plugin_deployments=as_plugin_deployments(
