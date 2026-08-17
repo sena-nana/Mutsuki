@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use mutsuki_agent_service_host_integration::LOCAL_AGENT_CONFIG_PROVIDER_ID;
 use mutsuki_bot_service_host_integration::{
-    AgentConnectionConsoleBridge, BilibiliConsoleBridge, BotFlowConsoleBridge,
-    LocalAgentConsoleBridge, QqConsoleBridge, SandboxConsoleBridge,
+    AgentConnectionConsoleBridge, BilibiliConsoleBridge, BotDatabaseConsoleBridge,
+    BotFlowConsoleBridge, LocalAgentConsoleBridge, QqConsoleBridge, SandboxConsoleBridge,
 };
 use mutsuki_bot_web_console::{
     BotAgentConsoleServices, ConsoleAssetDirs, ControlChangeBridge, ManagementChangeBridge,
@@ -101,6 +101,7 @@ impl WebConsoleGuard {
             bilibili.clone(),
             qq.clone(),
             sandbox.clone(),
+            BotDatabaseConsoleBridge::get(runtime),
             BotAgentConsoleServices {
                 connections: AgentConnectionConsoleBridge::get(runtime),
                 sessions: LocalAgentConsoleBridge::get(runtime),

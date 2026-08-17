@@ -41,7 +41,9 @@ use mutsuki_plugin_bot_adapter_qqbot::{
 use mutsuki_runtime_sdk::{LoadedPlugin, RuntimeBootstrapperService};
 use serde_json::Value;
 
-use crate::console_bridge::QQ_MANAGEMENT_SERVICE_ID;
+use crate::console_bridge::{
+    BOT_STATE_DB_SERVICE_ID, QQ_MANAGEMENT_SERVICE_ID, bot_state_db_host_service,
+};
 use crate::event_source::{QqGatewayControlHandle, QqGatewayEventSource, QqGatewayHealthHandle};
 
 type MediaFactory = Arc<
@@ -160,9 +162,14 @@ impl QqBotPluginBundle {
         manifest.provides.services.push(SANDBOX_SERVICE_ID.into());
         manifest
             .provides
+            .services
+            .push(BOT_STATE_DB_SERVICE_ID.into());
+        manifest
+            .provides
             .capabilities
             .push("bot.qq.management".into());
         manifest.provides.capabilities.push("bot.sandbox".into());
+        manifest.provides.capabilities.push("bot.state".into());
         if let Some(provider_id) = media_provider_id {
             manifest.requires.push(SurfaceRequirement::new(
                 ContractSurfaceKind::ResourceProvider,
@@ -199,7 +206,9 @@ impl QqBotPluginBundle {
                     delivery: delivery.clone(),
                     interaction,
                 });
-                let state = Arc::new(StateDbQqManagementStore { repository });
+                let state = Arc::new(StateDbQqManagementStore {
+                    repository: repository.clone(),
+                });
                 let management =
                     Arc::new(QqBotManagementService::with_state_store(provider, state));
                 let sandbox = Arc::new(SandboxService::with_account(
@@ -212,18 +221,20 @@ impl QqBotPluginBundle {
                 }));
                 let observed = sandbox.clone();
                 inbound.set(Arc::new(move |event| observed.observe_event(event)));
+                let mut host_services = vec![
+                    RuntimeBootstrapperService::new(
+                        QQ_MANAGEMENT_SERVICE_ID,
+                        management,
+                        "bot.qq.management",
+                    ),
+                    RuntimeBootstrapperService::new(SANDBOX_SERVICE_ID, sandbox, "bot.sandbox"),
+                ];
+                host_services.push(bot_state_db_host_service(repository));
                 Ok::<LoadedPlugin, String>(LoadedPlugin {
                     manifest: loaded_manifest.clone(),
                     runners: Vec::new(),
                     async_handlers: Vec::new(),
-                    host_services: vec![
-                        RuntimeBootstrapperService::new(
-                            QQ_MANAGEMENT_SERVICE_ID,
-                            management,
-                            "bot.qq.management",
-                        ),
-                        RuntimeBootstrapperService::new(SANDBOX_SERVICE_ID, sandbox, "bot.sandbox"),
-                    ],
+                    host_services,
                     resource_providers: Vec::new(),
                     async_resource_providers: Vec::new(),
                     host_effects: Vec::new(),

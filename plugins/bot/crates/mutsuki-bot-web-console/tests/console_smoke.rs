@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
+use mutsuki_bot_state_db::BotStateDbRepository;
 use mutsuki_bot_web_console::{
     BotAgentConsoleServices, SecretKeyResolver, SecretMonitor, WebConsoleConfig, WebConsolePaths,
     WebConsoleSecrets, build_console_host, build_console_host_with_agent, demo_config_service,
@@ -85,7 +86,7 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
             .any(|item| item["id"] == "settings" && item["position"] == "bottom")
     );
     let extensions = options["extensions"].as_array().unwrap();
-    for id in ["overview", "control"] {
+    for id in ["overview", "control", "database"] {
         let url = extensions
             .iter()
             .find(|item| item["id"] == id)
@@ -182,11 +183,69 @@ async fn embedded_console_reads_overview_and_control() {
     let health = ws_rpc(&addr, "control", "health").await.unwrap();
     assert_eq!(health["service"], "ok");
 
+    let database = ws_rpc(&addr, "database", "snapshot").await.unwrap();
+    assert!(database.is_null());
+    let database_js = http_get_body(&addr, "/extensions/database/index.js").await;
+    assert!(database_js.contains("在左侧选择要访问的数据表"));
+
     let logs = ws_rpc_params(&addr, "control", "log_tail", json!({"lines": 5}))
         .await
         .unwrap();
     assert!(logs["entries"].is_array());
 
+    host.stop().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+}
+
+#[tokio::test]
+async fn embedded_console_reads_live_bot_state_database() {
+    let root = tempfile::tempdir().unwrap();
+    let repository =
+        Arc::new(BotStateDbRepository::open(root.path().join("state.sqlite3")).unwrap());
+    let config = WebConsoleConfig {
+        enabled: true,
+        listen: "127.0.0.1:0".into(),
+        auth_token_key: None,
+        extensions: Vec::new(),
+        ..Default::default()
+    };
+    let secrets = WebConsoleSecrets {
+        auth_token: "local-dev".into(),
+    };
+    let (mut host, _dirs) = build_console_host_with_agent(
+        &config,
+        &secrets,
+        Arc::new(FixtureControlHandler::default()),
+        "local-dev",
+        None,
+        None,
+        &WebConsolePaths::default(),
+        None,
+        None,
+        None,
+        Some(repository),
+        BotAgentConsoleServices::default(),
+    )
+    .unwrap();
+    host.start().await.unwrap();
+    let addr = host.listen_addr().unwrap().to_string();
+    let snapshot = ws_rpc(&addr, "database", "snapshot").await.unwrap();
+    assert!(
+        snapshot["tables"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|table| table["name"] == "bot_management_meta")
+    );
+    let page = ws_rpc_params(
+        &addr,
+        "database",
+        "rows",
+        json!({ "table": "bot_management_meta" }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(page["rows"].as_array().unwrap().len(), 1);
     host.stop().await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 }
@@ -547,6 +606,7 @@ async fn embedded_console_serves_lilia_flow_node_editor() {
         Some(service),
         None,
         &WebConsolePaths::default(),
+        None,
         None,
         None,
         None,

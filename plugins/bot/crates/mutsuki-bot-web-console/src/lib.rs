@@ -20,6 +20,7 @@ pub use watch_bridge::{
 use mutsuki_bot_flow::BotFlowRegistry;
 use mutsuki_bot_management::BilibiliManagementApi;
 use mutsuki_bot_sandbox::{SandboxApi, SandboxService};
+use mutsuki_bot_state_db::BotStateDbRepository;
 use mutsuki_config_service::{ConfigProviderRegistry, ConfigService, InMemoryConfigRepository};
 use mutsuki_plugin_bot_agent_web::{
     AgentConnectionManagementResolver, BotAgentWebExtension, LocalAgentManagementResolver,
@@ -31,6 +32,9 @@ use mutsuki_plugin_bot_bilibili_web::{
 use mutsuki_plugin_bot_control_web::{
     ControlRpcCaller, ControlWebExtension,
     materialize_frontend_assets as materialize_control_assets,
+};
+use mutsuki_plugin_bot_database_web::{
+    DatabaseWebExtension, materialize_frontend_assets as materialize_database_assets,
 };
 use mutsuki_plugin_bot_flow_web::{
     BotFlowEditorWebExtension, materialize_frontend_assets as materialize_bot_flow_assets,
@@ -185,6 +189,7 @@ pub fn build_console_host(
         bilibili,
         qq,
         None,
+        None,
         BotAgentConsoleServices::default(),
     )
 }
@@ -210,6 +215,7 @@ pub fn build_console_host_with_agent(
     bilibili: Option<Arc<dyn BilibiliManagementApi>>,
     qq: Option<Arc<dyn QqBotManagementApi>>,
     sandbox: Option<Arc<dyn SandboxApi>>,
+    database: Option<Arc<BotStateDbRepository>>,
     bot_agent: BotAgentConsoleServices,
 ) -> WebHostResult<(MutsukiWebHost, ConsoleAssetDirs)> {
     if !config.enabled {
@@ -234,6 +240,9 @@ pub fn build_console_host_with_agent(
     );
     builder = builder.extension(
         OverviewWebExtension::new(caller.clone()).with_frontend_assets(&asset_dirs.overview_assets),
+    );
+    builder = builder.extension(
+        DatabaseWebExtension::new(database).with_frontend_assets(&asset_dirs.database_assets),
     );
     if let Some(monitor) = secret_monitor {
         builder = builder.extension(SecretStatusWebExtension::new(monitor));
@@ -355,6 +364,7 @@ pub(crate) fn base_builder(
 pub struct ConsoleAssetDirs {
     pub _overview_dir: tempfile::TempDir,
     pub _control_dir: tempfile::TempDir,
+    pub _database_dir: tempfile::TempDir,
     pub _config_dir: Option<tempfile::TempDir>,
     pub _upgrade_dir: Option<tempfile::TempDir>,
     pub _bilibili_dir: Option<tempfile::TempDir>,
@@ -365,6 +375,7 @@ pub struct ConsoleAssetDirs {
     pub _shell_dir: tempfile::TempDir,
     pub overview_assets: PathBuf,
     pub control_assets: PathBuf,
+    pub database_assets: PathBuf,
     pub config_assets: PathBuf,
     pub upgrade_assets: PathBuf,
     pub bilibili_assets: PathBuf,
@@ -399,6 +410,15 @@ impl ConsoleAssetDirs {
             .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
         copy_dir(&control_assets, &overview_assets.join("extensions/control"))
             .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
+        let database_dir = tempfile::tempdir()
+            .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
+        let database_assets = materialize_database_assets(database_dir.path())
+            .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
+        copy_dir(
+            &database_assets,
+            &overview_assets.join("extensions/database"),
+        )
+        .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
 
         // Config assets first so shell ?v= stamps match real config/index.js bytes.
         let (config_dir, config_assets) = if include_config {
@@ -502,6 +522,7 @@ impl ConsoleAssetDirs {
         Ok(Self {
             overview_assets: overview_assets.clone(),
             control_assets,
+            database_assets,
             config_assets,
             upgrade_assets,
             bilibili_assets,
@@ -512,6 +533,7 @@ impl ConsoleAssetDirs {
             shell_root: shell_dir.path().to_path_buf(),
             _overview_dir: overview_dir,
             _control_dir: control_dir,
+            _database_dir: database_dir,
             _config_dir: config_dir,
             _upgrade_dir: upgrade_dir,
             _bilibili_dir: bilibili_dir,
@@ -584,6 +606,13 @@ pub(crate) fn materialize_console_shell(
         json!({
             "id": "control",
             "url": format!("./{control_path}?v={control_v}"),
+        }),
+        json!({
+            "id": "database",
+            "url": format!(
+                "./extensions/database/index.js?v={}",
+                asset_version_stamp(&std::fs::read(out_dir.join("extensions/database/index.js"))?)
+            ),
         }),
     ];
     for (id, path, enabled) in [
@@ -702,6 +731,11 @@ mod owner_console_tests {
         assert!(!dirs.overview_assets.join("extensions/bot-flow").exists());
         assert!(dirs.overview_assets.join("trajectory-model.js").is_file());
         assert!(dirs.overview_assets.join("trajectory-view.js").is_file());
+        assert!(
+            dirs.overview_assets
+                .join("extensions/database/index.js")
+                .is_file()
+        );
     }
 
     #[test]

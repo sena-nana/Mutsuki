@@ -11,10 +11,12 @@ mutsuki-bot-flow = { workspace = true }
 mutsuki-plugin-bot-command = { workspace = true }
 mutsuki-plugin-config-web = { workspace = true }
 mutsuki-plugin-bot-control-web = { workspace = true }
+mutsuki-plugin-bot-database-web = { workspace = true }
 mutsuki-plugin-bot-upgrade-web = { workspace = true }
 mutsuki-plugin-bot-overview-web = { workspace = true }
 mutsuki-bot-management = { workspace = true }
 mutsuki-bot-sandbox = { workspace = true }
+mutsuki-bot-state-db = { workspace = true }
 mutsuki-plugin-bot-bilibili-web = { workspace = true }
 mutsuki-plugin-bot-qq-web = { workspace = true }
 mutsuki-plugin-bot-sandbox-web = { workspace = true }

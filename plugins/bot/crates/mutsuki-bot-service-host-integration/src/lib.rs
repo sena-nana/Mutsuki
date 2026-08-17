@@ -12,9 +12,10 @@ pub use bundle::QqBotPluginBundle;
 pub use configured::*;
 pub use console_bridge::{
     AgentConnectionConsoleBridge, AgentConnectionRegistryConsoleBridge,
-    BILIBILI_MANAGEMENT_SERVICE_ID, BilibiliConsoleBridge, BotAgentConfigConsoleBridge,
-    BotFlowConsoleBridge, LocalAgentConsoleBridge, QQ_MANAGEMENT_SERVICE_ID, QqConsoleBridge,
-    SANDBOX_SERVICE_ID, SandboxConsoleBridge,
+    BILIBILI_MANAGEMENT_SERVICE_ID, BOT_STATE_DB_SERVICE_ID, BilibiliConsoleBridge,
+    BotAgentConfigConsoleBridge, BotDatabaseConsoleBridge, BotFlowConsoleBridge,
+    LocalAgentConsoleBridge, QQ_MANAGEMENT_SERVICE_ID, QqConsoleBridge, SANDBOX_SERVICE_ID,
+    SandboxConsoleBridge, bot_state_db_host_service,
 };
 pub use delivery_recovery::{
     BOT_REPLY_DELIVERY_RECOVERY_SOURCE_ID, BotReplyDeliveryRecoveryEventSource,
