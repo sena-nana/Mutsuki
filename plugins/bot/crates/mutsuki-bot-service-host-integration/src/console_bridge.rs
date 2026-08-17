@@ -12,13 +12,32 @@ use mutsuki_agent_service_host_integration::{
 use mutsuki_bot_flow::BotFlowRegistry;
 use mutsuki_bot_management::{BilibiliManagementApi, QqBotManagementService};
 use mutsuki_bot_sandbox::{SandboxApi, SandboxService};
+use mutsuki_bot_state_db::BotStateDbRepository;
 use mutsuki_plugin_bot_agent::{BOT_AGENT_CONFIG_SERVICE_ID, BotAgentConfigHandle};
 use mutsuki_plugin_bot_event_router::BOT_FLOW_REGISTRY_SERVICE_ID;
+use mutsuki_runtime_sdk::RuntimeBootstrapperService;
 use mutsuki_service_runtime::{ServiceRuntime, ServiceRuntimeHandle};
 
 pub const BILIBILI_MANAGEMENT_SERVICE_ID: &str = "mutsuki.bot.bilibili.management";
 pub const QQ_MANAGEMENT_SERVICE_ID: &str = "mutsuki.bot.qq.management";
+pub const BOT_STATE_DB_SERVICE_ID: &str = "mutsuki.bot.state.db";
 pub use mutsuki_bot_sandbox::SANDBOX_SERVICE_ID;
+
+#[must_use]
+pub fn bot_state_db_host_service(
+    repository: Arc<BotStateDbRepository>,
+) -> RuntimeBootstrapperService {
+    RuntimeBootstrapperService::new(BOT_STATE_DB_SERVICE_ID, repository, "bot.state")
+}
+
+pub struct BotDatabaseConsoleBridge;
+
+impl BotDatabaseConsoleBridge {
+    #[must_use]
+    pub fn get(runtime: &ServiceRuntime) -> Option<Arc<BotStateDbRepository>> {
+        runtime.host_service(BOT_STATE_DB_SERVICE_ID).ok()
+    }
+}
 
 pub struct BilibiliConsoleBridge;
 

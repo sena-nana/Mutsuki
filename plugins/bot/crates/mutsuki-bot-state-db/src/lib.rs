@@ -15,6 +15,7 @@ use mutsuki_bot_protocol::{
     BotInteractionSession, BotReplyDeliveryReceipt, BotReplyDeliveryRequest, DeliveryStatus,
     InteractionStatus,
 };
+use rusqlite::types::ValueRef;
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
@@ -49,6 +50,36 @@ pub struct BotStateDbMetrics {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BotStatePage<T> {
     pub items: Vec<T>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BotDatabaseSnapshot {
+    pub path: String,
+    pub journal_mode: String,
+    pub size_bytes: Option<u64>,
+    pub tables: Vec<BotDatabaseTableInfo>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BotDatabaseTableInfo {
+    pub name: String,
+    pub row_count: u64,
+    pub columns: Vec<BotDatabaseColumnInfo>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BotDatabaseColumnInfo {
+    pub name: String,
+    pub decl_type: String,
+    pub primary_key: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct BotDatabaseTablePage {
+    pub table: String,
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<serde_json::Value>>,
     pub next_cursor: Option<String>,
 }
 
@@ -196,6 +227,34 @@ impl BotStateDbRepository {
     #[must_use]
     pub fn metrics(&self) -> BotStateDbMetrics {
         self.inner.metrics.snapshot()
+    }
+
+    /// Reads the live catalog: user tables, columns, and row counts.
+    pub fn inspect_snapshot(&self) -> Result<BotDatabaseSnapshot, BotStateDbError> {
+        let tables = self.call_sync(|reply| DbJob::InspectSnapshot { reply })?;
+        Ok(BotDatabaseSnapshot {
+            path: self.path().display().to_string(),
+            journal_mode: self.journal_mode().to_string(),
+            size_bytes: std::fs::metadata(self.path()).ok().map(|meta| meta.len()),
+            tables,
+        })
+    }
+
+    /// Pages rows from a live user table. `after` is the last `rowid` cursor.
+    pub fn inspect_rows(
+        &self,
+        table: &str,
+        after: Option<&str>,
+        limit: u32,
+    ) -> Result<BotDatabaseTablePage, BotStateDbError> {
+        let table = table.to_owned();
+        let after = after.unwrap_or_default().to_owned();
+        self.call_sync(|reply| DbJob::InspectRows {
+            table,
+            after,
+            limit: bounded_page_limit(limit),
+            reply,
+        })
     }
 
     /// Lists durable delivery receipts and attempts in stable delivery-id order.
@@ -457,6 +516,15 @@ enum DbJob {
         created_at_unix_ms: u64,
         reply: SyncDbReply<Option<BotManagementAuditRecord>>,
     },
+    InspectSnapshot {
+        reply: SyncDbReply<Vec<BotDatabaseTableInfo>>,
+    },
+    InspectRows {
+        table: String,
+        after: String,
+        limit: u32,
+        reply: SyncDbReply<BotDatabaseTablePage>,
+    },
 }
 
 type DbReply<T> = oneshot::Sender<Result<T, BotStateDbError>>;
@@ -666,6 +734,19 @@ impl DbJob {
                     result,
                     created_at_unix_ms,
                 ),
+                metrics,
+            ),
+            Self::InspectSnapshot { reply } => {
+                send_sync_reply(reply, inspect_snapshot_tables(connection), metrics);
+            }
+            Self::InspectRows {
+                table,
+                after,
+                limit,
+                reply,
+            } => send_sync_reply(
+                reply,
+                inspect_rows(connection, &table, &after, limit),
                 metrics,
             ),
         }
@@ -1834,6 +1915,137 @@ fn bounded_page_limit(limit: u32) -> u32 {
     limit.clamp(1, 100)
 }
 
+fn quote_ident(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+fn user_table_names(connection: &Connection) -> Result<Vec<String>, BotStateDbError> {
+    let mut statement = connection.prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+    )?;
+    statement
+        .query_map([], |row| row.get(0))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(BotStateDbError::from)
+}
+
+fn inspect_columns(
+    connection: &Connection,
+    table: &str,
+) -> Result<Vec<BotDatabaseColumnInfo>, BotStateDbError> {
+    let mut statement =
+        connection.prepare(&format!("PRAGMA table_info({})", quote_ident(table)))?;
+    statement
+        .query_map([], |row| {
+            Ok(BotDatabaseColumnInfo {
+                name: row.get(1)?,
+                decl_type: row.get::<_, String>(2).unwrap_or_default(),
+                primary_key: row.get::<_, i64>(5)? != 0,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(BotStateDbError::from)
+}
+
+fn inspect_row_count(connection: &Connection, table: &str) -> Result<u64, BotStateDbError> {
+    let count: i64 = connection.query_row(
+        &format!("SELECT COUNT(*) FROM {}", quote_ident(table)),
+        [],
+        |row| row.get(0),
+    )?;
+    sqlite_unsigned(count, "row_count")
+}
+
+fn inspect_snapshot_tables(
+    connection: &Connection,
+) -> Result<Vec<BotDatabaseTableInfo>, BotStateDbError> {
+    user_table_names(connection)?
+        .into_iter()
+        .map(|name| {
+            Ok(BotDatabaseTableInfo {
+                row_count: inspect_row_count(connection, &name)?,
+                columns: inspect_columns(connection, &name)?,
+                name,
+            })
+        })
+        .collect()
+}
+
+fn inspect_value(value: ValueRef<'_>) -> serde_json::Value {
+    match value {
+        ValueRef::Null => serde_json::Value::Null,
+        ValueRef::Integer(value) => serde_json::Value::from(value),
+        ValueRef::Real(value) => serde_json::json!(value),
+        ValueRef::Text(value) => {
+            serde_json::Value::String(String::from_utf8_lossy(value).into_owned())
+        }
+        ValueRef::Blob(value) => serde_json::json!({
+            "$type": "blob",
+            "bytes": value.len(),
+        }),
+    }
+}
+
+fn inspect_rows(
+    connection: &Connection,
+    table: &str,
+    after: &str,
+    limit: u32,
+) -> Result<BotDatabaseTablePage, BotStateDbError> {
+    if !user_table_names(connection)?
+        .iter()
+        .any(|name| name == table)
+    {
+        return Err(BotStateDbError::InvalidConfiguration(format!(
+            "unknown table: {table}"
+        )));
+    }
+    let columns = inspect_columns(connection, table)?;
+    let column_names = columns
+        .into_iter()
+        .map(|column| column.name)
+        .collect::<Vec<_>>();
+    let select_list = column_names
+        .iter()
+        .map(|name| quote_ident(name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT rowid, {select_list} FROM {} WHERE rowid > ?1 ORDER BY rowid LIMIT ?2",
+        quote_ident(table)
+    );
+    let after_rowid = if after.is_empty() {
+        0
+    } else {
+        after.parse::<i64>().map_err(|_| {
+            BotStateDbError::InvalidConfiguration(format!("invalid cursor: {after}"))
+        })?
+    };
+    let mut statement = connection.prepare(&sql)?;
+    let mut query = statement.query(params![after_rowid, i64::from(limit)])?;
+    let mut rows = Vec::new();
+    let mut last_rowid = None;
+    while let Some(row) = query.next()? {
+        last_rowid = Some(row.get(0)?);
+        let mut values = Vec::with_capacity(column_names.len());
+        for index in 0..column_names.len() {
+            values.push(inspect_value(row.get_ref(index + 1)?));
+        }
+        rows.push(values);
+    }
+    let next_cursor = if rows.len() == usize::try_from(limit).unwrap_or(usize::MAX) {
+        last_rowid.map(|rowid: i64| rowid.to_string())
+    } else {
+        None
+    };
+    Ok(BotDatabaseTablePage {
+        table: table.to_owned(),
+        columns: column_names,
+        rows,
+        next_cursor,
+    })
+}
+
 fn encode(value: &impl serde::Serialize) -> Result<String, BotStateDbError> {
     serde_json::to_string(value).map_err(|error| BotStateDbError::Serialization(error.to_string()))
 }
@@ -2718,6 +2930,45 @@ mod tests {
         assert!(
             p99 < Duration::from_secs(5),
             "p99 under injected contention should stay under busy_timeout, got {p99:?}"
+        );
+    }
+
+    #[test]
+    fn inspect_reads_live_schema_and_rejects_unknown_tables() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("state.db");
+        let repository = BotStateDbRepository::open(&path).unwrap();
+        let snapshot = repository.inspect_snapshot().unwrap();
+        assert_eq!(snapshot.path, path.display().to_string());
+        assert_eq!(snapshot.journal_mode, "wal");
+        assert!(snapshot.size_bytes.unwrap_or(0) > 0);
+        let meta = snapshot
+            .tables
+            .iter()
+            .find(|table| table.name == "bot_management_meta")
+            .expect("schema table");
+        assert_eq!(meta.row_count, 1);
+        assert!(meta.columns.iter().any(|column| column.name == "revision"));
+        assert!(
+            !snapshot
+                .tables
+                .iter()
+                .any(|table| table.name.starts_with("sqlite_"))
+        );
+
+        let page = repository
+            .inspect_rows("bot_management_meta", None, 10)
+            .unwrap();
+        assert_eq!(page.table, "bot_management_meta");
+        assert!(page.columns.contains(&"revision".to_string()));
+        assert_eq!(page.rows.len(), 1);
+        assert!(page.next_cursor.is_none());
+        assert!(repository.inspect_rows("sqlite_master", None, 10).is_err());
+        assert!(repository.inspect_rows("not_a_table", None, 10).is_err());
+        assert!(
+            repository
+                .inspect_rows("bot_management_meta;drop", None, 10)
+                .is_err()
         );
     }
 

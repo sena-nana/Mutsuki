@@ -4021,11 +4021,13 @@ dependencies = [
  "mutsuki-bot-management",
  "mutsuki-bot-protocol",
  "mutsuki-bot-sandbox",
+ "mutsuki-bot-state-db",
  "mutsuki-config-service",
  "mutsuki-plugin-bot-agent-web",
  "mutsuki-plugin-bot-bilibili-web",
  "mutsuki-plugin-bot-command",
  "mutsuki-plugin-bot-control-web",
+ "mutsuki-plugin-bot-database-web",
  "mutsuki-plugin-bot-flow-web",
  "mutsuki-plugin-bot-overview-web",
  "mutsuki-plugin-bot-qq-web",
@@ -4584,6 +4586,22 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.19",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
+ "uuid",
+]
+
+[[package]]
+name = "mutsuki-plugin-bot-database-web"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "mutsuki-bot-state-db",
+ "mutsuki-web-extension",
+ "mutsuki-web-host",
+ "mutsuki-web-protocol",
+ "serde_json",
+ "tempfile",
  "tokio",
  "tokio-tungstenite 0.30.0",
  "uuid",
