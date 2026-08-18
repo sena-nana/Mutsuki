@@ -11,6 +11,8 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::protocol::CloseFrame;
+use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 
 pub mod benchmark;
 pub use benchmark::*;
@@ -32,11 +34,21 @@ pub struct FakeQqSnapshot {
     pub clean_closes: usize,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FakeQqIdentifyOutcome {
+    #[default]
+    ReadyThenCleanClose,
+    ReadyThenClose(u16),
+    ReadyThenReconnectOpcode,
+    RejectIdentify,
+}
+
 #[derive(Clone, Debug)]
 pub struct FakeQqGatewayScript {
     pub initial_events: Vec<Value>,
     pub resumed_events: Vec<Value>,
     pub close_delay: Duration,
+    pub after_identify: FakeQqIdentifyOutcome,
 }
 
 impl Default for FakeQqGatewayScript {
@@ -45,6 +57,7 @@ impl Default for FakeQqGatewayScript {
             initial_events: vec![command_event(2, "echo-1", "/echo hello")],
             resumed_events: vec![command_event(4, "ping-1", "/ping")],
             close_delay: Duration::ZERO,
+            after_identify: FakeQqIdentifyOutcome::ReadyThenCleanClose,
         }
     }
 }
@@ -143,6 +156,20 @@ impl FakeQqServer {
         })
         .await
         .expect("fake QQ OpenAPI sends timed out")
+    }
+
+    pub async fn wait_for_auth_frames(&self, count: usize, timeout: Duration) -> Vec<Value> {
+        tokio::time::timeout(timeout, async {
+            loop {
+                let frames = self.gateway_auth_frames.lock().unwrap().clone();
+                if frames.len() >= count {
+                    break frames;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("fake QQ Gateway auth frames timed out")
     }
 
     pub fn snapshot(&self) -> FakeQqSnapshot {
@@ -290,57 +317,112 @@ async fn run_gateway_server(
             ))
             .await
             .unwrap();
-        let auth = next_json(&mut socket).await;
+        let auth = next_auth_frame(&mut socket).await;
         auth_frames.lock().unwrap().push(auth.clone());
         if connection == 0 {
-            assert_eq!(auth["op"], 2);
+            match script.after_identify {
+                FakeQqIdentifyOutcome::ReadyThenCleanClose => {
+                    send_ready_events(&mut socket, &resume_url, &script.initial_events).await;
+                    socket.send(Message::Close(None)).await.unwrap();
+                }
+                FakeQqIdentifyOutcome::ReadyThenClose(code) => {
+                    send_ready_events(&mut socket, &resume_url, &script.initial_events).await;
+                    socket
+                        .send(Message::Close(Some(CloseFrame {
+                            code: CloseCode::from(code),
+                            reason: format!("close {code}").into(),
+                        })))
+                        .await
+                        .unwrap();
+                }
+                FakeQqIdentifyOutcome::ReadyThenReconnectOpcode => {
+                    send_ready_events(&mut socket, &resume_url, &script.initial_events).await;
+                    socket
+                        .send(Message::Text(
+                            json!({"op": 7, "d": null}).to_string().into(),
+                        ))
+                        .await
+                        .unwrap();
+                    drain_until_close(&mut socket, script.close_delay, &clean_closes).await;
+                }
+                FakeQqIdentifyOutcome::RejectIdentify => {
+                    socket
+                        .send(Message::Text(
+                            json!({"op": 9, "d": false}).to_string().into(),
+                        ))
+                        .await
+                        .unwrap();
+                    drain_until_close(&mut socket, script.close_delay, &clean_closes).await;
+                }
+            }
+            continue;
+        }
+        if auth["op"] == 6 {
             socket
                 .send(Message::Text(
-                    json!({
-                        "op": 0, "s": 1, "t": "READY", "id": "ready-1",
-                        "d": {"session_id": "SESSION_1", "resume_gateway_url": resume_url}
-                    })
-                    .to_string()
-                    .into(),
+                    json!({"op": 0, "s": 3, "t": "RESUMED", "id": "resumed-1", "d": {}})
+                        .to_string()
+                        .into(),
                 ))
                 .await
                 .unwrap();
-            for event in &script.initial_events {
+            for event in &script.resumed_events {
                 send_gateway_event(&mut socket, event).await;
             }
-            socket.send(Message::Close(None)).await.unwrap();
-            continue;
+        } else {
+            send_ready_events(&mut socket, &resume_url, &script.initial_events).await;
         }
-        assert_eq!(auth["op"], 6);
-        socket
-            .send(Message::Text(
-                json!({"op": 0, "s": 3, "t": "RESUMED", "id": "resumed-1", "d": {}})
-                    .to_string()
-                    .into(),
-            ))
-            .await
-            .unwrap();
-        for event in &script.resumed_events {
-            send_gateway_event(&mut socket, event).await;
-        }
-        while let Some(message) = socket.next().await {
-            match message {
-                Ok(Message::Text(text)) => {
-                    if gateway_frame_opcode(text.as_ref()) == Some(1) {
-                        socket
-                            .send(Message::Text(HEARTBEAT_ACK.into()))
-                            .await
-                            .unwrap();
-                    }
+        drain_until_close(&mut socket, script.close_delay, &clean_closes).await;
+    }
+}
+
+async fn send_ready_events<S>(
+    socket: &mut tokio_tungstenite::WebSocketStream<S>,
+    resume_url: &str,
+    events: &[Value],
+) where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    socket
+        .send(Message::Text(
+            json!({
+                "op": 0, "s": 1, "t": "READY", "id": "ready-1",
+                "d": {"session_id": "SESSION_1", "resume_gateway_url": resume_url}
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    for event in events {
+        send_gateway_event(socket, event).await;
+    }
+}
+
+async fn drain_until_close<S>(
+    socket: &mut tokio_tungstenite::WebSocketStream<S>,
+    close_delay: Duration,
+    clean_closes: &Arc<AtomicUsize>,
+) where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    while let Some(message) = socket.next().await {
+        match message {
+            Ok(Message::Text(text)) => {
+                if gateway_frame_opcode(text.as_ref()) == Some(1) {
+                    socket
+                        .send(Message::Text(HEARTBEAT_ACK.into()))
+                        .await
+                        .unwrap();
                 }
-                Ok(Message::Close(_)) => {
-                    tokio::time::sleep(script.close_delay).await;
-                    clean_closes.fetch_add(1, Ordering::SeqCst);
-                    break;
-                }
-                Err(_) => break,
-                _ => {}
             }
+            Ok(Message::Close(_)) => {
+                tokio::time::sleep(close_delay).await;
+                clean_closes.fetch_add(1, Ordering::SeqCst);
+                break;
+            }
+            Err(_) => break,
+            _ => {}
         }
     }
 }
@@ -372,13 +454,27 @@ fn command_event(sequence: u64, id: &str, content: &str) -> Value {
     })
 }
 
-async fn next_json<S>(socket: &mut tokio_tungstenite::WebSocketStream<S>) -> Value
+async fn next_auth_frame<S>(socket: &mut tokio_tungstenite::WebSocketStream<S>) -> Value
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
     loop {
-        if let Message::Text(text) = socket.next().await.unwrap().unwrap() {
-            return serde_json::from_str(text.as_ref()).unwrap();
+        match socket.next().await.unwrap().unwrap() {
+            Message::Text(text) => {
+                let value: Value = serde_json::from_str(text.as_ref()).unwrap();
+                if value.get("op").and_then(Value::as_u64) == Some(1) {
+                    socket
+                        .send(Message::Text(HEARTBEAT_ACK.into()))
+                        .await
+                        .unwrap();
+                    continue;
+                }
+                return value;
+            }
+            Message::Ping(payload) => {
+                socket.send(Message::Pong(payload)).await.unwrap();
+            }
+            other => panic!("expected Gateway auth frame, received {other:?}"),
         }
     }
 }

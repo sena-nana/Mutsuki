@@ -1703,6 +1703,32 @@ fn gateway_pump_models_identify_heartbeat_resume_and_reconnect() {
 }
 
 #[test]
+fn gateway_pump_invalid_session_resumes_or_reidentifies() {
+    let mut pump = QqGatewayPump::with_account("main", 8);
+    pump.handle_raw_frame(json!({"op": 9, "d": false}), 0)
+        .unwrap();
+    assert_eq!(pump.pop_action(), Some(GatewayAction::Identify));
+    assert_eq!(pump.session_id(), None);
+
+    pump.handle_raw_frame(
+        json!({
+            "op": 0,
+            "s": 1,
+            "t": "READY",
+            "id": "ready-1",
+            "d": {"session_id": "SESSION", "resume_gateway_url": "wss://resume.example"}
+        }),
+        0,
+    )
+    .unwrap();
+    let _ = pump.pop_action();
+    pump.handle_raw_frame(json!({"op": 9, "d": true}), 0)
+        .unwrap();
+    assert_eq!(pump.pop_action(), Some(GatewayAction::Resume));
+    assert_eq!(pump.session_id(), Some("SESSION"));
+}
+
+#[test]
 fn gateway_pump_bounds_dedup_window_and_tolerates_unknown_frames() {
     let mut pump = QqGatewayPump::with_account("main", 2);
     let frame = |id: &str, sequence: u64| {

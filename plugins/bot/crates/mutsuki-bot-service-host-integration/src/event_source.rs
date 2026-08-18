@@ -11,8 +11,9 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tokio_tungstenite::tungstenite::Message;
 
 use mutsuki_bot_management::{
-    QQ_GATEWAY_ERROR_OPERATOR_RECONNECT, QQ_GATEWAY_ERROR_SESSION_EXPIRED,
-    QQ_GATEWAY_ERROR_SESSION_REPLACED,
+    QQ_GATEWAY_ERROR_IDENTIFY_REJECTED, QQ_GATEWAY_ERROR_IDENTIFY_TIMEOUT,
+    QQ_GATEWAY_ERROR_OPERATOR_RECONNECT, QQ_GATEWAY_ERROR_SERVER_RECONNECT,
+    QQ_GATEWAY_ERROR_SESSION_EXPIRED, QQ_GATEWAY_ERROR_SESSION_INVALID,
 };
 use mutsuki_bot_protocol::{BotEvent, BotEventKind, BotUser};
 use mutsuki_plugin_bot_adapter_qqbot::{
@@ -445,6 +446,8 @@ async fn run_connection(
     pump.handle_frame(hello_frame, hello, 0)
         .map_err(GatewayFailure::Fatal)?;
     send_auth_action(&mut websocket, config, pump, &access_token).await?;
+    let identify_timeout = Duration::from_millis(config.gateway_hello_timeout_ms);
+    let mut awaiting_ready_since = Some(Instant::now());
 
     let (mut sink, mut stream) = websocket.split();
     let (incoming_tx, mut incoming_rx) = mpsc::channel(config.gateway_queue_capacity);
@@ -468,22 +471,19 @@ async fn run_connection(
     let mut cached_heartbeat_text = String::new();
 
     let end = loop {
-        let ack_deadline = async {
-            match awaiting_ack_since {
-                Some(sent) => {
-                    let elapsed = sent.elapsed();
-                    if elapsed < ack_timeout {
-                        tokio::time::sleep(ack_timeout - elapsed).await;
-                    }
-                }
-                None => std::future::pending::<()>().await,
-            }
-        };
         tokio::select! {
             _ = host_stop.cancelled() => break ConnectionEnd::Shutdown,
             _ = local_stop.changed() => break ConnectionEnd::Shutdown,
             signal = reconnect.recv() => break connection_end_from_reconnect_signal(signal),
-            _ = ack_deadline => {
+            _ = wait_deadline(awaiting_ready_since, identify_timeout) => {
+                if awaiting_ready_since.is_some() {
+                    break ConnectionEnd::Reconnect(ReconnectReason::classified(
+                        QQ_GATEWAY_ERROR_IDENTIFY_TIMEOUT,
+                        "Identify timed out waiting for READY",
+                    ));
+                }
+            }
+            _ = wait_deadline(awaiting_ack_since, ack_timeout) => {
                 if awaiting_ack_since.is_some() {
                     break ConnectionEnd::Reconnect(ReconnectReason::new(
                         "heartbeat ACK timed out",
@@ -569,19 +569,34 @@ async fn run_connection(
                         let task = pump.handle_frame(frame.clone(), raw, 0)
                             .map_err(GatewayFailure::Recoverable)?;
                         if matches!(frame.t.as_deref(), Some("READY" | "RESUMED")) {
-                            health.inner.lock().expect("QQBot health mutex").identified = true;
+                            let mut snapshot = health.inner.lock().expect("QQBot health mutex");
+                            snapshot.identified = true;
+                            snapshot.last_error = None;
+                            snapshot.last_error_code = None;
+                            awaiting_ready_since = None;
                             *reconnect_attempt = 0;
+                        }
+                        if frame.op == 9
+                            && !(frame.d.as_bool().unwrap_or(false) && pump.session_id().is_some())
+                        {
+                            while pump.pop_action().is_some() {}
+                            break ConnectionEnd::Reconnect(ReconnectReason::classified(
+                                QQ_GATEWAY_ERROR_IDENTIFY_REJECTED,
+                                "Identify or Resume rejected",
+                            ));
                         }
                         while let Some(action) = pump.pop_action() {
                             match action {
                                 GatewayAction::Identify => {
                                     sink.send(Message::Text(QqGatewayPump::identify_frame(config, &access_token).to_string().into()))
                                         .await.map_err(recoverable_failure)?;
+                                    awaiting_ready_since = Some(Instant::now());
                                 }
                                 GatewayAction::Resume => {
                                     let frame = pump.resume_frame(&access_token).map_err(GatewayFailure::Recoverable)?;
                                     sink.send(Message::Text(frame.to_string().into())).await
                                         .map_err(recoverable_failure)?;
+                                    awaiting_ready_since = Some(Instant::now());
                                 }
                                 GatewayAction::Heartbeat(_) => {
                                     let sequence = pump.last_sequence();
@@ -612,7 +627,7 @@ async fn run_connection(
                         }
                         if frame.op == 7 {
                             break ConnectionEnd::Reconnect(ReconnectReason::classified(
-                                QQ_GATEWAY_ERROR_SESSION_REPLACED,
+                                QQ_GATEWAY_ERROR_SERVER_RECONNECT,
                                 "server requested reconnect",
                             ));
                         }
@@ -746,6 +761,18 @@ fn gateway_opcode(text: &str) -> Option<u64> {
         .map(|frame| frame.op)
 }
 
+async fn wait_deadline(since: Option<Instant>, timeout: Duration) {
+    match since {
+        Some(sent) => {
+            let elapsed = sent.elapsed();
+            if elapsed < timeout {
+                tokio::time::sleep(timeout - elapsed).await;
+            }
+        }
+        None => std::future::pending::<()>().await,
+    }
+}
+
 fn reconnect_delay(config: &QqBotConfig, attempt: u32) -> Duration {
     let exponent = attempt.saturating_sub(1).min(20);
     let base = config
@@ -840,14 +867,16 @@ enum GatewayCloseDisposition {
 }
 
 fn classify_gateway_close(code: u16) -> GatewayCloseDisposition {
-    // QQ-specific close semantics mirrored by Tencent's official QQBot gateway
-    // implementation: 4004 refreshes auth, 4006/7/9 and 4900-4913 discard the
-    // session, 4008 is rate limiting, and 4914/4915 are permanent account state.
+    // Official QQ Gateway close semantics: 4006/4007 and 4900-4913 discard the
+    // session and Identify; 4009 and ordinary disconnects Resume; 4008 is rate
+    // limiting; 4001/4002/4010-4014 cannot retry; 4914/4915 are permanent
+    // account state. 4004 is a defensive auth-refresh path.
     match code {
-        4914 | 4915 => GatewayCloseDisposition::Permanent,
+        4001 | 4002 | 4010..=4014 | 4914 | 4915 => GatewayCloseDisposition::Permanent,
         4004 => GatewayCloseDisposition::RefreshToken,
-        4006 | 4007 | 4009 | 4900..=4913 => GatewayCloseDisposition::Reidentify,
+        4006 | 4007 | 4900..=4913 => GatewayCloseDisposition::Reidentify,
         4008 => GatewayCloseDisposition::RateLimited,
+        4009 => GatewayCloseDisposition::Resume,
         _ => GatewayCloseDisposition::Resume,
     }
 }
@@ -868,7 +897,7 @@ fn safe_source_id(value: &str) -> String {
 
 fn reconnect_reason_from_close(code: u16, detail: String) -> ReconnectReason {
     match code {
-        4006 | 4007 => ReconnectReason::classified(QQ_GATEWAY_ERROR_SESSION_REPLACED, detail),
+        4006 | 4007 => ReconnectReason::classified(QQ_GATEWAY_ERROR_SESSION_INVALID, detail),
         4009 => ReconnectReason::classified(QQ_GATEWAY_ERROR_SESSION_EXPIRED, detail),
         _ => ReconnectReason::new(detail),
     }
@@ -1000,7 +1029,11 @@ mod tests {
             classify_gateway_close(4004),
             GatewayCloseDisposition::RefreshToken
         );
-        for code in [4006, 4007, 4009, 4900, 4913] {
+        assert_eq!(
+            classify_gateway_close(4009),
+            GatewayCloseDisposition::Resume
+        );
+        for code in [4006, 4007, 4900, 4913] {
             assert_eq!(
                 classify_gateway_close(code),
                 GatewayCloseDisposition::Reidentify
@@ -1010,7 +1043,7 @@ mod tests {
             classify_gateway_close(4008),
             GatewayCloseDisposition::RateLimited
         );
-        for code in [4914, 4915] {
+        for code in [4001, 4002, 4010, 4011, 4012, 4013, 4014, 4914, 4915] {
             assert_eq!(
                 classify_gateway_close(code),
                 GatewayCloseDisposition::Permanent
@@ -1077,14 +1110,14 @@ mod tests {
     }
 
     #[test]
-    fn close_codes_map_session_replaced_without_labeling_4009_as_duplicate_login() {
+    fn close_codes_map_session_invalid_without_labeling_4009_as_duplicate_login() {
         assert_eq!(
             reconnect_reason_from_close(4006, "Gateway close 4006".into()).code,
-            Some(QQ_GATEWAY_ERROR_SESSION_REPLACED)
+            Some(QQ_GATEWAY_ERROR_SESSION_INVALID)
         );
         assert_eq!(
             reconnect_reason_from_close(4007, "Gateway close 4007".into()).code,
-            Some(QQ_GATEWAY_ERROR_SESSION_REPLACED)
+            Some(QQ_GATEWAY_ERROR_SESSION_INVALID)
         );
         assert_eq!(
             reconnect_reason_from_close(4009, "Gateway close 4009".into()).code,

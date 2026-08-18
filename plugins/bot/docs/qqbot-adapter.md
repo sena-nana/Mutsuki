@@ -69,8 +69,13 @@ last error, and the bot self profile from `/users/@me` (READY only fills empty f
 explicit supervised restart. Logs use account ID, a session digest, event type, sequence and
 correlation ID, never credentials or authorization headers.
 
-Failures are classified as recoverable disconnect, Gateway rate limit, auth/config rejection or
-permanent account rejection. OpenAPI task failures expose stable `qqbot.openapi.*` codes plus
+Failures are classified as recoverable disconnect, Gateway rate limit, Identify/Resume
+rejection, auth/config rejection or permanent protocol/account rejection. Opcode 9
+(Invalid Session) reconnects with `qq.gateway.identify_rejected`. Waiting for READY
+after Identify uses the HELLO timeout. Close 4006/4007 discard the session and
+Identify (`qq.gateway.session_invalid`); 4009 and opcode 7 preserve the session and
+Resume. Close 4001/4002/4010-4014 and 4914/4915 stop the Gateway. OpenAPI task
+failures expose stable `qqbot.openapi.*` codes plus
 `classification`, `retryable`, optional `retry_after_ms` and HTTP status evidence. HTTP 401 refreshes
 once; 429/5xx retries are bounded by config and server headers. Gateway queues and event
 deduplication windows are bounded. Dedup keys include event kind plus message ID, so a reconnect
