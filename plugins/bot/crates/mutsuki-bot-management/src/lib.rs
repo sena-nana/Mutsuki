@@ -87,16 +87,22 @@ pub enum QqGatewayConnectionState {
 }
 
 pub const QQ_GATEWAY_ERROR_OPERATOR_RECONNECT: &str = "qq.gateway.operator_reconnect";
-pub const QQ_GATEWAY_ERROR_SESSION_REPLACED: &str = "qq.gateway.session_replaced";
+pub const QQ_GATEWAY_ERROR_IDENTIFY_REJECTED: &str = "qq.gateway.identify_rejected";
+pub const QQ_GATEWAY_ERROR_IDENTIFY_TIMEOUT: &str = "qq.gateway.identify_timeout";
+pub const QQ_GATEWAY_ERROR_SESSION_INVALID: &str = "qq.gateway.session_invalid";
 pub const QQ_GATEWAY_ERROR_SESSION_EXPIRED: &str = "qq.gateway.session_expired";
+pub const QQ_GATEWAY_ERROR_SERVER_RECONNECT: &str = "qq.gateway.server_reconnect";
 
 /// User-facing Chinese copy for a QQ Gateway reconnect/error code.
 #[must_use]
 pub fn qq_gateway_error_message(code: &str) -> Option<&'static str> {
     Some(match code {
         QQ_GATEWAY_ERROR_OPERATOR_RECONNECT => "已按请求重新连接",
-        QQ_GATEWAY_ERROR_SESSION_REPLACED => "已存在已连接 QQ",
+        QQ_GATEWAY_ERROR_IDENTIFY_REJECTED => "登录鉴权失败",
+        QQ_GATEWAY_ERROR_IDENTIFY_TIMEOUT => "登录超时，正在重新连接",
+        QQ_GATEWAY_ERROR_SESSION_INVALID => "会话无效，正在重新登录",
         QQ_GATEWAY_ERROR_SESSION_EXPIRED => "连接已过期，正在重新连接",
+        QQ_GATEWAY_ERROR_SERVER_RECONNECT => "服务端要求重新连接",
         _ => return None,
     })
 }
@@ -1187,7 +1193,7 @@ mod tests {
     }
 
     #[test]
-    fn account_view_maps_session_replaced_to_connected_qq_prompt() {
+    fn account_view_maps_identify_and_session_recovery_codes() {
         let account = account_view_from_config(QqAccountViewInput {
             account_id: "main".into(),
             app_id: "app".into(),
@@ -1199,15 +1205,27 @@ mod tests {
             connected: false,
             identified: false,
             last_heartbeat_unix_ms: None,
-            last_error: Some("server requested reconnect".into()),
-            last_error_code: Some(QQ_GATEWAY_ERROR_SESSION_REPLACED.into()),
+            last_error: Some("Identify or Resume rejected".into()),
+            last_error_code: Some(QQ_GATEWAY_ERROR_IDENTIFY_REJECTED.into()),
             reconnect_count: 1,
             self_user: None,
         });
-        assert_eq!(account.last_error.as_deref(), Some("已存在已连接 QQ"));
+        assert_eq!(account.last_error.as_deref(), Some("登录鉴权失败"));
         assert_eq!(
             account.last_error_code.as_deref(),
-            Some(QQ_GATEWAY_ERROR_SESSION_REPLACED)
+            Some(QQ_GATEWAY_ERROR_IDENTIFY_REJECTED)
+        );
+        assert_eq!(
+            qq_gateway_error_message(QQ_GATEWAY_ERROR_SESSION_INVALID),
+            Some("会话无效，正在重新登录")
+        );
+        assert_eq!(
+            qq_gateway_error_message(QQ_GATEWAY_ERROR_SERVER_RECONNECT),
+            Some("服务端要求重新连接")
+        );
+        assert_eq!(
+            qq_gateway_error_message(QQ_GATEWAY_ERROR_IDENTIFY_TIMEOUT),
+            Some("登录超时，正在重新连接")
         );
     }
 
