@@ -49,6 +49,10 @@ async fn sandbox_rpc_simulate_send_and_confirm_live_send() {
     assert!(frontend.contains("发送到 QQ"));
     assert!(frontend.contains("update_user"));
     assert!(frontend.contains("import_live_users"));
+    assert!(frontend.contains("avatar_url"));
+    assert!(frontend.contains("conversation.avatar_url || peer?.avatar_url"));
+    assert!(frontend.contains("referrerpolicy"));
+    assert!(frontend.contains("remoteImage"));
     assert!(frontend.contains("sandbox-reply"));
     assert!(frontend.contains("conversation.active_message"));
     assert!(frontend.contains("sandbox-mention"));

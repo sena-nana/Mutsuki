@@ -17,7 +17,8 @@ use crate::types::{
     SANDBOX_USER_NAMES, SandboxAction, SandboxChangeEvent, SandboxConversationView, SandboxError,
     SandboxMediaBlob, SandboxMediaRef, SandboxMessageView, SandboxMode, SandboxSnapshot,
     SandboxSpeakerRole, SandboxUserView, SandboxWriteRequest, SandboxWriteResult,
-    is_sandbox_conversation, parse_sandbox_mentions, preview_segments, sandbox_user_id,
+    is_sandbox_conversation, parse_sandbox_mentions, preview_segments, qqapp_avatar_url,
+    sandbox_user_id,
 };
 
 const MAX_MESSAGES: usize = 200;
@@ -109,6 +110,7 @@ struct Inner {
     revision: u64,
     mode: SandboxMode,
     account_id: String,
+    app_id: String,
     simulate: Store,
     live: Store,
     media: VecDeque<StoredMedia>,
@@ -136,6 +138,11 @@ impl SandboxService {
 
     #[must_use]
     pub fn with_account(account_id: impl Into<String>) -> Self {
+        Self::with_account_app(account_id, "")
+    }
+
+    #[must_use]
+    pub fn with_account_app(account_id: impl Into<String>, app_id: impl Into<String>) -> Self {
         let account_id = account_id.into();
         let (changes, _) = broadcast::channel(64);
         let mut simulate = Store::default();
@@ -146,6 +153,7 @@ impl SandboxService {
                 revision: 0,
                 mode: SandboxMode::Simulate,
                 account_id,
+                app_id: app_id.into(),
                 simulate,
                 live: Store::default(),
                 media: VecDeque::new(),
@@ -264,7 +272,7 @@ impl SandboxService {
                 .ok_or_else(|| SandboxError::new("invalid_state", "可创建的用户数量已达上限"))?;
             let now = unix_ms();
             let user_id = sandbox_user_id(display_name);
-            let (group, user) = place_simulate_user(&mut inner, &user_id, display_name, now)?;
+            let (group, user) = place_simulate_user(&mut inner, &user_id, display_name, None, now)?;
             let account_id = inner.account_id.clone();
             let event = sandbox_event(
                 &account_id,
@@ -438,7 +446,13 @@ impl SandboxService {
                         format!("真实数据中没有成员 `{user_id}`"),
                     ));
                 };
-                match place_simulate_user(&mut inner, &user_id, &source.display_name, now) {
+                match place_simulate_user(
+                    &mut inner,
+                    &user_id,
+                    &source.display_name,
+                    source.avatar_url.as_deref(),
+                    now,
+                ) {
                     Ok((group, user)) => {
                         events.push(sandbox_event(
                             &account_id,
@@ -734,13 +748,22 @@ impl SandboxApi for SandboxService {
         let active_message = active_message_permission(&event);
         let mut inner = self.lock_inner();
         let account_id = inner.account_id.clone();
+        let app_id = inner.app_id.clone();
         {
             let stored = ensure_conversation(&mut inner.live, conversation, &live_title, now);
+            apply_conversation_avatar(stored, &app_id);
             if let Some(allowed) = active_message {
                 stored.view.active_message = allowed;
             }
             if let Some(actor) = &event.actor {
-                upsert_user(stored, &actor.user_id, actor.display_name.as_deref(), now);
+                upsert_user(
+                    stored,
+                    &actor.user_id,
+                    actor.display_name.as_deref(),
+                    actor.avatar_url.as_deref(),
+                    now,
+                );
+                apply_conversation_avatar(stored, &app_id);
             }
             if let Some(message) = &event.message {
                 let sender = event.actor.as_ref();
@@ -779,6 +802,7 @@ impl SandboxApi for SandboxService {
         let sandbox = is_sandbox_conversation(conversation);
         let now = unix_ms();
         let mut inner = self.lock_inner();
+        let app_id = inner.app_id.clone();
         let message = {
             let store = if sandbox {
                 &mut inner.simulate
@@ -788,6 +812,7 @@ impl SandboxApi for SandboxService {
             let title: fn(&QqConversationRef) -> String =
                 if sandbox { sandbox_title } else { live_title };
             let stored = ensure_conversation(store, conversation.clone(), &title, now);
+            apply_conversation_avatar(stored, &app_id);
             append_message(
                 stored,
                 "bot",
@@ -872,7 +897,7 @@ fn seed_simulate(store: &mut Store, account_id: &str) {
         insert_conversation(store, group_ref(account_id), "沙盒体验群", now).expect("seed group");
     if let Some(stored) = store.conversations.get_mut(&group.conversation_id) {
         for name in ["Alice", "Bob"] {
-            upsert_user(stored, &sandbox_user_id(name), Some(name), now);
+            upsert_user(stored, &sandbox_user_id(name), Some(name), None, now);
         }
         append_message(
             stored,
@@ -892,7 +917,7 @@ fn seed_simulate(store: &mut Store, account_id: &str) {
         let private = insert_conversation(store, private_ref(account_id, &user_id), name, now)
             .expect("seed private");
         if let Some(stored) = store.conversations.get_mut(&private.conversation_id) {
-            upsert_user(stored, &user_id, Some(name), now);
+            upsert_user(stored, &user_id, Some(name), None, now);
         }
     }
 }
@@ -920,6 +945,7 @@ fn insert_conversation(
             } else {
                 title.to_owned()
             },
+            avatar_url: None,
             conversation,
             users: Vec::new(),
             last_preview: None,
@@ -1142,6 +1168,7 @@ fn place_simulate_user(
     inner: &mut Inner,
     user_id: &str,
     display_name: &str,
+    avatar_url: Option<&str>,
     now: u64,
 ) -> Result<(QqConversationRef, SandboxUserView), SandboxError> {
     let taken = group_user_ids(&inner.simulate);
@@ -1160,7 +1187,7 @@ fn place_simulate_user(
     let account_id = inner.account_id.clone();
     let group_id = group_conversation_id(&inner.simulate)?;
     let stored = conversation_mut(&mut inner.simulate, &group_id)?;
-    set_user(stored, user_id, display_name, now);
+    set_user(stored, user_id, display_name, avatar_url, now);
     let group = stored.view.conversation.clone();
     let user = stored.users[user_id].clone();
     let private = private_ref(&account_id, user_id);
@@ -1170,7 +1197,8 @@ fn place_simulate_user(
     }
     if let Some(stored) = inner.simulate.conversations.get_mut(&private_key) {
         stored.view.title = display_name.to_owned();
-        set_user(stored, user_id, display_name, now);
+        set_user(stored, user_id, display_name, avatar_url, now);
+        apply_conversation_avatar(stored, "");
     }
     Ok((group, user))
 }
@@ -1202,7 +1230,14 @@ fn relocate_simulate_user(
         stored.view.conversation_id = new_private.clone();
         stored.view.title = display_name.to_owned();
         stored.users.remove(old_id);
-        set_user(&mut stored, new_id, display_name, now);
+        set_user(
+            &mut stored,
+            new_id,
+            display_name,
+            user.avatar_url.as_deref(),
+            now,
+        );
+        stored.view.avatar_url.clone_from(&user.avatar_url);
         rewrite_sender(&mut stored.messages, old_id, new_id, display_name);
         for message in &mut stored.messages {
             message.conversation_id.clone_from(&new_private);
@@ -1226,18 +1261,26 @@ fn rewrite_sender(
     }
 }
 
-fn set_user(stored: &mut StoredConversation, user_id: &str, display_name: &str, now: u64) {
+fn set_user(
+    stored: &mut StoredConversation,
+    user_id: &str,
+    display_name: &str,
+    avatar_url: Option<&str>,
+    now: u64,
+) {
     let user = stored
         .users
         .entry(user_id.to_owned())
         .or_insert_with(|| SandboxUserView {
             user_id: user_id.to_owned(),
             display_name: display_name.to_owned(),
+            avatar_url: None,
             last_seen_unix_ms: now,
             message_count: 0,
         });
     user.user_id = user_id.to_owned();
     display_name.clone_into(&mut user.display_name);
+    assign_avatar(&mut user.avatar_url, avatar_url);
     user.last_seen_unix_ms = now;
     stored.view.last_activity_unix_ms = stored.view.last_activity_unix_ms.max(now);
 }
@@ -1246,6 +1289,7 @@ fn upsert_user(
     stored: &mut StoredConversation,
     user_id: &str,
     display_name: Option<&str>,
+    avatar_url: Option<&str>,
     now: u64,
 ) {
     let display_name = display_name
@@ -1258,14 +1302,22 @@ fn upsert_user(
         .or_insert_with(|| SandboxUserView {
             user_id: user_id.to_owned(),
             display_name: display_name.to_owned(),
+            avatar_url: None,
             last_seen_unix_ms: now,
             message_count: 0,
         });
     if user.display_name == user.user_id && display_name != user_id {
         display_name.clone_into(&mut user.display_name);
     }
+    assign_avatar(&mut user.avatar_url, avatar_url);
     user.last_seen_unix_ms = now;
     stored.view.last_activity_unix_ms = stored.view.last_activity_unix_ms.max(now);
+}
+
+fn assign_avatar(target: &mut Option<String>, avatar_url: Option<&str>) {
+    if let Some(avatar_url) = avatar_url.map(str::trim).filter(|value| !value.is_empty()) {
+        *target = Some(avatar_url.to_owned());
+    }
 }
 
 fn append_message(
@@ -1283,7 +1335,7 @@ fn append_message(
         .filter(|value| *value > 0)
         .unwrap_or_else(unix_ms);
     if role == SandboxSpeakerRole::User {
-        upsert_user(stored, sender_id, Some(sender_name), now);
+        upsert_user(stored, sender_id, Some(sender_name), None, now);
         if let Some(user) = stored.users.get_mut(sender_id) {
             user.message_count = user.message_count.saturating_add(1);
         }
@@ -1326,7 +1378,7 @@ fn sandbox_event(
     let actor = BotUser {
         user_id: user.user_id.clone(),
         display_name: Some(user.display_name.clone()),
-        avatar_url: None,
+        avatar_url: user.avatar_url.clone(),
     };
     let mut ext = BotExtMap::new();
     ext.insert("sandbox".into(), Value::Bool(true));
@@ -1383,9 +1435,37 @@ fn projected_conversation(stored: &StoredConversation) -> SandboxConversationVie
             .cmp(&left.last_seen_unix_ms)
             .then_with(|| left.user_id.cmp(&right.user_id))
     });
+    if view.avatar_url.is_none() && view.kind == BotConversationKind::Private {
+        view.avatar_url = users
+            .iter()
+            .find(|user| view.conversation.user_id.as_deref() == Some(user.user_id.as_str()))
+            .or(users.first())
+            .and_then(|user| user.avatar_url.clone());
+    }
     view.users = users;
     view.message_count = stored.messages.len() as u64;
     view
+}
+
+fn apply_conversation_avatar(stored: &mut StoredConversation, app_id: &str) {
+    let synthesized = match stored.view.kind {
+        BotConversationKind::Group | BotConversationKind::Channel => None,
+        BotConversationKind::Private => stored
+            .users
+            .values()
+            .find_map(|user| user.avatar_url.clone())
+            .or_else(|| {
+                stored
+                    .view
+                    .conversation
+                    .user_id
+                    .as_deref()
+                    .and_then(|user_id| qqapp_avatar_url(app_id, user_id))
+            }),
+    };
+    if let Some(url) = synthesized {
+        stored.view.avatar_url = Some(url);
+    }
 }
 
 fn active_store(inner: &Inner) -> &Store {

@@ -120,10 +120,19 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
     let html = http_get_body(&addr, "/").await;
     assert!(html.contains("mutsuki-ui.css?v="));
     assert!(html.contains("console-bootstrap.js?v="));
-    let shell = http_get_body(&addr, "/index.html").await;
+    let (headers, shell) = http_get_parts(&addr, "/index.html").await;
+    let header_csp = headers.to_ascii_lowercase();
     assert!(
-        shell.contains("img-src 'self' data:"),
-        "console CSP must allow QR data: PNG"
+        header_csp.contains("img-src 'self' data: blob:")
+            && header_csp.contains("https://*.qlogo.cn")
+            && header_csp.contains("https://*.nt.qq.com.cn"),
+        "Host CSP header must allow QR data, blob media, QQ avatars and inbound attachment CDNs"
+    );
+    assert!(
+        shell.contains("img-src 'self' data: blob:")
+            && shell.contains("https://*.qlogo.cn")
+            && shell.contains("https://*.nt.qq.com.cn"),
+        "console CSP must allow QR data, blob media, QQ avatars and inbound attachment CDNs"
     );
 
     let bootstrap = http_get_body(&addr, "/console-bootstrap.js").await;
@@ -657,6 +666,11 @@ fn versioned_module_path(options: &str, module_path: &str) -> String {
 
 async fn http_get_body(addr: &str, path: &str) -> String {
     String::from_utf8_lossy(&http_get_bytes(addr, path).await.1).into_owned()
+}
+
+async fn http_get_parts(addr: &str, path: &str) -> (String, String) {
+    let (headers, body) = http_get_bytes(addr, path).await;
+    (headers, String::from_utf8_lossy(&body).into_owned())
 }
 
 async fn http_get_bytes(addr: &str, path: &str) -> (String, Vec<u8>) {

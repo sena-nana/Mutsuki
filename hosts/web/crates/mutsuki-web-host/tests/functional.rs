@@ -10,7 +10,7 @@ use mutsuki_web_extension::{
 use mutsuki_web_host::{MinimalWebApplication, MutsukiWebHost, WebHost, WebHostError};
 use mutsuki_web_protocol::{
     DeploymentMode, EXTENSION_MANIFEST_VERSION, ExtensionManifest, JsonValue, WEB_PROTOCOL_VERSION,
-    WebFrontendAssets, WebHostStatus,
+    WebApplicationDescriptor, WebFrontendAssets, WebHostStatus, WebShellAssets,
 };
 use tempfile::tempdir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -155,9 +155,62 @@ async fn starts_on_loopback_serves_shell_and_health() {
     let (code, body) = http_get(&addr, "/").await;
     assert_eq!(code, 200);
     assert!(body.contains("Recovery Shell") || body.contains("Mutsuki"));
+    let headers = body.to_ascii_lowercase();
+    assert!(
+        headers.contains("content-security-policy:") && headers.contains("img-src 'self' data:"),
+        "Host CSP must declare img-src so images do not fall back to default-src"
+    );
+    assert!(!headers.contains("qlogo"));
 
     host.stop().await.unwrap();
     assert_eq!(host.status().status, WebHostStatus::Stopped);
+}
+
+#[tokio::test]
+async fn static_csp_includes_application_image_hosts() {
+    let assets = tempdir().unwrap();
+    std::fs::write(
+        assets.path().join("index.html"),
+        "<!doctype html><title>ok</title>",
+    )
+    .unwrap();
+    let dest = tempdir().unwrap();
+    let mut host = MutsukiWebHost::builder()
+        .application(
+            MinimalWebApplication::new(
+                WebApplicationDescriptor {
+                    id: "mutsuki.web.example".into(),
+                    name: "Example".into(),
+                    version: "0.1.0".into(),
+                    brand: Some("Mutsuki".into()),
+                    theme: Some("default".into()),
+                },
+                WebShellAssets {
+                    root_dir: assets.path().to_path_buf(),
+                    index_file: "index.html".into(),
+                    import_map: Default::default(),
+                },
+            )
+            .with_extra_img_src(vec!["https://*.qlogo.cn".into()]),
+        )
+        .listen("127.0.0.1:0")
+        .mode(DeploymentMode::Embedded)
+        .shell_dir(dest.path().join("shell"))
+        .auth_token("test-token")
+        .build()
+        .expect("build host");
+    host.start().await.expect("start host");
+    let addr = host.listen_addr().unwrap().to_string();
+    let (code, body) = http_get(&addr, "/").await;
+    assert_eq!(code, 200);
+    let headers = body.to_ascii_lowercase();
+    assert!(
+        headers.contains("img-src 'self' data: blob: https://*.qlogo.cn"),
+        "application extra img-src must appear in the Host CSP header"
+    );
+    host.stop().await.unwrap();
+    std::mem::forget(assets);
+    std::mem::forget(dest);
 }
 
 #[tokio::test]

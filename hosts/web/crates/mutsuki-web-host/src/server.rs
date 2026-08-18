@@ -27,12 +27,14 @@ struct AppState {
     index_file: String,
     connections: Arc<AtomicU64>,
     budgets_max_connections: usize,
+    content_security_policy: String,
 }
 
 pub struct HostServer {
     config: WebHostConfig,
     bridge: WebBridge,
     shell: WebShellAssets,
+    extra_img_src: Vec<String>,
 }
 
 impl HostServer {
@@ -40,12 +42,14 @@ impl HostServer {
         config: WebHostConfig,
         bridge: WebBridge,
         shell: WebShellAssets,
+        extra_img_src: Vec<String>,
         _cancel: CancellationToken,
     ) -> Self {
         Self {
             config,
             bridge,
             shell,
+            extra_img_src,
         }
     }
 
@@ -62,6 +66,7 @@ impl HostServer {
             index_file: self.shell.index_file.clone(),
             connections: connections.clone(),
             budgets_max_connections: self.config.budgets.max_connections,
+            content_security_policy: content_security_policy(&self.extra_img_src),
         };
 
         let app = Router::new()
@@ -116,7 +121,12 @@ async fn health_handler(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 async fn index_handler(State(state): State<AppState>) -> Response {
-    serve_file(&state.shell_root.join(&state.index_file), true).await
+    serve_file(
+        &state.shell_root.join(&state.index_file),
+        true,
+        &state.content_security_policy,
+    )
+    .await
 }
 
 async fn static_handler(
@@ -128,10 +138,41 @@ async fn static_handler(
         return (StatusCode::BAD_REQUEST, "invalid path").into_response();
     }
     let file_path = state.shell_root.join(&path);
-    serve_file(&file_path, false).await
+    serve_file(&file_path, false, &state.content_security_policy).await
 }
 
-async fn serve_file(path: &std::path::Path, is_index: bool) -> Response {
+const DEFAULT_CONTENT_SECURITY_POLICY: &str = "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data: blob:; media-src 'self' blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'";
+
+fn content_security_policy(extra_img_src: &[String]) -> String {
+    let extras: Vec<&str> = extra_img_src
+        .iter()
+        .map(String::as_str)
+        .filter(|source| is_allowed_extra_img_src(source))
+        .collect();
+    if extras.is_empty() {
+        return DEFAULT_CONTENT_SECURITY_POLICY.to_string();
+    }
+    let extra = format!(" {}", extras.join(" "));
+    format!(
+        "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data: blob:{extra}; media-src 'self' blob:{extra}; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'"
+    )
+}
+
+fn is_allowed_extra_img_src(source: &str) -> bool {
+    let Some(host) = source.strip_prefix("https://") else {
+        return false;
+    };
+    !host.is_empty()
+        && host
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'*'))
+}
+
+async fn serve_file(
+    path: &std::path::Path,
+    is_index: bool,
+    content_security_policy: &str,
+) -> Response {
     match tokio::fs::read(path).await {
         Ok(bytes) => {
             let mime = mime_guess::from_path(path)
@@ -144,7 +185,7 @@ async fn serve_file(path: &std::path::Path, is_index: bool) -> Response {
                     (header::CONTENT_TYPE, mime),
                     (
                         header::CONTENT_SECURITY_POLICY,
-                        "default-src 'self'; connect-src 'self' ws: wss:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'".into(),
+                        content_security_policy.to_string(),
                     ),
                     (header::X_CONTENT_TYPE_OPTIONS, "nosniff".into()),
                 ],
@@ -308,7 +349,10 @@ fn binary_error(code: &str, message: &str) -> Message {
 
 #[cfg(test)]
 mod tests {
-    use super::{binary_error, is_content_addressed_asset};
+    use super::{
+        DEFAULT_CONTENT_SECURITY_POLICY, binary_error, content_security_policy,
+        is_allowed_extra_img_src, is_content_addressed_asset,
+    };
     use axum::extract::ws::Message;
     use mutsuki_web_protocol::WireMessage;
     use std::path::Path;
@@ -321,6 +365,33 @@ mod tests {
         assert!(!is_content_addressed_asset(Path::new("mutsuki-ui.css")));
         assert!(!is_content_addressed_asset(Path::new("index.js")));
         assert!(!is_content_addressed_asset(Path::new("foo.bar.js")));
+    }
+
+    #[test]
+    fn default_csp_declares_img_src() {
+        let policy = content_security_policy(&[]);
+        assert_eq!(policy, DEFAULT_CONTENT_SECURITY_POLICY);
+        assert!(policy.contains("img-src 'self' data: blob:"));
+        assert!(policy.contains("media-src 'self' blob:"));
+        assert!(!policy.contains("qlogo"));
+    }
+
+    #[test]
+    fn application_https_img_src_is_appended() {
+        let policy = content_security_policy(&["https://*.qlogo.cn".into()]);
+        assert!(policy.contains("img-src 'self' data: blob: https://*.qlogo.cn;"));
+        assert!(policy.contains("media-src 'self' blob: https://*.qlogo.cn;"));
+    }
+
+    #[test]
+    fn extra_img_src_rejects_policy_injection() {
+        assert!(!is_allowed_extra_img_src(
+            "https://evil.example; script-src"
+        ));
+        assert!(!is_allowed_extra_img_src("http://q.qlogo.cn"));
+        assert!(!is_allowed_extra_img_src("data:"));
+        assert!(is_allowed_extra_img_src("https://*.qlogo.cn"));
+        assert!(is_allowed_extra_img_src("https://*.nt.qq.com.cn"));
     }
 
     #[test]

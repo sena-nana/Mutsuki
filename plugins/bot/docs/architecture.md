@@ -74,12 +74,18 @@ Sandbox console (virtual user)
   Koishi-style closed loop (virtual users always enter `mutsuki.bot.flow/ingress@1`,
   outbound `message/send` for `sandbox:` conversations is intercepted back into the
   console). Simulate roster OpenID/nickname can be edited, and observed live members
-  can be imported into simulate. Simulate compose can send mentions, local media,
+  can be imported into simulate together with their avatar URL. Simulate compose
+  can send mentions, local media,
   Ark cards and Markdown into Flow; the console renders those segments plus live
   inbound attachments/ark/markdown/keyboard. Live outbound stays on Adapter-supported
   text, mention and media. Media bytes stay in a bounded sandbox blob map, not in
   the message list JSON. Live mode projects real Gateway inbound events and
-  confirmed bot sends. Unquoted live send is allowed only after that conversation
+  confirmed bot sends, including live member avatar URLs
+  (`q.qlogo.cn/qqapp/{app_id}/{user_openid}` only; `group_openid` is not a user
+  avatar and the session list falls back to a member photo). Console CSP allows
+  QQ image CDNs (`*.qlogo.cn`, `*.qpic.cn`, `*.gtimg.cn`, `*.qq.com.cn`,
+  `*.nt.qq.com.cn`) and sandbox `<img>` uses `referrerpolicy=no-referrer`.
+  Unquoted live send is allowed only after that conversation
   received `GROUP_MSG_RECEIVE` / `C2C_MSG_RECEIVE`; otherwise it requires a user-message
   reply (`msg_id`). Failed receipts are surfaced instead of a local bubble.
 - `mutsuki-plugin-bot-sandbox-web`: WebExtension for the shared simulate/live conversation client

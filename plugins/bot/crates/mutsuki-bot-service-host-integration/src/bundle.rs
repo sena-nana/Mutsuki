@@ -220,8 +220,9 @@ impl QqBotPluginBundle {
                 });
                 let management =
                     Arc::new(QqBotManagementService::with_state_store(provider, state));
-                let sandbox = Arc::new(SandboxService::with_account(
+                let sandbox = Arc::new(SandboxService::with_account_app(
                     management_config.account_id.clone(),
+                    management_config.app_id.clone(),
                 ));
                 sandbox.set_runtime(Arc::new(HostSandboxRuntime {
                     runtime,
@@ -258,9 +259,10 @@ impl QqBotPluginBundle {
             })
         } else {
             builder.register_builtin_runner(move || {
-                Box::new(QqGatewayMapRunner::new(
+                Box::new(QqGatewayMapRunner::with_app_id(
                     1,
                     gateway_config.account_id.clone(),
+                    gateway_config.app_id.clone(),
                 ))
             })
         };

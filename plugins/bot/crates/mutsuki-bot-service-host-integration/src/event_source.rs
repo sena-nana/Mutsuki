@@ -580,7 +580,11 @@ async fn run_connection(
                                 return Err(recoverable_failure(error));
                             }
                             if let Ok(event) =
-                                qq_gateway_frame_to_bot_event(&config.account_id, frame.clone())
+                                qq_gateway_frame_to_bot_event(
+                                    &config.account_id,
+                                    &config.app_id,
+                                    frame.clone(),
+                                )
                             {
                                 inbound.notify(event);
                             }

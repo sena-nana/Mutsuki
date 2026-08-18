@@ -44,6 +44,7 @@ pub fn benchmark_event(index: usize, adapter_count: usize, command_hit: bool) ->
     let frame: GatewayFrame = serde_json::from_value(raw).unwrap();
     qq_gateway_frame_to_bot_event(
         &format!("benchmark-adapter-{:02}", index % adapter_count.max(1)),
+        "BENCHMARK_APP",
         frame,
     )
     .expect("benchmark gateway frame maps to a Bot event")

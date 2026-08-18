@@ -30,8 +30,9 @@ const STYLE = `
 .sandbox-session-title, .sandbox-session-preview, .sandbox-member-name { max-width: 100%; }
 .sandbox-session:hover, .sandbox-member:hover { background: var(--bg-hover, var(--bg-subtle, transparent)); }
 .sandbox-session.is-active, .sandbox-member.is-active { background: var(--accent-soft, var(--bg-hover, transparent)); }
-.sandbox-avatar { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; font-weight: 650; color: var(--accent-text, #fff); background: var(--accent, #7aa2ff); flex: none; }
+.sandbox-avatar { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; font-weight: 650; color: var(--accent-text, #fff); background: var(--accent, #7aa2ff); flex: none; overflow: hidden; }
 .sandbox-avatar--sm { width: 24px; height: 24px; font-size: 11px; }
+img.sandbox-avatar { display: block; object-fit: cover; object-position: center; padding: 0; }
 .sandbox-session-title, .sandbox-member-name { display: block; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sandbox-session-preview { margin: 1px 0 0; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sandbox-session-time { font-size: 10px; white-space: nowrap; min-width: max-content; justify-self: end; align-self: start; padding-top: 1px; }
@@ -115,9 +116,25 @@ function kindLabel(kind) {
   return { group: "群聊", private: "私聊", channel: "频道" }[kind] || kind || "会话";
 }
 
-function avatar(name, className = "sandbox-avatar") {
+function avatar(name, className = "sandbox-avatar", avatarUrl) {
   const value = String(name || "?").trim();
-  return element("span", className, value ? value.slice(0, 1).toUpperCase() : "?");
+  const initial = value ? value.slice(0, 1).toUpperCase() : "?";
+  if (!avatarUrl) return element("span", className, initial);
+  const img = remoteImage(className, value || "头像", avatarUrl);
+  img.onerror = () => img.replaceWith(element("span", className, initial));
+  return img;
+}
+
+function remoteImage(className, alt, src) {
+  const img = element("img", className);
+  img.alt = alt || "";
+  img.setAttribute("referrerpolicy", "no-referrer");
+  if (src) img.src = src;
+  return img;
+}
+
+function userById(users, userId) {
+  return (users || []).find((user) => user.user_id === userId);
 }
 
 function formatTime(unixMs) {
@@ -174,8 +191,7 @@ function renderSegments(message, messages, users, rpc) {
       const mediaId = segment.resource?.ref_id;
       if (!mediaId) body.append(document.createTextNode("[图片]"));
       else {
-        const img = element("img", "sandbox-media");
-        img.alt = "图片";
+        const img = remoteImage("sandbox-media", "图片");
         bindMedia(img, mediaId, rpc);
         body.append(img);
       }
@@ -184,6 +200,7 @@ function renderSegments(message, messages, users, rpc) {
       const node = document.createElement(segment.type);
       node.className = "sandbox-media";
       node.controls = true;
+      node.setAttribute("referrerpolicy", "no-referrer");
       const mediaId = segment.resource?.ref_id;
       if (mediaId) bindMedia(node, mediaId, rpc);
       body.append(node);
@@ -208,16 +225,15 @@ function renderPlatform(body, segment, rpc) {
       const node = document.createElement(mime.startsWith("audio/") ? "audio" : "video");
       node.className = "sandbox-media";
       node.controls = true;
+      node.setAttribute("referrerpolicy", "no-referrer");
       if (url) node.src = url;
       else if (mediaId) bindMedia(node, mediaId, rpc);
       body.append(node);
       return;
     }
     if (mime.startsWith("image/") || kind === "attachment" || kind === "media") {
-      const img = element("img", "sandbox-media");
-      img.alt = payload.name || payload.filename || "图片";
-      if (url) img.src = url;
-      else if (mediaId) bindMedia(img, mediaId, rpc);
+      const img = remoteImage("sandbox-media", payload.name || payload.filename || "图片", url);
+      if (!url && mediaId) bindMedia(img, mediaId, rpc);
       body.append(img);
       return;
     }
@@ -228,10 +244,7 @@ function renderPlatform(body, segment, rpc) {
     const fields = arkFields(payload);
     const card = element("div", "sandbox-card");
     if (fields.image) {
-      const img = element("img", "");
-      img.alt = fields.title;
-      img.src = fields.image;
-      card.append(img);
+      card.append(remoteImage("", fields.title, fields.image));
     }
     const inner = element("div", "sandbox-card-body");
     inner.append(element("span", "sandbox-card-title", fields.title));
@@ -330,7 +343,8 @@ export function mountSandboxPanel(host, rpc, events) {
         element("span", "sandbox-session-title", conversation.title || kindLabel(conversation.kind)),
         element("p", "muted sandbox-session-preview", `${kindLabel(conversation.kind)} · ${conversation.last_preview || "暂无消息"}`),
       );
-      item.append(avatar(conversation.title || kindLabel(conversation.kind)), meta, element("span", "muted sandbox-session-time", formatTime(conversation.last_activity_unix_ms)));
+      const peer = (conversation.users || [])[0];
+      item.append(avatar(conversation.title || kindLabel(conversation.kind), "sandbox-avatar", conversation.avatar_url || peer?.avatar_url), meta, element("span", "muted sandbox-session-time", formatTime(conversation.last_activity_unix_ms)));
       item.onclick = () => { state.selectedId = conversation.conversation_id; state.quote = null; void loadConversation(); };
       list.append(item);
     });
@@ -360,7 +374,10 @@ export function mountSandboxPanel(host, rpc, events) {
     else if (!state.messages.length) messages.append(element("p", "muted sandbox-empty", "暂无消息"));
     else state.messages.forEach((message) => {
       const row = element("div", `sandbox-row sandbox-row--${message.role}`);
-      if (message.role !== "system") row.append(avatar(message.sender_name, "sandbox-avatar sandbox-avatar--sm"));
+      if (message.role !== "system") {
+        const sender = userById(conversation.users, message.sender_id);
+        row.append(avatar(message.sender_name, "sandbox-avatar sandbox-avatar--sm", sender?.avatar_url));
+      }
       const bubble = element("div", "sandbox-bubble");
       if (message.role !== "system") bubble.append(element("p", "muted", `${message.sender_name} · ${formatTime(message.time_ms)}`));
       bubble.append(renderSegments(message, state.messages, conversation.users, rpc));
@@ -686,7 +703,7 @@ export function mountSandboxPanel(host, rpc, events) {
       item.disabled = taken.has(user.user_id);
       const meta = element("div", "");
       meta.append(element("span", "sandbox-member-name", user.display_name || user.user_id), element("p", "muted sandbox-session-preview", user.user_id));
-      item.append(avatar(user.display_name || user.user_id, "sandbox-avatar sandbox-avatar--sm"), meta);
+      item.append(avatar(user.display_name || user.user_id, "sandbox-avatar sandbox-avatar--sm", user.avatar_url), meta);
       item.onclick = async () => {
         try {
           await write({ action: "import_live_users", user_ids: [user.user_id] });
@@ -759,7 +776,7 @@ export function mountSandboxPanel(host, rpc, events) {
         item.onclick = () => { state.speakerId = user.user_id; render(); };
         item.onkeydown = (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); state.speakerId = user.user_id; render(); } };
       }
-      item.append(avatar(user.display_name || user.user_id, "sandbox-avatar sandbox-avatar--sm"), meta);
+      item.append(avatar(user.display_name || user.user_id, "sandbox-avatar sandbox-avatar--sm", user.avatar_url), meta);
       list.append(item);
     });
     pane.append(list);
