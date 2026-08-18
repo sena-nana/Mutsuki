@@ -565,8 +565,6 @@ async fn embedded_console_serves_sandbox_panel() {
     let js = http_get_body(&addr, &format!("/{path}")).await;
     assert!(js.contains("mountSandboxPanel"));
     assert!(js.contains("添加用户"));
-    assert!(js.contains("模拟模式"));
-    assert!(js.contains("发言进入 Bot 流程"));
     assert!(js.contains("真实数据"));
     assert!(!js.contains("inject_into_flow"));
     let snap = ws_rpc_params(&addr, "sandbox", "snapshot", json!({}))

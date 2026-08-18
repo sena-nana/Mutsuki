@@ -71,6 +71,8 @@ pub struct SandboxSnapshot {
     pub flow_available: bool,
     pub account_id: String,
     pub conversations: Vec<SandboxConversationView>,
+    #[serde(default)]
+    pub live_users: Vec<SandboxUserView>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -80,6 +82,14 @@ pub enum SandboxAction {
         mode: SandboxMode,
     },
     AddUser,
+    UpdateUser {
+        user_id: String,
+        new_user_id: String,
+        display_name: String,
+    },
+    ImportLiveUsers {
+        user_ids: Vec<String>,
+    },
     RemoveUser {
         user_id: String,
     },

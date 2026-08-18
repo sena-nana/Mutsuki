@@ -43,10 +43,11 @@ async fn sandbox_rpc_simulate_send_and_confirm_live_send() {
     let shell_dir = tempfile::tempdir().unwrap();
     let assets = materialize_frontend_assets(assets_dir.path()).unwrap();
     let frontend = std::fs::read_to_string(assets.join("index.js")).unwrap();
-    assert!(frontend.contains("模拟模式"));
     assert!(frontend.contains("添加用户"));
-    assert!(frontend.contains("发言进入 Bot 流程"));
+    assert!(frontend.contains("真实数据"));
     assert!(frontend.contains("发送到 QQ"));
+    assert!(frontend.contains("update_user"));
+    assert!(frontend.contains("import_live_users"));
     assert!(!frontend.contains("inject_into_flow"));
     std::fs::write(
         shell_dir.path().join("index.html"),
@@ -144,13 +145,33 @@ async fn sandbox_rpc_simulate_send_and_confirm_live_send() {
     .await
     .unwrap();
     assert_eq!(added["result"]["display_name"], "Carol");
+    let carol = added["result"]["user_id"].as_str().unwrap().to_owned();
+    let renamed = rpc(
+        &address,
+        "write",
+        json!({
+            "request": {
+                "expected_revision": added["revision"],
+                "action": {
+                    "action": "update_user",
+                    "user_id": carol,
+                    "new_user_id": "custom-openid",
+                    "display_name": "测试昵称"
+                }
+            }
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(renamed["result"]["user_id"], "custom-openid");
+    assert_eq!(renamed["result"]["display_name"], "测试昵称");
 
     let switched = rpc(
         &address,
         "write",
         json!({
             "request": {
-                "expected_revision": added["revision"],
+                "expected_revision": renamed["revision"],
                 "action": { "action": "set_mode", "mode": "live" }
             }
         }),
