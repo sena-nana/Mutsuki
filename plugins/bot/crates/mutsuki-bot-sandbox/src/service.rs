@@ -17,8 +17,7 @@ use crate::types::{
     SANDBOX_USER_NAMES, SandboxAction, SandboxChangeEvent, SandboxConversationView, SandboxError,
     SandboxMediaBlob, SandboxMediaRef, SandboxMessageView, SandboxMode, SandboxSnapshot,
     SandboxSpeakerRole, SandboxUserView, SandboxWriteRequest, SandboxWriteResult,
-    is_sandbox_conversation, parse_sandbox_mentions, preview_segments, qqapp_avatar_url,
-    sandbox_user_id,
+    is_sandbox_conversation, parse_sandbox_mentions, preview_segments, sandbox_user_id,
 };
 
 const MAX_MESSAGES: usize = 200;
@@ -110,7 +109,6 @@ struct Inner {
     revision: u64,
     mode: SandboxMode,
     account_id: String,
-    app_id: String,
     simulate: Store,
     live: Store,
     media: VecDeque<StoredMedia>,
@@ -138,11 +136,6 @@ impl SandboxService {
 
     #[must_use]
     pub fn with_account(account_id: impl Into<String>) -> Self {
-        Self::with_account_app(account_id, "")
-    }
-
-    #[must_use]
-    pub fn with_account_app(account_id: impl Into<String>, app_id: impl Into<String>) -> Self {
         let account_id = account_id.into();
         let (changes, _) = broadcast::channel(64);
         let mut simulate = Store::default();
@@ -153,7 +146,6 @@ impl SandboxService {
                 revision: 0,
                 mode: SandboxMode::Simulate,
                 account_id,
-                app_id: app_id.into(),
                 simulate,
                 live: Store::default(),
                 media: VecDeque::new(),
@@ -748,10 +740,8 @@ impl SandboxApi for SandboxService {
         let active_message = active_message_permission(&event);
         let mut inner = self.lock_inner();
         let account_id = inner.account_id.clone();
-        let app_id = inner.app_id.clone();
         {
             let stored = ensure_conversation(&mut inner.live, conversation, &live_title, now);
-            apply_conversation_avatar(stored, &app_id);
             if let Some(allowed) = active_message {
                 stored.view.active_message = allowed;
             }
@@ -763,7 +753,6 @@ impl SandboxApi for SandboxService {
                     actor.avatar_url.as_deref(),
                     now,
                 );
-                apply_conversation_avatar(stored, &app_id);
             }
             if let Some(message) = &event.message {
                 let sender = event.actor.as_ref();
@@ -802,7 +791,6 @@ impl SandboxApi for SandboxService {
         let sandbox = is_sandbox_conversation(conversation);
         let now = unix_ms();
         let mut inner = self.lock_inner();
-        let app_id = inner.app_id.clone();
         let message = {
             let store = if sandbox {
                 &mut inner.simulate
@@ -812,7 +800,6 @@ impl SandboxApi for SandboxService {
             let title: fn(&QqConversationRef) -> String =
                 if sandbox { sandbox_title } else { live_title };
             let stored = ensure_conversation(store, conversation.clone(), &title, now);
-            apply_conversation_avatar(stored, &app_id);
             append_message(
                 stored,
                 "bot",
@@ -1198,7 +1185,6 @@ fn place_simulate_user(
     if let Some(stored) = inner.simulate.conversations.get_mut(&private_key) {
         stored.view.title = display_name.to_owned();
         set_user(stored, user_id, display_name, avatar_url, now);
-        apply_conversation_avatar(stored, "");
     }
     Ok((group, user))
 }
@@ -1237,7 +1223,6 @@ fn relocate_simulate_user(
             user.avatar_url.as_deref(),
             now,
         );
-        stored.view.avatar_url.clone_from(&user.avatar_url);
         rewrite_sender(&mut stored.messages, old_id, new_id, display_name);
         for message in &mut stored.messages {
             message.conversation_id.clone_from(&new_private);
@@ -1445,27 +1430,6 @@ fn projected_conversation(stored: &StoredConversation) -> SandboxConversationVie
     view.users = users;
     view.message_count = stored.messages.len() as u64;
     view
-}
-
-fn apply_conversation_avatar(stored: &mut StoredConversation, app_id: &str) {
-    let synthesized = match stored.view.kind {
-        BotConversationKind::Group | BotConversationKind::Channel => None,
-        BotConversationKind::Private => stored
-            .users
-            .values()
-            .find_map(|user| user.avatar_url.clone())
-            .or_else(|| {
-                stored
-                    .view
-                    .conversation
-                    .user_id
-                    .as_deref()
-                    .and_then(|user_id| qqapp_avatar_url(app_id, user_id))
-            }),
-    };
-    if let Some(url) = synthesized {
-        stored.view.avatar_url = Some(url);
-    }
 }
 
 fn active_store(inner: &Inner) -> &Store {

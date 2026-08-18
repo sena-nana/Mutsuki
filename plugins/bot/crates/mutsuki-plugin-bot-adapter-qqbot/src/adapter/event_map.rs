@@ -19,7 +19,7 @@ pub fn qq_gateway_frame_to_bot_event(
     let event_type = frame.t.as_deref().unwrap_or("UNKNOWN");
     let data = &frame.d;
     let target = qq_target_from_payload(event_type, data);
-    let actor = qq_actor(event_type, data, app_id);
+    let actor = qq_actor(data, app_id);
     let message = qq_message(event_type, data, target.clone(), actor.clone());
     let mut ext = BotExtMap::new();
     ext.insert("qqbot.event_type".into(), Value::String(event_type.into()));
@@ -97,17 +97,28 @@ fn qq_event_kind(event_type: &str) -> BotEventKind {
     }
 }
 
-fn qq_actor(event_type: &str, data: &Value, app_id: &str) -> Option<BotUser> {
+fn qq_actor(data: &Value, app_id: &str) -> Option<BotUser> {
     let author = data.get("author").unwrap_or(data);
     let (user_id, from_openid) = qq_actor_id(author)?;
+    let avatar = author
+        .get("avatar")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .or_else(|| {
+            let app_id = app_id.trim();
+            (from_openid && !app_id.is_empty())
+                .then(|| format!("https://q.qlogo.cn/qqapp/{app_id}/{user_id}/640"))
+        });
     Some(BotUser {
-        user_id: user_id.clone(),
+        user_id,
         display_name: author
             .get("username")
             .or_else(|| author.get("nick"))
             .and_then(Value::as_str)
             .map(str::to_owned),
-        avatar_url: qq_actor_avatar(event_type, author, app_id, &user_id, from_openid),
+        avatar_url: avatar,
     })
 }
 
@@ -133,33 +144,6 @@ fn qq_actor_id(author: &Value) -> Option<(String, bool)> {
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
         .map(|user_id| (user_id.to_owned(), false))
-}
-
-fn qq_actor_avatar(
-    event_type: &str,
-    author: &Value,
-    app_id: &str,
-    user_id: &str,
-    from_openid: bool,
-) -> Option<String> {
-    if let Some(avatar) = author
-        .get("avatar")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        return Some(avatar.to_owned());
-    }
-    let app_id = app_id.trim();
-    let group_or_c2c = from_openid
-        || event_type.starts_with("GROUP_")
-        || event_type.starts_with("C2C_")
-        || event_type.starts_with("FRIEND_");
-    if group_or_c2c && !app_id.is_empty() && !user_id.is_empty() {
-        Some(format!("https://q.qlogo.cn/qqapp/{app_id}/{user_id}/640"))
-    } else {
-        None
-    }
 }
 
 fn qq_actor_role(data: &Value) -> Option<&'static str> {

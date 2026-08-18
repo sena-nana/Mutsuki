@@ -381,7 +381,7 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn live_projects_inbound_and_sends_quoted_reply() {
-        let service = SandboxService::with_account_app("qq-main", "APP_ID");
+        let service = SandboxService::with_account("qq-main");
         let runtime = runtime();
         service.set_runtime(runtime.clone());
         service.observe_event(live_group_event("qq-msg-1", "在吗", now_ms()));

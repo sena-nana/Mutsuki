@@ -193,18 +193,6 @@ pub fn is_sandbox_id(value: &str) -> bool {
     value.starts_with(SANDBOX_ID_PREFIX)
 }
 
-/// User-only QQ app avatar URL. `openid` must be a user/member openid, not `group_openid`.
-#[must_use]
-pub fn qqapp_avatar_url(app_id: &str, openid: &str) -> Option<String> {
-    let app_id = app_id.trim();
-    let openid = openid.trim();
-    if app_id.is_empty() || openid.is_empty() || is_sandbox_id(openid) {
-        None
-    } else {
-        Some(format!("https://q.qlogo.cn/qqapp/{app_id}/{openid}/640"))
-    }
-}
-
 #[must_use]
 pub fn is_sandbox_conversation(conversation: &QqConversationRef) -> bool {
     conversation.user_id.as_deref().is_some_and(is_sandbox_id)
