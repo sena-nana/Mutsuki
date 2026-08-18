@@ -86,6 +86,22 @@ function ensureStyle() {
   document.head.append(style);
 }
 
+function httpsQqCdn(url) {
+  const value = String(url || "").trim();
+  const href = value.startsWith("//")
+    ? `https:${value}`
+    : value.slice(0, 7).toLowerCase() === "http://"
+      ? `https://${value.slice(7)}`
+      : "";
+  try {
+    return href && /(^|\.)(qlogo\.cn|qpic\.cn|gtimg\.cn|qq\.com\.cn|qq\.com)$/i.test(new URL(href).hostname)
+      ? href
+      : value;
+  } catch (_) {
+    return value;
+  }
+}
+
 function avatar(name, className, avatarUrl) {
   const value = String(name || "?").trim();
   const initial = value ? value.slice(0, 1).toUpperCase() : "?";
@@ -93,7 +109,7 @@ function avatar(name, className, avatarUrl) {
   const img = element("img", className);
   img.alt = value || "头像";
   img.setAttribute("referrerpolicy", "no-referrer");
-  img.src = avatarUrl;
+  img.src = httpsQqCdn(avatarUrl);
   img.onerror = () => img.replaceWith(element("span", className, initial));
   return img;
 }

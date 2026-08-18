@@ -5,7 +5,7 @@ use mutsuki_bot_protocol::{
 use serde_json::{Value, json};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
-use crate::adapter::qq_target_from_payload;
+use crate::adapter::{qq_target_from_payload, upgrade_qq_cdn_https};
 use crate::gateway::{GatewayFrame, dedup_key};
 
 pub fn qq_gateway_frame_to_bot_event(
@@ -127,7 +127,7 @@ fn qq_user_fields(
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(str::to_owned)
+        .map(upgrade_qq_cdn_https)
         .or_else(|| {
             let app_id = app_id.trim();
             (synthesize_qqapp_avatar && !app_id.is_empty())
@@ -379,7 +379,7 @@ fn extend_qq_rich_segments(segments: &mut Vec<MessageSegment>, data: &Value) {
                 platform: "qqbot".into(),
                 kind: "attachment".into(),
                 payload: json!({
-                    "url": url,
+                    "url": upgrade_qq_cdn_https(url),
                     "content_type": content_type,
                     "filename": filename,
                 }),

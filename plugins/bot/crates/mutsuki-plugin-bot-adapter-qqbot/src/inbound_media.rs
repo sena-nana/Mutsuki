@@ -12,7 +12,7 @@ use mutsuki_runtime_sdk::{ResourceRegistryGateway, RunnerDescriptorBuilder};
 use reqwest::{Client, Url};
 use serde_json::Value;
 
-use crate::adapter::qq_gateway_frame_to_bot_event;
+use crate::adapter::{qq_gateway_frame_to_bot_event, upgrade_qq_cdn_https};
 use crate::tasks::{QQBOT_ADAPTER_PLUGIN_ID, QQBOT_GATEWAY_RUNNER_ID, flow_envelope};
 use crate::{GatewayFrame, QQBOT_GATEWAY_FRAME_PROTOCOL_ID, QqBotConfig};
 
@@ -244,7 +244,8 @@ fn attachments(data: &Value) -> Result<Vec<QqAttachment>, RuntimeError> {
                 .get("url")
                 .and_then(Value::as_str)
                 .ok_or_else(|| failure("gateway.media.url_missing", "attachment URL missing"))?;
-            let url = Url::parse(url).map_err(|error| failure("gateway.media.url", error))?;
+            let url = Url::parse(&upgrade_qq_cdn_https(url))
+                .map_err(|error| failure("gateway.media.url", error))?;
             let mime_type = value
                 .get("content_type")
                 .or_else(|| value.get("contentType"))
@@ -577,6 +578,18 @@ mod tests {
         assert!(validate_mime("audio/mpeg", b"ID3fixture").is_ok());
         assert!(validate_mime("audio/mpeg", &[0xff, 0xfb, 0x90, 0x64]).is_ok());
         assert!(validate_mime("audio/mpeg", b"not-an-mp3").is_err());
+    }
+
+    #[test]
+    fn http_qq_cdn_attachment_url_is_upgraded_to_https_before_parse() {
+        let parsed = attachments(&serde_json::json!({
+            "attachments": [{ "url": "http://thirdqq.qlogo.cn/g?b=oidb&k=TEST&s=0" }]
+        }))
+        .unwrap();
+        assert_eq!(
+            parsed[0].url.as_str(),
+            "https://thirdqq.qlogo.cn/g?b=oidb&k=TEST&s=0"
+        );
     }
 
     async fn media_server(

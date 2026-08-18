@@ -145,11 +145,27 @@ function avatar(name, className = "sandbox-avatar", avatarUrl) {
   return img;
 }
 
+function httpsQqCdn(url) {
+  const value = String(url || "").trim();
+  const href = value.startsWith("//")
+    ? `https:${value}`
+    : value.slice(0, 7).toLowerCase() === "http://"
+      ? `https://${value.slice(7)}`
+      : "";
+  try {
+    return href && /(^|\.)(qlogo\.cn|qpic\.cn|gtimg\.cn|qq\.com\.cn|qq\.com)$/i.test(new URL(href).hostname)
+      ? href
+      : value;
+  } catch (_) {
+    return value;
+  }
+}
+
 function remoteImage(className, alt, src) {
   const img = element("img", className);
   img.alt = alt || "";
   img.setAttribute("referrerpolicy", "no-referrer");
-  if (src) img.src = src;
+  if (src) img.src = httpsQqCdn(src);
   return img;
 }
 
