@@ -49,7 +49,9 @@ img.sandbox-avatar { display: block; object-fit: cover; object-position: center;
 .sandbox-quote { margin: 0 0 6px; padding: 4px 8px; border-left: 3px solid var(--accent, #7aa2ff); opacity: 0.8; font-size: 12px; }
 .sandbox-compose { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--border, transparent); flex: 0 0 auto; }
 .sandbox-compose-row { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.sandbox-compose-field { position: relative; flex: 1; min-width: 0; display: flex; }
 .sandbox-compose-row input[type="text"] { flex: 1; min-width: 0; }
+.sandbox-pane--chat { overflow: visible; }
 .sandbox-quote-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
 .sandbox-client .sandbox-member .ghost { height: 22px; padding: 0 6px; font-size: 11px; flex: none; }
 .sandbox-member-actions { display: flex; gap: 4px; flex-wrap: wrap; }
@@ -83,7 +85,11 @@ img.sandbox-avatar { display: block; object-fit: cover; object-position: center;
 .sandbox-keyboard span { border: 1px solid var(--border, transparent); border-radius: 8px; padding: 4px 8px; font-size: 11px; }
 .sandbox-compose-tools, .sandbox-draft-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .sandbox-draft-chip { display: inline-flex; align-items: center; gap: 4px; border-radius: 999px; padding: 2px 8px; font-size: 11px; background: var(--bg-hover, transparent); }
-.sandbox-mention-picker { display: flex; flex-direction: column; max-height: 160px; overflow: auto; border: 1px solid var(--border, transparent); border-radius: 10px; }
+.sandbox-mention-picker {
+  position: absolute; z-index: 1850; left: 0; bottom: calc(100% + 4px);
+  min-width: 160px; max-width: 240px; max-height: 160px; overflow: auto;
+}
+.sandbox-mention-picker[hidden] { display: none; }
 @media (max-width: 960px) {
   .sandbox-client { height: auto; min-height: 0; }
   .sandbox-frame { grid-template-columns: 1fr; min-height: 720px; }
@@ -104,6 +110,13 @@ function element(tag, className, content) {
 function button(label) {
   const node = element("button", "ghost", label);
   node.type = "button";
+  return node;
+}
+
+function menuButton(label, onclick) {
+  const node = element("button", "", label);
+  node.type = "button";
+  node.onclick = onclick;
   return node;
 }
 
@@ -443,12 +456,8 @@ export function mountSandboxPanel(host, rpc, events) {
       });
       compose.append(chips);
     }
-    const tools = element("div", "sandbox-compose-tools");
-    const mentionBtn = button("@");
-    mentionBtn.title = "艾特成员";
-    mentionBtn.onclick = () => { state.draft += "@"; render(); };
-    tools.append(mentionBtn);
     if (mode() === "simulate") {
+      const tools = element("div", "sandbox-compose-tools");
       const imageBtn = button("图片");
       imageBtn.onclick = () => void attachFile("image/*");
       const fileBtn = button("文件");
@@ -458,11 +467,12 @@ export function mountSandboxPanel(host, rpc, events) {
       const markdownBtn = button("Markdown");
       markdownBtn.onclick = () => openDialog("markdown");
       tools.append(imageBtn, fileBtn, cardBtn, markdownBtn);
+      compose.append(tools);
     }
-    compose.append(tools);
-    const picker = element("div", "sandbox-mention-picker");
+    const picker = element("div", "sandbox-context-menu sandbox-mention-picker");
     picker.hidden = true;
     const row = element("div", "sandbox-compose-row");
+    const field = element("div", "sandbox-compose-field");
     const input = element("input", "ui-input");
     input.type = "text";
     const canActive = Boolean(conversation.active_message);
@@ -478,15 +488,13 @@ export function mountSandboxPanel(host, rpc, events) {
       const hits = [{ user_id: "__all__", display_name: "全体成员" }, ...(conversation.users || [])]
         .filter((user) => (user.display_name || "").toLowerCase().includes(query) || user.user_id.toLowerCase().includes(query));
       hits.forEach((user) => {
-        const item = button(`@${user.display_name || user.user_id}`);
-        item.onclick = () => {
+        picker.append(menuButton(`@${user.display_name || user.user_id}`, () => {
           state.draft = state.draft.slice(0, match.index);
           state.draftSegments.push(user.user_id === "__all__"
             ? { type: "mention_all" }
             : { type: "mention_user", user_id: user.user_id });
           render();
-        };
-        picker.append(item);
+        }));
       });
       picker.hidden = !hits.length;
     };
@@ -533,8 +541,9 @@ export function mountSandboxPanel(host, rpc, events) {
     };
     send.onclick = () => void submit();
     input.onkeydown = (event) => { if (event.key === "Enter") { event.preventDefault(); void submit(); } };
-    row.append(input, send);
-    compose.append(picker, row);
+    field.append(picker, input);
+    row.append(field, send);
+    compose.append(row);
     refreshPicker();
     pane.append(compose);
   }
@@ -593,20 +602,19 @@ export function mountSandboxPanel(host, rpc, events) {
   function openMemberMenu(event, user) {
     event.preventDefault();
     closeMemberMenu();
-    const item = (label, onclick) => {
-      const node = element("button", "", label);
-      node.type = "button";
-      node.onclick = onclick;
-      return node;
-    };
     const menu = element("div", "sandbox-context-menu");
-    menu.append(item("复制 OpenID", async () => {
+    menu.append(menuButton(`@${user.display_name || user.user_id}`, () => {
+      closeMemberMenu();
+      state.draftSegments.push({ type: "mention_user", user_id: user.user_id });
+      render();
+    }));
+    menu.append(menuButton("复制 OpenID", async () => {
       closeMemberMenu();
       try { await copyText(user.user_id); showStatus("已复制 OpenID"); }
       catch (error) { reportError(error); }
     }));
     if (mode() === "live") {
-      menu.append(item("导入作为模拟用户", async () => {
+      menu.append(menuButton("导入作为模拟用户", async () => {
         closeMemberMenu();
         try {
           const written = await write({ action: "import_live_users", user_ids: [user.user_id] });
@@ -855,7 +863,7 @@ export function mountSandboxPanel(host, rpc, events) {
   function render() {
     closeMemberMenu();
     const sessions = element("section", "sandbox-pane");
-    const chat = element("section", "sandbox-pane");
+    const chat = element("section", "sandbox-pane sandbox-pane--chat");
     const members = element("section", "sandbox-pane");
     renderSessions(sessions);
     renderMessages(chat, current());

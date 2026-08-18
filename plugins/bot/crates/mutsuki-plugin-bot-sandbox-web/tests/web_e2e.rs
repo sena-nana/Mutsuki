@@ -51,6 +51,12 @@ async fn sandbox_rpc_simulate_send_and_confirm_live_send() {
     assert!(frontend.contains("import_live_users"));
     assert!(frontend.contains("复制 OpenID"));
     assert!(frontend.contains("导入作为模拟用户"));
+    assert!(frontend.contains("`@${user.display_name || user.user_id}`"));
+    assert!(frontend.contains(r"/@([^\s@]*)$/"));
+    assert!(frontend.contains("sandbox-compose-field"));
+    assert!(frontend.contains("sandbox-mention-picker[hidden]"));
+    assert!(frontend.contains("sandbox-pane--chat"));
+    assert!(!frontend.contains("艾特成员"));
     assert!(frontend.contains("contextmenu"));
     assert!(frontend.contains("avatar_url"));
     assert!(frontend.contains("conversation.avatar_url || peer?.avatar_url"));
