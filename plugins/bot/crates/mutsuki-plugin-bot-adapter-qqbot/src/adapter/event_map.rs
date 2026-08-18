@@ -421,7 +421,22 @@ fn message_content(event_type: &str, data: &Value) -> String {
             content = remainder.trim_start();
         }
     }
-    content.trim().to_owned()
+    strip_qq_face_tags(content.trim())
+}
+
+fn strip_qq_face_tags(content: &str) -> String {
+    let mut out = String::with_capacity(content.len());
+    let mut rest = content;
+    while let Some(start) = rest.find("<faceType=") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + "<faceType=".len()..];
+        match after.find('>') {
+            Some(end) => rest = &after[end + 1..],
+            None => break,
+        }
+    }
+    out.push_str(rest);
+    out.trim().to_owned()
 }
 
 fn event_time_ms(data: &Value) -> Option<i64> {

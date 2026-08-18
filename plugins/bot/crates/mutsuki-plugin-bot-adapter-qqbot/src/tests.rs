@@ -547,6 +547,56 @@ fn gateway_runner_maps_attachments_ark_markdown_and_keyboard() {
 }
 
 #[test]
+fn gateway_runner_strips_face_placeholder_from_image_content() {
+    let mut runner = QqGatewayMapRunner::new(1, "main");
+    let task = Task::new(
+        "image-face",
+        QQBOT_GATEWAY_FRAME_PROTOCOL_ID,
+        json!({
+            "op": 0,
+            "s": 9,
+            "t": "GROUP_MESSAGE_CREATE",
+            "id": "image-face-event",
+            "d": {
+                "id": "image-face-message",
+                "group_openid": "GROUP_OPENID",
+                "content": "看看这个<faceType=6,faceId=\"0\",ext=\"eyJ0ZXh0IjoiIn0=\"><@member>",
+                "attachments": [{
+                    "url": "https://img.example/a.png",
+                    "content_type": "image/png",
+                    "filename": "a.png"
+                }],
+                "author": {"member_openid": "MEMBER_OPENID"}
+            }
+        }),
+    );
+
+    let result = run_one(&mut runner, task).unwrap();
+    let segments = decode_ingress_event(&result.tasks[0])
+        .message
+        .unwrap()
+        .segments;
+    assert_eq!(
+        segments
+            .iter()
+            .filter_map(|segment| match segment {
+                MessageSegment::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<String>(),
+        "看看这个"
+    );
+    assert!(segments.iter().any(|segment| matches!(
+        segment,
+        MessageSegment::MentionUser { user_id } if user_id == "member"
+    )));
+    assert!(segments.iter().any(|segment| matches!(
+        segment,
+        MessageSegment::PlatformSpecific { kind, .. } if kind == "attachment"
+    )));
+}
+
+#[test]
 fn gateway_runner_maps_multiple_frames_in_one_batch() {
     let mut runner = QqGatewayMapRunner::new(1, "main");
     let mut tasks = ["first", "second"]
