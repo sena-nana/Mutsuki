@@ -142,6 +142,13 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
             .contains("createWebShellRuntime")
     );
 
+    for weight in ["400", "500", "600", "700"] {
+        let path = format!("/fonts/noto-sans-sc-chinese-simplified-{weight}-normal.woff2");
+        let (headers, body) = http_get_bytes(&addr, &path).await;
+        assert!(headers.to_ascii_lowercase().contains("woff2"));
+        assert!(body.starts_with(b"wOF2"));
+    }
+
     host.stop().await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 }
@@ -649,21 +656,26 @@ fn versioned_module_path(options: &str, module_path: &str) -> String {
 }
 
 async fn http_get_body(addr: &str, path: &str) -> String {
+    String::from_utf8_lossy(&http_get_bytes(addr, path).await.1).into_owned()
+}
+
+async fn http_get_bytes(addr: &str, path: &str) -> (String, Vec<u8>) {
     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let request = format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n");
     stream.write_all(request.as_bytes()).await.unwrap();
     let mut buf = Vec::new();
     stream.read_to_end(&mut buf).await.unwrap();
-    let text = String::from_utf8_lossy(&buf);
-    let (_, body) = text
-        .split_once("\r\n\r\n")
-        .unwrap_or_else(|| panic!("HTTP response missing body separator: {text}"));
+    let split = buf
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .unwrap_or_else(|| panic!("HTTP response missing body separator for {path}"));
+    let headers = String::from_utf8_lossy(&buf[..split]).into_owned();
     assert!(
-        text.starts_with("HTTP/1.1 200") || text.starts_with("HTTP/1.0 200"),
+        headers.starts_with("HTTP/1.1 200") || headers.starts_with("HTTP/1.0 200"),
         "expected 200 for {path}, got: {}",
-        text.lines().next().unwrap_or("")
+        headers.lines().next().unwrap_or("")
     );
-    body.to_string()
+    (headers, buf[split + 4..].to_vec())
 }
 
 async fn ws_rpc(addr: &str, namespace: &str, method: &str) -> Result<serde_json::Value, String> {
