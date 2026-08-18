@@ -80,7 +80,8 @@ Console 的库依赖。
   is edited in the Flow page.
 - `mutsuki-bot-sandbox`: QQ conversation sandbox with `BotStateDb` history. Simulate mode is a
   Koishi-style closed loop through Bot Flow; live mode projects real inbound events.
-  Conversations, users and messages hydrate from `bot_sandbox_*` tables on startup.
+  Conversations, users and messages hydrate from `bot_sandbox_*` tables on startup;
+  other plugins query the same tables through `BotStateDbRepository`.
 - `mutsuki-plugin-bot-sandbox-web`: WebExtension for the shared simulate/live Stapxs-style QQ conversation client.
 - `mutsuki-plugin-bot-adapter-qqbot`: QQBot platform adapter for gateway events and message/media OpenAPI tasks.
 - `mutsuki-bot-service-host-integration`: configured native factories, QQ EventSource bundle, and sandbox outbound intercept.
