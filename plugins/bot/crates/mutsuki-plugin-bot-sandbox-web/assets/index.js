@@ -53,6 +53,12 @@ img.sandbox-avatar { display: block; object-fit: cover; object-position: center;
 .sandbox-quote-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
 .sandbox-client .sandbox-member .ghost { height: 22px; padding: 0 6px; font-size: 11px; flex: none; }
 .sandbox-member-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+.sandbox-context-menu {
+  position: absolute; z-index: 1900; min-width: 160px; padding: 4px;
+  background: var(--bg-elev, var(--bg, #fff)); border: 1px solid var(--border, transparent); border-radius: 10px;
+}
+.sandbox-context-menu button { display: block; width: 100%; height: auto; padding: 8px 10px; border: 0; background: transparent; text-align: left; }
+.sandbox-context-menu button:hover { background: var(--bg-hover, transparent); }
 .sandbox-dialog-overlay { position: absolute; inset: 0; z-index: var(--z-dialog, 1800); display: grid; place-items: center; padding: 16px; box-sizing: border-box; background: color-mix(in oklch, black 42%, transparent); }
 .sandbox-dialog { width: min(380px, 100%); max-height: min(520px, 100%); min-height: 0; display: flex; flex-direction: column; background: var(--lilia-surface-fill-raised, var(--bg-elev, var(--bg, #fff))); border: 1px solid var(--border, transparent); border-radius: 16px; box-shadow: var(--shadow-dialog, 0 14px 40px rgb(0 0 0 / 0.35)); overflow: hidden; }
 .sandbox-dialog-head, .sandbox-dialog-foot { display: flex; align-items: center; gap: 8px; padding: 12px 14px; flex: none; }
@@ -166,6 +172,17 @@ function arkFields(payload) {
   };
 }
 
+function copyText(text) {
+  return (navigator.clipboard?.writeText(text) || Promise.reject()).catch(() => {
+    const input = element("textarea");
+    input.value = text;
+    document.body.append(input);
+    input.select();
+    try { if (!document.execCommand("copy")) throw new Error("复制失败"); }
+    finally { input.remove(); }
+  });
+}
+
 function bindMedia(node, mediaId, rpc) {
   void rpc.read("sandbox", "media.get", { media_id: mediaId }).then((blob) => {
     const binary = Uint8Array.from(atob(blob.bytes || ""), (ch) => ch.charCodeAt(0));
@@ -276,7 +293,7 @@ function renderPlatform(body, segment, rpc) {
 
 /** Mount the QQ sandbox conversation console. */
 export function mountSandboxPanel(host, rpc, events) {
-  const state = { snapshot: null, messages: [], selectedId: null, draft: "", draftSegments: [], speakerId: "", query: "", quote: null, dialog: "" };
+  const state = { snapshot: null, messages: [], selectedId: null, draft: "", draftSegments: [], speakerId: "", query: "", quote: null, dialog: "", menu: null };
   host.innerHTML = "";
   const style = document.createElement("style");
   style.textContent = STYLE;
@@ -553,9 +570,51 @@ export function mountSandboxPanel(host, rpc, events) {
     return segment.type || "附件";
   }
 
+  function closeMemberMenu() {
+    state.menu?.remove();
+    state.menu = null;
+  }
+
   function closeDialog() {
     state.dialog = "";
     root.querySelector(".sandbox-dialog-overlay")?.remove();
+    closeMemberMenu();
+  }
+
+  function openMemberMenu(event, user) {
+    event.preventDefault();
+    closeMemberMenu();
+    const item = (label, onclick) => {
+      const node = element("button", "", label);
+      node.type = "button";
+      node.onclick = onclick;
+      return node;
+    };
+    const menu = element("div", "sandbox-context-menu");
+    menu.append(item("复制 OpenID", async () => {
+      closeMemberMenu();
+      try { await copyText(user.user_id); showStatus("已复制 OpenID"); }
+      catch (error) { reportError(error); }
+    }));
+    if (mode() === "live") {
+      menu.append(item("导入作为模拟用户", async () => {
+        closeMemberMenu();
+        try {
+          const written = await write({ action: "import_live_users", user_ids: [user.user_id] });
+          if (state.snapshot) state.snapshot.revision = written.revision;
+          if (!written.result?.imported?.length) { showStatus("该成员已在模拟花名册中"); return; }
+          state.speakerId = user.user_id;
+          await write({ action: "set_mode", mode: "simulate" });
+          showStatus("已导入为模拟用户");
+          await refresh();
+        } catch (error) { reportError(error); }
+      }));
+    }
+    const rect = root.getBoundingClientRect();
+    menu.style.left = `${event.clientX - rect.left}px`;
+    menu.style.top = `${event.clientY - rect.top}px`;
+    root.append(menu);
+    state.menu = menu;
   }
 
   function openDialog(dialog) {
@@ -755,7 +814,8 @@ export function mountSandboxPanel(host, rpc, events) {
       item.tabIndex = 0;
       if (mode() === "simulate" && user.user_id === state.speakerId) item.classList.add("is-active");
       const meta = element("div", "");
-      meta.append(element("span", "sandbox-member-name", user.display_name || user.user_id), element("p", "muted sandbox-session-preview", user.user_id));
+      meta.append(element("span", "sandbox-member-name", user.display_name || user.user_id));
+      item.oncontextmenu = (event) => openMemberMenu(event, user);
       if (mode() === "simulate") {
         const actions = element("div", "sandbox-member-actions");
         const edit = button("编辑");
@@ -784,6 +844,7 @@ export function mountSandboxPanel(host, rpc, events) {
   }
 
   function render() {
+    closeMemberMenu();
     const sessions = element("section", "sandbox-pane");
     const chat = element("section", "sandbox-pane");
     const members = element("section", "sandbox-pane");
@@ -837,19 +898,25 @@ export function mountSandboxPanel(host, rpc, events) {
   const onKey = (event) => {
     if (event.key === "Escape") closeDialog();
   };
+  const onPointerDown = (event) => {
+    if (state.menu && !state.menu.contains(event.target)) closeMemberMenu();
+  };
   const visibility = () => { clearTimeout(pollTimer); if (!document.hidden) void refresh(); };
   const eventSubscription = events.subscribe("sandbox.changed", () => { if (!document.hidden) void refresh(); }, "bot.read");
   document.addEventListener("visibilitychange", visibility);
   document.addEventListener("keydown", onKey);
+  document.addEventListener("pointerdown", onPointerDown);
   void refresh();
   return {
     refresh,
     destroy() {
       disposed = true;
+      closeMemberMenu();
       clearTimeout(pollTimer);
       eventSubscription.dispose();
       document.removeEventListener("visibilitychange", visibility);
       document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onPointerDown);
     },
   };
 }

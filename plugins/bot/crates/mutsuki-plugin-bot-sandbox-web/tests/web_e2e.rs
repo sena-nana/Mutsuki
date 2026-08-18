@@ -49,6 +49,9 @@ async fn sandbox_rpc_simulate_send_and_confirm_live_send() {
     assert!(frontend.contains("发送到 QQ"));
     assert!(frontend.contains("update_user"));
     assert!(frontend.contains("import_live_users"));
+    assert!(frontend.contains("复制 OpenID"));
+    assert!(frontend.contains("导入作为模拟用户"));
+    assert!(frontend.contains("contextmenu"));
     assert!(frontend.contains("avatar_url"));
     assert!(frontend.contains("conversation.avatar_url || peer?.avatar_url"));
     assert!(frontend.contains("referrerpolicy"));
