@@ -36,13 +36,14 @@ const STYLE = `
 .sandbox-session-preview { margin: 1px 0 0; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sandbox-session-time { font-size: 10px; white-space: nowrap; min-width: max-content; justify-self: end; align-self: start; padding-top: 1px; }
 .sandbox-messages { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; background: var(--bg-subtle, transparent); }
-.sandbox-row { display: flex; gap: 8px; max-width: 78%; align-items: flex-start; }
+.sandbox-row { display: flex; gap: 8px; max-width: 78%; align-items: center; }
 .sandbox-row--user { align-self: flex-start; }
 .sandbox-row--bot { align-self: flex-end; flex-direction: row-reverse; }
 .sandbox-row--system { align-self: center; max-width: 90%; }
 .sandbox-bubble { border-radius: 12px; padding: 8px 12px; background: var(--bg-elev, transparent); min-width: 0; }
 .sandbox-row--bot .sandbox-bubble { background: var(--accent-soft, var(--bg-hover, transparent)); }
 .sandbox-row--system .sandbox-bubble { background: transparent; }
+.sandbox-client .sandbox-reply { height: 22px; padding: 0 6px; font-size: 11px; flex: none; }
 .sandbox-quote { margin: 0 0 6px; padding: 4px 8px; border-left: 3px solid var(--accent, #7aa2ff); opacity: 0.8; font-size: 12px; }
 .sandbox-compose { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--border, transparent); flex: 0 0 auto; }
 .sandbox-compose-row { display: flex; gap: 8px; align-items: center; min-width: 0; }
@@ -165,7 +166,6 @@ export function mountSandboxPanel(host, rpc, events) {
     confirmed: confirm,
     request: { operation_id: crypto.randomUUID(), expected_revision: state.snapshot?.revision ?? 0, action },
   });
-  const setStatus = () => showStatus("");
 
   function renderSessions(pane) {
     const tabs = element("div", "segmented sandbox-mode-tabs");
@@ -245,12 +245,18 @@ export function mountSandboxPanel(host, rpc, events) {
       const bubble = element("div", "sandbox-bubble");
       if (message.role !== "system") bubble.append(element("p", "muted", `${message.sender_name} · ${formatTime(message.time_ms)}`));
       bubble.append(renderSegments(message, state.messages));
-      if (mode() === "simulate" && message.role !== "system") {
-        bubble.style.cursor = "pointer";
-        bubble.title = "点击引用这条消息";
-        bubble.onclick = () => { state.quote = message; render(); };
-      }
       row.append(bubble);
+      if (message.role === "user") {
+        const reply = button("回复");
+        reply.classList.add("ghost", "sandbox-reply");
+        reply.title = "引用并回复这条消息";
+        reply.onclick = (event) => {
+          event.stopPropagation();
+          state.quote = message;
+          render();
+        };
+        row.append(reply);
+      }
       messages.append(row);
     });
     pane.append(messages);
@@ -266,17 +272,29 @@ export function mountSandboxPanel(host, rpc, events) {
     const row = element("div", "sandbox-compose-row");
     const input = element("input", "ui-input");
     input.type = "text";
-    input.placeholder = mode() === "live" ? "以后台机器人身份发送到真实会话" : "输入消息，Enter 发送";
+    const canActive = Boolean(conversation.active_message);
+    input.placeholder = mode() === "live"
+      ? (canActive ? "可直接发送主动消息，或点右侧回复" : "请先点用户消息右侧回复")
+      : "输入消息，Enter 发送";
     input.value = state.draft;
     input.oninput = () => { state.draft = input.value; };
     const send = button(mode() === "live" ? "发送到 QQ" : "发送");
     const submit = async () => {
       const text = state.draft.trim();
       if (!text) { showStatus("请填写消息"); return; }
+      if (mode() === "live" && !state.quote?.message_id && !canActive) {
+        showStatus("当前会话没有主动消息权限，请先点击用户消息右侧的回复");
+        return;
+      }
       if (mode() === "live" && !window.confirm("将以机器人身份向真实 QQ 会话发送消息，是否继续？")) return;
       try {
         if (mode() === "live") {
-          await write({ action: "send_as_bot", conversation_id: conversation.conversation_id, text }, true);
+          await write({
+            action: "send_as_bot",
+            conversation_id: conversation.conversation_id,
+            text,
+            reply_to: state.quote?.message_id || null,
+          }, true);
         } else {
           const speaker = state.speakerId || conversation.users?.[0]?.user_id;
           if (!speaker) { showStatus("请先添加用户"); return; }
@@ -290,6 +308,7 @@ export function mountSandboxPanel(host, rpc, events) {
         }
         state.draft = "";
         state.quote = null;
+        showStatus("");
         await refresh();
       } catch (error) {
         reportError(error);
@@ -499,7 +518,6 @@ export function mountSandboxPanel(host, rpc, events) {
         if (!state.selectedId || !(snapshot.conversations || []).some((item) => item.conversation_id === state.selectedId)) {
           state.selectedId = snapshot.conversations?.[0]?.conversation_id || null;
         }
-        setStatus();
         await loadConversation();
       } catch (error) {
         if (!disposed) reportError(error);

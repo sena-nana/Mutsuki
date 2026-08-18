@@ -47,6 +47,8 @@ pub struct SandboxConversationView {
     pub last_preview: Option<String>,
     pub last_activity_unix_ms: u64,
     pub message_count: u64,
+    #[serde(default)]
+    pub active_message: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -106,6 +108,8 @@ pub enum SandboxAction {
     SendAsBot {
         conversation_id: String,
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reply_to: Option<String>,
     },
 }
 

@@ -11,7 +11,7 @@ use mutsuki_bot_protocol::{
     BOT_EVENT_INGEST_PROTOCOL_ID, BOT_FLOW_BOT_EVENT_TYPE, BOT_FLOW_INGRESS_PROTOCOL_ID,
     BOT_MESSAGE_SEND_PROTOCOL_ID, BotActiveDeliveryRequest, BotDeliveryContent,
     BotDeliveryPartReceipt, BotEvent, BotFlowContext, BotFlowEventEnvelope, BotFlowPayload,
-    BotFlowTypeRef, BotMessage, DeliveryPartStatus, DeliveryPolicy, MessageSegment,
+    BotFlowTypeRef, BotMessage, DeliveryPartStatus, DeliveryPolicy, DeliveryStatus, MessageSegment,
     QqConversationRef,
 };
 use mutsuki_bot_sandbox::{
@@ -942,6 +942,7 @@ impl SandboxRuntime for HostSandboxRuntime {
         operation_id: &str,
         conversation: &QqConversationRef,
         text: &str,
+        reply_to: Option<&str>,
     ) -> Result<Value, SandboxError> {
         if conversation.account_id != self.account_id {
             return Err(SandboxError::new(
@@ -956,7 +957,7 @@ impl SandboxRuntime for HostSandboxRuntime {
             content: BotDeliveryContent {
                 segments: vec![MessageSegment::text(text)],
                 summary: Some("沙盒后台消息".into()),
-                reply_to: None,
+                reply_to: reply_to.map(str::to_owned),
             },
             policy: DeliveryPolicy {
                 max_attempts: 1,
@@ -973,6 +974,16 @@ impl SandboxRuntime for HostSandboxRuntime {
             .submit(&request, unix_ms())
             .await
             .map_err(|error| SandboxError::new("delivery.failed", error.to_string()))?;
+        if receipt.status != DeliveryStatus::Succeeded {
+            let code = receipt
+                .error_code
+                .clone()
+                .unwrap_or_else(|| "delivery.failed".into());
+            return Err(SandboxError::new(
+                code.clone(),
+                format!("真实消息发送失败（{code}）"),
+            ));
+        }
         serde_json::to_value(receipt)
             .map_err(|error| SandboxError::new("encode_failed", error.to_string()))
     }

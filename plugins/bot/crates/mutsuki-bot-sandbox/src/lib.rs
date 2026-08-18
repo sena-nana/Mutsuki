@@ -22,7 +22,7 @@ mod tests {
 
     struct RecordingRuntime {
         ingest: std::sync::Mutex<Vec<BotEvent>>,
-        deliver: std::sync::Mutex<Vec<String>>,
+        deliver: std::sync::Mutex<Vec<(String, Option<String>)>>,
     }
 
     #[async_trait]
@@ -41,8 +41,12 @@ mod tests {
             _operation_id: &str,
             _conversation: &QqConversationRef,
             text: &str,
+            reply_to: Option<&str>,
         ) -> Result<serde_json::Value, SandboxError> {
-            self.deliver.lock().expect("deliver").push(text.into());
+            self.deliver
+                .lock()
+                .expect("deliver")
+                .push((text.into(), reply_to.map(str::to_owned)));
             Ok(json!({ "delivered": true }))
         }
     }
@@ -78,6 +82,82 @@ mod tests {
                 },
             )
             .await
+    }
+
+    fn now_ms() -> i64 {
+        i64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_millis(),
+        )
+        .unwrap_or(i64::MAX)
+    }
+
+    fn live_group_event(message_id: &str, text: &str, time_ms: i64) -> BotEvent {
+        let mut message = BotMessage::text(
+            BotTarget::Group {
+                group_id: "group-1".into(),
+            },
+            text,
+        );
+        message.message_id = Some(message_id.into());
+        BotEvent {
+            event_id: format!("evt-{message_id}"),
+            platform: BotPlatform::QqBot,
+            bot: BotAccountRef {
+                account_id: "qq-main".into(),
+                platform: BotPlatform::QqBot,
+            },
+            kind: BotEventKind::MessageCreated,
+            time_ms,
+            target: BotTarget::Group {
+                group_id: "group-1".into(),
+            },
+            actor: Some(BotUser {
+                user_id: "member-1".into(),
+                display_name: Some("群友甲".into()),
+                avatar_url: None,
+            }),
+            message: Some(message),
+            raw: None,
+            ext: BotExtMap::new(),
+        }
+    }
+
+    fn live_group_toggle(event_type: &str, time_ms: i64) -> BotEvent {
+        let mut ext = BotExtMap::new();
+        ext.insert("qqbot.event_type".into(), json!(event_type));
+        BotEvent {
+            event_id: format!("evt-{event_type}"),
+            platform: BotPlatform::QqBot,
+            bot: BotAccountRef {
+                account_id: "qq-main".into(),
+                platform: BotPlatform::QqBot,
+            },
+            kind: BotEventKind::PlatformSpecific(event_type.into()),
+            time_ms,
+            target: BotTarget::Group {
+                group_id: "group-1".into(),
+            },
+            actor: None,
+            message: None,
+            raw: None,
+            ext,
+        }
+    }
+
+    async fn switch_live(service: &SandboxService) {
+        write(
+            service,
+            service.snapshot("").await.unwrap().revision,
+            "op-live",
+            SandboxAction::SetMode {
+                mode: SandboxMode::Live,
+            },
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -138,6 +218,7 @@ mod tests {
             SandboxAction::SendAsBot {
                 conversation_id: group.conversation_id.clone(),
                 text: "不该发出".into(),
+                reply_to: None,
             },
         )
         .await
@@ -295,55 +376,19 @@ mod tests {
 
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
-    async fn live_projects_inbound_and_sends_as_bot() {
+    async fn live_projects_inbound_and_sends_quoted_reply() {
         let service = SandboxService::with_account("qq-main");
         let runtime = runtime();
         service.set_runtime(runtime.clone());
-        service.observe_event(BotEvent {
-            event_id: "evt-1".into(),
-            platform: BotPlatform::QqBot,
-            bot: BotAccountRef {
-                account_id: "qq-main".into(),
-                platform: BotPlatform::QqBot,
-            },
-            kind: BotEventKind::MessageCreated,
-            time_ms: 1_700_000_000_000,
-            target: BotTarget::Group {
-                group_id: "group-1".into(),
-            },
-            actor: Some(BotUser {
-                user_id: "member-1".into(),
-                display_name: Some("群友甲".into()),
-                avatar_url: None,
-            }),
-            message: Some(BotMessage::text(
-                BotTarget::Group {
-                    group_id: "group-1".into(),
-                },
-                "在吗",
-            )),
-            raw: None,
-            ext: BotExtMap::new(),
-        });
-        let after_observe = service.snapshot("").await.unwrap();
-        write(
-            &service,
-            after_observe.revision,
-            "op-live",
-            SandboxAction::SetMode {
-                mode: SandboxMode::Live,
-            },
-        )
-        .await
-        .unwrap();
+        service.observe_event(live_group_event("qq-msg-1", "在吗", now_ms()));
+        switch_live(&service).await;
         let live = service.snapshot("").await.unwrap();
         assert_eq!(live.mode, SandboxMode::Live);
         assert_eq!(live.conversations[0].users[0].display_name, "群友甲");
-        let live_messages = service
-            .messages(&live.conversations[0].conversation_id)
-            .await
-            .unwrap();
+        let conversation_id = live.conversations[0].conversation_id.clone();
+        let live_messages = service.messages(&conversation_id).await.unwrap();
         assert_eq!(live_messages[0].role, SandboxSpeakerRole::User);
+        assert_eq!(live_messages[0].message_id, "qq-msg-1");
 
         service.observe_outbound(
             &QqConversationRef {
@@ -361,27 +406,44 @@ mod tests {
         );
         assert!(
             service
-                .messages(&live.conversations[0].conversation_id)
+                .messages(&conversation_id)
                 .await
                 .unwrap()
                 .iter()
                 .any(|item| item.text == "机器人自己" && item.role == SandboxSpeakerRole::Bot)
         );
 
+        let missing = write(
+            &service,
+            service.snapshot("").await.unwrap().revision,
+            "op-send-missing",
+            SandboxAction::SendAsBot {
+                conversation_id: conversation_id.clone(),
+                text: "后台回复".into(),
+                reply_to: None,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(missing.code, "invalid_argument");
+        assert!(missing.message.contains("主动消息权限"));
+        assert!(runtime.deliver.lock().expect("deliver").is_empty());
+
         write(
             &service,
             service.snapshot("").await.unwrap().revision,
             "op-send",
             SandboxAction::SendAsBot {
-                conversation_id: live.conversations[0].conversation_id.clone(),
+                conversation_id: conversation_id.clone(),
                 text: "后台回复".into(),
+                reply_to: Some("qq-msg-1".into()),
             },
         )
         .await
         .unwrap();
         assert_eq!(
             runtime.deliver.lock().expect("deliver").as_slice(),
-            ["后台回复"]
+            [("后台回复".into(), Some("qq-msg-1".into()))]
         );
 
         let error = write(
@@ -389,7 +451,7 @@ mod tests {
             service.snapshot("").await.unwrap().revision,
             "op-forge",
             SandboxAction::IngestAsUser {
-                conversation_id: live.conversations[0].conversation_id.clone(),
+                conversation_id,
                 user_id: sandbox_user_id("Alice"),
                 text: "伪造".into(),
                 reply_to: None,
@@ -398,6 +460,191 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(error.code, "invalid_state");
+    }
+
+    #[tokio::test]
+    async fn live_send_uses_active_message_when_group_enabled() {
+        let service = SandboxService::with_account("qq-main");
+        let runtime = runtime();
+        service.set_runtime(runtime.clone());
+        service.observe_event(live_group_event("qq-msg-1", "在吗", now_ms()));
+        service.observe_event(live_group_toggle("GROUP_MSG_RECEIVE", now_ms()));
+        switch_live(&service).await;
+        let live = service.snapshot("").await.unwrap();
+        assert!(live.conversations[0].active_message);
+        let conversation_id = live.conversations[0].conversation_id.clone();
+        write(
+            &service,
+            live.revision,
+            "op-active",
+            SandboxAction::SendAsBot {
+                conversation_id: conversation_id.clone(),
+                text: "主动推送".into(),
+                reply_to: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            runtime.deliver.lock().expect("deliver").as_slice(),
+            [("主动推送".into(), None)]
+        );
+
+        service.observe_event(live_group_toggle("GROUP_MSG_REJECT", now_ms()));
+        let denied = write(
+            &service,
+            service.snapshot("").await.unwrap().revision,
+            "op-denied",
+            SandboxAction::SendAsBot {
+                conversation_id,
+                text: "再推一次".into(),
+                reply_to: None,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(denied.code, "invalid_argument");
+        assert!(denied.message.contains("主动消息权限"));
+    }
+
+    #[tokio::test]
+    async fn live_send_rejects_bot_unknown_and_expired_quotes() {
+        let service = SandboxService::with_account("qq-main");
+        service.set_runtime(runtime());
+        service.observe_event(live_group_event("qq-msg-fresh", "在吗", now_ms()));
+        switch_live(&service).await;
+        let conversation_id = service.snapshot("").await.unwrap().conversations[0]
+            .conversation_id
+            .clone();
+        service.observe_outbound(
+            &QqConversationRef {
+                version: QQ_CONVERSATION_REF_VERSION,
+                account_id: "qq-main".into(),
+                kind: BotConversationKind::Group,
+                user_id: None,
+                group_id: Some("group-1".into()),
+                guild_id: None,
+                channel_id: None,
+                thread_id: None,
+            },
+            &[MessageSegment::text("机器人自己")],
+            None,
+        );
+        let bot_id = service
+            .messages(&conversation_id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|item| item.role == SandboxSpeakerRole::Bot)
+            .unwrap()
+            .message_id;
+
+        let bot_quote = write(
+            &service,
+            service.snapshot("").await.unwrap().revision,
+            "op-bot-quote",
+            SandboxAction::SendAsBot {
+                conversation_id: conversation_id.clone(),
+                text: "不能引用机器人".into(),
+                reply_to: Some(bot_id),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(bot_quote.code, "invalid_argument");
+        assert!(bot_quote.message.contains("用户消息"));
+
+        let unknown = write(
+            &service,
+            service.snapshot("").await.unwrap().revision,
+            "op-unknown",
+            SandboxAction::SendAsBot {
+                conversation_id: conversation_id.clone(),
+                text: "未知引用".into(),
+                reply_to: Some("missing-id".into()),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(unknown.code, "invalid_argument");
+        assert!(unknown.message.contains("不存在"));
+
+        service.observe_event(live_group_event(
+            "qq-msg-old",
+            "很久以前",
+            now_ms() - (6 * 60 * 1_000),
+        ));
+        let expired = write(
+            &service,
+            service.snapshot("").await.unwrap().revision,
+            "op-expired",
+            SandboxAction::SendAsBot {
+                conversation_id,
+                text: "过期回复".into(),
+                reply_to: Some("qq-msg-old".into()),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(expired.code, "invalid_argument");
+        assert!(expired.message.contains("5 分钟"));
+    }
+
+    #[tokio::test]
+    async fn live_send_keeps_passive_delivery_and_rejects_failed_receipt() {
+        struct FailedDeliveryRuntime;
+
+        #[async_trait]
+        impl SandboxRuntime for FailedDeliveryRuntime {
+            fn live_available(&self) -> bool {
+                true
+            }
+
+            async fn ingest(&self, _event: BotEvent) -> Result<(), SandboxError> {
+                Ok(())
+            }
+
+            async fn deliver(
+                &self,
+                _operation_id: &str,
+                _conversation: &QqConversationRef,
+                _text: &str,
+                _reply_to: Option<&str>,
+            ) -> Result<serde_json::Value, SandboxError> {
+                Err(SandboxError::new(
+                    "qqbot.openapi.permanent",
+                    "真实消息发送失败（qqbot.openapi.permanent）",
+                ))
+            }
+        }
+
+        let service = SandboxService::with_account("qq-main");
+        service.set_runtime(Arc::new(FailedDeliveryRuntime));
+        service.observe_event(live_group_event("qq-msg-1", "在吗", now_ms()));
+        switch_live(&service).await;
+        let live = service.snapshot("").await.unwrap();
+        let error = write(
+            &service,
+            live.revision,
+            "op-send",
+            SandboxAction::SendAsBot {
+                conversation_id: live.conversations[0].conversation_id.clone(),
+                text: "后台回复".into(),
+                reply_to: Some("qq-msg-1".into()),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, "qqbot.openapi.permanent");
+        assert!(error.message.contains("真实消息发送失败"));
+        assert!(
+            service
+                .messages(&live.conversations[0].conversation_id)
+                .await
+                .unwrap()
+                .iter()
+                .all(|item| item.role != SandboxSpeakerRole::Bot)
+        );
     }
 
     #[test]

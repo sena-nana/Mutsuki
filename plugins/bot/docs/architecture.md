@@ -74,7 +74,10 @@ Sandbox console (virtual user)
   Koishi-style closed loop (virtual users always enter `mutsuki.bot.flow/ingress@1`,
   outbound `message/send` for `sandbox:` conversations is intercepted back into the
   console). Simulate roster OpenID/nickname can be edited, and observed live members
-  can be imported into simulate. Live mode projects real Gateway inbound events and confirmed bot sends.
+  can be imported into simulate. Live mode projects real Gateway inbound events and
+  confirmed bot sends. Unquoted live send is allowed only after that conversation
+  received `GROUP_MSG_RECEIVE` / `C2C_MSG_RECEIVE`; otherwise it requires a user-message
+  reply (`msg_id`). Failed receipts are surfaced instead of a local bubble.
 - `mutsuki-plugin-bot-sandbox-web`: WebExtension for the shared simulate/live conversation client
   (Stapxs-style three-pane session / chat / member layout).
 - `mutsuki-plugin-bot-adapter-qqbot`: QQBot platform translation and OpenAPI side effects.

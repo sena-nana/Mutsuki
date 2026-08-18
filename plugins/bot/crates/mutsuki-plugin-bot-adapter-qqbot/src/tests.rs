@@ -495,6 +495,50 @@ fn openapi_runner_maps_standard_text_message_to_qqbot_send() {
 }
 
 #[test]
+fn openapi_runner_sends_group_text_without_msg_id_as_active_message() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut runner = openapi_runner_with_shared(
+        requests.clone(),
+        vec![
+            token_response("TOKEN_A"),
+            ok_response(json!({"id": "MESSAGE_ID"})),
+        ],
+        Box::new(NoopIdSource::new(702)),
+    );
+    let task = Task::new(
+        "send-group-active",
+        BOT_MESSAGE_SEND_PROTOCOL_ID,
+        serde_json::to_value(BotMessage {
+            message_id: None,
+            target: BotTarget::Group {
+                group_id: "GROUP_OPENID".into(),
+            },
+            sender: None,
+            segments: vec![MessageSegment::Text {
+                text: "主动推送".into(),
+            }],
+            reply_to: None,
+            time_ms: None,
+            ext: Default::default(),
+        })
+        .unwrap(),
+    );
+
+    run_one(&mut runner, task).unwrap();
+
+    let requests = requests.lock().unwrap();
+    assert!(
+        requests[1]
+            .url
+            .ends_with("/v2/groups/GROUP_OPENID/messages")
+    );
+    assert_eq!(requests[1].body.as_ref().unwrap()["msg_type"], 0);
+    assert_eq!(requests[1].body.as_ref().unwrap()["content"], "主动推送");
+    assert_eq!(requests[1].body.as_ref().unwrap()["msg_seq"], 702);
+    assert!(requests[1].body.as_ref().unwrap().get("msg_id").is_none());
+}
+
+#[test]
 fn openapi_runner_accepts_standard_reply_and_quote_segments() {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let mut runner = openapi_runner_with_shared(
