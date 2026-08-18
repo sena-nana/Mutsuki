@@ -85,8 +85,10 @@ Sandbox console (virtual user)
   the message list JSON, and the same bound is persisted for restart. Live mode projects real Gateway inbound events and
   confirmed bot sends, including live member avatar URLs. Bot bubbles use the connected bot's
   name and avatar when known, otherwise `机器人`. Group sessions show a
-  member photo. The right-hand roster shows nicknames only; OpenID is copied from
-  the member context menu, and live members can be imported into the simulate roster.
+  member photo. The right-hand roster shows nicknames only. The member context menu
+  inserts `@nickname` into compose, copies OpenID, and can import a live member into
+  the simulate roster. Typing `@` in compose opens a compact mention menu above the
+  input; an unmatched query closes it.
   Console CSP allows QQ image CDNs (`*.qlogo.cn`, `*.qpic.cn`,
   `*.gtimg.cn`, `*.qq.com.cn`, `*.nt.qq.com.cn`) and sandbox `<img>` uses
   `referrerpolicy=no-referrer`.
