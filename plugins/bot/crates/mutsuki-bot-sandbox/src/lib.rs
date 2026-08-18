@@ -3,7 +3,9 @@
 mod service;
 mod types;
 
-pub use service::{SandboxApi, SandboxChangeSubscription, SandboxRuntime, SandboxService};
+pub use service::{
+    SandboxApi, SandboxChangeSubscription, SandboxHistoryStore, SandboxRuntime, SandboxService,
+};
 pub use types::*;
 
 #[cfg(test)]
@@ -983,5 +985,132 @@ mod tests {
         let delivered = runtime.deliver.lock().expect("deliver");
         assert_eq!(delivered[0].0, "hi @member-1");
         assert_eq!(delivered[0].1.as_deref(), Some("qq-msg-1"));
+    }
+
+    #[derive(Default)]
+    struct MemoryHistoryStore {
+        inner: std::sync::Mutex<SandboxHistorySnapshot>,
+    }
+
+    impl SandboxHistoryStore for MemoryHistoryStore {
+        fn load(&self) -> Result<SandboxHistorySnapshot, SandboxError> {
+            Ok(self.inner.lock().expect("history").clone())
+        }
+
+        fn save(&self, snapshot: &SandboxHistorySnapshot) -> Result<(), SandboxError> {
+            *self.inner.lock().expect("history") = snapshot.clone();
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn history_store_restores_simulate_and_live_after_restart() {
+        let store = Arc::new(MemoryHistoryStore::default());
+        let first = SandboxService::with_history("qq-main", store.clone()).unwrap();
+        first.set_runtime(runtime());
+        let snapshot = first.snapshot("").await.unwrap();
+        assert!(
+            group(&snapshot)
+                .users
+                .iter()
+                .any(|user| user.display_name == "Alice")
+        );
+        write(
+            &first,
+            snapshot.revision,
+            "op-seed-msg",
+            SandboxAction::IngestAsUser {
+                conversation_id: group(&snapshot).conversation_id.clone(),
+                user_id: sandbox_user_id("Alice"),
+                text: "hello history".into(),
+                segments: vec![],
+                reply_to: None,
+            },
+        )
+        .await
+        .unwrap();
+        first.observe_event(live_group_event("qq-msg-hist", "在吗", now_ms()));
+        write(
+            &first,
+            first.snapshot("").await.unwrap().revision,
+            "op-live",
+            SandboxAction::SetMode {
+                mode: SandboxMode::Live,
+            },
+        )
+        .await
+        .unwrap();
+
+        let restored = SandboxService::with_history("qq-main", store).unwrap();
+        let live = restored.snapshot("").await.unwrap();
+        assert_eq!(live.mode, SandboxMode::Live);
+        assert!(
+            restored
+                .messages(&live.conversations[0].conversation_id)
+                .await
+                .unwrap()
+                .iter()
+                .any(|item| item.message_id == "qq-msg-hist")
+        );
+        write(
+            &restored,
+            live.revision,
+            "op-sim",
+            SandboxAction::SetMode {
+                mode: SandboxMode::Simulate,
+            },
+        )
+        .await
+        .unwrap();
+        let simulate = restored.snapshot("").await.unwrap();
+        assert!(
+            restored
+                .messages(&group(&simulate).conversation_id)
+                .await
+                .unwrap()
+                .iter()
+                .any(|item| item.text == "hello history")
+        );
+    }
+
+    #[tokio::test]
+    async fn history_store_does_not_reseed_existing_simulate() {
+        let store = Arc::new(MemoryHistoryStore::default());
+        let first = SandboxService::with_history("qq-main", store.clone()).unwrap();
+        first.set_runtime(runtime());
+        let snapshot = first.snapshot("").await.unwrap();
+        write(&first, snapshot.revision, "op-add", SandboxAction::AddUser)
+            .await
+            .unwrap();
+        drop(first);
+        let restored = SandboxService::with_history("qq-main", store).unwrap();
+        let after = restored.snapshot("").await.unwrap();
+        assert!(
+            group(&after)
+                .users
+                .iter()
+                .any(|user| user.display_name == "Carol")
+        );
+    }
+
+    #[tokio::test]
+    async fn live_message_upsert_is_idempotent() {
+        let store = Arc::new(MemoryHistoryStore::default());
+        let service = SandboxService::with_history("qq-main", store).unwrap();
+        let event = live_group_event("qq-dup", "重复", now_ms());
+        service.observe_event(event.clone());
+        service.observe_event(event);
+        switch_live(&service).await;
+        let conversation_id = service.snapshot("").await.unwrap().conversations[0]
+            .conversation_id
+            .clone();
+        let messages = service.messages(&conversation_id).await.unwrap();
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|item| item.message_id == "qq-dup")
+                .count(),
+            1
+        );
     }
 }

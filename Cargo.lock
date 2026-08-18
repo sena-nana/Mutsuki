@@ -3992,6 +3992,7 @@ dependencies = [
  "mutsuki-bot-flow",
  "mutsuki-bot-interaction",
  "mutsuki-bot-protocol",
+ "mutsuki-bot-sandbox",
  "rusqlite",
  "serde",
  "serde_json",

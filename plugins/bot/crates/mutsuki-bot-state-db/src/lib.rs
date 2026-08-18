@@ -20,6 +20,8 @@ use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, 
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
 
+mod sandbox_history;
+
 const DEFAULT_QUEUE_CAPACITY: usize = 256;
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -525,6 +527,13 @@ enum DbJob {
         limit: u32,
         reply: SyncDbReply<BotDatabaseTablePage>,
     },
+    SandboxLoad {
+        reply: SyncDbReply<mutsuki_bot_sandbox::SandboxHistorySnapshot>,
+    },
+    SandboxSave {
+        snapshot: mutsuki_bot_sandbox::SandboxHistorySnapshot,
+        reply: SyncDbReply<()>,
+    },
 }
 
 type DbReply<T> = oneshot::Sender<Result<T, BotStateDbError>>;
@@ -547,6 +556,7 @@ impl DbJob {
                 | Self::BeginManagementOperation { .. }
                 | Self::CompleteManagementOperation { .. }
                 | Self::CommitManagementAudit { .. }
+                | Self::SandboxSave { .. }
         )
     }
 
@@ -749,6 +759,12 @@ impl DbJob {
                 inspect_rows(connection, &table, &after, limit),
                 metrics,
             ),
+            Self::SandboxLoad { reply } => {
+                send_sync_reply(reply, sandbox_history::load(connection), metrics);
+            }
+            Self::SandboxSave { snapshot, reply } => {
+                send_sync_reply(reply, sandbox_history::save(connection, &snapshot), metrics);
+            }
         }
     }
 }
@@ -808,7 +824,7 @@ fn configure_connection(connection: &Connection) -> Result<String, BotStateDbErr
 }
 
 fn migrate_schema(connection: &Connection) -> Result<(), BotStateDbError> {
-    connection.execute_batch(
+    let sql = format!(
         "BEGIN IMMEDIATE;
          CREATE TABLE IF NOT EXISTS bot_conversation_policy(
              rule_id TEXT PRIMARY KEY,
@@ -903,9 +919,12 @@ fn migrate_schema(connection: &Connection) -> Result<(), BotStateDbError> {
              ON bot_delivery_attempt(status, retry_at, delivery_id, attempt);
          CREATE INDEX IF NOT EXISTS bot_interaction_active
              ON bot_interaction(origin_key, status, session_id);
-         PRAGMA user_version=7;
+         {}
+         PRAGMA user_version=8;
          COMMIT;",
-    )?;
+        sandbox_history::SANDBOX_SCHEMA_SQL
+    );
+    connection.execute_batch(&sql)?;
 
     let has_receipt_status = {
         let mut statement = connection.prepare("PRAGMA table_info(bot_delivery_receipt)")?;
@@ -2970,6 +2989,96 @@ mod tests {
                 .inspect_rows("bot_management_meta;drop", None, 10)
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn sandbox_history_roundtrip_survives_reopen() {
+        use mutsuki_bot_sandbox::{
+            SandboxAction, SandboxApi, SandboxHistoryStore, SandboxMode, SandboxService,
+            sandbox_user_id,
+        };
+
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("state.db");
+        let repository = Arc::new(BotStateDbRepository::open(&path).unwrap());
+        let snapshot = repository.inspect_snapshot().unwrap();
+        assert!(
+            snapshot
+                .tables
+                .iter()
+                .any(|table| table.name == "bot_sandbox_conversation")
+        );
+
+        let first = SandboxService::with_history("qq-main", repository.clone()).unwrap();
+        first.set_runtime(Arc::new(NoopSandboxRuntime));
+        let initial = first.snapshot("").await.unwrap();
+        let group_id = initial
+            .conversations
+            .iter()
+            .find(|item| item.kind == BotConversationKind::Group)
+            .expect("seed group")
+            .conversation_id
+            .clone();
+        first
+            .write(
+                "tester",
+                mutsuki_bot_sandbox::SandboxWriteRequest {
+                    operation_id: "op-hist".into(),
+                    expected_revision: initial.revision,
+                    action: SandboxAction::IngestAsUser {
+                        conversation_id: group_id.clone(),
+                        user_id: sandbox_user_id("Alice"),
+                        text: "persisted".into(),
+                        segments: vec![],
+                        reply_to: None,
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        drop(first);
+        drop(repository);
+
+        let reopened = Arc::new(BotStateDbRepository::open(&path).unwrap());
+        let restored = SandboxService::with_history("qq-main", reopened.clone()).unwrap();
+        let messages = restored.messages(&group_id).await.unwrap();
+        assert!(messages.iter().any(|item| item.text == "persisted"));
+        assert_eq!(
+            restored.snapshot("").await.unwrap().mode,
+            SandboxMode::Simulate
+        );
+        let loaded = SandboxHistoryStore::load(reopened.as_ref()).unwrap();
+        assert!(loaded.simulate.iter().any(|item| {
+            item.messages
+                .iter()
+                .any(|message| message.text == "persisted")
+        }));
+    }
+
+    struct NoopSandboxRuntime;
+
+    #[async_trait]
+    impl mutsuki_bot_sandbox::SandboxRuntime for NoopSandboxRuntime {
+        fn live_available(&self) -> bool {
+            true
+        }
+
+        async fn ingest(
+            &self,
+            _event: mutsuki_bot_protocol::BotEvent,
+        ) -> Result<(), mutsuki_bot_sandbox::SandboxError> {
+            Ok(())
+        }
+
+        async fn deliver(
+            &self,
+            _operation_id: &str,
+            _conversation: &QqConversationRef,
+            _segments: &[MessageSegment],
+            _reply_to: Option<&str>,
+        ) -> Result<serde_json::Value, mutsuki_bot_sandbox::SandboxError> {
+            Ok(serde_json::json!({ "delivered": true }))
+        }
     }
 
     fn conversation() -> QqConversationRef {
