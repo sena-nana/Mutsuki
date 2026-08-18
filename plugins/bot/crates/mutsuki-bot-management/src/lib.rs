@@ -64,6 +64,8 @@ pub struct QqAccountView {
     pub connection_state: QqGatewayConnectionState,
     pub last_heartbeat_unix_ms: Option<u64>,
     pub last_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error_code: Option<String>,
     pub reconnect_count: u64,
     pub intents: u64,
     pub shard: [u64; 2],
@@ -82,6 +84,21 @@ pub enum QqGatewayConnectionState {
     Connected,
     Identified,
     Resumable,
+}
+
+pub const QQ_GATEWAY_ERROR_OPERATOR_RECONNECT: &str = "qq.gateway.operator_reconnect";
+pub const QQ_GATEWAY_ERROR_SESSION_REPLACED: &str = "qq.gateway.session_replaced";
+pub const QQ_GATEWAY_ERROR_SESSION_EXPIRED: &str = "qq.gateway.session_expired";
+
+/// User-facing Chinese copy for a QQ Gateway reconnect/error code.
+#[must_use]
+pub fn qq_gateway_error_message(code: &str) -> Option<&'static str> {
+    Some(match code {
+        QQ_GATEWAY_ERROR_OPERATOR_RECONNECT => "已按请求重新连接",
+        QQ_GATEWAY_ERROR_SESSION_REPLACED => "已存在已连接 QQ",
+        QQ_GATEWAY_ERROR_SESSION_EXPIRED => "连接已过期，正在重新连接",
+        _ => return None,
+    })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -887,6 +904,7 @@ pub struct QqAccountViewInput {
     pub identified: bool,
     pub last_heartbeat_unix_ms: Option<u64>,
     pub last_error: Option<String>,
+    pub last_error_code: Option<String>,
     pub reconnect_count: u64,
     pub self_user: Option<BotUser>,
 }
@@ -894,11 +912,12 @@ pub struct QqAccountViewInput {
 /// Builds an account view from adapter config facts plus live gateway health.
 #[must_use]
 pub fn account_view_from_config(input: QqAccountViewInput) -> QqAccountView {
+    let has_error = input.last_error.is_some() || input.last_error_code.is_some();
     let connection_state = if input.identified {
         QqGatewayConnectionState::Identified
     } else if input.connected {
         QqGatewayConnectionState::Connected
-    } else if input.last_error.is_some() {
+    } else if has_error {
         QqGatewayConnectionState::Resumable
     } else {
         QqGatewayConnectionState::Disconnected
@@ -907,7 +926,7 @@ pub fn account_view_from_config(input: QqAccountViewInput) -> QqAccountView {
         "ok"
     } else if input.connected {
         "degraded"
-    } else if input.last_error.is_some() {
+    } else if has_error {
         "unhealthy"
     } else {
         "stopped"
@@ -919,7 +938,13 @@ pub fn account_view_from_config(input: QqAccountViewInput) -> QqAccountView {
         health: health.into(),
         connection_state,
         last_heartbeat_unix_ms: input.last_heartbeat_unix_ms,
-        last_error: input.last_error,
+        last_error: input
+            .last_error_code
+            .as_deref()
+            .and_then(qq_gateway_error_message)
+            .map(str::to_owned)
+            .or(input.last_error),
+        last_error_code: input.last_error_code,
         reconnect_count: input.reconnect_count,
         intents: input.intents,
         shard: input.shard,
@@ -1087,6 +1112,7 @@ mod tests {
             identified: true,
             last_heartbeat_unix_ms: Some(10),
             last_error: None,
+            last_error_code: None,
             reconnect_count: 0,
             self_user: None,
         }));
@@ -1141,6 +1167,7 @@ mod tests {
             identified: false,
             last_heartbeat_unix_ms: None,
             last_error: Some("identify rejected".into()),
+            last_error_code: None,
             reconnect_count: 3,
             self_user: Some(BotUser {
                 user_id: "BOT_OPENID".into(),
@@ -1156,6 +1183,31 @@ mod tests {
         assert_eq!(
             account.self_user.as_ref().unwrap().display_name.as_deref(),
             Some("mutsuki")
+        );
+    }
+
+    #[test]
+    fn account_view_maps_session_replaced_to_connected_qq_prompt() {
+        let account = account_view_from_config(QqAccountViewInput {
+            account_id: "main".into(),
+            app_id: "app".into(),
+            credential_reference: "QQBOT_CLIENT_SECRET".into(),
+            credential_present: true,
+            capability: capability("main"),
+            intents: 1,
+            shard: [0, 1],
+            connected: false,
+            identified: false,
+            last_heartbeat_unix_ms: None,
+            last_error: Some("server requested reconnect".into()),
+            last_error_code: Some(QQ_GATEWAY_ERROR_SESSION_REPLACED.into()),
+            reconnect_count: 1,
+            self_user: None,
+        });
+        assert_eq!(account.last_error.as_deref(), Some("已存在已连接 QQ"));
+        assert_eq!(
+            account.last_error_code.as_deref(),
+            Some(QQ_GATEWAY_ERROR_SESSION_REPLACED)
         );
     }
 

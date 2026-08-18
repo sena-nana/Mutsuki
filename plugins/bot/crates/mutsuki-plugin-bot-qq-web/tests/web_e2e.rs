@@ -35,6 +35,7 @@ impl QqBotManagementApi for Api {
                 connection_state: QqGatewayConnectionState::Resumable,
                 last_heartbeat_unix_ms: Some(100),
                 last_error: None,
+                last_error_code: None,
                 reconnect_count: 0,
                 intents: 1 << 25,
                 shard: [0, 1],
