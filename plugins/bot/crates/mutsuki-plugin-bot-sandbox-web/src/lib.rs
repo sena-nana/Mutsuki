@@ -197,11 +197,5 @@ fn required_capability(action: &SandboxAction) -> &'static str {
 }
 
 fn requires_confirmation(mode: SandboxMode, action: &SandboxAction) -> bool {
-    matches!(
-        action,
-        SandboxAction::IngestAsUser {
-            inject_into_flow: true,
-            ..
-        }
-    ) || (mode == SandboxMode::Live && matches!(action, SandboxAction::SendAsBot { .. }))
+    mode == SandboxMode::Live && matches!(action, SandboxAction::SendAsBot { .. })
 }

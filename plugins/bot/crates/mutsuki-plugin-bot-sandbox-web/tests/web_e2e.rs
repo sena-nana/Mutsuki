@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use mutsuki_plugin_bot_sandbox_web::*;
 use mutsuki_web_host::{MinimalWebApplication, MutsukiWebHost, WebHost};
@@ -11,16 +12,42 @@ use mutsuki_web_protocol::{
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+struct TestRuntime;
+
+#[async_trait]
+impl SandboxRuntime for TestRuntime {
+    fn live_available(&self) -> bool {
+        false
+    }
+
+    async fn ingest(&self, _event: mutsuki_bot_protocol::BotEvent) -> Result<(), SandboxError> {
+        Ok(())
+    }
+
+    async fn deliver(
+        &self,
+        _operation_id: &str,
+        _conversation: &mutsuki_bot_protocol::QqConversationRef,
+        _text: &str,
+    ) -> Result<Value, SandboxError> {
+        Err(SandboxError::new("qq.owner_unavailable", "尚未连接 QQ"))
+    }
+}
+
 #[tokio::test]
 #[allow(clippy::too_many_lines)]
 async fn sandbox_rpc_simulate_send_and_confirm_live_send() {
-    let api = Arc::new(SandboxService::new());
+    let service = Arc::new(SandboxService::new());
+    service.set_runtime(Arc::new(TestRuntime));
     let assets_dir = tempfile::tempdir().unwrap();
     let shell_dir = tempfile::tempdir().unwrap();
     let assets = materialize_frontend_assets(assets_dir.path()).unwrap();
     let frontend = std::fs::read_to_string(assets.join("index.js")).unwrap();
     assert!(frontend.contains("模拟模式"));
+    assert!(frontend.contains("添加用户"));
+    assert!(frontend.contains("发言进入 Bot 流程"));
     assert!(frontend.contains("发送到 QQ"));
+    assert!(!frontend.contains("inject_into_flow"));
     std::fs::write(
         shell_dir.path().join("index.html"),
         "<!doctype html><main></main>",
@@ -44,7 +71,7 @@ async fn sandbox_rpc_simulate_send_and_confirm_live_send() {
         .listen("127.0.0.1:0")
         .mode(DeploymentMode::Embedded)
         .shell_dir(shell_dir.path())
-        .extension(SandboxWebExtension::new(api).with_frontend_assets(&assets))
+        .extension(SandboxWebExtension::new(service).with_frontend_assets(&assets))
         .auth_token("local-dev")
         .build()
         .unwrap();
@@ -53,12 +80,25 @@ async fn sandbox_rpc_simulate_send_and_confirm_live_send() {
 
     let snapshot = rpc(&address, "snapshot", json!({})).await.unwrap();
     assert_eq!(snapshot["mode"], "simulate");
-    let conversation_id = snapshot["conversations"][0]["conversation_id"]
+    assert_eq!(snapshot["flow_available"], true);
+    let conversation_id = snapshot["conversations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["kind"] == "group")
+        .unwrap()["conversation_id"]
         .as_str()
-        .unwrap();
-    let user_id = snapshot["conversations"][0]["users"][0]["user_id"]
+        .unwrap()
+        .to_owned();
+    let user_id = snapshot["conversations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["kind"] == "group")
+        .unwrap()["users"][0]["user_id"]
         .as_str()
-        .unwrap();
+        .unwrap()
+        .to_owned();
     let written = rpc(
         &address,
         "write",
@@ -91,12 +131,26 @@ async fn sandbox_rpc_simulate_send_and_confirm_live_send() {
             .any(|item| item["text"] == "沙盒你好")
     );
 
-    let switched = rpc(
+    let added = rpc(
         &address,
         "write",
         json!({
             "request": {
                 "expected_revision": written["revision"],
+                "action": { "action": "add_user" }
+            }
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(added["result"]["display_name"], "Carol");
+
+    let switched = rpc(
+        &address,
+        "write",
+        json!({
+            "request": {
+                "expected_revision": added["revision"],
                 "action": { "action": "set_mode", "mode": "live" }
             }
         }),
@@ -177,7 +231,7 @@ async fn rpc(address: &str, method: &str, params: Value) -> Result<Value, String
         .ok_or("missing response")?
         .map_err(|error| error.to_string())?;
     let Message::Binary(bytes) = message else {
-        return Err("unexpected response".into());
+        return Err("unexpected wire message".into());
     };
     match WireMessage::decode(bytes.as_ref()).map_err(|error| error.to_string())? {
         WireMessage::RpcResult(result) => match result.error {

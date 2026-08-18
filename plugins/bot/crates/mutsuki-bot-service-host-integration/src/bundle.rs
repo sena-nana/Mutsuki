@@ -45,6 +45,9 @@ use crate::console_bridge::{
     BOT_STATE_DB_SERVICE_ID, QQ_MANAGEMENT_SERVICE_ID, bot_state_db_host_service,
 };
 use crate::event_source::{QqGatewayControlHandle, QqGatewayEventSource, QqGatewayHealthHandle};
+use crate::sandbox_intercept::{
+    SandboxAwareDeliveryGateway, SandboxAwareOpenApiRunner, SandboxInterceptHandle,
+};
 
 type MediaFactory = Arc<
     dyn Fn(Arc<dyn ResourceRegistryGateway>) -> Result<Box<dyn QqMediaProvider>, String>
@@ -144,6 +147,9 @@ impl QqBotPluginBundle {
             .ok_or_else(|| QqOpenApiError::InvalidPayload("event source already taken".into()))?;
         let control = source.control_handle();
         let inbound = source.inbound_handle();
+        let intercept = SandboxInterceptHandle::default();
+        let intercept_for_factory = intercept.clone();
+        let intercept_for_runner = intercept.clone();
         let management_config = self.config.clone();
         let management_health = self.health.clone();
         let management_credentials = self.credentials.clone();
@@ -182,10 +188,13 @@ impl QqBotPluginBundle {
                 let repository = Arc::new(
                     BotStateDbRepository::open(&state_path).map_err(|error| error.to_string())?,
                 );
-                let gateway = Arc::new(RuntimeQqDeliveryGateway {
-                    runtime: runtime.clone(),
-                    account_id: management_config.account_id.clone(),
-                });
+                let gateway = Arc::new(SandboxAwareDeliveryGateway::new(
+                    Arc::new(RuntimeQqDeliveryGateway {
+                        runtime: runtime.clone(),
+                        account_id: management_config.account_id.clone(),
+                    }),
+                    intercept_for_factory.clone(),
+                ));
                 let delivery = ActiveDeliveryService::new(
                     repository.clone(),
                     gateway,
@@ -219,6 +228,7 @@ impl QqBotPluginBundle {
                     delivery,
                     account_id: management_config.account_id.clone(),
                 }));
+                intercept_for_factory.bind(sandbox.clone());
                 let observed = sandbox.clone();
                 inbound.set(Arc::new(move |event| observed.observe_event(event)));
                 let mut host_services = vec![
@@ -259,19 +269,27 @@ impl QqBotPluginBundle {
                 let http = ReqwestQqHttpClient::new(&openapi_config)
                     .map_err(|error| error.redacted_message())?;
                 Ok::<Box<dyn mutsuki_runtime_core::Runner>, String>(Box::new(
-                    QqOpenApiRunner::new_with_auth(
-                        1,
-                        openapi_config.clone(),
-                        {
-                            let clients =
-                                QqBotClients::new(Box::new(http), Arc::new(credentials.clone()));
-                            match &media_factory {
-                                Some(factory) => clients.with_media_provider(factory(resources)?),
-                                None => clients,
-                            }
-                        },
-                        id_factory(),
-                        auth.clone(),
+                    SandboxAwareOpenApiRunner::new(
+                        Box::new(QqOpenApiRunner::new_with_auth(
+                            1,
+                            openapi_config.clone(),
+                            {
+                                let clients = QqBotClients::new(
+                                    Box::new(http),
+                                    Arc::new(credentials.clone()),
+                                );
+                                match &media_factory {
+                                    Some(factory) => {
+                                        clients.with_media_provider(factory(resources)?)
+                                    }
+                                    None => clients,
+                                }
+                            },
+                            id_factory(),
+                            auth.clone(),
+                        )),
+                        intercept_for_runner.clone(),
+                        openapi_config.account_id.clone(),
                     ),
                 ))
             })

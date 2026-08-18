@@ -16,6 +16,7 @@ uuid.workspace = true
 
 [dev-dependencies]
 futures-util.workspace = true
+mutsuki-bot-protocol.workspace = true
 mutsuki-web-host.workspace = true
 tempfile.workspace = true
 tokio.workspace = true

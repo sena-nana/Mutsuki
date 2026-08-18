@@ -209,6 +209,17 @@ impl SandboxApi for GenerationAwareSandbox {
             service.observe_event(event);
         }
     }
+
+    fn observe_outbound(
+        &self,
+        conversation: &mutsuki_bot_protocol::QqConversationRef,
+        segments: &[mutsuki_bot_protocol::MessageSegment],
+        reply_to: Option<&str>,
+    ) -> Option<mutsuki_bot_sandbox::SandboxMessageView> {
+        self.service()
+            .ok()?
+            .observe_outbound(conversation, segments, reply_to)
+    }
 }
 
 impl GenerationAwareSandbox {
