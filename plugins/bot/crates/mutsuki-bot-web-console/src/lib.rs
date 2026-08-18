@@ -555,6 +555,32 @@ fn asset_version_stamp(bytes: &[u8]) -> String {
         .collect()
 }
 
+fn materialize_lilia_fonts(out_dir: &Path) -> std::io::Result<()> {
+    let dir = out_dir.join("fonts");
+    std::fs::create_dir_all(&dir)?;
+    macro_rules! write_font {
+        ($weight:literal) => {
+            std::fs::write(
+                dir.join(concat!(
+                    "noto-sans-sc-chinese-simplified-",
+                    $weight,
+                    "-normal.woff2"
+                )),
+                include_bytes!(concat!(
+                    "../../../../../products/bot/assets/fonts/noto-sans-sc-chinese-simplified-",
+                    $weight,
+                    "-normal.woff2"
+                )),
+            )?;
+        };
+    }
+    write_font!("400");
+    write_font!("500");
+    write_font!("600");
+    write_font!("700");
+    Ok(())
+}
+
 pub(crate) fn materialize_console_shell(
     out_dir: &Path,
     include_config: bool,
@@ -596,6 +622,7 @@ pub(crate) fn materialize_console_shell(
     std::fs::create_dir_all(out_dir.join("shared"))?;
     std::fs::write(out_dir.join("shared/web-sdk.js"), web_sdk)?;
     std::fs::write(out_dir.join("shared/web-shell.js"), web_shell)?;
+    materialize_lilia_fonts(out_dir)?;
     let control_path = "extensions/control/index.js";
     let control_v = asset_version_stamp(&std::fs::read(out_dir.join(control_path))?);
     let mut extensions = vec![
