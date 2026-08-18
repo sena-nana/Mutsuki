@@ -64,6 +64,7 @@ async fn sandbox_rpc_simulate_send_and_confirm_live_send() {
     assert!(frontend.contains("snapshot?.bot"));
     assert!(frontend.contains("referrerpolicy"));
     assert!(frontend.contains("remoteImage"));
+    assert!(frontend.contains("httpsQqCdn"));
     assert!(frontend.contains("sandbox-reply"));
     assert!(frontend.contains("conversation.active_message"));
     assert!(frontend.contains("sandbox-mention"));

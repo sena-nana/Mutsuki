@@ -405,6 +405,19 @@ fn qq_self_user_keeps_avatar_url_and_synthesizes_qqapp_fallback() {
         synthesized.avatar_url.as_deref(),
         Some("https://q.qlogo.cn/qqapp/APP_ID/BOT_OPENID/640")
     );
+
+    let http_cdn = qq_self_user(
+        &json!({
+            "id": "BOT_OPENID",
+            "avatar": "http://thirdqq.qlogo.cn/g?b=oidb&k=TEST&s=0"
+        }),
+        "APP_ID",
+    )
+    .unwrap();
+    assert_eq!(
+        http_cdn.avatar_url.as_deref(),
+        Some("https://thirdqq.qlogo.cn/g?b=oidb&k=TEST&s=0")
+    );
 }
 
 #[test]
@@ -555,7 +568,7 @@ fn gateway_runner_maps_attachments_ark_markdown_and_keyboard() {
                 "group_openid": "GROUP_OPENID",
                 "content": "look <@member> @all",
                 "attachments": [{
-                    "url": "https://img.example/a.png",
+                    "url": "http://gchat.qpic.cn/qmeetpic/0",
                     "content_type": "image/png",
                     "filename": "a.png"
                 }],
@@ -589,8 +602,10 @@ fn gateway_runner_maps_attachments_ark_markdown_and_keyboard() {
     );
     assert!(segments.iter().any(|segment| matches!(
         segment,
-        MessageSegment::PlatformSpecific { platform, kind, .. }
-            if platform == "qqbot" && kind == "attachment"
+        MessageSegment::PlatformSpecific { platform, kind, payload, .. }
+            if platform == "qqbot"
+                && kind == "attachment"
+                && payload.get("url").and_then(Value::as_str) == Some("https://gchat.qpic.cn/qmeetpic/0")
     )));
     assert!(segments.iter().any(|segment| matches!(
         segment,

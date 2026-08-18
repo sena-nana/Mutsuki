@@ -90,8 +90,9 @@ Sandbox console (virtual user)
   the simulate roster. Typing `@` in compose opens a compact mention menu above the
   input; an unmatched query closes it.
   Console CSP allows QQ image CDNs (`*.qlogo.cn`, `*.qpic.cn`,
-  `*.gtimg.cn`, `*.qq.com.cn`, `*.nt.qq.com.cn`) and sandbox `<img>` uses
-  `referrerpolicy=no-referrer`.
+  `*.gtimg.cn`, `*.qq.com.cn`, `*.nt.qq.com.cn`) over HTTPS only. Adapter
+  and sandbox upgrade QQ CDN `http://` URLs to `https://` before persist or
+  display; sandbox `<img>` uses `referrerpolicy=no-referrer`.
   Unquoted live send is allowed only after that conversation
   received `GROUP_MSG_RECEIVE` / `C2C_MSG_RECEIVE`; otherwise it requires a user-message
   reply (`msg_id`). Failed receipts are surfaced instead of a local bubble.
