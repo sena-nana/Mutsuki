@@ -214,6 +214,7 @@ impl WebHost for MutsukiWebHost {
             self.config.clone(),
             bridge.clone(),
             shell,
+            self.application.extra_img_src(),
             self.cancel.child_token(),
         );
 

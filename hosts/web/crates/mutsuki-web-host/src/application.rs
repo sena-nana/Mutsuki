@@ -7,6 +7,10 @@ pub trait WebApplication: Send + Sync {
     fn shell(&self) -> WebShellAssets;
     fn register_services(&self, ctx: &mut WebServiceContext);
     fn register_extensions(&self, ctx: &mut WebExtensionContext);
+    /// Extra https `img-src` / `media-src` hosts after Host baseline `'self' data: blob:`.
+    fn extra_img_src(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// Minimal application used by tests and recovery-first boots.
@@ -14,11 +18,21 @@ pub trait WebApplication: Send + Sync {
 pub struct MinimalWebApplication {
     descriptor: WebApplicationDescriptor,
     shell: WebShellAssets,
+    extra_img_src: Vec<String>,
 }
 
 impl MinimalWebApplication {
     pub fn new(descriptor: WebApplicationDescriptor, shell: WebShellAssets) -> Self {
-        Self { descriptor, shell }
+        Self {
+            descriptor,
+            shell,
+            extra_img_src: Vec::new(),
+        }
+    }
+
+    pub fn with_extra_img_src(mut self, extra_img_src: Vec<String>) -> Self {
+        self.extra_img_src = extra_img_src;
+        self
     }
 
     pub fn empty(id: impl Into<String>) -> Self {
@@ -36,6 +50,7 @@ impl MinimalWebApplication {
                 index_file: "index.html".into(),
                 import_map: Default::default(),
             },
+            extra_img_src: Vec::new(),
         }
     }
 }
@@ -47,6 +62,10 @@ impl WebApplication for MinimalWebApplication {
 
     fn shell(&self) -> WebShellAssets {
         self.shell.clone()
+    }
+
+    fn extra_img_src(&self) -> Vec<String> {
+        self.extra_img_src.clone()
     }
 
     fn register_services(&self, _ctx: &mut WebServiceContext) {}

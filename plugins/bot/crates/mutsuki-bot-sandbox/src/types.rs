@@ -32,6 +32,8 @@ pub enum SandboxSpeakerRole {
 pub struct SandboxUserView {
     pub user_id: String,
     pub display_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar_url: Option<String>,
     pub last_seen_unix_ms: u64,
     pub message_count: u64,
 }
@@ -42,6 +44,8 @@ pub struct SandboxConversationView {
     pub account_id: String,
     pub kind: BotConversationKind,
     pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar_url: Option<String>,
     pub conversation: QqConversationRef,
     pub users: Vec<SandboxUserView>,
     pub last_preview: Option<String>,
@@ -187,6 +191,18 @@ pub fn sandbox_user_id(display_name: &str) -> String {
 #[must_use]
 pub fn is_sandbox_id(value: &str) -> bool {
     value.starts_with(SANDBOX_ID_PREFIX)
+}
+
+/// User-only QQ app avatar URL. `openid` must be a user/member openid, not `group_openid`.
+#[must_use]
+pub fn qqapp_avatar_url(app_id: &str, openid: &str) -> Option<String> {
+    let app_id = app_id.trim();
+    let openid = openid.trim();
+    if app_id.is_empty() || openid.is_empty() || is_sandbox_id(openid) {
+        None
+    } else {
+        Some(format!("https://q.qlogo.cn/qqapp/{app_id}/{openid}/640"))
+    }
 }
 
 #[must_use]

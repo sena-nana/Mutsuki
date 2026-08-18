@@ -321,6 +321,64 @@ fn gateway_runner_uses_official_group_member_openid_and_c2c_id_fallbacks() {
 }
 
 #[test]
+fn gateway_runner_synthesizes_group_qqapp_avatar_and_keeps_channel_avatar() {
+    let mut runner = QqGatewayMapRunner::with_app_id(1, "main", "APP_ID");
+    let group = Task::new(
+        "group",
+        QQBOT_GATEWAY_FRAME_PROTOCOL_ID,
+        json!({
+            "op": 0,
+            "s": 1,
+            "t": "GROUP_AT_MESSAGE_CREATE",
+            "id": "group-event",
+            "d": {
+                "id": "group-message",
+                "group_openid": "GROUP_OPENID",
+                "content": "hello",
+                "author": {"member_openid": "MEMBER_OPENID", "username": "member"}
+            }
+        }),
+    );
+    let channel = Task::new(
+        "channel",
+        QQBOT_GATEWAY_FRAME_PROTOCOL_ID,
+        json!({
+            "op": 0,
+            "s": 2,
+            "t": "AT_MESSAGE_CREATE",
+            "id": "channel-event",
+            "d": {
+                "id": "channel-message",
+                "guild_id": "guild",
+                "channel_id": "channel",
+                "content": "hello",
+                "author": {
+                    "id": "GUILD_USER",
+                    "username": "guild-user",
+                    "avatar": "https://example.test/guild-avatar.png"
+                }
+            }
+        }),
+    );
+
+    let completion = run_tasks(&mut runner, vec![group, channel]);
+    let events = completion
+        .results
+        .iter()
+        .map(|entry| decode_ingress_event(&entry.result.as_ref().unwrap().tasks[0]))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        events[0].actor.as_ref().unwrap().avatar_url.as_deref(),
+        Some("https://q.qlogo.cn/qqapp/APP_ID/MEMBER_OPENID/640")
+    );
+    assert_eq!(
+        events[1].actor.as_ref().unwrap().avatar_url.as_deref(),
+        Some("https://example.test/guild-avatar.png")
+    );
+}
+
+#[test]
 fn gateway_runner_maps_lifecycle_seconds_and_reaction_identity_fields() {
     let mut runner = QqGatewayMapRunner::new(1, "main");
     let member = Task::new(

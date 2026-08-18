@@ -65,6 +65,14 @@ use serde_json::json;
 
 pub const CONSOLE_APPLICATION_ID: &str = "mutsuki.bot.console";
 
+const CONSOLE_EXTRA_IMG_SRC: &[&str] = &[
+    "https://*.qlogo.cn",
+    "https://*.qpic.cn",
+    "https://*.gtimg.cn",
+    "https://*.qq.com.cn",
+    "https://*.nt.qq.com.cn",
+];
+
 /// Console enablement parsed from product config (`[web.console]`).
 #[derive(Clone, Debug, Default, serde::Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -344,16 +352,24 @@ pub(crate) fn base_builder(
         import_map: Default::default(),
     };
     MutsukiWebHost::builder()
-        .application(MinimalWebApplication::new(
-            WebApplicationDescriptor {
-                id: CONSOLE_APPLICATION_ID.into(),
-                name: "Mutsuki Console".into(),
-                version: "0.1.0".into(),
-                brand: Some("Mutsuki".into()),
-                theme: Some("lilia".into()),
-            },
-            shell,
-        ))
+        .application(
+            MinimalWebApplication::new(
+                WebApplicationDescriptor {
+                    id: CONSOLE_APPLICATION_ID.into(),
+                    name: "Mutsuki Console".into(),
+                    version: "0.1.0".into(),
+                    brand: Some("Mutsuki".into()),
+                    theme: Some("lilia".into()),
+                },
+                shell,
+            )
+            .with_extra_img_src(
+                CONSOLE_EXTRA_IMG_SRC
+                    .iter()
+                    .map(|source| (*source).to_string())
+                    .collect(),
+            ),
+        )
         .listen(&config.listen)
         .mode(DeploymentMode::Embedded)
         .shell_dir(&asset_dirs.shell_root)

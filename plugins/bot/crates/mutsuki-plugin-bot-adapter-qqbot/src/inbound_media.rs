@@ -19,6 +19,7 @@ use crate::{GatewayFrame, QQBOT_GATEWAY_FRAME_PROTOCOL_ID, QqBotConfig};
 pub struct QqGatewayMediaHandler {
     descriptor: mutsuki_runtime_contracts::RunnerDescriptor,
     account_id: String,
+    app_id: String,
     provider_id: String,
     allow_insecure_transport: bool,
     allowed_hosts: Vec<String>,
@@ -47,6 +48,7 @@ impl QqGatewayMediaHandler {
         Ok(Self {
             descriptor: gateway_media_descriptor(1),
             account_id: config.account_id.clone(),
+            app_id: config.app_id.clone(),
             provider_id,
             allow_insecure_transport: config.allow_insecure_transport,
             allowed_hosts: config
@@ -74,6 +76,7 @@ impl AsyncBatchHandler for QqGatewayMediaHandler {
             }
         };
         let account_id = self.account_id.clone();
+        let app_id = self.app_id.clone();
         let provider_id = self.provider_id.clone();
         let allow_insecure_transport = self.allow_insecure_transport;
         let allowed_hosts = self.allowed_hosts.clone();
@@ -92,6 +95,7 @@ impl AsyncBatchHandler for QqGatewayMediaHandler {
                     &ctx,
                     task,
                     &account_id,
+                    &app_id,
                     &provider_id,
                     allow_insecure_transport,
                     &allowed_hosts,
@@ -145,6 +149,7 @@ async fn map_task_with_media(
     ctx: &RunnerContext,
     task: Task,
     account_id: &str,
+    app_id: &str,
     provider_id: &str,
     allow_insecure_transport: bool,
     allowed_hosts: &[String],
@@ -155,7 +160,7 @@ async fn map_task_with_media(
     let frame: GatewayFrame = serde_json::from_value(task.payload.clone().into())
         .map_err(|error| failure("gateway.decode", error))?;
     let attachments = attachments(&frame.d)?;
-    let mut event = qq_gateway_frame_to_bot_event(account_id, frame)
+    let mut event = qq_gateway_frame_to_bot_event(account_id, app_id, frame)
         .map_err(|error| failure("gateway.map", error))?;
     if !attachments.is_empty() {
         let message = event

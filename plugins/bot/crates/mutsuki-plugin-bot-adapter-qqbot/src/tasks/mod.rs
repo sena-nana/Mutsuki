@@ -281,7 +281,11 @@ pub fn qqbot_runners(
     id_source: Box<dyn QqIdSource>,
 ) -> Vec<Box<dyn Runner>> {
     vec![
-        Box::new(QqGatewayMapRunner::new(1, config.account_id.clone())),
+        Box::new(QqGatewayMapRunner::with_app_id(
+            1,
+            config.account_id.clone(),
+            config.app_id.clone(),
+        )),
         Box::new(QqOpenApiRunner::new(1, config, clients, id_source)),
     ]
 }
@@ -289,13 +293,23 @@ pub fn qqbot_runners(
 pub struct QqGatewayMapRunner {
     descriptor: RunnerDescriptor,
     account_id: String,
+    app_id: String,
 }
 
 impl QqGatewayMapRunner {
     pub fn new(plugin_generation: u64, account_id: impl Into<String>) -> Self {
+        Self::with_app_id(plugin_generation, account_id, "")
+    }
+
+    pub fn with_app_id(
+        plugin_generation: u64,
+        account_id: impl Into<String>,
+        app_id: impl Into<String>,
+    ) -> Self {
         Self {
             descriptor: gateway_descriptor(plugin_generation),
             account_id: account_id.into(),
+            app_id: app_id.into(),
         }
     }
 }
@@ -313,7 +327,7 @@ impl Runner for QqGatewayMapRunner {
         map_work_batch_entries(&batch, |task| {
             let frame: GatewayFrame = serde_json::from_value(task.payload.clone().into())
                 .map_err(|error| failure("mutsuki.bot.qqbot.gateway.decode", error))?;
-            let event = qq_gateway_frame_to_bot_event(&self.account_id, frame)
+            let event = qq_gateway_frame_to_bot_event(&self.account_id, &self.app_id, frame)
                 .map_err(|error| failure("mutsuki.bot.qqbot.gateway.map", error))?;
             tracing::info!(
                 account_id = %self.account_id,

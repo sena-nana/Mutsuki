@@ -117,7 +117,7 @@ mod tests {
             actor: Some(BotUser {
                 user_id: "member-1".into(),
                 display_name: Some("群友甲".into()),
-                avatar_url: None,
+                avatar_url: Some("https://q.qlogo.cn/qqapp/APP_ID/member-1/640".into()),
             }),
             message: Some(message),
             raw: None,
@@ -381,7 +381,7 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn live_projects_inbound_and_sends_quoted_reply() {
-        let service = SandboxService::with_account("qq-main");
+        let service = SandboxService::with_account_app("qq-main", "APP_ID");
         let runtime = runtime();
         service.set_runtime(runtime.clone());
         service.observe_event(live_group_event("qq-msg-1", "在吗", now_ms()));
@@ -389,6 +389,11 @@ mod tests {
         let live = service.snapshot("").await.unwrap();
         assert_eq!(live.mode, SandboxMode::Live);
         assert_eq!(live.conversations[0].users[0].display_name, "群友甲");
+        assert_eq!(
+            live.conversations[0].users[0].avatar_url.as_deref(),
+            Some("https://q.qlogo.cn/qqapp/APP_ID/member-1/640")
+        );
+        assert_eq!(live.conversations[0].avatar_url, None);
         let conversation_id = live.conversations[0].conversation_id.clone();
         let live_messages = service.messages(&conversation_id).await.unwrap();
         assert_eq!(live_messages[0].role, SandboxSpeakerRole::User);
@@ -739,7 +744,7 @@ mod tests {
             actor: Some(BotUser {
                 user_id: "member-1".into(),
                 display_name: Some("群友甲".into()),
-                avatar_url: None,
+                avatar_url: Some("https://q.qlogo.cn/qqapp/APP_ID/member-1/640".into()),
             }),
             message: Some(BotMessage::text(
                 BotTarget::Group {
@@ -756,7 +761,10 @@ mod tests {
             snapshot
                 .live_users
                 .iter()
-                .any(|user| user.user_id == "member-1" && user.display_name == "群友甲")
+                .any(|user| user.user_id == "member-1"
+                    && user.display_name == "群友甲"
+                    && user.avatar_url.as_deref()
+                        == Some("https://q.qlogo.cn/qqapp/APP_ID/member-1/640"))
         );
         write(
             &service,
@@ -773,7 +781,10 @@ mod tests {
             group(&after)
                 .users
                 .iter()
-                .any(|user| user.user_id == "member-1" && user.display_name == "群友甲")
+                .any(|user| user.user_id == "member-1"
+                    && user.display_name == "群友甲"
+                    && user.avatar_url.as_deref()
+                        == Some("https://q.qlogo.cn/qqapp/APP_ID/member-1/640"))
         );
         assert!(after.conversations.iter().any(|item| {
             item.kind == BotConversationKind::Private
@@ -799,12 +810,14 @@ mod tests {
             SandboxUserView {
                 user_id: sandbox_user_id("Alice"),
                 display_name: "Alice".into(),
+                avatar_url: None,
                 last_seen_unix_ms: 0,
                 message_count: 0,
             },
             SandboxUserView {
                 user_id: sandbox_user_id("Bob"),
                 display_name: "Bob".into(),
+                avatar_url: None,
                 last_seen_unix_ms: 0,
                 message_count: 0,
             },
