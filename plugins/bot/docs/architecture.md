@@ -80,11 +80,10 @@ Sandbox console (virtual user)
   inbound attachments/ark/markdown/keyboard. Live outbound stays on Adapter-supported
   text, mention and media. Media bytes stay in a bounded sandbox blob map, not in
   the message list JSON. Live mode projects real Gateway inbound events and
-  confirmed bot sends, including live member avatar URLs
-  (`q.qlogo.cn/qqapp/{app_id}/{user_openid}` only; `group_openid` is not a user
-  avatar and the session list falls back to a member photo). Console CSP allows
-  QQ image CDNs (`*.qlogo.cn`, `*.qpic.cn`, `*.gtimg.cn`, `*.qq.com.cn`,
-  `*.nt.qq.com.cn`) and sandbox `<img>` uses `referrerpolicy=no-referrer`.
+  confirmed bot sends, including live member avatar URLs. Group sessions show a
+  member photo. Console CSP allows QQ image CDNs (`*.qlogo.cn`, `*.qpic.cn`,
+  `*.gtimg.cn`, `*.qq.com.cn`, `*.nt.qq.com.cn`) and sandbox `<img>` uses
+  `referrerpolicy=no-referrer`.
   Unquoted live send is allowed only after that conversation
   received `GROUP_MSG_RECEIVE` / `C2C_MSG_RECEIVE`; otherwise it requires a user-message
   reply (`msg_id`). Failed receipts are surfaced instead of a local bubble.

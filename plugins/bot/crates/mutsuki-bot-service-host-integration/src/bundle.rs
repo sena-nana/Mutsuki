@@ -220,9 +220,8 @@ impl QqBotPluginBundle {
                 });
                 let management =
                     Arc::new(QqBotManagementService::with_state_store(provider, state));
-                let sandbox = Arc::new(SandboxService::with_account_app(
+                let sandbox = Arc::new(SandboxService::with_account(
                     management_config.account_id.clone(),
-                    management_config.app_id.clone(),
                 ));
                 sandbox.set_runtime(Arc::new(HostSandboxRuntime {
                     runtime,

@@ -34,7 +34,7 @@ pub struct HostServer {
     config: WebHostConfig,
     bridge: WebBridge,
     shell: WebShellAssets,
-    extra_img_src: Vec<String>,
+    content_security_policy: String,
 }
 
 impl HostServer {
@@ -49,7 +49,7 @@ impl HostServer {
             config,
             bridge,
             shell,
-            extra_img_src,
+            content_security_policy: content_security_policy(&extra_img_src),
         }
     }
 
@@ -66,7 +66,7 @@ impl HostServer {
             index_file: self.shell.index_file.clone(),
             connections: connections.clone(),
             budgets_max_connections: self.config.budgets.max_connections,
-            content_security_policy: content_security_policy(&self.extra_img_src),
+            content_security_policy: self.content_security_policy,
         };
 
         let app = Router::new()
@@ -144,15 +144,15 @@ async fn static_handler(
 const DEFAULT_CONTENT_SECURITY_POLICY: &str = "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data: blob:; media-src 'self' blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'";
 
 fn content_security_policy(extra_img_src: &[String]) -> String {
-    let extras: Vec<&str> = extra_img_src
+    let extra: String = extra_img_src
         .iter()
         .map(String::as_str)
         .filter(|source| is_allowed_extra_img_src(source))
+        .flat_map(|source| [" ", source])
         .collect();
-    if extras.is_empty() {
+    if extra.is_empty() {
         return DEFAULT_CONTENT_SECURITY_POLICY.to_string();
     }
-    let extra = format!(" {}", extras.join(" "));
     format!(
         "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data: blob:{extra}; media-src 'self' blob:{extra}; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'"
     )
