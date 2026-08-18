@@ -545,7 +545,7 @@ impl SandboxService {
                 None => {
                     return Err(SandboxError::new(
                         "invalid_argument",
-                        "当前会话没有主动消息权限，请先点击用户消息右侧的回复",
+                        "当前会话没有主动消息权限，请先悬停用户消息并点击回复",
                     ));
                 }
             };

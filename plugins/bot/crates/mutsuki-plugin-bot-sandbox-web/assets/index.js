@@ -41,10 +41,11 @@ img.sandbox-avatar { display: block; object-fit: cover; object-position: center;
 .sandbox-row--user { align-self: flex-start; }
 .sandbox-row--bot { align-self: flex-end; flex-direction: row-reverse; }
 .sandbox-row--system { align-self: center; max-width: 90%; }
-.sandbox-bubble { border-radius: 12px; padding: 8px 12px; background: var(--bg-elev, transparent); min-width: 0; }
+.sandbox-bubble { position: relative; border-radius: 12px; padding: 8px 12px; background: var(--bg-elev, transparent); min-width: 0; }
 .sandbox-row--bot .sandbox-bubble { background: var(--accent-soft, var(--bg-hover, transparent)); }
 .sandbox-row--system .sandbox-bubble { background: transparent; }
-.sandbox-client .sandbox-reply { height: 22px; padding: 0 6px; font-size: 11px; flex: none; }
+.sandbox-client .sandbox-reply { position: absolute; top: 6px; right: 6px; height: 20px; padding: 0 6px; font-size: 11px; opacity: 0; pointer-events: none; }
+.sandbox-row:hover .sandbox-reply, .sandbox-row:focus-within .sandbox-reply { opacity: 1; pointer-events: auto; }
 .sandbox-quote { margin: 0 0 6px; padding: 4px 8px; border-left: 3px solid var(--accent, #7aa2ff); opacity: 0.8; font-size: 12px; }
 .sandbox-compose { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--border, transparent); flex: 0 0 auto; }
 .sandbox-compose-row { display: flex; gap: 8px; align-items: center; min-width: 0; }
@@ -381,7 +382,6 @@ export function mountSandboxPanel(host, rpc, events) {
       const bubble = element("div", "sandbox-bubble");
       if (message.role !== "system") bubble.append(element("p", "muted", `${message.sender_name} · ${formatTime(message.time_ms)}`));
       bubble.append(renderSegments(message, state.messages, conversation.users, rpc));
-      row.append(bubble);
       if (message.role === "user") {
         const reply = button("回复");
         reply.classList.add("ghost", "sandbox-reply");
@@ -391,8 +391,9 @@ export function mountSandboxPanel(host, rpc, events) {
           state.quote = message;
           render();
         };
-        row.append(reply);
+        bubble.append(reply);
       }
+      row.append(bubble);
       messages.append(row);
     });
     pane.append(messages);
@@ -440,7 +441,7 @@ export function mountSandboxPanel(host, rpc, events) {
     input.type = "text";
     const canActive = Boolean(conversation.active_message);
     input.placeholder = mode() === "live"
-      ? (canActive ? "可直接发送主动消息，或点右侧回复" : "请先点用户消息右侧回复")
+      ? (canActive ? "可直接发送主动消息，或悬停消息后回复" : "请先悬停用户消息并点击回复")
       : "输入消息，Enter 发送";
     input.value = state.draft;
     const refreshPicker = () => {
@@ -470,7 +471,7 @@ export function mountSandboxPanel(host, rpc, events) {
       const segments = state.draftSegments.slice();
       if (!text && !segments.length) { showStatus("请填写消息"); return; }
       if (mode() === "live" && !state.quote?.message_id && !canActive) {
-        showStatus("当前会话没有主动消息权限，请先点击用户消息右侧的回复");
+        showStatus("当前会话没有主动消息权限，请先悬停用户消息并点击回复");
         return;
       }
       if (mode() === "live" && !window.confirm("将以机器人身份向真实 QQ 会话发送消息，是否继续？")) return;
