@@ -10,6 +10,10 @@ use serde_json::Value;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_tungstenite::tungstenite::Message;
 
+use mutsuki_bot_management::{
+    QQ_GATEWAY_ERROR_OPERATOR_RECONNECT, QQ_GATEWAY_ERROR_SESSION_EXPIRED,
+    QQ_GATEWAY_ERROR_SESSION_REPLACED,
+};
 use mutsuki_bot_protocol::{BotEvent, BotEventKind, BotUser};
 use mutsuki_plugin_bot_adapter_qqbot::{
     GatewayAction, GatewayFrame, HttpMethod, QQBOT_ADAPTER_PLUGIN_ID, QqAuthManager, QqBotConfig,
@@ -29,6 +33,7 @@ pub struct QqGatewayHealthSnapshot {
     pub last_event_unix_ms: Option<u128>,
     pub reconnect_count: u64,
     pub last_error: Option<String>,
+    pub last_error_code: Option<String>,
     pub started_at_unix_ms: Option<u128>,
     pub connected_since_unix_ms: Option<u128>,
     pub self_user: Option<BotUser>,
@@ -272,7 +277,7 @@ async fn run_gateway(
             mark_stopped(&health);
             return Ok(());
         }
-        match run_connection(
+        let outcome = match run_connection(
             &config,
             api.clone(),
             &mut pump,
@@ -288,11 +293,17 @@ async fn run_gateway(
         )
         .await
         {
+            Err(GatewayFailure::Recoverable(detail)) => {
+                Ok(ConnectionEnd::Reconnect(ReconnectReason::new(detail)))
+            }
+            outcome => outcome,
+        };
+        match outcome {
             Ok(ConnectionEnd::Shutdown) => {
                 mark_stopped(&health);
                 return Ok(());
             }
-            Ok(ConnectionEnd::Reconnect(reason)) | Err(GatewayFailure::Recoverable(reason)) => {
+            Ok(ConnectionEnd::Reconnect(reason)) => {
                 reconnect_attempt = reconnect_attempt.saturating_add(1);
                 mark_reconnect(&health, &reason);
                 ctx.events
@@ -308,12 +319,18 @@ async fn run_gateway(
                         mark_stopped(&health);
                         return Ok(());
                     }
-                    _ = reconnect.recv() => {}
+                    signal = reconnect.recv() => {
+                        if signal.is_none() {
+                            mark_stopped(&health);
+                            return Ok(());
+                        }
+                    }
                 }
             }
+            Err(GatewayFailure::Recoverable(_)) => unreachable!("mapped to reconnect"),
             Err(GatewayFailure::RateLimited(reason)) => {
                 reconnect_attempt = reconnect_attempt.saturating_add(1);
-                mark_reconnect(&health, &reason);
+                mark_reconnect(&health, &ReconnectReason::new(reason.clone()));
                 ctx.events.log(
                     "warn",
                     &format!("QQBot Gateway rate limited: {reason}"),
@@ -329,7 +346,12 @@ async fn run_gateway(
                         mark_stopped(&health);
                         return Ok(());
                     }
-                    _ = reconnect.recv() => {}
+                    signal = reconnect.recv() => {
+                        if signal.is_none() {
+                            mark_stopped(&health);
+                            return Ok(());
+                        }
+                    }
                 }
             }
             Err(GatewayFailure::Fatal(reason)) => {
@@ -380,7 +402,7 @@ async fn run_connection(
         }
         _ = host_stop.cancelled() => return Ok(ConnectionEnd::Shutdown),
         _ = local_stop.changed() => return Ok(ConnectionEnd::Shutdown),
-        _ = reconnect.recv() => return Ok(ConnectionEnd::Reconnect("operator requested reconnect".into())),
+        signal = reconnect.recv() => return Ok(connection_end_from_reconnect_signal(signal)),
     };
     mark_connected(health);
 
@@ -400,9 +422,9 @@ async fn run_connection(
             let _ = websocket.close(None).await;
             return Ok(ConnectionEnd::Shutdown);
         }
-        _ = reconnect.recv() => {
+        signal = reconnect.recv() => {
             let _ = websocket.close(None).await;
-            return Ok(ConnectionEnd::Reconnect("operator requested reconnect".into()));
+            return Ok(connection_end_from_reconnect_signal(signal));
         }
     };
     let hello = message_json(hello)?;
@@ -460,10 +482,12 @@ async fn run_connection(
         tokio::select! {
             _ = host_stop.cancelled() => break ConnectionEnd::Shutdown,
             _ = local_stop.changed() => break ConnectionEnd::Shutdown,
-            _ = reconnect.recv() => break ConnectionEnd::Reconnect("operator requested reconnect".into()),
+            signal = reconnect.recv() => break connection_end_from_reconnect_signal(signal),
             _ = ack_deadline => {
                 if awaiting_ack_since.is_some() {
-                    break ConnectionEnd::Reconnect("heartbeat ACK timed out".into());
+                    break ConnectionEnd::Reconnect(ReconnectReason::new(
+                        "heartbeat ACK timed out",
+                    ));
                 }
             }
             _ = heartbeat.tick() => {
@@ -483,7 +507,9 @@ async fn run_connection(
             }
             incoming = incoming_rx.recv() => {
                 let Some(incoming) = incoming else {
-                    break ConnectionEnd::Reconnect("Gateway receive stream ended".into());
+                    break ConnectionEnd::Reconnect(ReconnectReason::new(
+                        "Gateway receive stream ended",
+                    ));
                 };
                 let message = incoming.map_err(GatewayFailure::Recoverable)?;
                 match message {
@@ -498,7 +524,7 @@ async fn run_connection(
                             .map(|frame| format!("Gateway close {} {}", u16::from(frame.code), frame.reason))
                             .unwrap_or_else(|| "Gateway closed".into());
                         let Some(code) = frame.as_ref().map(|frame| u16::from(frame.code)) else {
-                            break ConnectionEnd::Reconnect(reason);
+                            break ConnectionEnd::Reconnect(ReconnectReason::new(reason));
                         };
                         match classify_gateway_close(code) {
                             GatewayCloseDisposition::Permanent => {
@@ -506,18 +532,22 @@ async fn run_connection(
                             }
                             GatewayCloseDisposition::RefreshToken => {
                                 api.lock().expect("QQBot API mutex").invalidate_token();
-                                break ConnectionEnd::Reconnect(reason);
+                                break ConnectionEnd::Reconnect(ReconnectReason::new(reason));
                             }
                             GatewayCloseDisposition::Reidentify => {
                                 pump.clear_session();
                                 api.lock().expect("QQBot API mutex").invalidate_token();
-                                break ConnectionEnd::Reconnect(reason);
+                                break ConnectionEnd::Reconnect(reconnect_reason_from_close(
+                                    code, reason,
+                                ));
                             }
                             GatewayCloseDisposition::RateLimited => {
                                 return Err(GatewayFailure::RateLimited(reason));
                             }
                             GatewayCloseDisposition::Resume => {
-                                break ConnectionEnd::Reconnect(reason);
+                                break ConnectionEnd::Reconnect(reconnect_reason_from_close(
+                                    code, reason,
+                                ));
                             }
                         }
                     }
@@ -581,7 +611,10 @@ async fn run_connection(
                             }
                         }
                         if frame.op == 7 {
-                            break ConnectionEnd::Reconnect("server requested reconnect".into());
+                            break ConnectionEnd::Reconnect(ReconnectReason::classified(
+                                QQ_GATEWAY_ERROR_SESSION_REPLACED,
+                                "server requested reconnect",
+                            ));
                         }
                         if let Some(task) = task {
                             let correlation_id = task.correlation_id.clone();
@@ -755,6 +788,7 @@ fn mark_connected(health: &QqGatewayHealthHandle) {
     health.connected = true;
     health.identified = false;
     health.last_error = None;
+    health.last_error_code = None;
 }
 
 fn mark_disconnected(health: &QqGatewayHealthHandle) {
@@ -764,13 +798,14 @@ fn mark_disconnected(health: &QqGatewayHealthHandle) {
     health.connected_since_unix_ms = None;
 }
 
-fn mark_reconnect(health: &QqGatewayHealthHandle, error: &str) {
+fn mark_reconnect(health: &QqGatewayHealthHandle, reason: &ReconnectReason) {
     let mut health = health.inner.lock().expect("QQBot health mutex");
     health.connected = false;
     health.identified = false;
     health.connected_since_unix_ms = None;
     health.reconnect_count = health.reconnect_count.saturating_add(1);
-    health.last_error = Some(error.into());
+    health.last_error = Some(reason.detail.clone());
+    health.last_error_code = reason.code.map(str::to_owned);
 }
 
 fn mark_error(health: &QqGatewayHealthHandle, error: &str) {
@@ -779,6 +814,7 @@ fn mark_error(health: &QqGatewayHealthHandle, error: &str) {
     health.identified = false;
     health.connected_since_unix_ms = None;
     health.last_error = Some(error.into());
+    health.last_error_code = None;
 }
 
 fn mark_stopped(health: &QqGatewayHealthHandle) {
@@ -830,9 +866,58 @@ fn safe_source_id(value: &str) -> String {
         .collect()
 }
 
+fn reconnect_reason_from_close(code: u16, detail: String) -> ReconnectReason {
+    match code {
+        4006 | 4007 => ReconnectReason::classified(QQ_GATEWAY_ERROR_SESSION_REPLACED, detail),
+        4009 => ReconnectReason::classified(QQ_GATEWAY_ERROR_SESSION_EXPIRED, detail),
+        _ => ReconnectReason::new(detail),
+    }
+}
+
+fn connection_end_from_reconnect_signal(signal: Option<()>) -> ConnectionEnd {
+    match signal {
+        Some(()) => ConnectionEnd::Reconnect(ReconnectReason::classified(
+            QQ_GATEWAY_ERROR_OPERATOR_RECONNECT,
+            "operator requested reconnect",
+        )),
+        None => ConnectionEnd::Shutdown,
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ReconnectReason {
+    code: Option<&'static str>,
+    detail: String,
+}
+
+impl std::fmt::Display for ReconnectReason {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.code {
+            Some(code) => write!(formatter, "{code} ({})", self.detail),
+            None => formatter.write_str(&self.detail),
+        }
+    }
+}
+
+impl ReconnectReason {
+    fn new(detail: impl Into<String>) -> Self {
+        Self {
+            code: None,
+            detail: detail.into(),
+        }
+    }
+
+    fn classified(code: &'static str, detail: impl Into<String>) -> Self {
+        Self {
+            code: Some(code),
+            detail: detail.into(),
+        }
+    }
+}
+
 enum ConnectionEnd {
     Shutdown,
-    Reconnect(String),
+    Reconnect(ReconnectReason),
 }
 
 enum GatewayFailure {
@@ -965,13 +1050,50 @@ mod tests {
             .identified = true;
         assert_eq!(source.health(), HostEventSourceHealth::Healthy);
 
-        mark_reconnect(&source.health, "heartbeat ACK timed out");
+        mark_reconnect(
+            &source.health,
+            &ReconnectReason::new("heartbeat ACK timed out"),
+        );
         assert!(matches!(
             source.health(),
             HostEventSourceHealth::Unhealthy(ref reason)
                 if reason == "heartbeat ACK timed out"
         ));
         assert_eq!(source.health.snapshot().reconnect_count, 1);
+    }
+
+    #[test]
+    fn reconnect_signal_treats_channel_close_as_shutdown() {
+        assert!(matches!(
+            connection_end_from_reconnect_signal(None),
+            ConnectionEnd::Shutdown
+        ));
+        match connection_end_from_reconnect_signal(Some(())) {
+            ConnectionEnd::Reconnect(reason) => {
+                assert_eq!(reason.code, Some(QQ_GATEWAY_ERROR_OPERATOR_RECONNECT));
+            }
+            ConnectionEnd::Shutdown => panic!("operator reconnect must not shut down"),
+        }
+    }
+
+    #[test]
+    fn close_codes_map_session_replaced_without_labeling_4009_as_duplicate_login() {
+        assert_eq!(
+            reconnect_reason_from_close(4006, "Gateway close 4006".into()).code,
+            Some(QQ_GATEWAY_ERROR_SESSION_REPLACED)
+        );
+        assert_eq!(
+            reconnect_reason_from_close(4007, "Gateway close 4007".into()).code,
+            Some(QQ_GATEWAY_ERROR_SESSION_REPLACED)
+        );
+        assert_eq!(
+            reconnect_reason_from_close(4009, "Gateway close 4009".into()).code,
+            Some(QQ_GATEWAY_ERROR_SESSION_EXPIRED)
+        );
+        assert_eq!(
+            reconnect_reason_from_close(1001, "Gateway close 1001".into()).code,
+            None
+        );
     }
 
     #[tokio::test]

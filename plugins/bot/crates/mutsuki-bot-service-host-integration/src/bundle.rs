@@ -315,6 +315,7 @@ impl QqBotPluginBundle {
                     "last_event_unix_ms": snapshot.last_event_unix_ms,
                     "reconnect_count": snapshot.reconnect_count,
                     "last_error": snapshot.last_error,
+                    "last_error_code": snapshot.last_error_code,
                     "started_at_unix_ms": snapshot.started_at_unix_ms,
                     "connected_since_unix_ms": snapshot.connected_since_unix_ms,
                 })
@@ -350,6 +351,7 @@ impl OwnerBackedQqManagementProvider {
                 .last_heartbeat_unix_ms
                 .map(|value| u64::try_from(value).unwrap_or(u64::MAX)),
             last_error: snapshot.last_error,
+            last_error_code: snapshot.last_error_code,
             reconnect_count: snapshot.reconnect_count,
             self_user: snapshot.self_user,
         });

@@ -507,6 +507,7 @@ async fn embedded_console_mounts_qq_management_extension() {
         identified: true,
         last_heartbeat_unix_ms: Some(1),
         last_error: None,
+        last_error_code: None,
         reconnect_count: 0,
         self_user: None,
     }));
