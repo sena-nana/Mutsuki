@@ -13,16 +13,18 @@ use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use crate::types::{
-    DEFAULT_SANDBOX_ACCOUNT_ID, SANDBOX_GROUP_ID, SANDBOX_ID_PREFIX, SANDBOX_USER_LIMIT,
-    SANDBOX_USER_NAMES, SandboxAction, SandboxChangeEvent, SandboxConversationView, SandboxError,
-    SandboxMediaBlob, SandboxMediaRef, SandboxMessageView, SandboxMode, SandboxSnapshot,
-    SandboxSpeakerRole, SandboxUserView, SandboxWriteRequest, SandboxWriteResult,
-    is_sandbox_conversation, parse_sandbox_mentions, preview_segments, sandbox_user_id,
+    DEFAULT_SANDBOX_ACCOUNT_ID, SANDBOX_GROUP_ID, SANDBOX_ID_PREFIX, SANDBOX_MAX_MEDIA_BYTES,
+    SANDBOX_MAX_MEDIA_ITEMS, SANDBOX_MAX_MESSAGES, SANDBOX_USER_LIMIT, SANDBOX_USER_NAMES,
+    SandboxAction, SandboxChangeEvent, SandboxConversationView, SandboxError,
+    SandboxHistoryConversation, SandboxHistorySnapshot, SandboxMediaBlob, SandboxMediaRef,
+    SandboxMessageView, SandboxMode, SandboxSnapshot, SandboxSpeakerRole, SandboxUserView,
+    SandboxWriteRequest, SandboxWriteResult, is_sandbox_conversation, parse_sandbox_mentions,
+    preview_segments, sandbox_user_id,
 };
 
-const MAX_MESSAGES: usize = 200;
-const MAX_MEDIA_ITEMS: usize = 20;
-const MAX_MEDIA_BYTES: usize = 2 * 1024 * 1024;
+const MAX_MESSAGES: usize = SANDBOX_MAX_MESSAGES;
+const MAX_MEDIA_ITEMS: usize = SANDBOX_MAX_MEDIA_ITEMS;
+const MAX_MEDIA_BYTES: usize = SANDBOX_MAX_MEDIA_BYTES;
 const PASSIVE_REPLY_WINDOW_MS: u64 = 5 * 60 * 1_000;
 
 pub struct SandboxChangeSubscription {
@@ -86,6 +88,13 @@ pub trait SandboxApi: Send + Sync {
     async fn media_blob(&self, media_id: &str) -> Result<SandboxMediaBlob, SandboxError>;
 }
 
+/// Durable sandbox conversation, roster, message and media history.
+pub trait SandboxHistoryStore: Send + Sync {
+    fn load(&self) -> Result<SandboxHistorySnapshot, SandboxError>;
+    fn save(&self, snapshot: &SandboxHistorySnapshot) -> Result<(), SandboxError>;
+}
+
+#[derive(Clone)]
 struct StoredConversation {
     view: SandboxConversationView,
     users: HashMap<String, SandboxUserView>,
@@ -115,12 +124,13 @@ struct Inner {
     bot: Option<BotUser>,
 }
 
-/// In-memory QQ conversation sandbox used by the Web Console.
+/// QQ conversation sandbox used by the Web Console, with optional durable history.
 pub struct SandboxService {
     write_lock: tokio::sync::Mutex<()>,
     inner: Mutex<Inner>,
     runtime: Mutex<Option<Arc<dyn SandboxRuntime>>>,
     changes: broadcast::Sender<SandboxChangeEvent>,
+    history: Option<Arc<dyn SandboxHistoryStore>>,
 }
 
 impl Default for SandboxService {
@@ -137,24 +147,77 @@ impl SandboxService {
 
     #[must_use]
     pub fn with_account(account_id: impl Into<String>) -> Self {
+        Self::from_parts(
+            account_id.into(),
+            Store::default(),
+            Store::default(),
+            SandboxMode::Simulate,
+            Vec::new(),
+            None,
+        )
+        .expect("in-memory sandbox cannot fail to seed")
+    }
+
+    /// Restores live and simulate history from `store`, seeding simulate only when empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when history cannot be loaded or the initial seed cannot be persisted.
+    pub fn with_history(
+        account_id: impl Into<String>,
+        store: Arc<dyn SandboxHistoryStore>,
+    ) -> Result<Self, SandboxError> {
         let account_id = account_id.into();
+        let snapshot = store.load()?;
+        Self::from_parts(
+            account_id,
+            store_from_history(snapshot.simulate),
+            store_from_history(snapshot.live),
+            snapshot.mode,
+            snapshot.media,
+            Some(store),
+        )
+    }
+
+    fn from_parts(
+        account_id: String,
+        mut simulate: Store,
+        live: Store,
+        mode: SandboxMode,
+        media: Vec<SandboxMediaBlob>,
+        history: Option<Arc<dyn SandboxHistoryStore>>,
+    ) -> Result<Self, SandboxError> {
         let (changes, _) = broadcast::channel(64);
-        let mut simulate = Store::default();
-        seed_simulate(&mut simulate, &account_id);
-        Self {
+        let seeded = simulate.conversations.is_empty();
+        if seeded {
+            seed_simulate(&mut simulate, &account_id);
+        }
+        let media = media
+            .into_iter()
+            .map(|blob| StoredMedia {
+                media_id: blob.media_id,
+                mime: blob.mime,
+                name: blob.name,
+                bytes: blob.bytes,
+            })
+            .collect();
+        let service = Self {
             write_lock: tokio::sync::Mutex::new(()),
             inner: Mutex::new(Inner {
                 revision: 0,
-                mode: SandboxMode::Simulate,
+                mode,
                 account_id,
                 simulate,
-                live: Store::default(),
-                media: VecDeque::new(),
+                live,
+                media,
                 bot: None,
             }),
             runtime: Mutex::new(None),
             changes,
-        }
+            history,
+        };
+        service.persist()?;
+        Ok(service)
     }
 
     /// Installs the live ingest/delivery runtime used by real-data mode.
@@ -183,6 +246,21 @@ impl SandboxService {
 
     fn lock_inner(&self) -> std::sync::MutexGuard<'_, Inner> {
         self.inner.lock().expect("sandbox state mutex")
+    }
+
+    fn persist(&self) -> Result<(), SandboxError> {
+        let Some(history) = &self.history else {
+            return Ok(());
+        };
+        let snapshot = {
+            let inner = self.lock_inner();
+            snapshot_from_inner(&inner)
+        };
+        history.save(&snapshot)
+    }
+
+    fn persist_best_effort(&self) {
+        let _ = self.persist();
     }
 
     fn publish(&self, revision: u64, mode: SandboxMode) {
@@ -254,6 +332,7 @@ impl SandboxService {
             let (revision, mode) = finish(&mut inner);
             (event, revision, mode, message)
         };
+        self.persist()?;
         runtime.ingest(event).await?;
         self.publish(revision, mode);
         Ok(write_ok(
@@ -298,6 +377,7 @@ impl SandboxService {
                 }),
             )
         };
+        self.persist()?;
         runtime.ingest(event).await?;
         self.publish(revision, mode);
         Ok(write_ok(revision, result))
@@ -321,10 +401,8 @@ impl SandboxService {
                 SandboxError::new("not_found", format!("用户 `{user_id}` 不在当前会话"))
             })?;
             let group = stored.view.conversation.clone();
-            inner
-                .simulate
-                .conversations
-                .remove(&private_ref(&account_id, &user_id).origin_key());
+            let private_id = private_ref(&account_id, &user_id).origin_key();
+            inner.simulate.conversations.remove(&private_id);
             let event = sandbox_event(
                 &account_id,
                 &group,
@@ -336,6 +414,7 @@ impl SandboxService {
             let (revision, mode) = finish(&mut inner);
             (event, revision, mode, json!({ "user_id": user.user_id }))
         };
+        self.persist()?;
         runtime.ingest(event).await?;
         self.publish(revision, mode);
         Ok(write_ok(revision, result))
@@ -414,6 +493,7 @@ impl SandboxService {
                 }),
             )
         };
+        self.persist()?;
         if !events.is_empty() {
             let runtime = self.require_flow()?;
             for event in events {
@@ -487,6 +567,7 @@ impl SandboxService {
                 json!({ "imported": imported, "skipped": skipped }),
             )
         };
+        self.persist()?;
         for event in events {
             runtime.ingest(event).await?;
         }
@@ -511,6 +592,7 @@ impl SandboxService {
         }
         let (revision, mode) = finish(&mut inner);
         drop(inner);
+        self.persist()?;
         self.publish(revision, mode);
         Ok(write_ok(revision, json!({ "cleared": true })))
     }
@@ -586,6 +668,7 @@ impl SandboxService {
             let (revision, mode) = finish(&mut inner);
             (revision, mode, message)
         };
+        self.persist()?;
         self.publish(recorded.0, recorded.1);
         Ok(write_ok(
             recorded.0,
@@ -663,6 +746,7 @@ impl SandboxApi for SandboxService {
                 inner.mode = mode;
                 let (revision, _) = finish(&mut inner);
                 drop(inner);
+                self.persist()?;
                 self.publish(revision, mode);
                 Ok(write_ok(revision, json!({ "mode": mode })))
             }
@@ -769,7 +853,7 @@ impl SandboxApi for SandboxService {
                     now,
                 );
             }
-            if let Some(message) = &event.message {
+            if let Some(message) = event.message.as_ref() {
                 let sender = event.actor.as_ref();
                 let sender_id = sender.map_or("unknown", |user| user.user_id.as_str());
                 let sender_name = sender
@@ -794,6 +878,7 @@ impl SandboxApi for SandboxService {
         }
         let (revision, mode) = finish(&mut inner);
         drop(inner);
+        self.persist_best_effort();
         self.publish(revision, mode);
     }
 
@@ -829,6 +914,7 @@ impl SandboxApi for SandboxService {
         };
         let (revision, mode) = finish(&mut inner);
         drop(inner);
+        self.persist_best_effort();
         self.publish(revision, mode);
         Some(message)
     }
@@ -854,16 +940,24 @@ impl SandboxApi for SandboxService {
             ));
         }
         let media_id = format!("media-{}", Uuid::new_v4());
-        let mut inner = self.lock_inner();
-        inner.media.push_back(StoredMedia {
+        let blob = SandboxMediaBlob {
             media_id: media_id.clone(),
             mime: mime.to_owned(),
             name: name.to_owned(),
             bytes,
+        };
+        let mut inner = self.lock_inner();
+        inner.media.push_back(StoredMedia {
+            media_id: blob.media_id.clone(),
+            mime: blob.mime.clone(),
+            name: blob.name.clone(),
+            bytes: blob.bytes.clone(),
         });
         while inner.media.len() > MAX_MEDIA_ITEMS {
             inner.media.pop_front();
         }
+        drop(inner);
+        self.persist()?;
         Ok(SandboxMediaRef {
             media_id,
             mime: mime.to_owned(),
@@ -892,6 +986,65 @@ impl SandboxApi for SandboxService {
             format!("媒体 `{media_id}` 不存在"),
         ))
     }
+}
+
+fn snapshot_from_inner(inner: &Inner) -> SandboxHistorySnapshot {
+    SandboxHistorySnapshot {
+        mode: inner.mode,
+        account_id: inner.account_id.clone(),
+        simulate: inner
+            .simulate
+            .conversations
+            .values()
+            .map(history_conversation)
+            .collect(),
+        live: inner
+            .live
+            .conversations
+            .values()
+            .map(history_conversation)
+            .collect(),
+        media: inner
+            .media
+            .iter()
+            .map(|item| SandboxMediaBlob {
+                media_id: item.media_id.clone(),
+                mime: item.mime.clone(),
+                name: item.name.clone(),
+                bytes: item.bytes.clone(),
+            })
+            .collect(),
+    }
+}
+
+fn history_conversation(stored: &StoredConversation) -> SandboxHistoryConversation {
+    SandboxHistoryConversation {
+        view: projected_conversation(stored),
+        users: stored.users.values().cloned().collect(),
+        messages: stored.messages.clone(),
+    }
+}
+
+fn store_from_history(items: Vec<SandboxHistoryConversation>) -> Store {
+    let mut store = Store::default();
+    for mut item in items {
+        if item.messages.len() > MAX_MESSAGES {
+            item.messages.drain(0..item.messages.len() - MAX_MESSAGES);
+        }
+        let mut users = HashMap::new();
+        for user in item.users {
+            users.insert(user.user_id.clone(), user);
+        }
+        store.conversations.insert(
+            item.view.conversation_id.clone(),
+            StoredConversation {
+                view: item.view,
+                users,
+                messages: item.messages,
+            },
+        );
+    }
+    store
 }
 
 fn seed_simulate(store: &mut Store, account_id: &str) {
@@ -1344,6 +1497,14 @@ fn append_message(
     message_id: Option<String>,
     time_ms: Option<i64>,
 ) -> SandboxMessageView {
+    if let Some(message_id) = message_id.as_deref()
+        && let Some(existing) = stored
+            .messages
+            .iter()
+            .find(|item| item.message_id == message_id)
+    {
+        return existing.clone();
+    }
     let now = time_ms
         .and_then(|value| u64::try_from(value).ok())
         .filter(|value| *value > 0)

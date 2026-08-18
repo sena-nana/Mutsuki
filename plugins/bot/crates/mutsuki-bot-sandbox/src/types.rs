@@ -13,10 +13,14 @@ pub const SANDBOX_USER_LIMIT: usize = 10;
 pub const SANDBOX_USER_NAMES: [&str; SANDBOX_USER_LIMIT] = [
     "Alice", "Bob", "Carol", "Dave", "Eve", "Frank", "Grace", "Hank", "Ivy", "Jack",
 ];
+pub const SANDBOX_MAX_MESSAGES: usize = 200;
+pub const SANDBOX_MAX_MEDIA_ITEMS: usize = 20;
+pub const SANDBOX_MAX_MEDIA_BYTES: usize = 2 * 1024 * 1024;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxMode {
+    #[default]
     Simulate,
     Live,
 }
@@ -27,6 +31,56 @@ pub enum SandboxSpeakerRole {
     User,
     Bot,
     System,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SandboxHistoryKind {
+    Simulate,
+    Live,
+}
+
+impl SandboxHistoryKind {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Simulate => "simulate",
+            Self::Live => "live",
+        }
+    }
+
+    /// Parses a persisted store kind.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `value` is not `simulate` or `live`.
+    pub fn parse(value: &str) -> Result<Self, SandboxError> {
+        match value {
+            "simulate" => Ok(Self::Simulate),
+            "live" => Ok(Self::Live),
+            _ => Err(SandboxError::new(
+                "sandbox.history",
+                format!("unknown sandbox history kind `{value}`"),
+            )),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SandboxHistoryConversation {
+    pub view: SandboxConversationView,
+    pub users: Vec<SandboxUserView>,
+    pub messages: Vec<SandboxMessageView>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SandboxHistorySnapshot {
+    pub mode: SandboxMode,
+    #[serde(default)]
+    pub account_id: String,
+    pub simulate: Vec<SandboxHistoryConversation>,
+    pub live: Vec<SandboxHistoryConversation>,
+    pub media: Vec<SandboxMediaBlob>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -3,7 +3,7 @@ name = "mutsuki-bot-sandbox"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Headless QQ conversation sandbox: virtual Koishi-style loop and live inbound projection."
+description = "QQ conversation sandbox with durable BotStateDb history: virtual Koishi-style loop and live inbound projection."
 
 [dependencies]
 async-trait.workspace = true
