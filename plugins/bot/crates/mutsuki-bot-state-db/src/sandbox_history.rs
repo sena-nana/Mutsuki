@@ -68,24 +68,10 @@ pub(super) const SANDBOX_SCHEMA_SQL: &str = "
          );";
 
 pub(super) fn load(connection: &Connection) -> Result<SandboxHistorySnapshot, BotStateDbError> {
-    let (mode, account_id) = connection
-        .query_row(
-            "SELECT mode, account_id FROM bot_sandbox_meta WHERE singleton=1",
-            [],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-        )
-        .optional()?
-        .map(|(mode, account_id)| {
-            let mode = match mode.as_str() {
-                "live" => SandboxMode::Live,
-                _ => SandboxMode::Simulate,
-            };
-            (mode, account_id)
-        })
-        .unwrap_or((SandboxMode::Simulate, String::new()));
+    let (mode, account_id) = load_meta(connection)?;
     let mut simulate = Vec::new();
     let mut live = Vec::new();
-    for conversation in load_conversations(connection)? {
+    for conversation in load_conversations(connection, None, true)? {
         match conversation.kind {
             SandboxHistoryKind::Simulate => simulate.push(conversation.record),
             SandboxHistoryKind::Live => live.push(conversation.record),
@@ -100,35 +86,94 @@ pub(super) fn load(connection: &Connection) -> Result<SandboxHistorySnapshot, Bo
     })
 }
 
+fn load_meta(connection: &Connection) -> Result<(SandboxMode, String), BotStateDbError> {
+    Ok(connection
+        .query_row(
+            "SELECT mode, account_id FROM bot_sandbox_meta WHERE singleton=1",
+            [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?
+        .map(|(mode, account_id)| {
+            let mode = if mode == "live" {
+                SandboxMode::Live
+            } else {
+                SandboxMode::Simulate
+            };
+            (mode, account_id)
+        })
+        .unwrap_or((SandboxMode::Simulate, String::new())))
+}
+
+pub(super) fn load_conversation_views(
+    connection: &Connection,
+    kind: SandboxHistoryKind,
+) -> Result<Vec<SandboxConversationView>, BotStateDbError> {
+    load_conversations(connection, Some(kind), false)
+        .map(|items| items.into_iter().map(|item| item.record.view).collect())
+}
+
+pub(super) fn load_conversation_messages(
+    connection: &Connection,
+    kind: SandboxHistoryKind,
+    conversation_id: &str,
+) -> Result<Vec<SandboxMessageView>, BotStateDbError> {
+    load_messages(connection, kind.as_str(), conversation_id)
+}
+
+pub(super) fn load_media_by_id(
+    connection: &Connection,
+    media_id: &str,
+) -> Result<Option<SandboxMediaBlob>, BotStateDbError> {
+    connection
+        .query_row(
+            "SELECT media_id, mime, name, bytes FROM bot_sandbox_media WHERE media_id=?1",
+            params![media_id],
+            |row| {
+                Ok(SandboxMediaBlob {
+                    media_id: row.get(0)?,
+                    mime: row.get(1)?,
+                    name: row.get(2)?,
+                    bytes: row.get(3)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(BotStateDbError::from)
+}
+
 struct LoadedConversation {
     kind: SandboxHistoryKind,
     record: SandboxHistoryConversation,
 }
 
-fn load_conversations(connection: &Connection) -> Result<Vec<LoadedConversation>, BotStateDbError> {
-    let mut statement = connection.prepare(
+fn load_conversations(
+    connection: &Connection,
+    kind: Option<SandboxHistoryKind>,
+    include_messages: bool,
+) -> Result<Vec<LoadedConversation>, BotStateDbError> {
+    let sql = if kind.is_some() {
         "SELECT store, conversation_id, account_id, kind, title, avatar_url, conversation_json,
                 last_preview, last_activity_unix_ms, message_count, active_message
          FROM bot_sandbox_conversation
-         ORDER BY store, conversation_id",
-    )?;
-    let rows = statement
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, String>(4)?,
-                row.get::<_, Option<String>>(5)?,
-                row.get::<_, String>(6)?,
-                row.get::<_, Option<String>>(7)?,
-                row.get::<_, i64>(8)?,
-                row.get::<_, i64>(9)?,
-                row.get::<_, i64>(10)?,
-            ))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
+         WHERE store=?1
+         ORDER BY conversation_id"
+    } else {
+        "SELECT store, conversation_id, account_id, kind, title, avatar_url, conversation_json,
+                last_preview, last_activity_unix_ms, message_count, active_message
+         FROM bot_sandbox_conversation
+         ORDER BY store, conversation_id"
+    };
+    let mut statement = connection.prepare(sql)?;
+    let rows = if let Some(kind) = kind {
+        statement
+            .query_map(params![kind.as_str()], map_conversation_row)?
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        statement
+            .query_map([], map_conversation_row)?
+            .collect::<Result<Vec<_>, _>>()?
+    };
     let mut loaded = Vec::new();
     for (
         store,
@@ -148,7 +193,11 @@ fn load_conversations(connection: &Connection) -> Result<Vec<LoadedConversation>
         let conversation: QqConversationRef = decode(&conversation_json)?;
         let kind: BotConversationKind = decode(&format!("\"{kind}\""))?;
         let users = load_users(connection, &store, &conversation_id)?;
-        let messages = load_messages(connection, &store, &conversation_id)?;
+        let messages = if include_messages {
+            load_messages(connection, &store, &conversation_id)?
+        } else {
+            Vec::new()
+        };
         loaded.push(LoadedConversation {
             kind: history_kind,
             record: SandboxHistoryConversation {
@@ -174,6 +223,36 @@ fn load_conversations(connection: &Connection) -> Result<Vec<LoadedConversation>
         });
     }
     Ok(loaded)
+}
+
+fn map_conversation_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<(
+    String,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    String,
+    Option<String>,
+    i64,
+    i64,
+    i64,
+)> {
+    Ok((
+        row.get(0)?,
+        row.get(1)?,
+        row.get(2)?,
+        row.get(3)?,
+        row.get(4)?,
+        row.get(5)?,
+        row.get(6)?,
+        row.get(7)?,
+        row.get(8)?,
+        row.get(9)?,
+        row.get(10)?,
+    ))
 }
 
 fn load_users(
@@ -449,6 +528,36 @@ fn role_name(role: SandboxSpeakerRole) -> &'static str {
 
 fn sandbox_error(error: BotStateDbError) -> SandboxError {
     SandboxError::new("sandbox.history", error.to_string())
+}
+
+impl BotStateDbRepository {
+    pub fn sandbox_conversations(
+        &self,
+        kind: SandboxHistoryKind,
+    ) -> Result<Vec<SandboxConversationView>, BotStateDbError> {
+        self.call_sync(|reply| super::DbJob::SandboxConversations { kind, reply })
+    }
+
+    pub fn sandbox_messages(
+        &self,
+        kind: SandboxHistoryKind,
+        conversation_id: &str,
+    ) -> Result<Vec<SandboxMessageView>, BotStateDbError> {
+        let conversation_id = conversation_id.to_owned();
+        self.call_sync(|reply| super::DbJob::SandboxMessages {
+            kind,
+            conversation_id,
+            reply,
+        })
+    }
+
+    pub fn sandbox_media(
+        &self,
+        media_id: &str,
+    ) -> Result<Option<SandboxMediaBlob>, BotStateDbError> {
+        let media_id = media_id.to_owned();
+        self.call_sync(|reply| super::DbJob::SandboxMedia { media_id, reply })
+    }
 }
 
 impl SandboxHistoryStore for BotStateDbRepository {

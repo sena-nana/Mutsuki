@@ -71,7 +71,8 @@ Sandbox console (virtual user)
 - `mutsuki-bot-state-db`: durable session, delivery, interaction and sandbox history
   repository; historical Flow tables are neither read nor destructively removed.
   Sandbox live/simulate conversations, roster users, messages and bounded simulate
-  media persist in `bot_sandbox_*` tables and hydrate when the sandbox starts.
+  media persist in `bot_sandbox_*` tables. Other plugins query those tables through
+  `BotStateDbRepository` or `inspect_rows`; sandbox startup hydrates from a snapshot.
 - `mutsuki-bot-sandbox`: QQ conversation sandbox with durable history in `BotStateDb`.
   Simulate mode is a Koishi-style closed loop (virtual users always enter `mutsuki.bot.flow/ingress@1`,
   outbound `message/send` for `sandbox:` conversations is intercepted back into the

@@ -88,7 +88,8 @@ pub trait SandboxApi: Send + Sync {
     async fn media_blob(&self, media_id: &str) -> Result<SandboxMediaBlob, SandboxError>;
 }
 
-/// Durable sandbox conversation, roster, message and media history.
+/// Durable sandbox history. The sandbox writes snapshots; other plugins query
+/// the same tables through `BotStateDbRepository`.
 pub trait SandboxHistoryStore: Send + Sync {
     fn load(&self) -> Result<SandboxHistorySnapshot, SandboxError>;
     fn save(&self, snapshot: &SandboxHistorySnapshot) -> Result<(), SandboxError>;

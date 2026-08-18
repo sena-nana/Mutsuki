@@ -534,6 +534,19 @@ enum DbJob {
         snapshot: mutsuki_bot_sandbox::SandboxHistorySnapshot,
         reply: SyncDbReply<()>,
     },
+    SandboxConversations {
+        kind: mutsuki_bot_sandbox::SandboxHistoryKind,
+        reply: SyncDbReply<Vec<mutsuki_bot_sandbox::SandboxConversationView>>,
+    },
+    SandboxMessages {
+        kind: mutsuki_bot_sandbox::SandboxHistoryKind,
+        conversation_id: String,
+        reply: SyncDbReply<Vec<mutsuki_bot_sandbox::SandboxMessageView>>,
+    },
+    SandboxMedia {
+        media_id: String,
+        reply: SyncDbReply<Option<mutsuki_bot_sandbox::SandboxMediaBlob>>,
+    },
 }
 
 type DbReply<T> = oneshot::Sender<Result<T, BotStateDbError>>;
@@ -765,6 +778,25 @@ impl DbJob {
             Self::SandboxSave { snapshot, reply } => {
                 send_sync_reply(reply, sandbox_history::save(connection, &snapshot), metrics);
             }
+            Self::SandboxConversations { kind, reply } => send_sync_reply(
+                reply,
+                sandbox_history::load_conversation_views(connection, kind),
+                metrics,
+            ),
+            Self::SandboxMessages {
+                kind,
+                conversation_id,
+                reply,
+            } => send_sync_reply(
+                reply,
+                sandbox_history::load_conversation_messages(connection, kind, &conversation_id),
+                metrics,
+            ),
+            Self::SandboxMedia { media_id, reply } => send_sync_reply(
+                reply,
+                sandbox_history::load_media_by_id(connection, &media_id),
+                metrics,
+            ),
         }
     }
 }
@@ -2994,8 +3026,8 @@ mod tests {
     #[tokio::test]
     async fn sandbox_history_roundtrip_survives_reopen() {
         use mutsuki_bot_sandbox::{
-            SandboxAction, SandboxApi, SandboxHistoryStore, SandboxMode, SandboxService,
-            sandbox_user_id,
+            SandboxAction, SandboxApi, SandboxHistoryKind, SandboxHistoryStore, SandboxMode,
+            SandboxService, sandbox_user_id,
         };
 
         let root = tempfile::tempdir().unwrap();
@@ -3053,6 +3085,20 @@ mod tests {
                 .iter()
                 .any(|message| message.text == "persisted")
         }));
+        assert!(
+            reopened
+                .sandbox_conversations(SandboxHistoryKind::Simulate)
+                .unwrap()
+                .iter()
+                .any(|item| item.conversation_id == group_id)
+        );
+        assert!(
+            reopened
+                .sandbox_messages(SandboxHistoryKind::Simulate, &group_id)
+                .unwrap()
+                .iter()
+                .any(|item| item.text == "persisted")
+        );
     }
 
     struct NoopSandboxRuntime;
