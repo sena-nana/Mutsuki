@@ -46,6 +46,19 @@ The bundle also registers a domain-neutral ServiceHost health component that
 publishes the Gateway connection, identification, heartbeat, ACK, event,
 reconnect and last-error snapshot through the standard health control surface.
 
+Simulate-mode sandbox traffic stays on the same QQ-shaped Bot contracts, but
+`sandbox:` conversation ids are intercepted by the ServiceHost integration
+before `mutsuki.bot.message/send@1` reaches QQ OpenAPI:
+
+```text
+Sandbox console (virtual user)
+  -> mutsuki.bot.flow/ingress@1
+  -> Match / Processor nodes
+  -> mutsuki.bot.message/send@1 or delivery/reply@1
+  -> sandbox outbound sink
+  -> sandbox console (bot bubble)
+```
+
 ## Crate Responsibilities
 
 - `mutsuki-bot-protocol`: pure Bot data contracts.
@@ -57,10 +70,16 @@ reconnect and last-error snapshot through the standard health control surface.
 - `mutsuki-bot-delivery`: attempt, receipt, retry, CAS claim and reply-part delivery behavior.
 - `mutsuki-bot-state-db`: durable session, delivery and interaction repository; historical Flow
   tables are neither read nor destructively removed.
-- `mutsuki-bot-sandbox`: in-memory QQ conversation sandbox and live inbound projection.
-- `mutsuki-plugin-bot-sandbox-web`: WebExtension for simulate/live conversation console.
+- `mutsuki-bot-sandbox`: in-memory QQ conversation sandbox. Simulate mode is a
+  Koishi-style closed loop (virtual users always enter `mutsuki.bot.flow/ingress@1`,
+  outbound `message/send` for `sandbox:` conversations is intercepted back into the
+  console). Live mode projects real Gateway inbound events and confirmed bot sends.
+- `mutsuki-plugin-bot-sandbox-web`: WebExtension for the shared simulate/live conversation client
+  (Stapxs-style three-pane session / chat / member layout).
 - `mutsuki-plugin-bot-adapter-qqbot`: QQBot platform translation and OpenAPI side effects.
-- `mutsuki-bot-service-host-integration`: EventSource, health and ServiceRuntime assembly only.
+- `mutsuki-bot-service-host-integration`: EventSource, health, ServiceRuntime assembly, and
+  sandbox outbound intercept for `sandbox:` conversations (Gateway / `message/send`). QQ Adapter
+  still only translates official protocol.
 - `examples/bot-echo`: platform-neutral example business plugin over `mutsuki.bot.*` only.
 
 ## Deferred Plugins

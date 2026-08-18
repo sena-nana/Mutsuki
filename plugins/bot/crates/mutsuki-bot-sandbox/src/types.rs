@@ -1,9 +1,17 @@
-use mutsuki_bot_protocol::{BotConversationKind, QqConversationRef};
+use mutsuki_bot_protocol::{
+    BotConversationKind, BotTarget, MessageSegment, QQ_CONVERSATION_REF_VERSION, QqConversationRef,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub const SANDBOX_SERVICE_ID: &str = "mutsuki.bot.sandbox";
 pub const DEFAULT_SANDBOX_ACCOUNT_ID: &str = "sandbox";
+pub const SANDBOX_ID_PREFIX: &str = "sandbox:";
+pub const SANDBOX_GROUP_ID: &str = "sandbox:default";
+pub const SANDBOX_USER_LIMIT: usize = 10;
+pub const SANDBOX_USER_NAMES: [&str; SANDBOX_USER_LIMIT] = [
+    "Alice", "Bob", "Carol", "Dave", "Eve", "Frank", "Grace", "Hank", "Ivy", "Jack",
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -41,7 +49,7 @@ pub struct SandboxConversationView {
     pub message_count: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SandboxMessageView {
     pub message_id: String,
     pub conversation_id: String,
@@ -49,6 +57,9 @@ pub struct SandboxMessageView {
     pub sender_name: String,
     pub role: SandboxSpeakerRole,
     pub text: String,
+    pub segments: Vec<MessageSegment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<String>,
     pub time_ms: i64,
 }
 
@@ -57,6 +68,7 @@ pub struct SandboxSnapshot {
     pub revision: u64,
     pub mode: SandboxMode,
     pub live_available: bool,
+    pub flow_available: bool,
     pub account_id: String,
     pub conversations: Vec<SandboxConversationView>,
 }
@@ -67,12 +79,19 @@ pub enum SandboxAction {
     SetMode {
         mode: SandboxMode,
     },
+    AddUser,
+    RemoveUser {
+        user_id: String,
+    },
+    ClearConversation {
+        conversation_id: String,
+    },
     IngestAsUser {
         conversation_id: String,
         user_id: String,
         text: String,
-        #[serde(default)]
-        inject_into_flow: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reply_to: Option<String>,
     },
     SendAsBot {
         conversation_id: String,
@@ -124,3 +143,109 @@ impl std::fmt::Display for SandboxError {
 }
 
 impl std::error::Error for SandboxError {}
+
+#[must_use]
+pub fn sandbox_user_id(display_name: &str) -> String {
+    format!("{SANDBOX_ID_PREFIX}{}", display_name.to_ascii_lowercase())
+}
+
+#[must_use]
+pub fn is_sandbox_id(value: &str) -> bool {
+    value.starts_with(SANDBOX_ID_PREFIX)
+}
+
+#[must_use]
+pub fn is_sandbox_conversation(conversation: &QqConversationRef) -> bool {
+    conversation.user_id.as_deref().is_some_and(is_sandbox_id)
+        || conversation.group_id.as_deref().is_some_and(is_sandbox_id)
+        || conversation.guild_id.as_deref().is_some_and(is_sandbox_id)
+        || conversation
+            .channel_id
+            .as_deref()
+            .is_some_and(is_sandbox_id)
+}
+
+#[must_use]
+pub fn is_sandbox_target(target: &BotTarget) -> bool {
+    match target {
+        BotTarget::User { user_id } => is_sandbox_id(user_id),
+        BotTarget::Group { group_id } => is_sandbox_id(group_id),
+        BotTarget::GuildChannel {
+            guild_id,
+            channel_id,
+        } => is_sandbox_id(guild_id) || is_sandbox_id(channel_id),
+        BotTarget::Conversation { conversation_id } => conversation_id.contains(SANDBOX_ID_PREFIX),
+        BotTarget::PlatformSpecific { id, .. } => is_sandbox_id(id),
+    }
+}
+
+#[must_use]
+pub fn qq_conversation_from_target(
+    account_id: impl Into<String>,
+    target: &BotTarget,
+) -> Option<QqConversationRef> {
+    let (kind, user_id, group_id, guild_id, channel_id) = match target {
+        BotTarget::User { user_id } => (
+            BotConversationKind::Private,
+            Some(user_id.clone()),
+            None,
+            None,
+            None,
+        ),
+        BotTarget::Group { group_id } => (
+            BotConversationKind::Group,
+            None,
+            Some(group_id.clone()),
+            None,
+            None,
+        ),
+        BotTarget::GuildChannel {
+            guild_id,
+            channel_id,
+        } => (
+            BotConversationKind::Channel,
+            None,
+            None,
+            Some(guild_id.clone()),
+            Some(channel_id.clone()),
+        ),
+        BotTarget::Conversation { .. } | BotTarget::PlatformSpecific { .. } => return None,
+    };
+    let conversation = QqConversationRef {
+        version: QQ_CONVERSATION_REF_VERSION,
+        account_id: account_id.into(),
+        kind,
+        user_id,
+        group_id,
+        guild_id,
+        channel_id,
+        thread_id: None,
+    };
+    conversation.validate().ok()?;
+    Some(conversation)
+}
+
+#[must_use]
+pub fn preview_segments(segments: &[MessageSegment]) -> String {
+    let mut parts = Vec::new();
+    for segment in segments {
+        match segment {
+            MessageSegment::Text { text } => parts.push(text.clone()),
+            MessageSegment::MentionUser { user_id } => {
+                parts.push(format!("@{user_id}"));
+            }
+            MessageSegment::MentionAll => parts.push("@全体成员".into()),
+            MessageSegment::Image { .. } => parts.push("[图片]".into()),
+            MessageSegment::File { name, .. } => {
+                parts.push(format!("[{}]", name.as_deref().unwrap_or("文件")));
+            }
+            MessageSegment::Audio { .. } => parts.push("[语音]".into()),
+            MessageSegment::Video { .. } => parts.push("[视频]".into()),
+            MessageSegment::Reply { .. } | MessageSegment::Quote { .. } => {}
+            MessageSegment::PlatformSpecific { kind, .. } => {
+                parts.push(format!("[{kind}]"));
+            }
+        }
+    }
+    parts.join("")
+}
