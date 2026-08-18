@@ -78,7 +78,10 @@ carry `qqbot.sequence` as ordering information.
 
 Standard outbound `Reply` and `Quote` segments lower to QQ's `msg_id`, the same as
 `BotMessage.reply_to`. Empty or conflicting message IDs return `qqbot.openapi.invalid_request`
-before any network request; they never fall back to a new active message.
+before any network request; they never fall back to a new active message. Omitting `reply_to`
+sends a Group/C2C active message (no `msg_id`). The sandbox records per-conversation permission
+from `GROUP_MSG_RECEIVE` / `GROUP_MSG_REJECT` and C2C equivalents, and otherwise requires the
+user-message reply button.
 
 ## Verification
 

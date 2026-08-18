@@ -21,6 +21,7 @@ use crate::types::{
 };
 
 const MAX_MESSAGES: usize = 200;
+const PASSIVE_REPLY_WINDOW_MS: u64 = 5 * 60 * 1_000;
 
 pub struct SandboxChangeSubscription {
     receiver: broadcast::Receiver<SandboxChangeEvent>,
@@ -48,6 +49,7 @@ pub trait SandboxRuntime: Send + Sync {
         operation_id: &str,
         conversation: &QqConversationRef,
         text: &str,
+        reply_to: Option<&str>,
     ) -> Result<Value, SandboxError>;
 }
 
@@ -197,6 +199,7 @@ impl SandboxService {
                 SandboxSpeakerRole::User,
                 segments,
                 reply_to,
+                None,
                 None,
             );
             let event = sandbox_event(
@@ -472,8 +475,18 @@ impl SandboxService {
         expected_revision: u64,
         conversation_id: String,
         text: String,
+        reply_to: Option<String>,
     ) -> Result<SandboxWriteResult, SandboxError> {
-        let (conversation, text) = {
+        let runtime = self.runtime().ok_or_else(|| {
+            SandboxError::new("qq.owner_unavailable", "尚未连接 QQ，无法发送真实消息")
+        })?;
+        if !runtime.live_available() {
+            return Err(SandboxError::new(
+                "qq.owner_unavailable",
+                "尚未连接 QQ，无法发送真实消息",
+            ));
+        }
+        let (conversation, text, reply_to) = {
             let inner = self.lock_inner();
             require_revision(&inner, expected_revision)?;
             if inner.mode != SandboxMode::Live {
@@ -488,18 +501,25 @@ impl SandboxService {
                 .conversations
                 .get(&conversation_id)
                 .ok_or_else(|| conversation_missing(&conversation_id))?;
-            (stored.view.conversation.clone(), text)
+            let quoted = reply_to
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let reply_to = match quoted {
+                Some(id) => Some(require_live_reply_target(stored, id, unix_ms())?),
+                None if stored.view.active_message => None,
+                None => {
+                    return Err(SandboxError::new(
+                        "invalid_argument",
+                        "当前会话没有主动消息权限，请先点击用户消息右侧的回复",
+                    ));
+                }
+            };
+            (stored.view.conversation.clone(), text, reply_to)
         };
-        let runtime = self.runtime().ok_or_else(|| {
-            SandboxError::new("qq.owner_unavailable", "尚未连接 QQ，无法发送真实消息")
-        })?;
-        if !runtime.live_available() {
-            return Err(SandboxError::new(
-                "qq.owner_unavailable",
-                "尚未连接 QQ，无法发送真实消息",
-            ));
-        }
-        let delivery = runtime.deliver(operation_id, &conversation, &text).await?;
+        let delivery = runtime
+            .deliver(operation_id, &conversation, &text, reply_to.as_deref())
+            .await?;
         let recorded = {
             let mut inner = self.lock_inner();
             let stored = conversation_mut(&mut inner.live, &conversation_id)?;
@@ -509,6 +529,7 @@ impl SandboxService {
                 "机器人",
                 SandboxSpeakerRole::Bot,
                 vec![MessageSegment::text(&text)],
+                reply_to,
                 None,
                 None,
             );
@@ -636,12 +657,14 @@ impl SandboxApi for SandboxService {
             SandboxAction::SendAsBot {
                 conversation_id,
                 text,
+                reply_to,
             } => {
                 self.send_as_bot(
                     &request.operation_id,
                     request.expected_revision,
                     conversation_id,
                     text,
+                    reply_to,
                 )
                 .await
             }
@@ -673,10 +696,14 @@ impl SandboxApi for SandboxService {
             return;
         }
         let now = u64::try_from(event.time_ms.max(0)).unwrap_or(unix_ms());
+        let active_message = active_message_permission(&event);
         let mut inner = self.lock_inner();
         let account_id = inner.account_id.clone();
         {
             let stored = ensure_conversation(&mut inner.live, conversation, &live_title, now);
+            if let Some(allowed) = active_message {
+                stored.view.active_message = allowed;
+            }
             if let Some(actor) = &event.actor {
                 upsert_user(stored, &actor.user_id, actor.display_name.as_deref(), now);
             }
@@ -699,6 +726,7 @@ impl SandboxApi for SandboxService {
                     message.segments.clone(),
                     message.reply_to.clone(),
                     message.message_id.clone(),
+                    Some(event.time_ms),
                 );
             }
         }
@@ -733,6 +761,7 @@ impl SandboxApi for SandboxService {
                 segments.to_vec(),
                 reply_to.map(str::to_owned),
                 None,
+                None,
             )
         };
         let (revision, mode) = finish(&mut inner);
@@ -758,6 +787,7 @@ fn seed_simulate(store: &mut Store, account_id: &str) {
             vec![MessageSegment::text(
                 "这是虚拟 QQ 会话。以群成员身份发言会进入 Bot 流程，机器人回复会回到这里。",
             )],
+            None,
             None,
             None,
         );
@@ -800,6 +830,7 @@ fn insert_conversation(
             last_preview: None,
             last_activity_unix_ms: now,
             message_count: 0,
+            active_message: false,
         },
         users: HashMap::new(),
         messages: Vec::new(),
@@ -866,6 +897,34 @@ fn require_message(stored: &StoredConversation, message_id: &str) -> Result<(), 
         .find(|item| item.message_id == message_id)
         .map(|_| ())
         .ok_or_else(|| SandboxError::new("not_found", format!("消息 `{message_id}` 不存在")))
+}
+
+fn require_live_reply_target(
+    stored: &StoredConversation,
+    reply_to: &str,
+    now_unix_ms: u64,
+) -> Result<String, SandboxError> {
+    let message = stored
+        .messages
+        .iter()
+        .find(|item| item.message_id == reply_to)
+        .ok_or_else(|| {
+            SandboxError::new(
+                "invalid_argument",
+                format!("引用的消息 `{reply_to}` 不存在"),
+            )
+        })?;
+    if message.role != SandboxSpeakerRole::User {
+        return Err(SandboxError::new("invalid_argument", "只能回复用户消息"));
+    }
+    let message_time = u64::try_from(message.time_ms.max(0)).unwrap_or(0);
+    if now_unix_ms.saturating_sub(message_time) > PASSIVE_REPLY_WINDOW_MS {
+        return Err(SandboxError::new(
+            "invalid_argument",
+            "引用的消息已超过 5 分钟，无法被动回复；请先在会话里 @ 机器人",
+        ));
+    }
+    Ok(reply_to.to_owned())
 }
 
 fn group_user_ids(store: &Store) -> Vec<String> {
@@ -1048,8 +1107,12 @@ fn append_message(
     segments: Vec<MessageSegment>,
     reply_to: Option<String>,
     message_id: Option<String>,
+    time_ms: Option<i64>,
 ) -> SandboxMessageView {
-    let now = unix_ms();
+    let now = time_ms
+        .and_then(|value| u64::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .unwrap_or_else(unix_ms);
     if role == SandboxSpeakerRole::User {
         upsert_user(stored, sender_id, Some(sender_name), now);
         if let Some(user) = stored.users.get_mut(sender_id) {
@@ -1124,6 +1187,22 @@ fn sandbox_event(
         raw: None,
         ext,
     })
+}
+
+fn active_message_permission(event: &BotEvent) -> Option<bool> {
+    let event_type = event
+        .ext
+        .get("qqbot.event_type")
+        .and_then(Value::as_str)
+        .or_else(|| match &event.kind {
+            BotEventKind::PlatformSpecific(kind) => Some(kind.as_str()),
+            _ => None,
+        })?;
+    match event_type {
+        "GROUP_MSG_RECEIVE" | "C2C_MSG_RECEIVE" => Some(true),
+        "GROUP_MSG_REJECT" | "C2C_MSG_REJECT" | "GROUP_DEL_ROBOT" | "FRIEND_DEL" => Some(false),
+        _ => None,
+    }
 }
 
 fn projected_conversation(stored: &StoredConversation) -> SandboxConversationView {

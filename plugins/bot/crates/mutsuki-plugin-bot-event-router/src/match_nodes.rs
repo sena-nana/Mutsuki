@@ -268,6 +268,14 @@ fn actor_role(event: &BotEvent) -> Option<&str> {
 }
 
 fn mentioned_bot(event: &BotEvent) -> bool {
+    if event
+        .ext
+        .get("qqbot.mentioned_bot")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return true;
+    }
     event.message.as_ref().is_some_and(|message| {
         message.segments.iter().any(|segment| match segment {
             MessageSegment::MentionUser { user_id } => user_id == &event.bot.account_id,
@@ -631,6 +639,16 @@ mod tests {
             raw: None,
             ext: Default::default(),
         }
+    }
+
+    #[test]
+    fn mention_match_accepts_platform_flag() {
+        let mut flagged = event("hello");
+        flagged
+            .ext
+            .insert("qqbot.mentioned_bot".into(), json!(true));
+        assert!(mentioned_bot(&flagged));
+        assert!(!mentioned_bot(&event("hello")));
     }
 
     #[test]

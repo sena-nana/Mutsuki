@@ -29,6 +29,7 @@ impl SandboxRuntime for TestRuntime {
         _operation_id: &str,
         _conversation: &mutsuki_bot_protocol::QqConversationRef,
         _text: &str,
+        _reply_to: Option<&str>,
     ) -> Result<Value, SandboxError> {
         Err(SandboxError::new("qq.owner_unavailable", "尚未连接 QQ"))
     }
@@ -48,6 +49,8 @@ async fn sandbox_rpc_simulate_send_and_confirm_live_send() {
     assert!(frontend.contains("发送到 QQ"));
     assert!(frontend.contains("update_user"));
     assert!(frontend.contains("import_live_users"));
+    assert!(frontend.contains("sandbox-reply"));
+    assert!(frontend.contains("conversation.active_message"));
     assert!(!frontend.contains("inject_into_flow"));
     std::fs::write(
         shell_dir.path().join("index.html"),
