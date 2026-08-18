@@ -434,13 +434,15 @@ fn write_private_toml(path: &Path, document: &toml::Value) -> Result<(), String>
     result
 }
 
+#[cfg(unix)]
 fn ensure_private_permissions(path: &Path) -> Result<(), String> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-            .map_err(|error| error.to_string())?;
-    }
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(not(unix))]
+fn ensure_private_permissions(_: &Path) -> Result<(), String> {
     Ok(())
 }
 
