@@ -508,6 +508,7 @@ async fn embedded_console_mounts_qq_management_extension() {
         last_heartbeat_unix_ms: Some(1),
         last_error: None,
         reconnect_count: 0,
+        self_user: None,
     }));
     let api: Arc<dyn QqBotManagementApi> = Arc::new(QqBotManagementService::local(local));
     let config = WebConsoleConfig {
@@ -539,6 +540,8 @@ async fn embedded_console_mounts_qq_management_extension() {
     let qq_js = http_get_body(&addr, &format!("/{qq_path}")).await;
     assert!(qq_js.contains("mountQqBotPanel"));
     assert!(qq_js.contains("请到配置里填写账号"));
+    assert!(qq_js.contains("self_user"));
+    assert!(qq_js.contains("qq-account-avatar"));
     assert!(!qq_js.contains("保存登录配置"));
     let snap = ws_rpc_params(&addr, "qq-bot", "snapshot", json!({}))
         .await

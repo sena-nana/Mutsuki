@@ -10,11 +10,12 @@ use serde_json::Value;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_tungstenite::tungstenite::Message;
 
-use mutsuki_bot_protocol::BotEvent;
+use mutsuki_bot_protocol::{BotEvent, BotEventKind, BotUser};
 use mutsuki_plugin_bot_adapter_qqbot::{
     GatewayAction, GatewayFrame, HttpMethod, QQBOT_ADAPTER_PLUGIN_ID, QqAuthManager, QqBotConfig,
     QqGatewayPump, QqOpenApiError, QqOpenApiTransport, ReqwestQqHttpClient, SharedQqCredentials,
-    adapter::qq_gateway_frame_to_bot_event, session_summary, validate_gateway_url,
+    adapter::{qq_gateway_frame_to_bot_event, qq_self_user},
+    session_summary, validate_gateway_url,
 };
 
 pub const QQBOT_GATEWAY_SOURCE_ID: &str = "mutsuki.bot.adapter.qqbot.gateway.source";
@@ -30,6 +31,7 @@ pub struct QqGatewayHealthSnapshot {
     pub last_error: Option<String>,
     pub started_at_unix_ms: Option<u128>,
     pub connected_since_unix_ms: Option<u128>,
+    pub self_user: Option<BotUser>,
 }
 
 #[derive(Clone)]
@@ -40,6 +42,11 @@ pub struct QqGatewayHealthHandle {
 impl QqGatewayHealthHandle {
     pub fn snapshot(&self) -> QqGatewayHealthSnapshot {
         self.inner.lock().expect("QQBot health mutex").clone()
+    }
+
+    pub fn set_self_user(&self, user: BotUser) {
+        let mut snapshot = self.inner.lock().expect("QQBot health mutex");
+        snapshot.self_user = Some(merge_self_user(snapshot.self_user.clone(), user));
     }
 }
 
@@ -358,7 +365,10 @@ async fn run_connection(
         local_stop,
         reconnect,
     } = lifecycle;
-    let (gateway_url, access_token) = gateway_credentials(config, api.clone()).await?;
+    let (gateway_url, access_token, self_user) = gateway_credentials(config, api.clone()).await?;
+    if let Some(user) = self_user {
+        health.set_self_user(user);
+    }
     let selected_url = pump.resume_url().unwrap_or(&gateway_url);
     validate_gateway_url(selected_url, config.allow_insecure_transport).map_err(fatal_failure)?;
     let connect = tokio_tungstenite::connect_async(selected_url);
@@ -586,6 +596,11 @@ async fn run_connection(
                                     frame.clone(),
                                 )
                             {
+                                if event.kind == BotEventKind::BotConnected
+                                    && let Some(actor) = event.actor.clone()
+                                {
+                                    health.set_self_user(actor);
+                                }
                                 inbound.notify(event);
                             }
                             let mut snapshot = health.inner.lock().expect("QQBot health mutex");
@@ -635,7 +650,8 @@ where
 async fn gateway_credentials(
     config: &QqBotConfig,
     api: Arc<Mutex<QqOpenApiTransport>>,
-) -> Result<(String, String), GatewayFailure> {
+) -> Result<(String, String, Option<BotUser>), GatewayFailure> {
+    let app_id = config.app_id.clone();
     let result = tokio::task::spawn_blocking(move || {
         let mut api = api.lock().expect("QQBot API mutex");
         let account = api.execute_json(HttpMethod::Get, "/users/@me".into(), Value::Null)?;
@@ -644,6 +660,7 @@ async fn gateway_credentials(
             .and_then(Value::as_str)
             .filter(|id| !id.is_empty())
             .ok_or_else(|| QqOpenApiError::InvalidResponse("account.id".into()))?;
+        let self_user = qq_self_user(&account, &app_id);
         let gateway = api.execute_json(HttpMethod::Get, "/gateway/bot".into(), Value::Null)?;
         let url = gateway
             .get("url")
@@ -652,7 +669,7 @@ async fn gateway_credentials(
             .ok_or_else(|| QqOpenApiError::InvalidResponse("gateway.url".into()))?
             .to_owned();
         let token = api.access_token()?;
-        Ok::<_, QqOpenApiError>((url, token))
+        Ok::<_, QqOpenApiError>((url, token, self_user))
     })
     .await
     .map_err(recoverable_failure)?;
@@ -711,6 +728,21 @@ fn reconnect_delay(config: &QqBotConfig, attempt: u32) -> Duration {
         base.saturating_add(jitter)
             .min(config.reconnect_max_delay_ms),
     )
+}
+
+fn merge_self_user(existing: Option<BotUser>, incoming: BotUser) -> BotUser {
+    let Some(current) = existing else {
+        return incoming;
+    };
+    BotUser {
+        user_id: if current.user_id.is_empty() {
+            incoming.user_id
+        } else {
+            current.user_id
+        },
+        display_name: current.display_name.or(incoming.display_name),
+        avatar_url: current.avatar_url.or(incoming.avatar_url),
+    }
 }
 
 fn mark_connected(health: &QqGatewayHealthHandle) {
@@ -968,5 +1000,31 @@ mod tests {
             credentials.client_secret(),
             Err(QqOpenApiError::CredentialsUnavailable)
         ));
+    }
+
+    #[test]
+    fn self_user_keeps_name_and_avatar_when_later_update_is_empty() {
+        let source = QqGatewayEventSource::new(
+            QqBotConfig::new("main", "APP_ID"),
+            SharedQqCredentials::default(),
+            QqAuthManager::new(),
+        );
+        source.health.set_self_user(BotUser {
+            user_id: "BOT_OPENID".into(),
+            display_name: Some("mutsuki".into()),
+            avatar_url: Some("https://example.test/bot.png".into()),
+        });
+        source.health.set_self_user(BotUser {
+            user_id: "OTHER".into(),
+            display_name: None,
+            avatar_url: None,
+        });
+        let cached = source.health.snapshot().self_user.unwrap();
+        assert_eq!(cached.user_id, "BOT_OPENID");
+        assert_eq!(cached.display_name.as_deref(), Some("mutsuki"));
+        assert_eq!(
+            cached.avatar_url.as_deref(),
+            Some("https://example.test/bot.png")
+        );
     }
 }

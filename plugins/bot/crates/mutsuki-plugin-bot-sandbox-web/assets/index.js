@@ -161,6 +161,10 @@ function mentionName(users, userId) {
   return (users || []).find((user) => user.user_id === userId)?.display_name || userId || "";
 }
 
+function botProfile(snapshot) {
+  return snapshot?.bot || { user_id: "bot", display_name: "机器人" };
+}
+
 function arkFields(payload) {
   const kv = payload?.kv || payload?.ark?.kv || [];
   const map = Object.fromEntries((Array.isArray(kv) ? kv : []).map((item) => [item?.key, item?.value || ""]));
@@ -393,24 +397,29 @@ export function mountSandboxPanel(host, rpc, events) {
     else state.messages.forEach((message) => {
       const row = element("div", `sandbox-row sandbox-row--${message.role}`);
       if (message.role !== "system") {
-        const sender = userById(conversation.users, message.sender_id);
-        row.append(avatar(message.sender_name, "sandbox-avatar sandbox-avatar--sm", sender?.avatar_url));
+        const sender = message.role === "bot" ? botProfile(state.snapshot) : userById(conversation.users, message.sender_id);
+        const name = sender?.display_name || message.sender_name;
+        row.append(avatar(name, "sandbox-avatar sandbox-avatar--sm", sender?.avatar_url));
+        const bubble = element("div", "sandbox-bubble");
+        bubble.append(element("p", "muted", `${name} · ${formatTime(message.time_ms)}`));
+        bubble.append(renderSegments(message, state.messages, conversation.users, rpc));
+        if (message.role === "user") {
+          const reply = button("回复");
+          reply.classList.add("ghost", "sandbox-reply");
+          reply.title = "引用并回复这条消息";
+          reply.onclick = (event) => {
+            event.stopPropagation();
+            state.quote = message;
+            render();
+          };
+          bubble.append(reply);
+        }
+        row.append(bubble);
+      } else {
+        const bubble = element("div", "sandbox-bubble");
+        bubble.append(renderSegments(message, state.messages, conversation.users, rpc));
+        row.append(bubble);
       }
-      const bubble = element("div", "sandbox-bubble");
-      if (message.role !== "system") bubble.append(element("p", "muted", `${message.sender_name} · ${formatTime(message.time_ms)}`));
-      bubble.append(renderSegments(message, state.messages, conversation.users, rpc));
-      if (message.role === "user") {
-        const reply = button("回复");
-        reply.classList.add("ghost", "sandbox-reply");
-        reply.title = "引用并回复这条消息";
-        reply.onclick = (event) => {
-          event.stopPropagation();
-          state.quote = message;
-          render();
-        };
-        bubble.append(reply);
-      }
-      row.append(bubble);
       messages.append(row);
     });
     pane.append(messages);

@@ -19,7 +19,11 @@ pub fn qq_gateway_frame_to_bot_event(
     let event_type = frame.t.as_deref().unwrap_or("UNKNOWN");
     let data = &frame.d;
     let target = qq_target_from_payload(event_type, data);
-    let actor = qq_actor(data, app_id);
+    let actor = if event_type == "READY" {
+        data.get("user").and_then(|user| qq_self_user(user, app_id))
+    } else {
+        qq_actor(data, app_id)
+    };
     let message = qq_message(event_type, data, target.clone(), actor.clone());
     let mut ext = BotExtMap::new();
     ext.insert("qqbot.event_type".into(), Value::String(event_type.into()));
@@ -97,10 +101,28 @@ fn qq_event_kind(event_type: &str) -> BotEventKind {
     }
 }
 
+/// Maps `/users/@me` or READY `user` into a Bot self profile.
+///
+/// Missing avatars synthesize the QQ App CDN URL using `app_id` and the user id.
+#[must_use]
+pub fn qq_self_user(user: &Value, app_id: &str) -> Option<BotUser> {
+    let (user_id, _) = qq_actor_id(user)?;
+    Some(qq_user_fields(user, user_id, true, app_id))
+}
+
 fn qq_actor(data: &Value, app_id: &str) -> Option<BotUser> {
     let author = data.get("author").unwrap_or(data);
     let (user_id, from_openid) = qq_actor_id(author)?;
-    let avatar = author
+    Some(qq_user_fields(author, user_id, from_openid, app_id))
+}
+
+fn qq_user_fields(
+    source: &Value,
+    user_id: String,
+    synthesize_qqapp_avatar: bool,
+    app_id: &str,
+) -> BotUser {
+    let avatar = source
         .get("avatar")
         .and_then(Value::as_str)
         .map(str::trim)
@@ -108,18 +130,20 @@ fn qq_actor(data: &Value, app_id: &str) -> Option<BotUser> {
         .map(str::to_owned)
         .or_else(|| {
             let app_id = app_id.trim();
-            (from_openid && !app_id.is_empty())
+            (synthesize_qqapp_avatar && !app_id.is_empty())
                 .then(|| format!("https://q.qlogo.cn/qqapp/{app_id}/{user_id}/640"))
         });
-    Some(BotUser {
+    BotUser {
         user_id,
-        display_name: author
+        display_name: source
             .get("username")
-            .or_else(|| author.get("nick"))
+            .or_else(|| source.get("nick"))
             .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
             .map(str::to_owned),
         avatar_url: avatar,
-    })
+    }
 }
 
 fn qq_actor_id(author: &Value) -> Option<(String, bool)> {

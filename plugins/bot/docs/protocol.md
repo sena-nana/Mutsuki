@@ -31,6 +31,10 @@ QQBot-specific protocols:
 - `mutsuki.bot.qqbot.gateway/status@1`
 - `mutsuki.bot.qqbot.capability/get@1`
 
+`mutsuki.bot.qqbot.account/get@1` returns the configured account id, App ID, the raw `/users/@me`
+body as `openapi_user`, and a mapped `user` (`user_id`, `display_name`, `avatar_url`). Missing
+avatars synthesize `https://q.qlogo.cn/qqapp/{app_id}/{user_id}/640`.
+
 The QQ capability response is account-scoped and additive. It reports the configured intent mask
 and shard, required QQ permission categories, truthful inbound/outbound conversation and segment
 surfaces, optional media constraints, reply/quote/mention, active delivery, edit/recall and

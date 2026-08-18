@@ -112,6 +112,7 @@ struct Inner {
     simulate: Store,
     live: Store,
     media: VecDeque<StoredMedia>,
+    bot: Option<BotUser>,
 }
 
 /// In-memory QQ conversation sandbox used by the Web Console.
@@ -149,6 +150,7 @@ impl SandboxService {
                 simulate,
                 live: Store::default(),
                 media: VecDeque::new(),
+                bot: None,
             }),
             runtime: Mutex::new(None),
             changes,
@@ -162,6 +164,17 @@ impl SandboxService {
     /// Panics if the runtime mutex is poisoned.
     pub fn set_runtime(&self, runtime: Arc<dyn SandboxRuntime>) {
         *self.runtime.lock().expect("sandbox runtime mutex") = Some(runtime);
+    }
+
+    pub fn set_bot_profile(&self, user: BotUser) {
+        let mut inner = self.lock_inner();
+        if inner.bot.as_ref() == Some(&user) {
+            return;
+        }
+        inner.bot = Some(user);
+        let (revision, mode) = finish(&mut inner);
+        drop(inner);
+        self.publish(revision, mode);
     }
 
     fn runtime(&self) -> Option<Arc<dyn SandboxRuntime>> {
@@ -558,11 +571,12 @@ impl SandboxService {
             .await?;
         let recorded = {
             let mut inner = self.lock_inner();
+            let (sender_id, sender_name) = bot_speaker(&inner);
             let stored = conversation_mut(&mut inner.live, &conversation_id)?;
             let message = append_message(
                 stored,
-                "bot",
-                "机器人",
+                &sender_id,
+                &sender_name,
                 SandboxSpeakerRole::Bot,
                 segments,
                 reply_to,
@@ -620,6 +634,7 @@ impl SandboxApi for SandboxService {
             account_id: inner.account_id.clone(),
             conversations,
             live_users: collect_live_users(&inner.live),
+            bot: inner.bot.clone(),
         })
     }
 
@@ -724,15 +739,16 @@ impl SandboxApi for SandboxService {
     }
 
     fn observe_event(&self, event: BotEvent) {
+        if event.kind == BotEventKind::BotConnected {
+            if let Some(actor) = event.actor {
+                self.set_bot_profile(actor);
+            }
+            return;
+        }
         let Ok(conversation) = qq_conversation_from_event(&event) else {
             return;
         };
-        if is_sandbox_conversation(&conversation)
-            || matches!(
-                event.kind,
-                BotEventKind::BotConnected | BotEventKind::BotDisconnected
-            )
-        {
+        if is_sandbox_conversation(&conversation) || event.kind == BotEventKind::BotDisconnected {
             return;
         }
         let now = u64::try_from(event.time_ms.max(0)).unwrap_or(unix_ms());
@@ -790,6 +806,7 @@ impl SandboxApi for SandboxService {
         let sandbox = is_sandbox_conversation(conversation);
         let now = unix_ms();
         let mut inner = self.lock_inner();
+        let (sender_id, sender_name) = bot_speaker(&inner);
         let message = {
             let store = if sandbox {
                 &mut inner.simulate
@@ -801,8 +818,8 @@ impl SandboxApi for SandboxService {
             let stored = ensure_conversation(store, conversation.clone(), &title, now);
             append_message(
                 stored,
-                "bot",
-                "机器人",
+                &sender_id,
+                &sender_name,
                 SandboxSpeakerRole::Bot,
                 segments.to_vec(),
                 reply_to.map(str::to_owned),
@@ -1301,6 +1318,19 @@ fn upsert_user(
 fn assign_avatar(target: &mut Option<String>, avatar_url: Option<&str>) {
     if let Some(avatar_url) = avatar_url.map(str::trim).filter(|value| !value.is_empty()) {
         *target = Some(avatar_url.to_owned());
+    }
+}
+
+fn bot_speaker(inner: &Inner) -> (String, String) {
+    match &inner.bot {
+        Some(bot) => (
+            bot.user_id.clone(),
+            bot.display_name
+                .clone()
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "机器人".into()),
+        ),
+        None => ("bot".into(), "机器人".into()),
     }
 }
 
