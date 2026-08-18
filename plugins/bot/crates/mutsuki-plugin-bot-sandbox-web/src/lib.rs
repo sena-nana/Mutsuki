@@ -116,6 +116,47 @@ impl WebExtension for SandboxWebExtension {
                 .map_err(|error| encode_error(&error))
             }
         });
+
+        let api = self.api.clone();
+        registry.register_async_contextual("media.upload", move |context, params| {
+            let api = api.clone();
+            async move {
+                context.require(CAPABILITY_SANDBOX_WRITE)?;
+                let name = params.get("name").and_then(Value::as_str).unwrap_or("");
+                let mime = params.get("mime").and_then(Value::as_str).unwrap_or("");
+                let raw = params
+                    .get("bytes")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| ExtensionError::Registration("missing bytes".into()))?;
+                let bytes = base64_decode(raw)
+                    .map_err(|error| ExtensionError::Registration(error.to_owned()))?;
+                serde_json::to_value(
+                    api.upload_media(name, mime, bytes)
+                        .await
+                        .map_err(domain_error)?,
+                )
+                .map_err(|error| encode_error(&error))
+            }
+        });
+
+        let api = self.api.clone();
+        registry.register_async_contextual("media.get", move |context, params| {
+            let api = api.clone();
+            async move {
+                context.require(CAPABILITY_BOT_READ)?;
+                let media_id = params
+                    .get("media_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| ExtensionError::Registration("missing media_id".into()))?;
+                let blob = api.media_blob(media_id).await.map_err(domain_error)?;
+                Ok(json!({
+                    "media_id": blob.media_id,
+                    "mime": blob.mime,
+                    "name": blob.name,
+                    "bytes": base64_encode(&blob.bytes),
+                }))
+            }
+        });
         Ok(())
     }
 
@@ -198,4 +239,65 @@ fn required_capability(action: &SandboxAction) -> &'static str {
 
 fn requires_confirmation(mode: SandboxMode, action: &SandboxAction) -> bool {
     mode == SandboxMode::Live && matches!(action, SandboxAction::SendAsBot { .. })
+}
+
+fn base64_encode(bytes: &[u8]) -> String {
+    const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = u32::from(chunk[0]);
+        let b1 = u32::from(chunk.get(1).copied().unwrap_or(0));
+        let b2 = u32::from(chunk.get(2).copied().unwrap_or(0));
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(char::from(TABLE[((triple >> 18) & 0x3f) as usize]));
+        out.push(char::from(TABLE[((triple >> 12) & 0x3f) as usize]));
+        if chunk.len() > 1 {
+            out.push(char::from(TABLE[((triple >> 6) & 0x3f) as usize]));
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(char::from(TABLE[(triple & 0x3f) as usize]));
+        } else {
+            out.push('=');
+        }
+    }
+    out
+}
+
+fn base64_decode(input: &str) -> Result<Vec<u8>, &'static str> {
+    let input = input.trim();
+    if input.len() % 4 != 0 {
+        return Err("invalid base64");
+    }
+    let mut out = Vec::with_capacity(input.len() / 4 * 3);
+    let decode = |ch: u8| -> Result<u8, &'static str> {
+        match ch {
+            b'A'..=b'Z' => Ok(ch - b'A'),
+            b'a'..=b'z' => Ok(ch - b'a' + 26),
+            b'0'..=b'9' => Ok(ch - b'0' + 52),
+            b'+' => Ok(62),
+            b'/' => Ok(63),
+            b'=' => Ok(0),
+            _ => Err("invalid base64"),
+        }
+    };
+    for chunk in input.as_bytes().chunks(4) {
+        if chunk.len() != 4 {
+            return Err("invalid base64");
+        }
+        let n0 = u32::from(decode(chunk[0])?);
+        let n1 = u32::from(decode(chunk[1])?);
+        let n2 = u32::from(decode(chunk[2])?);
+        let n3 = u32::from(decode(chunk[3])?);
+        let triple = (n0 << 18) | (n1 << 12) | (n2 << 6) | n3;
+        out.push((triple >> 16) as u8);
+        if chunk[2] != b'=' {
+            out.push((triple >> 8) as u8);
+        }
+        if chunk[3] != b'=' {
+            out.push(triple as u8);
+        }
+    }
+    Ok(out)
 }

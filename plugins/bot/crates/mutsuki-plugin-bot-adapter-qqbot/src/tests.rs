@@ -103,7 +103,7 @@ fn gateway_runner_maps_channel_mentions_and_quote_context() {
             "id": "channel-message",
             "guild_id": "guild",
             "channel_id": "channel",
-            "content": "hello",
+            "content": "hello <@bot>",
             "thread_id": "thread",
             "mentions": [{"id": "bot", "is_you": true}],
             "message_reference": {"message_id": "quoted"},
@@ -400,10 +400,92 @@ fn gateway_runner_strips_only_the_bot_mention_from_group_at_content() {
     let result = run_one(&mut runner, task).unwrap();
     let event = decode_ingress_event(&result.tasks[0]);
 
+    let segments = event.message.unwrap().segments;
     assert_eq!(
-        event.message.unwrap().plain_text(),
-        "/echo hello <@OTHER_USER>"
+        segments
+            .iter()
+            .filter_map(|segment| match segment {
+                MessageSegment::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<String>(),
+        "/echo hello "
     );
+    assert!(segments.iter().any(|segment| matches!(
+        segment,
+        MessageSegment::MentionUser { user_id } if user_id == "OTHER_USER"
+    )));
+    assert!(!segments.iter().any(|segment| matches!(
+        segment,
+        MessageSegment::MentionUser { user_id } if user_id == "BOT_OPENID"
+    )));
+}
+
+#[test]
+fn gateway_runner_maps_attachments_ark_markdown_and_keyboard() {
+    let mut runner = QqGatewayMapRunner::new(1, "main");
+    let task = Task::new(
+        "rich",
+        QQBOT_GATEWAY_FRAME_PROTOCOL_ID,
+        json!({
+            "op": 0,
+            "s": 8,
+            "t": "GROUP_MESSAGE_CREATE",
+            "id": "rich-event",
+            "d": {
+                "id": "rich-message",
+                "group_openid": "GROUP_OPENID",
+                "content": "look <@member> @all",
+                "attachments": [{
+                    "url": "https://img.example/a.png",
+                    "content_type": "image/png",
+                    "filename": "a.png"
+                }],
+                "ark": {
+                    "template_id": 23,
+                    "kv": [
+                        {"key": "#METATITLE#", "value": "标题"},
+                        {"key": "#METADESC#", "value": "描述"}
+                    ]
+                },
+                "markdown": {"content": "**hi**"},
+                "keyboard": {"content": {"rows": []}},
+                "author": {"member_openid": "MEMBER_OPENID"}
+            }
+        }),
+    );
+
+    let result = run_one(&mut runner, task).unwrap();
+    let segments = decode_ingress_event(&result.tasks[0])
+        .message
+        .unwrap()
+        .segments;
+    assert!(segments.iter().any(|segment| matches!(
+        segment,
+        MessageSegment::MentionUser { user_id } if user_id == "member"
+    )));
+    assert!(
+        segments
+            .iter()
+            .any(|segment| matches!(segment, MessageSegment::MentionAll))
+    );
+    assert!(segments.iter().any(|segment| matches!(
+        segment,
+        MessageSegment::PlatformSpecific { platform, kind, .. }
+            if platform == "qqbot" && kind == "attachment"
+    )));
+    assert!(segments.iter().any(|segment| matches!(
+        segment,
+        MessageSegment::PlatformSpecific { kind, .. } if kind == "ark"
+    )));
+    assert!(segments.iter().any(|segment| matches!(
+        segment,
+        MessageSegment::PlatformSpecific { kind, .. } if kind == "markdown"
+    )));
+    assert!(segments.iter().any(|segment| matches!(
+        segment,
+        MessageSegment::PlatformSpecific { kind, .. } if kind == "keyboard"
+    )));
 }
 
 #[test]

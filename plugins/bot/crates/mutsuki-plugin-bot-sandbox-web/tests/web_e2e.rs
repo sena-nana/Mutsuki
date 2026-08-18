@@ -28,7 +28,7 @@ impl SandboxRuntime for TestRuntime {
         &self,
         _operation_id: &str,
         _conversation: &mutsuki_bot_protocol::QqConversationRef,
-        _text: &str,
+        _segments: &[mutsuki_bot_protocol::MessageSegment],
         _reply_to: Option<&str>,
     ) -> Result<Value, SandboxError> {
         Err(SandboxError::new("qq.owner_unavailable", "尚未连接 QQ"))
@@ -51,6 +51,10 @@ async fn sandbox_rpc_simulate_send_and_confirm_live_send() {
     assert!(frontend.contains("import_live_users"));
     assert!(frontend.contains("sandbox-reply"));
     assert!(frontend.contains("conversation.active_message"));
+    assert!(frontend.contains("sandbox-mention"));
+    assert!(frontend.contains("sandbox-card"));
+    assert!(frontend.contains("media.upload"));
+    assert!(frontend.contains("小卡片"));
     assert!(!frontend.contains("inject_into_flow"));
     std::fs::write(
         shell_dir.path().join("index.html"),
@@ -200,6 +204,24 @@ async fn sandbox_rpc_simulate_send_and_confirm_live_send() {
         .await
         .is_err()
     );
+
+    let uploaded = rpc(
+        &address,
+        "media.upload",
+        json!({
+            "name": "pic.png",
+            "mime": "image/png",
+            "bytes": "aGk="
+        }),
+    )
+    .await
+    .unwrap();
+    let media_id = uploaded["media_id"].as_str().unwrap();
+    let blob = rpc(&address, "media.get", json!({ "media_id": media_id }))
+        .await
+        .unwrap();
+    assert_eq!(blob["mime"], "image/png");
+    assert_eq!(blob["bytes"], "aGk=");
 
     host.stop().await.unwrap();
     tokio::time::sleep(Duration::from_millis(20)).await;

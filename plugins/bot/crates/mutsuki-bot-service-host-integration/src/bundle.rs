@@ -941,7 +941,7 @@ impl SandboxRuntime for HostSandboxRuntime {
         &self,
         operation_id: &str,
         conversation: &QqConversationRef,
-        text: &str,
+        segments: &[MessageSegment],
         reply_to: Option<&str>,
     ) -> Result<Value, SandboxError> {
         if conversation.account_id != self.account_id {
@@ -955,7 +955,7 @@ impl SandboxRuntime for HostSandboxRuntime {
             idempotency_key: format!("sandbox-send-key-{operation_id}"),
             conversation: conversation.clone(),
             content: BotDeliveryContent {
-                segments: vec![MessageSegment::text(text)],
+                segments: segments.to_vec(),
                 summary: Some("沙盒后台消息".into()),
                 reply_to: reply_to.map(str::to_owned),
             },

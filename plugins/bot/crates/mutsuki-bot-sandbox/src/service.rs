@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -15,12 +15,14 @@ use uuid::Uuid;
 use crate::types::{
     DEFAULT_SANDBOX_ACCOUNT_ID, SANDBOX_GROUP_ID, SANDBOX_ID_PREFIX, SANDBOX_USER_LIMIT,
     SANDBOX_USER_NAMES, SandboxAction, SandboxChangeEvent, SandboxConversationView, SandboxError,
-    SandboxMessageView, SandboxMode, SandboxSnapshot, SandboxSpeakerRole, SandboxUserView,
-    SandboxWriteRequest, SandboxWriteResult, is_sandbox_conversation, preview_segments,
-    sandbox_user_id,
+    SandboxMediaBlob, SandboxMediaRef, SandboxMessageView, SandboxMode, SandboxSnapshot,
+    SandboxSpeakerRole, SandboxUserView, SandboxWriteRequest, SandboxWriteResult,
+    is_sandbox_conversation, parse_sandbox_mentions, preview_segments, sandbox_user_id,
 };
 
 const MAX_MESSAGES: usize = 200;
+const MAX_MEDIA_ITEMS: usize = 20;
+const MAX_MEDIA_BYTES: usize = 2 * 1024 * 1024;
 const PASSIVE_REPLY_WINDOW_MS: u64 = 5 * 60 * 1_000;
 
 pub struct SandboxChangeSubscription {
@@ -48,7 +50,7 @@ pub trait SandboxRuntime: Send + Sync {
         &self,
         operation_id: &str,
         conversation: &QqConversationRef,
-        text: &str,
+        segments: &[MessageSegment],
         reply_to: Option<&str>,
     ) -> Result<Value, SandboxError>;
 }
@@ -75,6 +77,13 @@ pub trait SandboxApi: Send + Sync {
         segments: &[MessageSegment],
         reply_to: Option<&str>,
     ) -> Option<SandboxMessageView>;
+    async fn upload_media(
+        &self,
+        name: &str,
+        mime: &str,
+        bytes: Vec<u8>,
+    ) -> Result<SandboxMediaRef, SandboxError>;
+    async fn media_blob(&self, media_id: &str) -> Result<SandboxMediaBlob, SandboxError>;
 }
 
 struct StoredConversation {
@@ -88,12 +97,21 @@ struct Store {
     conversations: HashMap<String, StoredConversation>,
 }
 
+#[derive(Clone)]
+struct StoredMedia {
+    media_id: String,
+    mime: String,
+    name: String,
+    bytes: Vec<u8>,
+}
+
 struct Inner {
     revision: u64,
     mode: SandboxMode,
     account_id: String,
     simulate: Store,
     live: Store,
+    media: VecDeque<StoredMedia>,
 }
 
 /// In-memory QQ conversation sandbox used by the Web Console.
@@ -130,6 +148,7 @@ impl SandboxService {
                 account_id,
                 simulate,
                 live: Store::default(),
+                media: VecDeque::new(),
             }),
             runtime: Mutex::new(None),
             changes,
@@ -168,6 +187,7 @@ impl SandboxService {
         conversation_id: String,
         user_id: String,
         text: String,
+        segments: Vec<MessageSegment>,
         reply_to: Option<String>,
     ) -> Result<SandboxWriteResult, SandboxError> {
         let runtime = self.require_flow()?;
@@ -175,23 +195,31 @@ impl SandboxService {
             let mut inner = self.lock_inner();
             require_revision(&inner, expected_revision)?;
             require_simulate(&inner, "真实模式不能伪造群成员发言")?;
-            let text = require_text(&text)?;
-            let account_id = inner.account_id.clone();
-            let stored = conversation_mut(&mut inner.simulate, &conversation_id)?;
+            let stored = inner
+                .simulate
+                .conversations
+                .get(&conversation_id)
+                .ok_or_else(|| conversation_missing(&conversation_id))?;
             let user = stored.users.get(&user_id).cloned().ok_or_else(|| {
                 SandboxError::new("not_found", format!("用户 `{user_id}` 不在当前会话"))
             })?;
             if let Some(reply_to) = reply_to.as_deref() {
                 require_message(stored, reply_to)?;
             }
-            let conversation = stored.view.conversation.clone();
-            let mut segments = Vec::new();
+            let roster = stored.users.values().cloned().collect::<Vec<_>>();
+            let mut segments = compose_segments(&text, segments, &roster)?;
+            require_sandbox_media(&inner, &segments)?;
             if let Some(reply_to) = reply_to.as_deref() {
-                segments.push(MessageSegment::Quote {
-                    message_id: reply_to.to_owned(),
-                });
+                segments.insert(
+                    0,
+                    MessageSegment::Quote {
+                        message_id: reply_to.to_owned(),
+                    },
+                );
             }
-            segments.push(MessageSegment::text(&text));
+            let conversation = stored.view.conversation.clone();
+            let account_id = inner.account_id.clone();
+            let stored = conversation_mut(&mut inner.simulate, &conversation_id)?;
             let message = append_message(
                 stored,
                 &user.user_id,
@@ -475,6 +503,7 @@ impl SandboxService {
         expected_revision: u64,
         conversation_id: String,
         text: String,
+        segments: Vec<MessageSegment>,
         reply_to: Option<String>,
     ) -> Result<SandboxWriteResult, SandboxError> {
         let runtime = self.runtime().ok_or_else(|| {
@@ -486,7 +515,7 @@ impl SandboxService {
                 "尚未连接 QQ，无法发送真实消息",
             ));
         }
-        let (conversation, text, reply_to) = {
+        let (conversation, segments, reply_to) = {
             let inner = self.lock_inner();
             require_revision(&inner, expected_revision)?;
             if inner.mode != SandboxMode::Live {
@@ -495,7 +524,6 @@ impl SandboxService {
                     "模拟模式不能以后台机器人身份发送",
                 ));
             }
-            let text = require_text(&text)?;
             let stored = inner
                 .live
                 .conversations
@@ -515,10 +543,13 @@ impl SandboxService {
                     ));
                 }
             };
-            (stored.view.conversation.clone(), text, reply_to)
+            let roster = stored.users.values().cloned().collect::<Vec<_>>();
+            let segments = compose_segments(&text, segments, &roster)?;
+            require_live_outbound(&segments)?;
+            (stored.view.conversation.clone(), segments, reply_to)
         };
         let delivery = runtime
-            .deliver(operation_id, &conversation, &text, reply_to.as_deref())
+            .deliver(operation_id, &conversation, &segments, reply_to.as_deref())
             .await?;
         let recorded = {
             let mut inner = self.lock_inner();
@@ -528,7 +559,7 @@ impl SandboxService {
                 "bot",
                 "机器人",
                 SandboxSpeakerRole::Bot,
-                vec![MessageSegment::text(&text)],
+                segments,
                 reply_to,
                 None,
                 None,
@@ -643,6 +674,7 @@ impl SandboxApi for SandboxService {
                 conversation_id,
                 user_id,
                 text,
+                segments,
                 reply_to,
             } => {
                 self.ingest_as_user(
@@ -650,6 +682,7 @@ impl SandboxApi for SandboxService {
                     conversation_id,
                     user_id,
                     text,
+                    segments,
                     reply_to,
                 )
                 .await
@@ -657,6 +690,7 @@ impl SandboxApi for SandboxService {
             SandboxAction::SendAsBot {
                 conversation_id,
                 text,
+                segments,
                 reply_to,
             } => {
                 self.send_as_bot(
@@ -664,6 +698,7 @@ impl SandboxApi for SandboxService {
                     request.expected_revision,
                     conversation_id,
                     text,
+                    segments,
                     reply_to,
                 )
                 .await
@@ -769,6 +804,66 @@ impl SandboxApi for SandboxService {
         self.publish(revision, mode);
         Some(message)
     }
+
+    async fn upload_media(
+        &self,
+        name: &str,
+        mime: &str,
+        bytes: Vec<u8>,
+    ) -> Result<SandboxMediaRef, SandboxError> {
+        let name = name.trim();
+        let mime = mime.trim();
+        if name.is_empty() || name.len() > 128 {
+            return Err(SandboxError::new("invalid_argument", "文件名无效"));
+        }
+        if mime.is_empty() || mime.len() > 128 {
+            return Err(SandboxError::new("invalid_argument", "媒体类型无效"));
+        }
+        if bytes.is_empty() || bytes.len() > MAX_MEDIA_BYTES {
+            return Err(SandboxError::new(
+                "invalid_argument",
+                format!("媒体大小必须在 1 到 {MAX_MEDIA_BYTES} 字节之间"),
+            ));
+        }
+        let media_id = format!("media-{}", Uuid::new_v4());
+        let mut inner = self.lock_inner();
+        inner.media.push_back(StoredMedia {
+            media_id: media_id.clone(),
+            mime: mime.to_owned(),
+            name: name.to_owned(),
+            bytes,
+        });
+        while inner.media.len() > MAX_MEDIA_ITEMS {
+            inner.media.pop_front();
+        }
+        Ok(SandboxMediaRef {
+            media_id,
+            mime: mime.to_owned(),
+            name: name.to_owned(),
+        })
+    }
+
+    async fn media_blob(&self, media_id: &str) -> Result<SandboxMediaBlob, SandboxError> {
+        let media_id = media_id.trim();
+        if media_id.is_empty() {
+            return Err(SandboxError::new("invalid_argument", "媒体 ID 无效"));
+        }
+        {
+            let inner = self.lock_inner();
+            if let Some(item) = inner.media.iter().find(|item| item.media_id == media_id) {
+                return Ok(SandboxMediaBlob {
+                    media_id: item.media_id.clone(),
+                    mime: item.mime.clone(),
+                    name: item.name.clone(),
+                    bytes: item.bytes.clone(),
+                });
+            }
+        }
+        Err(SandboxError::new(
+            "not_found",
+            format!("媒体 `{media_id}` 不存在"),
+        ))
+    }
 }
 
 fn seed_simulate(store: &mut Store, account_id: &str) {
@@ -863,6 +958,80 @@ fn require_text(text: &str) -> Result<String, SandboxError> {
         return Err(SandboxError::new("invalid_argument", "消息不能为空"));
     }
     Ok(text.to_owned())
+}
+
+fn compose_segments(
+    text: &str,
+    segments: Vec<MessageSegment>,
+    users: &[SandboxUserView],
+) -> Result<Vec<MessageSegment>, SandboxError> {
+    let mut body = if segments.is_empty() {
+        parse_sandbox_mentions(&require_text(text)?, users)
+    } else {
+        let mut body = segments;
+        if !text.trim().is_empty() {
+            body.extend(parse_sandbox_mentions(text.trim(), users));
+        }
+        body
+    };
+    body.retain(|segment| match segment {
+        MessageSegment::Text { text } => !text.is_empty(),
+        _ => true,
+    });
+    if body.is_empty() {
+        return Err(SandboxError::new("invalid_argument", "消息不能为空"));
+    }
+    Ok(body)
+}
+
+fn require_live_outbound(segments: &[MessageSegment]) -> Result<(), SandboxError> {
+    for segment in segments {
+        match segment {
+            MessageSegment::Text { .. }
+            | MessageSegment::MentionUser { .. }
+            | MessageSegment::MentionAll
+            | MessageSegment::Image { .. }
+            | MessageSegment::File { .. }
+            | MessageSegment::Audio { .. }
+            | MessageSegment::Video { .. }
+            | MessageSegment::Reply { .. }
+            | MessageSegment::Quote { .. } => {}
+            _ => {
+                return Err(SandboxError::new(
+                    "invalid_argument",
+                    "真实模式只能发送文本、艾特和媒体",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn require_sandbox_media(inner: &Inner, segments: &[MessageSegment]) -> Result<(), SandboxError> {
+    for segment in segments {
+        if let Some(media_id) = sandbox_media_id(segment)
+            && !inner.media.iter().any(|item| item.media_id == media_id)
+        {
+            return Err(SandboxError::new(
+                "not_found",
+                format!("媒体 `{media_id}` 不存在"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn sandbox_media_id(segment: &MessageSegment) -> Option<&str> {
+    match segment {
+        MessageSegment::PlatformSpecific {
+            platform,
+            kind,
+            payload,
+        } if platform == "sandbox" && kind == "media" => {
+            payload.get("media_id").and_then(Value::as_str)
+        }
+        _ => None,
+    }
 }
 
 fn require_identity(value: &str, field: &str) -> Result<String, SandboxError> {

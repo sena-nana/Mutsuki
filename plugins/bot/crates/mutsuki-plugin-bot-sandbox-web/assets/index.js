@@ -63,6 +63,19 @@ const STYLE = `
 .sandbox-dialog .sandbox-member { border-radius: 8px; padding: 8px 10px; }
 .sandbox-dialog .sandbox-member:disabled { opacity: 0.45; cursor: default; }
 .sandbox-empty { padding: 10px; margin: 0; font-size: 12px; }
+.sandbox-mention { color: var(--accent, #7aa2ff); font-weight: 650; }
+.sandbox-media { display: block; max-width: min(240px, 100%); max-height: 180px; border-radius: 8px; margin-top: 6px; }
+.sandbox-file { display: block; margin-top: 6px; font-size: 12px; }
+.sandbox-card { margin-top: 6px; min-width: 180px; max-width: 260px; border: 1px solid var(--border, transparent); border-radius: 10px; overflow: hidden; background: var(--bg, transparent); }
+.sandbox-card img { display: block; width: 100%; max-height: 120px; object-fit: cover; }
+.sandbox-card-body { padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
+.sandbox-card-title { font-size: 13px; font-weight: 650; }
+.sandbox-card-desc, .sandbox-markdown, .sandbox-keyboard { font-size: 12px; white-space: pre-wrap; }
+.sandbox-keyboard { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.sandbox-keyboard span { border: 1px solid var(--border, transparent); border-radius: 8px; padding: 4px 8px; font-size: 11px; }
+.sandbox-compose-tools, .sandbox-draft-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.sandbox-draft-chip { display: inline-flex; align-items: center; gap: 4px; border-radius: 999px; padding: 2px 8px; font-size: 11px; background: var(--bg-hover, transparent); }
+.sandbox-mention-picker { display: flex; flex-direction: column; max-height: 160px; overflow: auto; border: 1px solid var(--border, transparent); border-radius: 10px; }
 @media (max-width: 960px) {
   .sandbox-client { height: auto; min-height: 0; }
   .sandbox-frame { grid-template-columns: 1fr; min-height: 720px; }
@@ -120,30 +133,136 @@ function quotedText(messages, replyTo) {
   return quoted ? `${quoted.sender_name}: ${quoted.text || "消息"}` : "引用消息";
 }
 
-function renderSegments(message, messages) {
+function mentionName(users, userId) {
+  return (users || []).find((user) => user.user_id === userId)?.display_name || userId || "";
+}
+
+function arkFields(payload) {
+  const kv = payload?.kv || payload?.ark?.kv || [];
+  const map = Object.fromEntries((Array.isArray(kv) ? kv : []).map((item) => [item?.key, item?.value || ""]));
+  return {
+    title: map["#METATITLE#"] || map["#PROMPT#"] || payload?.title || "小卡片",
+    desc: map["#METADESC#"] || payload?.description || "",
+    image: map["#PIC#"] || map["#METAIMAGE#"] || payload?.image || "",
+    url: map["#METAURL#"] || payload?.url || "",
+  };
+}
+
+function bindMedia(node, mediaId, rpc) {
+  void rpc.read("sandbox", "media.get", { media_id: mediaId }).then((blob) => {
+    const binary = Uint8Array.from(atob(blob.bytes || ""), (ch) => ch.charCodeAt(0));
+    node.src = URL.createObjectURL(new Blob([binary], { type: blob.mime || "application/octet-stream" }));
+  }).catch(() => {
+    node.replaceWith(document.createTextNode("[媒体不可用]"));
+  });
+}
+
+function renderSegments(message, messages, users, rpc) {
   const wrap = document.createDocumentFragment();
   if (message.reply_to) wrap.append(element("p", "sandbox-quote muted", quotedText(messages, message.reply_to)));
-  const body = element("p", "");
+  const body = element("div", "sandbox-rich");
   const segments = Array.isArray(message.segments) && message.segments.length
     ? message.segments
     : [{ type: "text", text: message.text || "" }];
+  const hasAttachment = segments.some((segment) => segment.type === "platform_specific" && segment.kind === "attachment");
   segments.forEach((segment) => {
     if (segment.type === "text") body.append(document.createTextNode(segment.text || ""));
-    else if (segment.type === "mention_user") body.append(element("strong", "", `@${segment.user_id || ""}`));
-    else if (segment.type === "mention_all") body.append(element("strong", "", "@全体成员"));
-    else if (segment.type === "image") body.append(document.createTextNode("[图片]"));
-    else if (segment.type === "file") body.append(document.createTextNode(`[${segment.name || "文件"}]`));
-    else if (segment.type === "audio") body.append(document.createTextNode("[语音]"));
-    else if (segment.type === "video") body.append(document.createTextNode("[视频]"));
+    else if (segment.type === "mention_user") body.append(element("span", "sandbox-mention", `@${mentionName(users, segment.user_id)}`));
+    else if (segment.type === "mention_all") body.append(element("span", "sandbox-mention", "@全体成员"));
+    else if (hasAttachment && (segment.type === "image" || segment.type === "file" || segment.type === "audio" || segment.type === "video")) return;
+    else if (segment.type === "image") {
+      const mediaId = segment.resource?.ref_id;
+      if (!mediaId) body.append(document.createTextNode("[图片]"));
+      else {
+        const img = element("img", "sandbox-media");
+        img.alt = "图片";
+        bindMedia(img, mediaId, rpc);
+        body.append(img);
+      }
+    } else if (segment.type === "file") body.append(element("span", "sandbox-file", `[${segment.name || "文件"}]`));
+    else if (segment.type === "audio" || segment.type === "video") {
+      const node = document.createElement(segment.type);
+      node.className = "sandbox-media";
+      node.controls = true;
+      const mediaId = segment.resource?.ref_id;
+      if (mediaId) bindMedia(node, mediaId, rpc);
+      body.append(node);
+    } else if (segment.type === "platform_specific") renderPlatform(body, segment, rpc);
+    else if (segment.type !== "reply" && segment.type !== "quote") body.append(document.createTextNode(message.text || ""));
   });
-  if (!body.textContent && !message.reply_to) body.textContent = message.text || "";
+  if (!body.textContent && !body.querySelector("img, audio, video, .sandbox-card") && !message.reply_to) {
+    body.textContent = message.text || "";
+  }
   wrap.append(body);
   return wrap;
 }
 
+function renderPlatform(body, segment, rpc) {
+  const kind = segment.kind || "";
+  const payload = segment.payload || {};
+  if (kind === "media" || kind === "attachment") {
+    const mime = payload.mime || payload.content_type || "";
+    const url = payload.url;
+    const mediaId = payload.media_id;
+    if (mime.startsWith("audio/") || mime.startsWith("video/")) {
+      const node = document.createElement(mime.startsWith("audio/") ? "audio" : "video");
+      node.className = "sandbox-media";
+      node.controls = true;
+      if (url) node.src = url;
+      else if (mediaId) bindMedia(node, mediaId, rpc);
+      body.append(node);
+      return;
+    }
+    if (mime.startsWith("image/") || kind === "attachment" || kind === "media") {
+      const img = element("img", "sandbox-media");
+      img.alt = payload.name || payload.filename || "图片";
+      if (url) img.src = url;
+      else if (mediaId) bindMedia(img, mediaId, rpc);
+      body.append(img);
+      return;
+    }
+    body.append(element("span", "sandbox-file", `[${payload.name || payload.filename || "文件"}]`));
+    return;
+  }
+  if (kind === "ark" || kind === "embed") {
+    const fields = arkFields(payload);
+    const card = element("div", "sandbox-card");
+    if (fields.image) {
+      const img = element("img", "");
+      img.alt = fields.title;
+      img.src = fields.image;
+      card.append(img);
+    }
+    const inner = element("div", "sandbox-card-body");
+    inner.append(element("span", "sandbox-card-title", fields.title));
+    if (fields.desc) inner.append(element("span", "muted sandbox-card-desc", fields.desc));
+    if (fields.url) inner.append(element("span", "muted sandbox-card-desc", fields.url));
+    card.append(inner);
+    body.append(card);
+    return;
+  }
+  if (kind === "markdown") {
+    const markdown = element("pre", "sandbox-markdown");
+    markdown.textContent = payload.content || payload.markdown?.content || JSON.stringify(payload);
+    body.append(markdown);
+    return;
+  }
+  if (kind === "keyboard") {
+    const bar = element("div", "sandbox-keyboard");
+    const rows = payload.content?.rows || payload.rows || [];
+    rows.flatMap((row) => row.buttons || []).forEach((item) => {
+      bar.append(element("span", "", item.render_data?.label || item.label || "按钮"));
+    });
+    if (!bar.childNodes.length) bar.append(element("span", "", "[按钮]"));
+    body.append(bar);
+    return;
+  }
+  body.append(document.createTextNode(`[${kind}]`));
+}
+
 /** Mount the QQ sandbox conversation console. */
 export function mountSandboxPanel(host, rpc, events) {
-  const state = { snapshot: null, messages: [], selectedId: null, draft: "", speakerId: "", query: "", quote: null, dialog: "" };
+  const state = { snapshot: null, messages: [], selectedId: null, draft: "", draftSegments: [], speakerId: "", query: "", quote: null, dialog: "" };
   host.innerHTML = "";
   const style = document.createElement("style");
   style.textContent = STYLE;
@@ -244,7 +363,7 @@ export function mountSandboxPanel(host, rpc, events) {
       if (message.role !== "system") row.append(avatar(message.sender_name, "sandbox-avatar sandbox-avatar--sm"));
       const bubble = element("div", "sandbox-bubble");
       if (message.role !== "system") bubble.append(element("p", "muted", `${message.sender_name} · ${formatTime(message.time_ms)}`));
-      bubble.append(renderSegments(message, state.messages));
+      bubble.append(renderSegments(message, state.messages, conversation.users, rpc));
       row.append(bubble);
       if (message.role === "user") {
         const reply = button("回复");
@@ -269,6 +388,36 @@ export function mountSandboxPanel(host, rpc, events) {
       bar.append(element("span", "", `正在回复 ${state.quote.sender_name}`), cancel);
       compose.append(bar);
     }
+    if (state.draftSegments.length) {
+      const chips = element("div", "sandbox-draft-chips");
+      state.draftSegments.forEach((segment, index) => {
+        const chip = element("span", "sandbox-draft-chip", draftLabel(segment, conversation.users));
+        const remove = button("×");
+        remove.onclick = () => { state.draftSegments.splice(index, 1); render(); };
+        chip.append(remove);
+        chips.append(chip);
+      });
+      compose.append(chips);
+    }
+    const tools = element("div", "sandbox-compose-tools");
+    const mentionBtn = button("@");
+    mentionBtn.title = "艾特成员";
+    mentionBtn.onclick = () => { state.draft += "@"; render(); };
+    tools.append(mentionBtn);
+    if (mode() === "simulate") {
+      const imageBtn = button("图片");
+      imageBtn.onclick = () => void attachFile("image/*");
+      const fileBtn = button("文件");
+      fileBtn.onclick = () => void attachFile("*/*");
+      const cardBtn = button("小卡片");
+      cardBtn.onclick = () => openDialog("card");
+      const markdownBtn = button("Markdown");
+      markdownBtn.onclick = () => openDialog("markdown");
+      tools.append(imageBtn, fileBtn, cardBtn, markdownBtn);
+    }
+    compose.append(tools);
+    const picker = element("div", "sandbox-mention-picker");
+    picker.hidden = true;
     const row = element("div", "sandbox-compose-row");
     const input = element("input", "ui-input");
     input.type = "text";
@@ -277,11 +426,32 @@ export function mountSandboxPanel(host, rpc, events) {
       ? (canActive ? "可直接发送主动消息，或点右侧回复" : "请先点用户消息右侧回复")
       : "输入消息，Enter 发送";
     input.value = state.draft;
-    input.oninput = () => { state.draft = input.value; };
+    const refreshPicker = () => {
+      const match = /@([^\s@]*)$/.exec(state.draft);
+      picker.replaceChildren();
+      if (!match) { picker.hidden = true; return; }
+      const query = match[1].toLowerCase();
+      const hits = [{ user_id: "__all__", display_name: "全体成员" }, ...(conversation.users || [])]
+        .filter((user) => (user.display_name || "").toLowerCase().includes(query) || user.user_id.toLowerCase().includes(query));
+      hits.forEach((user) => {
+        const item = button(`@${user.display_name || user.user_id}`);
+        item.onclick = () => {
+          state.draft = state.draft.slice(0, match.index);
+          state.draftSegments.push(user.user_id === "__all__"
+            ? { type: "mention_all" }
+            : { type: "mention_user", user_id: user.user_id });
+          render();
+        };
+        picker.append(item);
+      });
+      picker.hidden = !hits.length;
+    };
+    input.oninput = () => { state.draft = input.value; refreshPicker(); };
     const send = button(mode() === "live" ? "发送到 QQ" : "发送");
     const submit = async () => {
       const text = state.draft.trim();
-      if (!text) { showStatus("请填写消息"); return; }
+      const segments = state.draftSegments.slice();
+      if (!text && !segments.length) { showStatus("请填写消息"); return; }
       if (mode() === "live" && !state.quote?.message_id && !canActive) {
         showStatus("当前会话没有主动消息权限，请先点击用户消息右侧的回复");
         return;
@@ -293,6 +463,7 @@ export function mountSandboxPanel(host, rpc, events) {
             action: "send_as_bot",
             conversation_id: conversation.conversation_id,
             text,
+            segments,
             reply_to: state.quote?.message_id || null,
           }, true);
         } else {
@@ -303,10 +474,12 @@ export function mountSandboxPanel(host, rpc, events) {
             conversation_id: conversation.conversation_id,
             user_id: speaker,
             text,
+            segments,
             reply_to: state.quote?.message_id || null,
           });
         }
         state.draft = "";
+        state.draftSegments = [];
         state.quote = null;
         showStatus("");
         await refresh();
@@ -317,8 +490,49 @@ export function mountSandboxPanel(host, rpc, events) {
     send.onclick = () => void submit();
     input.onkeydown = (event) => { if (event.key === "Enter") { event.preventDefault(); void submit(); } };
     row.append(input, send);
-    compose.append(row);
+    compose.append(picker, row);
+    refreshPicker();
     pane.append(compose);
+  }
+
+  async function attachFile(accept) {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = accept;
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      try {
+        const buffer = new Uint8Array(await file.arrayBuffer());
+        let binary = "";
+        buffer.forEach((byte) => { binary += String.fromCharCode(byte); });
+        const uploaded = await rpc.write("sandbox", "media.upload", {
+          name: file.name,
+          mime: file.type || "application/octet-stream",
+          bytes: btoa(binary),
+        });
+        state.draftSegments.push({
+          type: "platform_specific",
+          platform: "sandbox",
+          kind: "media",
+          payload: { media_id: uploaded.media_id, mime: uploaded.mime, name: uploaded.name },
+        });
+        showStatus("");
+        render();
+      } catch (error) {
+        reportError(error);
+      }
+    };
+    input.click();
+  }
+
+  function draftLabel(segment, users) {
+    if (segment.type === "mention_user") return `@${mentionName(users, segment.user_id)}`;
+    if (segment.type === "mention_all") return "@全体成员";
+    if (segment.type === "platform_specific" && segment.kind === "ark") return "[小卡片]";
+    if (segment.type === "platform_specific" && segment.kind === "markdown") return "[Markdown]";
+    if (segment.type === "platform_specific" && segment.kind === "media") return `[${segment.payload?.name || "媒体"}]`;
+    return segment.type || "附件";
   }
 
   function closeDialog() {
@@ -344,6 +558,82 @@ export function mountSandboxPanel(host, rpc, events) {
     const foot = element("div", "sandbox-dialog-foot");
     const cancel = button("取消");
     cancel.onclick = () => closeDialog();
+    if (dialog === "card") {
+      card.setAttribute("aria-label", "发送小卡片");
+      head.append(element("h2", "", "发送小卡片"));
+      const title = element("input", "ui-input");
+      title.placeholder = "标题";
+      const desc = element("input", "ui-input");
+      desc.placeholder = "描述";
+      const image = element("input", "ui-input");
+      image.placeholder = "封面 URL（可选）";
+      const link = element("input", "ui-input");
+      link.placeholder = "跳转链接（可选）";
+      const titleField = element("label", "sandbox-dialog-field", "标题");
+      const descField = element("label", "sandbox-dialog-field", "描述");
+      const imageField = element("label", "sandbox-dialog-field", "封面");
+      const linkField = element("label", "sandbox-dialog-field", "链接");
+      titleField.append(title);
+      descField.append(desc);
+      imageField.append(image);
+      linkField.append(link);
+      body.append(titleField, descField, imageField, linkField);
+      const save = button("加入草稿");
+      save.onclick = () => {
+        if (!title.value.trim()) { showStatus("请填写卡片标题"); return; }
+        state.draftSegments.push({
+          type: "platform_specific",
+          platform: "qqbot",
+          kind: "ark",
+          payload: {
+            template_id: 23,
+            kv: [
+              { key: "#METATITLE#", value: title.value.trim() },
+              { key: "#METADESC#", value: desc.value.trim() },
+              { key: "#PIC#", value: image.value.trim() },
+              { key: "#METAURL#", value: link.value.trim() },
+            ],
+          },
+        });
+        closeDialog();
+        render();
+      };
+      foot.append(cancel, save);
+      card.append(head, body, foot);
+      overlay.append(card);
+      root.append(overlay);
+      title.focus();
+      return;
+    }
+    if (dialog === "markdown") {
+      card.setAttribute("aria-label", "发送 Markdown");
+      head.append(element("h2", "", "发送 Markdown"));
+      const content = document.createElement("textarea");
+      content.className = "ui-input";
+      content.rows = 6;
+      content.placeholder = "Markdown 文本";
+      const field = element("label", "sandbox-dialog-field", "内容");
+      field.append(content);
+      body.append(field);
+      const save = button("加入草稿");
+      save.onclick = () => {
+        if (!content.value.trim()) { showStatus("请填写 Markdown"); return; }
+        state.draftSegments.push({
+          type: "platform_specific",
+          platform: "qqbot",
+          kind: "markdown",
+          payload: { content: content.value },
+        });
+        closeDialog();
+        render();
+      };
+      foot.append(cancel, save);
+      card.append(head, body, foot);
+      overlay.append(card);
+      root.append(overlay);
+      content.focus();
+      return;
+    }
     if (dialog !== "import") {
       const user = (state.snapshot?.conversations || []).flatMap((item) => item.users || []).find((item) => item.user_id === dialog);
       if (!user) { closeDialog(); return; }

@@ -40,13 +40,13 @@ mod tests {
             &self,
             _operation_id: &str,
             _conversation: &QqConversationRef,
-            text: &str,
+            segments: &[MessageSegment],
             reply_to: Option<&str>,
         ) -> Result<serde_json::Value, SandboxError> {
             self.deliver
                 .lock()
                 .expect("deliver")
-                .push((text.into(), reply_to.map(str::to_owned)));
+                .push((preview_segments(segments), reply_to.map(str::to_owned)));
             Ok(json!({ "delivered": true }))
         }
     }
@@ -185,6 +185,7 @@ mod tests {
                 conversation_id: group.conversation_id.clone(),
                 user_id: alice.clone(),
                 text: "/ping".into(),
+                segments: vec![],
                 reply_to: None,
             },
         )
@@ -218,6 +219,7 @@ mod tests {
             SandboxAction::SendAsBot {
                 conversation_id: group.conversation_id.clone(),
                 text: "不该发出".into(),
+                segments: vec![],
                 reply_to: None,
             },
         )
@@ -325,6 +327,7 @@ mod tests {
                 conversation_id: group.conversation_id.clone(),
                 user_id: sandbox_user_id("Alice"),
                 text: "hello".into(),
+                segments: vec![],
                 reply_to: None,
             },
         )
@@ -339,6 +342,7 @@ mod tests {
                 conversation_id: group.conversation_id.clone(),
                 user_id: sandbox_user_id("Bob"),
                 text: "reply".into(),
+                segments: vec![],
                 reply_to: Some(hello_id.clone()),
             },
         )
@@ -420,6 +424,7 @@ mod tests {
             SandboxAction::SendAsBot {
                 conversation_id: conversation_id.clone(),
                 text: "后台回复".into(),
+                segments: vec![],
                 reply_to: None,
             },
         )
@@ -436,6 +441,7 @@ mod tests {
             SandboxAction::SendAsBot {
                 conversation_id: conversation_id.clone(),
                 text: "后台回复".into(),
+                segments: vec![],
                 reply_to: Some("qq-msg-1".into()),
             },
         )
@@ -454,6 +460,7 @@ mod tests {
                 conversation_id,
                 user_id: sandbox_user_id("Alice"),
                 text: "伪造".into(),
+                segments: vec![],
                 reply_to: None,
             },
         )
@@ -480,6 +487,7 @@ mod tests {
             SandboxAction::SendAsBot {
                 conversation_id: conversation_id.clone(),
                 text: "主动推送".into(),
+                segments: vec![],
                 reply_to: None,
             },
         )
@@ -498,6 +506,7 @@ mod tests {
             SandboxAction::SendAsBot {
                 conversation_id,
                 text: "再推一次".into(),
+                segments: vec![],
                 reply_to: None,
             },
         )
@@ -546,6 +555,7 @@ mod tests {
             SandboxAction::SendAsBot {
                 conversation_id: conversation_id.clone(),
                 text: "不能引用机器人".into(),
+                segments: vec![],
                 reply_to: Some(bot_id),
             },
         )
@@ -561,6 +571,7 @@ mod tests {
             SandboxAction::SendAsBot {
                 conversation_id: conversation_id.clone(),
                 text: "未知引用".into(),
+                segments: vec![],
                 reply_to: Some("missing-id".into()),
             },
         )
@@ -581,6 +592,7 @@ mod tests {
             SandboxAction::SendAsBot {
                 conversation_id,
                 text: "过期回复".into(),
+                segments: vec![],
                 reply_to: Some("qq-msg-old".into()),
             },
         )
@@ -608,7 +620,7 @@ mod tests {
                 &self,
                 _operation_id: &str,
                 _conversation: &QqConversationRef,
-                _text: &str,
+                _segments: &[MessageSegment],
                 _reply_to: Option<&str>,
             ) -> Result<serde_json::Value, SandboxError> {
                 Err(SandboxError::new(
@@ -630,6 +642,7 @@ mod tests {
             SandboxAction::SendAsBot {
                 conversation_id: live.conversations[0].conversation_id.clone(),
                 text: "后台回复".into(),
+                segments: vec![],
                 reply_to: Some("qq-msg-1".into()),
             },
         )
@@ -778,5 +791,154 @@ mod tests {
         .unwrap();
         assert!(skipped.result["imported"].as_array().unwrap().is_empty());
         assert_eq!(skipped.result["skipped"][0]["reason"], "already_exists");
+    }
+
+    #[test]
+    fn parse_sandbox_mentions_matches_roster_and_all() {
+        let users = vec![
+            SandboxUserView {
+                user_id: sandbox_user_id("Alice"),
+                display_name: "Alice".into(),
+                last_seen_unix_ms: 0,
+                message_count: 0,
+            },
+            SandboxUserView {
+                user_id: sandbox_user_id("Bob"),
+                display_name: "Bob".into(),
+                last_seen_unix_ms: 0,
+                message_count: 0,
+            },
+        ];
+        let segments = parse_sandbox_mentions("hi @Alice and @全体成员", &users);
+        assert!(matches!(
+            &segments[0],
+            MessageSegment::Text { text } if text == "hi "
+        ));
+        assert!(matches!(
+            &segments[1],
+            MessageSegment::MentionUser { user_id } if user_id == &sandbox_user_id("Alice")
+        ));
+        assert!(matches!(
+            &segments[2],
+            MessageSegment::Text { text } if text == " and "
+        ));
+        assert!(matches!(&segments[3], MessageSegment::MentionAll));
+    }
+
+    #[tokio::test]
+    async fn simulate_ingests_mentions_media_and_ark() {
+        let service = SandboxService::with_account("qq-main");
+        service.set_runtime(runtime());
+        let snapshot = service.snapshot("").await.unwrap();
+        let group = group(&snapshot);
+        write(
+            &service,
+            snapshot.revision,
+            "op-at",
+            SandboxAction::IngestAsUser {
+                conversation_id: group.conversation_id.clone(),
+                user_id: sandbox_user_id("Alice"),
+                text: "hello @Bob".into(),
+                segments: vec![],
+                reply_to: None,
+            },
+        )
+        .await
+        .unwrap();
+        let mentioned = service
+            .messages(&group.conversation_id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|item| item.text.contains("@sandbox:bob") || item.text.contains("@Bob"))
+            .unwrap();
+        assert!(mentioned.segments.iter().any(|segment| matches!(
+            segment,
+            MessageSegment::MentionUser { user_id } if user_id == &sandbox_user_id("Bob")
+        )));
+
+        let uploaded = service
+            .upload_media("pic.png", "image/png", b"fake-png".to_vec())
+            .await
+            .unwrap();
+        let after = service.snapshot("").await.unwrap();
+        write(
+            &service,
+            after.revision,
+            "op-rich",
+            SandboxAction::IngestAsUser {
+                conversation_id: group.conversation_id.clone(),
+                user_id: sandbox_user_id("Alice"),
+                text: String::new(),
+                segments: vec![
+                    MessageSegment::PlatformSpecific {
+                        platform: "sandbox".into(),
+                        kind: "media".into(),
+                        payload: json!({
+                            "media_id": uploaded.media_id,
+                            "mime": "image/png",
+                            "name": "pic.png"
+                        }),
+                    },
+                    MessageSegment::PlatformSpecific {
+                        platform: "qqbot".into(),
+                        kind: "ark".into(),
+                        payload: json!({
+                            "template_id": 23,
+                            "kv": [{"key": "#METATITLE#", "value": "卡片"}]
+                        }),
+                    },
+                ],
+                reply_to: None,
+            },
+        )
+        .await
+        .unwrap();
+        let blob = service.media_blob(&uploaded.media_id).await.unwrap();
+        assert_eq!(blob.bytes, b"fake-png");
+        let rich = service
+            .messages(&group.conversation_id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|item| item.text.contains("[小卡片]"))
+            .unwrap();
+        assert!(rich.segments.iter().any(|segment| matches!(
+            segment,
+            MessageSegment::PlatformSpecific { kind, .. } if kind == "ark"
+        )));
+    }
+
+    #[tokio::test]
+    async fn live_deliver_forwards_mention_segments() {
+        let service = SandboxService::with_account("qq-main");
+        let runtime = runtime();
+        service.set_runtime(runtime.clone());
+        service.observe_event(live_group_event("qq-msg-1", "在吗", now_ms()));
+        switch_live(&service).await;
+        let conversation_id = service.snapshot("").await.unwrap().conversations[0]
+            .conversation_id
+            .clone();
+        write(
+            &service,
+            service.snapshot("").await.unwrap().revision,
+            "op-mention",
+            SandboxAction::SendAsBot {
+                conversation_id,
+                text: String::new(),
+                segments: vec![
+                    MessageSegment::text("hi "),
+                    MessageSegment::MentionUser {
+                        user_id: "member-1".into(),
+                    },
+                ],
+                reply_to: Some("qq-msg-1".into()),
+            },
+        )
+        .await
+        .unwrap();
+        let delivered = runtime.deliver.lock().expect("deliver");
+        assert_eq!(delivered[0].0, "hi @member-1");
+        assert_eq!(delivered[0].1.as_deref(), Some("qq-msg-1"));
     }
 }
