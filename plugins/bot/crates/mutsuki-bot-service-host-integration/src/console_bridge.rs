@@ -220,6 +220,22 @@ impl SandboxApi for GenerationAwareSandbox {
             .ok()?
             .observe_outbound(conversation, segments, reply_to)
     }
+
+    async fn upload_media(
+        &self,
+        name: &str,
+        mime: &str,
+        bytes: Vec<u8>,
+    ) -> Result<mutsuki_bot_sandbox::SandboxMediaRef, mutsuki_bot_sandbox::SandboxError> {
+        self.service()?.upload_media(name, mime, bytes).await
+    }
+
+    async fn media_blob(
+        &self,
+        media_id: &str,
+    ) -> Result<mutsuki_bot_sandbox::SandboxMediaBlob, mutsuki_bot_sandbox::SandboxError> {
+        self.service()?.media_blob(media_id).await
+    }
 }
 
 impl GenerationAwareSandbox {

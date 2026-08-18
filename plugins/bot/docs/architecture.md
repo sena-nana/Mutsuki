@@ -74,7 +74,11 @@ Sandbox console (virtual user)
   Koishi-style closed loop (virtual users always enter `mutsuki.bot.flow/ingress@1`,
   outbound `message/send` for `sandbox:` conversations is intercepted back into the
   console). Simulate roster OpenID/nickname can be edited, and observed live members
-  can be imported into simulate. Live mode projects real Gateway inbound events and
+  can be imported into simulate. Simulate compose can send mentions, local media,
+  Ark cards and Markdown into Flow; the console renders those segments plus live
+  inbound attachments/ark/markdown/keyboard. Live outbound stays on Adapter-supported
+  text, mention and media. Media bytes stay in a bounded sandbox blob map, not in
+  the message list JSON. Live mode projects real Gateway inbound events and
   confirmed bot sends. Unquoted live send is allowed only after that conversation
   received `GROUP_MSG_RECEIVE` / `C2C_MSG_RECEIVE`; otherwise it requires a user-message
   reply (`msg_id`). Failed receipts are surfaced instead of a local bubble.

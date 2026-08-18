@@ -2,7 +2,7 @@ use mutsuki_bot_protocol::{
     BotAccountRef, BotEvent, BotEventKind, BotExtMap, BotMessage, BotPlatform, BotUser,
     MessageSegment,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::adapter::qq_target_from_payload;
@@ -172,17 +172,8 @@ fn qq_message(
         return None;
     }
     let content = message_content(event_type, data);
-    let mut segments = vec![MessageSegment::Text { text: content }];
-    if let Some(mentions) = data.get("mentions").and_then(Value::as_array) {
-        segments.extend(mentions.iter().filter_map(|mention| {
-            mention
-                .get("id")
-                .and_then(Value::as_str)
-                .map(|user_id| MessageSegment::MentionUser {
-                    user_id: user_id.into(),
-                })
-        }));
-    }
+    let mut segments = content_segments(&content);
+    extend_qq_rich_segments(&mut segments, data);
     let reply_to = data
         .get("message_reference")
         .and_then(|reference| reference.get("message_id"))
@@ -209,6 +200,165 @@ fn qq_message(
         time_ms: event_time_ms(data),
         ext: BotExtMap::new(),
     })
+}
+
+fn content_segments(content: &str) -> Vec<MessageSegment> {
+    let mut segments = Vec::new();
+    let mut cursor = 0;
+    while cursor < content.len() {
+        match next_mention(&content[cursor..]) {
+            None => {
+                let rest = &content[cursor..];
+                if !rest.is_empty() {
+                    segments.push(MessageSegment::Text {
+                        text: rest.to_owned(),
+                    });
+                }
+                break;
+            }
+            Some((start, end, segment)) => {
+                if start > 0 {
+                    segments.push(MessageSegment::Text {
+                        text: content[cursor..cursor + start].to_owned(),
+                    });
+                }
+                segments.push(segment);
+                cursor += end;
+            }
+        }
+    }
+    segments
+}
+
+fn next_mention(content: &str) -> Option<(usize, usize, MessageSegment)> {
+    let mut best: Option<(usize, usize, MessageSegment)> = None;
+    let consider = |best: &mut Option<(usize, usize, MessageSegment)>,
+                    start: usize,
+                    end: usize,
+                    segment: MessageSegment| {
+        if best.as_ref().is_none_or(|(current, _, _)| start < *current) {
+            *best = Some((start, end, segment));
+        }
+    };
+
+    let mut search = 0;
+    while let Some(rel) = content[search..].find('<') {
+        let start = search + rel;
+        let rest = &content[start..];
+        if let Some(mention) = parse_angle_mention(rest) {
+            consider(&mut best, start, start + mention.0, mention.1);
+            break;
+        }
+        search = start + 1;
+    }
+
+    for (token, segment) in [
+        ("@all", MessageSegment::MentionAll),
+        ("@everyone", MessageSegment::MentionAll),
+    ] {
+        if let Some(start) = content.find(token) {
+            let end = start + token.len();
+            if mention_token_boundary(content, start, end) {
+                consider(&mut best, start, end, segment);
+            }
+        }
+    }
+    best
+}
+
+fn parse_angle_mention(rest: &str) -> Option<(usize, MessageSegment)> {
+    if let Some(body) = rest.strip_prefix("<qqbot-at-user ") {
+        let id = body
+            .strip_prefix("id=\"")
+            .and_then(|value| value.split('"').next())
+            .filter(|value| !value.is_empty())?;
+        let close = body
+            .find("/>")
+            .map(|index| "<qqbot-at-user ".len() + index + 2)?;
+        return Some((
+            close,
+            MessageSegment::MentionUser {
+                user_id: id.to_owned(),
+            },
+        ));
+    }
+    let body = rest.strip_prefix("<@")?;
+    let body = body.strip_prefix('!').unwrap_or(body);
+    let (user_id, tail) = body.split_once('>')?;
+    if user_id.is_empty() || user_id.chars().any(char::is_whitespace) {
+        return None;
+    }
+    let consumed = rest.len() - tail.len();
+    if user_id.eq_ignore_ascii_case("all") || user_id.eq_ignore_ascii_case("everyone") {
+        Some((consumed, MessageSegment::MentionAll))
+    } else {
+        Some((
+            consumed,
+            MessageSegment::MentionUser {
+                user_id: user_id.to_owned(),
+            },
+        ))
+    }
+}
+
+fn mention_token_boundary(content: &str, start: usize, end: usize) -> bool {
+    let before_ok = content[..start]
+        .chars()
+        .next_back()
+        .is_none_or(|ch| !ch.is_ascii_alphanumeric());
+    let after_ok = content[end..]
+        .chars()
+        .next()
+        .is_none_or(|ch| !ch.is_ascii_alphanumeric());
+    before_ok && after_ok
+}
+
+fn extend_qq_rich_segments(segments: &mut Vec<MessageSegment>, data: &Value) {
+    if let Some(attachments) = data.get("attachments").and_then(Value::as_array) {
+        for attachment in attachments {
+            let Some(url) = attachment.get("url").and_then(Value::as_str) else {
+                continue;
+            };
+            let content_type = attachment
+                .get("content_type")
+                .or_else(|| attachment.get("contentType"))
+                .and_then(Value::as_str)
+                .unwrap_or("application/octet-stream");
+            let filename = attachment.get("filename").and_then(Value::as_str);
+            segments.push(MessageSegment::PlatformSpecific {
+                platform: "qqbot".into(),
+                kind: "attachment".into(),
+                payload: json!({
+                    "url": url,
+                    "content_type": content_type,
+                    "filename": filename,
+                }),
+            });
+        }
+    }
+    push_named_payload(segments, data, "ark");
+    push_named_payload(segments, data, "markdown");
+    push_named_payload(segments, data, "embed");
+    if let Some(embeds) = data.get("embeds").and_then(Value::as_array) {
+        for embed in embeds {
+            segments.push(platform_payload("embed", embed.clone()));
+        }
+    }
+    push_named_payload(segments, data, "keyboard");
+}
+
+fn push_named_payload(segments: &mut Vec<MessageSegment>, data: &Value, kind: &str) {
+    if let Some(payload) = data.get(kind) {
+        segments.push(platform_payload(kind, payload.clone()));
+    }
+}
+
+fn platform_payload(kind: &str, payload: Value) -> MessageSegment {
+    MessageSegment::PlatformSpecific {
+        platform: "qqbot".into(),
+        kind: kind.into(),
+        payload,
+    }
 }
 
 fn message_content(event_type: &str, data: &Value) -> String {

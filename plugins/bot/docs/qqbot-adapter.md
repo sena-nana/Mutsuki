@@ -9,7 +9,7 @@ the adapter through the configured plugin catalog.
 | Area | Support |
 | --- | --- |
 | Gateway | HTTPS discovery, WSS, Hello, Identify, Ready, heartbeat/ACK, Resume and reconnect |
-| Inbound | Group @, C2C, guild/channel @ and direct messages; available delete, member and reaction events |
+| Inbound | Group @, C2C, guild/channel @ and direct messages; available delete, member and reaction events. Content `<@id>` / `@all` is inlined as mention segments. Attachments (CDN URL), plus `ark` / `markdown` / `embed` / `keyboard`, map to `PlatformSpecific`. A media provider may additionally add `Image`/`File`/`Audio`/`Video` ResourceRef segments. |
 | Standard effects | Group/C2C text, mention, reply and message recall |
 | QQ-specific effects | Account query, Gateway query and relative-path raw call |
 | Media | Validated image/audio/video/file `ResourceRef` input and Group/C2C upload/send, only when the product injects a real provider |
@@ -79,7 +79,9 @@ carry `qqbot.sequence` as ordering information.
 Standard outbound `Reply` and `Quote` segments lower to QQ's `msg_id`, the same as
 `BotMessage.reply_to`. Empty or conflicting message IDs return `qqbot.openapi.invalid_request`
 before any network request; they never fall back to a new active message. Omitting `reply_to`
-sends a Group/C2C active message (no `msg_id`). The sandbox records per-conversation permission
+sends a Group/C2C active message (no `msg_id`). Standard `message/send` still does not send
+Ark, Markdown or keyboard payloads; those remain inbound `PlatformSpecific` segments (and
+sandbox simulate compose). The sandbox records per-conversation permission
 from `GROUP_MSG_RECEIVE` / `GROUP_MSG_REJECT` and C2C equivalents, and otherwise requires the
 user-message reply button.
 

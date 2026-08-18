@@ -101,16 +101,37 @@ pub enum SandboxAction {
     IngestAsUser {
         conversation_id: String,
         user_id: String,
+        #[serde(default)]
         text: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        segments: Vec<MessageSegment>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reply_to: Option<String>,
     },
     SendAsBot {
         conversation_id: String,
+        #[serde(default)]
         text: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        segments: Vec<MessageSegment>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reply_to: Option<String>,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SandboxMediaRef {
+    pub media_id: String,
+    pub mime: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SandboxMediaBlob {
+    pub media_id: String,
+    pub mime: String,
+    pub name: String,
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -256,10 +277,147 @@ pub fn preview_segments(segments: &[MessageSegment]) -> String {
             MessageSegment::Audio { .. } => parts.push("[语音]".into()),
             MessageSegment::Video { .. } => parts.push("[视频]".into()),
             MessageSegment::Reply { .. } | MessageSegment::Quote { .. } => {}
-            MessageSegment::PlatformSpecific { kind, .. } => {
-                parts.push(format!("[{kind}]"));
+            MessageSegment::PlatformSpecific { kind, payload, .. } => {
+                parts.push(preview_platform_kind(kind, payload));
             }
         }
     }
     parts.join("")
+}
+
+fn preview_platform_kind(kind: &str, payload: &Value) -> String {
+    match kind {
+        "ark" | "embed" => "[小卡片]".into(),
+        "markdown" => "[Markdown]".into(),
+        "keyboard" => "[按钮]".into(),
+        "attachment" | "media" => preview_media_label(payload),
+        other => format!("[{other}]"),
+    }
+}
+
+fn preview_media_label(payload: &Value) -> String {
+    let mime = payload
+        .get("content_type")
+        .or_else(|| payload.get("mime"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if mime.starts_with("image/") {
+        "[图片]".into()
+    } else if mime.starts_with("audio/") {
+        "[语音]".into()
+    } else if mime.starts_with("video/") {
+        "[视频]".into()
+    } else {
+        let name = payload
+            .get("filename")
+            .or_else(|| payload.get("name"))
+            .and_then(Value::as_str)
+            .unwrap_or("文件");
+        format!("[{name}]")
+    }
+}
+
+#[must_use]
+pub fn parse_sandbox_mentions(text: &str, users: &[SandboxUserView]) -> Vec<MessageSegment> {
+    let mut segments = Vec::new();
+    let mut cursor = 0;
+    while cursor < text.len() {
+        match next_sandbox_mention(&text[cursor..], users) {
+            None => {
+                let rest = &text[cursor..];
+                if !rest.is_empty() {
+                    segments.push(MessageSegment::text(rest));
+                }
+                break;
+            }
+            Some((start, end, segment)) => {
+                if start > 0 {
+                    segments.push(MessageSegment::text(&text[cursor..cursor + start]));
+                }
+                segments.push(segment);
+                cursor += end;
+            }
+        }
+    }
+    segments
+}
+
+fn next_sandbox_mention(
+    text: &str,
+    users: &[SandboxUserView],
+) -> Option<(usize, usize, MessageSegment)> {
+    let mut best: Option<(usize, usize, MessageSegment)> = None;
+    consider_mention(
+        &mut best,
+        text.find("@全体成员")
+            .map(|start| (start, start + "@全体成员".len(), MessageSegment::MentionAll)),
+    );
+    let mut search = 0;
+    while let Some(rel) = text[search..].find("<@") {
+        let start = search + rel;
+        if let Some(body) = text[start..].strip_prefix("<@")
+            && let Some((user_id, _)) = body.split_once('>')
+            && !user_id.is_empty()
+            && !user_id.chars().any(char::is_whitespace)
+        {
+            let end = start + 2 + user_id.len() + 1;
+            consider_mention(
+                &mut best,
+                Some((
+                    start,
+                    end,
+                    MessageSegment::MentionUser {
+                        user_id: user_id.to_owned(),
+                    },
+                )),
+            );
+            break;
+        }
+        search = start + 2;
+    }
+    let mut names = users
+        .iter()
+        .flat_map(|user| {
+            [
+                (user.display_name.as_str(), user.user_id.as_str()),
+                (user.user_id.as_str(), user.user_id.as_str()),
+            ]
+        })
+        .filter(|(name, _)| !name.is_empty())
+        .collect::<Vec<_>>();
+    names.sort_by_key(|(name, _)| std::cmp::Reverse(name.len()));
+    for (name, user_id) in names {
+        let needle = format!("@{name}");
+        if let Some(start) = text.find(&needle) {
+            consider_mention(
+                &mut best,
+                Some((
+                    start,
+                    start + needle.len(),
+                    MessageSegment::MentionUser {
+                        user_id: user_id.to_owned(),
+                    },
+                )),
+            );
+        }
+    }
+    best
+}
+
+fn consider_mention(
+    best: &mut Option<(usize, usize, MessageSegment)>,
+    hit: Option<(usize, usize, MessageSegment)>,
+) {
+    let Some((start, end, segment)) = hit else {
+        return;
+    };
+    match best {
+        None => *best = Some((start, end, segment)),
+        Some((current_start, current_end, _))
+            if start < *current_start || (start == *current_start && end > *current_end) =>
+        {
+            *best = Some((start, end, segment));
+        }
+        _ => {}
+    }
 }
