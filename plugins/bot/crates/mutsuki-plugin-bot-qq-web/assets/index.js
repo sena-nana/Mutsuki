@@ -1,5 +1,13 @@
 const QQ_PROVIDER_ID = "mutsuki.bot.adapter.qqbot";
 
+const STYLE = `
+.qq-account-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.qq-account-avatar { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; font-size: 18px; font-weight: 650; color: var(--accent-text, #fff); background: var(--accent, #7aa2ff); flex: none; overflow: hidden; object-fit: cover; object-position: center; }
+img.qq-account-avatar { display: block; padding: 0; }
+.qq-account-head h3 { margin: 0; }
+.qq-account-head p { margin: 2px 0 0; }
+`;
+
 const text = (value) => String(value ?? "—");
 
 const labels = {
@@ -70,6 +78,26 @@ function formatTime(unixMs) {
   return date.toLocaleString();
 }
 
+function ensureStyle() {
+  if (document.getElementById("qq-bot-self-style")) return;
+  const style = element("style");
+  style.id = "qq-bot-self-style";
+  style.textContent = STYLE;
+  document.head.append(style);
+}
+
+function avatar(name, className, avatarUrl) {
+  const value = String(name || "?").trim();
+  const initial = value ? value.slice(0, 1).toUpperCase() : "?";
+  if (!avatarUrl) return element("span", className, initial);
+  const img = element("img", className);
+  img.alt = value || "头像";
+  img.setAttribute("referrerpolicy", "no-referrer");
+  img.src = avatarUrl;
+  img.onerror = () => img.replaceWith(element("span", className, initial));
+  return img;
+}
+
 function actionButton(label, action, state, rpc, refresh, options = {}) {
   const button = element("button", "ghost", label);
   button.type = "button";
@@ -104,10 +132,17 @@ function actionButton(label, action, state, rpc, refresh, options = {}) {
 function accountCard(account, state, rpc, refresh) {
   const card = element("article", "card card--outlined");
   card.dataset.accountId = account.account_id;
+  const selfUser = account.self_user || {};
+  const title = selfUser.display_name || account.account_id || "QQ 账号";
+  const head = element("div", "qq-account-head");
+  const meta = element("div");
+  meta.append(element("h3", "", title));
+  if (selfUser.user_id) meta.append(element("p", "muted", `OpenID ${selfUser.user_id}`));
+  head.append(avatar(title, "qq-account-avatar", selfUser.avatar_url), meta);
   card.append(
-    element("h3", "", account.account_id || "QQ 账号"),
+    head,
     element("p", "muted", `${productLabel(account.health)} · ${productLabel(account.connection_state)}`),
-    element("p", "", `App ID ${text(account.app_id)} · 分片 ${account.shard.join("/")}`),
+    element("p", "", `账号 ${text(account.account_id)} · App ID ${text(account.app_id)} · 分片 ${account.shard.join("/")}`),
     element("p", "", `心跳 ${formatTime(account.last_heartbeat_unix_ms)} · 重连 ${text(account.reconnect_count)} 次`),
     element("p", "", `凭据 ${productLabel(account.credential_status)} · 发送状态 ${productLabel(account.rate_limit_status)}`),
   );
@@ -217,6 +252,7 @@ function withLoadMore(section, cursor, load) {
 
 /** Mount the QQ operations panel into the shared console shell. */
 export function mountQqBotPanel(host, rpc, events, options = {}) {
+  ensureStyle();
   const state = {
     rpc,
     snapshot: null,

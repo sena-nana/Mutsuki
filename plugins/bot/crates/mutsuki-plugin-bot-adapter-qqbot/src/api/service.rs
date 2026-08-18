@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use mutsuki_bot_protocol::{BotMessage, MessageSegment};
 use serde_json::{Value, json};
 
-use crate::adapter::{qq_message_body_from_segments, qq_scene_and_openid};
+use crate::adapter::{qq_message_body_from_segments, qq_scene_and_openid, qq_self_user};
 use crate::api::{
     HttpMethod, MediaUploadPayload, QqAuthManager, QqBotClients, QqHttpRequest, QqIdSource,
     QqMediaProvider, QqOpenApiError, QqOpenApiTransport, RawCallPayload, RecallMessagePayload,
@@ -200,13 +200,15 @@ impl QqOpenApiService {
         let openapi_user =
             self.transport
                 .execute_json(HttpMethod::Get, "/users/@me".into(), Value::Null)?;
+        let user = qq_self_user(&openapi_user, &config.app_id);
         Ok(json!({
             "account": {
                 "account_id": config.account_id,
                 "platform": "qqbot"
             },
             "app_id": config.app_id,
-            "openapi_user": openapi_user
+            "openapi_user": openapi_user,
+            "user": user,
         }))
     }
 

@@ -1,5 +1,6 @@
 use mutsuki_bot_protocol::{
-    BotConversationKind, BotTarget, MessageSegment, QQ_CONVERSATION_REF_VERSION, QqConversationRef,
+    BotConversationKind, BotTarget, BotUser, MessageSegment, QQ_CONVERSATION_REF_VERSION,
+    QqConversationRef,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -79,6 +80,8 @@ pub struct SandboxSnapshot {
     pub conversations: Vec<SandboxConversationView>,
     #[serde(default)]
     pub live_users: Vec<SandboxUserView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bot: Option<BotUser>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

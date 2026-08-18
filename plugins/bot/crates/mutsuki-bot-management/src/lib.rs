@@ -10,7 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use mutsuki_bot_protocol::{
-    BotDeliveryAttempt, BotDeliveryReceipt, BotInteractionSession, DeliveryStatus,
+    BotDeliveryAttempt, BotDeliveryReceipt, BotInteractionSession, BotUser, DeliveryStatus,
     InteractionStatus, QqBotCapabilityMatrix, QqConversationRef,
 };
 use serde::{Deserialize, Serialize};
@@ -71,6 +71,8 @@ pub struct QqAccountView {
     pub credential_status: String,
     pub rate_limit_status: String,
     pub capability: QqBotCapabilityMatrix,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub self_user: Option<BotUser>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -886,6 +888,7 @@ pub struct QqAccountViewInput {
     pub last_heartbeat_unix_ms: Option<u64>,
     pub last_error: Option<String>,
     pub reconnect_count: u64,
+    pub self_user: Option<BotUser>,
 }
 
 /// Builds an account view from adapter config facts plus live gateway health.
@@ -929,6 +932,7 @@ pub fn account_view_from_config(input: QqAccountViewInput) -> QqAccountView {
         .into(),
         rate_limit_status: "ready".into(),
         capability: input.capability,
+        self_user: input.self_user,
     }
 }
 
@@ -1084,6 +1088,7 @@ mod tests {
             last_heartbeat_unix_ms: Some(10),
             last_error: None,
             reconnect_count: 0,
+            self_user: None,
         }));
         local.upsert_delivery(delivery_view(
             BotDeliveryReceipt {
@@ -1137,11 +1142,21 @@ mod tests {
             last_heartbeat_unix_ms: None,
             last_error: Some("identify rejected".into()),
             reconnect_count: 3,
+            self_user: Some(BotUser {
+                user_id: "BOT_OPENID".into(),
+                display_name: Some("mutsuki".into()),
+                avatar_url: Some("https://q.qlogo.cn/qqapp/app/BOT_OPENID/640".into()),
+            }),
         });
         assert_eq!(account.app_id, "app");
         assert_eq!(account.last_error.as_deref(), Some("identify rejected"));
         assert_eq!(account.reconnect_count, 3);
         assert_eq!(account.health, "unhealthy");
+        assert_eq!(account.self_user.as_ref().unwrap().user_id, "BOT_OPENID");
+        assert_eq!(
+            account.self_user.as_ref().unwrap().display_name.as_deref(),
+            Some("mutsuki")
+        );
     }
 
     #[tokio::test]

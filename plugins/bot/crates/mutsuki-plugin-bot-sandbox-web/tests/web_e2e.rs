@@ -54,6 +54,8 @@ async fn sandbox_rpc_simulate_send_and_confirm_live_send() {
     assert!(frontend.contains("contextmenu"));
     assert!(frontend.contains("avatar_url"));
     assert!(frontend.contains("conversation.avatar_url || peer?.avatar_url"));
+    assert!(frontend.contains("botProfile"));
+    assert!(frontend.contains("snapshot?.bot"));
     assert!(frontend.contains("referrerpolicy"));
     assert!(frontend.contains("remoteImage"));
     assert!(frontend.contains("sandbox-reply"));

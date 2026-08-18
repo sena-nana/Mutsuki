@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use mutsuki_bot_protocol::{
     BOT_FLOW_BOT_EVENT_TYPE, BOT_MEDIA_UPLOAD_PROTOCOL_ID, BOT_MESSAGE_RECALL_PROTOCOL_ID,
     BOT_MESSAGE_SEND_PROTOCOL_ID, BotConversationKind, BotEvent, BotEventKind,
-    BotFlowEventEnvelope, BotMediaKind, BotMessage, BotMessageRecallRequest, BotTarget,
+    BotFlowEventEnvelope, BotMediaKind, BotMessage, BotMessageRecallRequest, BotTarget, BotUser,
     MessageSegment, QQBOT_ACCOUNT_GET_PROTOCOL_ID, QQBOT_GATEWAY_STATUS_PROTOCOL_ID,
     QQBOT_OPENAPI_PERMANENT_ERROR, QQBOT_OPENAPI_RATE_LIMITED_ERROR, QQBOT_RAW_CALL_PROTOCOL_ID,
     QqMessageSegmentKind, QqPermissionRequirement,
@@ -16,6 +16,7 @@ use mutsuki_runtime_contracts::{
 use mutsuki_runtime_core::{Runner, RunnerContext};
 use serde_json::{Value, json};
 
+use crate::adapter::qq_self_user;
 use crate::api::{
     HttpMethod, MediaChunk, QqAuthManager, QqMediaError, QqMediaProvider, QqOpenApiError,
     QqOpenApiTransport,
@@ -375,6 +376,65 @@ fn gateway_runner_synthesizes_group_qqapp_avatar_and_keeps_channel_avatar() {
     assert_eq!(
         events[1].actor.as_ref().unwrap().avatar_url.as_deref(),
         Some("https://example.test/guild-avatar.png")
+    );
+}
+
+#[test]
+fn qq_self_user_keeps_avatar_url_and_synthesizes_qqapp_fallback() {
+    let named = qq_self_user(
+        &json!({
+            "id": "BOT_OPENID",
+            "username": "mutsuki",
+            "avatar": "https://example.test/bot.png"
+        }),
+        "APP_ID",
+    )
+    .unwrap();
+    assert_eq!(
+        named,
+        BotUser {
+            user_id: "BOT_OPENID".into(),
+            display_name: Some("mutsuki".into()),
+            avatar_url: Some("https://example.test/bot.png".into()),
+        }
+    );
+
+    let synthesized = qq_self_user(&json!({"id": "BOT_OPENID", "nick": "bot"}), "APP_ID").unwrap();
+    assert_eq!(synthesized.display_name.as_deref(), Some("bot"));
+    assert_eq!(
+        synthesized.avatar_url.as_deref(),
+        Some("https://q.qlogo.cn/qqapp/APP_ID/BOT_OPENID/640")
+    );
+}
+
+#[test]
+fn gateway_runner_maps_ready_user_as_bot_self() {
+    let mut runner = QqGatewayMapRunner::with_app_id(1, "main", "APP_ID");
+    let ready = Task::new(
+        "ready",
+        QQBOT_GATEWAY_FRAME_PROTOCOL_ID,
+        json!({
+            "op": 0,
+            "s": 1,
+            "t": "READY",
+            "id": "ready-event",
+            "d": {
+                "session_id": "SESSION",
+                "user": {"id": "BOT_OPENID", "username": "mutsuki"}
+            }
+        }),
+    );
+
+    let completion = run_tasks(&mut runner, vec![ready]);
+    let event = decode_ingress_event(&completion.results[0].result.as_ref().unwrap().tasks[0]);
+    assert_eq!(event.kind, BotEventKind::BotConnected);
+    assert_eq!(
+        event.actor,
+        Some(BotUser {
+            user_id: "BOT_OPENID".into(),
+            display_name: Some("mutsuki".into()),
+            avatar_url: Some("https://q.qlogo.cn/qqapp/APP_ID/BOT_OPENID/640".into()),
+        })
     );
 }
 
@@ -1026,6 +1086,12 @@ fn openapi_runner_gets_qqbot_account_from_openapi() {
     assert_eq!(response["account"]["platform"], "qqbot");
     assert_eq!(response["app_id"], "APP_ID");
     assert_eq!(response["openapi_user"]["id"], "BOT_OPENID");
+    assert_eq!(response["user"]["user_id"], "BOT_OPENID");
+    assert_eq!(response["user"]["display_name"], "mutsuki");
+    assert_eq!(
+        response["user"]["avatar_url"],
+        "https://q.qlogo.cn/qqapp/APP_ID/BOT_OPENID/640"
+    );
     let requests = requests.lock().unwrap();
     assert_eq!(requests[1].method, HttpMethod::Get);
     assert!(requests[1].url.ends_with("/users/@me"));

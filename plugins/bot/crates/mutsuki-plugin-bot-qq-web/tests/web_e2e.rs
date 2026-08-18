@@ -51,6 +51,11 @@ impl QqBotManagementApi for Api {
                 .into(),
                 rate_limit_status: "ready".into(),
                 capability: capability(),
+                self_user: Some(mutsuki_bot_protocol::BotUser {
+                    user_id: "BOT_OPENID".into(),
+                    display_name: Some("mutsuki".into()),
+                    avatar_url: Some("https://q.qlogo.cn/qqapp/app/BOT_OPENID/640".into()),
+                }),
             }],
             deliveries: Vec::new(),
             interactions: Vec::new(),
@@ -88,6 +93,9 @@ async fn qq_management_rpc_uses_authenticated_capabilities_confirmation_and_fixe
     let frontend = std::fs::read_to_string(assets.join("index.js")).unwrap();
     assert!(frontend.contains("请到配置里填写账号"));
     assert!(!frontend.contains("保存登录配置"));
+    assert!(frontend.contains("self_user"));
+    assert!(frontend.contains("OpenID"));
+    assert!(frontend.contains("qq-account-avatar"));
     std::fs::write(
         shell_dir.path().join("index.html"),
         "<!doctype html><main></main>",
@@ -127,6 +135,14 @@ async fn qq_management_rpc_uses_authenticated_capabilities_confirmation_and_fixe
     assert_eq!(
         authenticated["accounts"][0]["credential_status"],
         "configured"
+    );
+    assert_eq!(
+        authenticated["accounts"][0]["self_user"]["user_id"],
+        "BOT_OPENID"
+    );
+    assert_eq!(
+        authenticated["accounts"][0]["self_user"]["display_name"],
+        "mutsuki"
     );
 
     let forged = json!({

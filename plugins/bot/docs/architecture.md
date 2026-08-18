@@ -80,7 +80,8 @@ Sandbox console (virtual user)
   inbound attachments/ark/markdown/keyboard. Live outbound stays on Adapter-supported
   text, mention and media. Media bytes stay in a bounded sandbox blob map, not in
   the message list JSON. Live mode projects real Gateway inbound events and
-  confirmed bot sends, including live member avatar URLs. Group sessions show a
+  confirmed bot sends, including live member avatar URLs. Bot bubbles use the connected bot's
+  name and avatar when known, otherwise `机器人`. Group sessions show a
   member photo. The right-hand roster shows nicknames only; OpenID is copied from
   the member context menu, and live members can be imported into the simulate roster.
   Console CSP allows QQ image CDNs (`*.qlogo.cn`, `*.qpic.cn`,

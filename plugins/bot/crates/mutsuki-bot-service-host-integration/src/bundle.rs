@@ -347,6 +347,7 @@ impl OwnerBackedQqManagementProvider {
                 .map(|value| u64::try_from(value).unwrap_or(u64::MAX)),
             last_error: snapshot.last_error,
             reconnect_count: snapshot.reconnect_count,
+            self_user: snapshot.self_user,
         });
         if !include_secret_status {
             account.credential_reference.clear();

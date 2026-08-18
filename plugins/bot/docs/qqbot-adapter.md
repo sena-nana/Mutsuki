@@ -11,7 +11,7 @@ the adapter through the configured plugin catalog.
 | Gateway | HTTPS discovery, WSS, Hello, Identify, Ready, heartbeat/ACK, Resume and reconnect |
 | Inbound | Group @, C2C, guild/channel @ and direct messages; available delete, member and reaction events. Content `<@id>` / `@all` is inlined as mention segments. `<faceType>` tags are stripped so image placeholders do not appear as text. Attachments (CDN URL), plus `ark` / `markdown` / `embed` / `keyboard`, map to `PlatformSpecific`. A media provider may additionally add `Image`/`File`/`Audio`/`Video` ResourceRef segments. Group/C2C actors without `author.avatar` receive `https://q.qlogo.cn/qqapp/{app_id}/{user_openid}/640`; `group_openid` is not used. Guild `author.avatar` is kept as-is. |
 | Standard effects | Group/C2C text, mention, reply and message recall |
-| QQ-specific effects | Account query, Gateway query and relative-path raw call |
+| QQ-specific effects | Account query (mapped `user` plus raw `openapi_user`), Gateway query and relative-path raw call |
 | Media | Validated image/audio/video/file `ResourceRef` input and Group/C2C upload/send, only when the product injects a real provider |
 | Message edit / media download | Not provided |
 
@@ -63,8 +63,9 @@ QQ adapter. Register it on `ServiceRuntimeBuilder`; configured plugins are insta
 RuntimeProfile/LoadPlan freeze. Unknown catalog IDs, raw credential fields, missing Host secrets and
 invalid QQ URLs fail before the service becomes healthy.
 
-Health exposes `connected`, `identified`, last heartbeat/ACK/event timestamps, reconnect count and
-last error. `event_source_list` shows the source lifecycle; `event_source_restart` performs an
+Health exposes `connected`, `identified`, last heartbeat/ACK/event timestamps, reconnect count,
+last error, and the bot self profile from `/users/@me` (READY only fills empty fields).
+`event_source_list` shows the source lifecycle; `event_source_restart` performs an
 explicit supervised restart. Logs use account ID, a session digest, event type, sequence and
 correlation ID, never credentials or authorization headers.
 

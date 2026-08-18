@@ -522,6 +522,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sandbox_bot_profile_appears_in_snapshot_and_outbound() {
+        let service = SandboxService::with_account("qq-main");
+        assert_eq!(service.snapshot("").await.unwrap().bot, None);
+        service.observe_event(BotEvent {
+            event_id: "ready".into(),
+            platform: BotPlatform::QqBot,
+            bot: BotAccountRef {
+                account_id: "qq-main".into(),
+                platform: BotPlatform::QqBot,
+            },
+            kind: BotEventKind::BotConnected,
+            time_ms: now_ms(),
+            target: BotTarget::Group {
+                group_id: "group-1".into(),
+            },
+            actor: Some(BotUser {
+                user_id: "BOT_OPENID".into(),
+                display_name: Some("mutsuki".into()),
+                avatar_url: Some("https://q.qlogo.cn/qqapp/APP_ID/BOT_OPENID/640".into()),
+            }),
+            message: None,
+            raw: None,
+            ext: BotExtMap::new(),
+        });
+        let snapshot = service.snapshot("").await.unwrap();
+        let bot = snapshot.bot.as_ref().expect("bot profile");
+        assert_eq!(bot.user_id, "BOT_OPENID");
+        assert_eq!(bot.display_name.as_deref(), Some("mutsuki"));
+        assert_eq!(
+            bot.avatar_url.as_deref(),
+            Some("https://q.qlogo.cn/qqapp/APP_ID/BOT_OPENID/640")
+        );
+
+        let conversation = group(&snapshot).conversation.clone();
+        let conversation_id = group(&snapshot).conversation_id.clone();
+        service.observe_outbound(&conversation, &[MessageSegment::text("机器人自己")], None);
+        let bot_message = service
+            .messages(&conversation_id)
+            .await
+            .unwrap()
+            .into_iter()
+            .rev()
+            .find(|item| item.role == SandboxSpeakerRole::Bot)
+            .unwrap();
+        assert_eq!(bot_message.sender_id, "BOT_OPENID");
+        assert_eq!(bot_message.sender_name, "mutsuki");
+        assert_eq!(bot_message.text, "机器人自己");
+    }
+
+    #[tokio::test]
     async fn live_send_rejects_bot_unknown_and_expired_quotes() {
         let service = SandboxService::with_account("qq-main");
         service.set_runtime(runtime());
