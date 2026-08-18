@@ -410,4 +410,126 @@ mod tests {
             group_id: "group-1".into(),
         }));
     }
+
+    #[tokio::test]
+    async fn update_user_renames_openid_and_private_chat() {
+        let service = SandboxService::with_account("qq-main");
+        let runtime = runtime();
+        service.set_runtime(runtime.clone());
+        let snapshot = service.snapshot("").await.unwrap();
+        let alice = sandbox_user_id("Alice");
+        write(
+            &service,
+            snapshot.revision,
+            "op-rename",
+            SandboxAction::UpdateUser {
+                user_id: alice.clone(),
+                new_user_id: "real-openid".into(),
+                display_name: "阿狸".into(),
+            },
+        )
+        .await
+        .unwrap();
+        let after = service.snapshot("").await.unwrap();
+        assert!(
+            group(&after)
+                .users
+                .iter()
+                .any(|user| user.user_id == "real-openid" && user.display_name == "阿狸")
+        );
+        assert!(after.conversations.iter().any(|item| {
+            item.kind == BotConversationKind::Private
+                && item.conversation.user_id.as_deref() == Some("real-openid")
+                && item.title == "阿狸"
+        }));
+        assert!(
+            !after
+                .conversations
+                .iter()
+                .any(|item| item.conversation.user_id.as_deref() == Some(alice.as_str()))
+        );
+        let events = runtime.ingest.lock().expect("ingest");
+        assert_eq!(events[0].kind, BotEventKind::MemberLeft);
+        assert_eq!(events[0].actor.as_ref().unwrap().user_id, alice);
+        assert_eq!(events[1].kind, BotEventKind::MemberJoined);
+        assert_eq!(events[1].actor.as_ref().unwrap().user_id, "real-openid");
+        assert_eq!(
+            events[1].actor.as_ref().unwrap().display_name.as_deref(),
+            Some("阿狸")
+        );
+    }
+
+    #[tokio::test]
+    async fn import_live_users_copies_openid_and_nickname() {
+        let service = SandboxService::with_account("qq-main");
+        let runtime = runtime();
+        service.set_runtime(runtime.clone());
+        service.observe_event(BotEvent {
+            event_id: "evt-live-member".into(),
+            platform: BotPlatform::QqBot,
+            bot: BotAccountRef {
+                account_id: "qq-main".into(),
+                platform: BotPlatform::QqBot,
+            },
+            kind: BotEventKind::MessageCreated,
+            time_ms: 1_700_000_000_000,
+            target: BotTarget::Group {
+                group_id: "group-1".into(),
+            },
+            actor: Some(BotUser {
+                user_id: "member-1".into(),
+                display_name: Some("群友甲".into()),
+                avatar_url: None,
+            }),
+            message: Some(BotMessage::text(
+                BotTarget::Group {
+                    group_id: "group-1".into(),
+                },
+                "在吗",
+            )),
+            raw: None,
+            ext: BotExtMap::new(),
+        });
+        let snapshot = service.snapshot("").await.unwrap();
+        assert_eq!(snapshot.mode, SandboxMode::Simulate);
+        assert!(
+            snapshot
+                .live_users
+                .iter()
+                .any(|user| user.user_id == "member-1" && user.display_name == "群友甲")
+        );
+        write(
+            &service,
+            snapshot.revision,
+            "op-import",
+            SandboxAction::ImportLiveUsers {
+                user_ids: vec!["member-1".into()],
+            },
+        )
+        .await
+        .unwrap();
+        let after = service.snapshot("").await.unwrap();
+        assert!(
+            group(&after)
+                .users
+                .iter()
+                .any(|user| user.user_id == "member-1" && user.display_name == "群友甲")
+        );
+        assert!(after.conversations.iter().any(|item| {
+            item.kind == BotConversationKind::Private
+                && item.conversation.user_id.as_deref() == Some("member-1")
+        }));
+        let skipped = write(
+            &service,
+            after.revision,
+            "op-import-again",
+            SandboxAction::ImportLiveUsers {
+                user_ids: vec!["member-1".into()],
+            },
+        )
+        .await
+        .unwrap();
+        assert!(skipped.result["imported"].as_array().unwrap().is_empty());
+        assert_eq!(skipped.result["skipped"][0]["reason"], "already_exists");
+    }
 }

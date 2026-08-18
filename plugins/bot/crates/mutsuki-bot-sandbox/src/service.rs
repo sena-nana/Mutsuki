@@ -13,10 +13,11 @@ use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use crate::types::{
-    DEFAULT_SANDBOX_ACCOUNT_ID, SANDBOX_GROUP_ID, SANDBOX_ID_PREFIX, SANDBOX_USER_NAMES,
-    SandboxAction, SandboxChangeEvent, SandboxConversationView, SandboxError, SandboxMessageView,
-    SandboxMode, SandboxSnapshot, SandboxSpeakerRole, SandboxUserView, SandboxWriteRequest,
-    SandboxWriteResult, is_sandbox_conversation, preview_segments, sandbox_user_id,
+    DEFAULT_SANDBOX_ACCOUNT_ID, SANDBOX_GROUP_ID, SANDBOX_ID_PREFIX, SANDBOX_USER_LIMIT,
+    SANDBOX_USER_NAMES, SandboxAction, SandboxChangeEvent, SandboxConversationView, SandboxError,
+    SandboxMessageView, SandboxMode, SandboxSnapshot, SandboxSpeakerRole, SandboxUserView,
+    SandboxWriteRequest, SandboxWriteResult, is_sandbox_conversation, preview_segments,
+    sandbox_user_id,
 };
 
 const MAX_MESSAGES: usize = 200;
@@ -231,26 +232,9 @@ impl SandboxService {
                 .find(|name| !taken.iter().any(|id| id == &sandbox_user_id(name)))
                 .ok_or_else(|| SandboxError::new("invalid_state", "可创建的用户数量已达上限"))?;
             let now = unix_ms();
-            let account_id = inner.account_id.clone();
             let user_id = sandbox_user_id(display_name);
-            let group_id = group_conversation_id(&inner.simulate)?;
-            let stored = conversation_mut(&mut inner.simulate, &group_id)?;
-            upsert_user(stored, &user_id, Some(display_name), now);
-            let group = stored.view.conversation.clone();
-            let user = stored.users[&user_id].clone();
-            let private = insert_conversation(
-                &mut inner.simulate,
-                private_ref(&account_id, &user_id),
-                display_name,
-                now,
-            )?;
-            if let Some(stored) = inner
-                .simulate
-                .conversations
-                .get_mut(&private.conversation_id)
-            {
-                upsert_user(stored, &user_id, Some(display_name), now);
-            }
+            let (group, user) = place_simulate_user(&mut inner, &user_id, display_name, now)?;
+            let account_id = inner.account_id.clone();
             let event = sandbox_event(
                 &account_id,
                 &group,
@@ -309,6 +293,154 @@ impl SandboxService {
             (event, revision, mode, json!({ "user_id": user.user_id }))
         };
         runtime.ingest(event).await?;
+        self.publish(revision, mode);
+        Ok(write_ok(revision, result))
+    }
+
+    async fn update_user(
+        &self,
+        expected_revision: u64,
+        user_id: String,
+        new_user_id: String,
+        display_name: String,
+    ) -> Result<SandboxWriteResult, SandboxError> {
+        let user_id = require_identity(&user_id, "OpenID")?;
+        let new_user_id = require_identity(&new_user_id, "OpenID")?;
+        let display_name = display_name.trim();
+        if display_name.is_empty() || display_name.chars().count() > 64 {
+            return Err(SandboxError::new("invalid_argument", "昵称无效"));
+        }
+        let display_name = display_name.to_owned();
+        let renamed = new_user_id != user_id;
+        if renamed {
+            self.require_flow()?;
+        }
+        let (events, revision, mode, result) = {
+            let mut inner = self.lock_inner();
+            require_revision(&inner, expected_revision)?;
+            require_simulate(&inner, "真实模式不能修改虚拟用户")?;
+            let now = unix_ms();
+            let account_id = inner.account_id.clone();
+            let group_id = group_conversation_id(&inner.simulate)?;
+            let (existing, group) = {
+                let stored = conversation_mut(&mut inner.simulate, &group_id)?;
+                let existing = stored.users.get(&user_id).cloned().ok_or_else(|| {
+                    SandboxError::new("not_found", format!("用户 `{user_id}` 不在当前会话"))
+                })?;
+                if renamed && stored.users.contains_key(&new_user_id) {
+                    return Err(SandboxError::new(
+                        "already_exists",
+                        format!("用户 `{new_user_id}` 已在沙盒中"),
+                    ));
+                }
+                (existing, stored.view.conversation.clone())
+            };
+            let user =
+                relocate_simulate_user(&mut inner, &user_id, &new_user_id, &display_name, now)?;
+            let events = if renamed {
+                vec![
+                    sandbox_event(
+                        &account_id,
+                        &group,
+                        &existing,
+                        BotEventKind::MemberLeft,
+                        None,
+                        i64::try_from(now).unwrap_or(i64::MAX),
+                    )?,
+                    sandbox_event(
+                        &account_id,
+                        &group,
+                        &user,
+                        BotEventKind::MemberJoined,
+                        None,
+                        i64::try_from(now).unwrap_or(i64::MAX),
+                    )?,
+                ]
+            } else {
+                Vec::new()
+            };
+            let (revision, mode) = finish(&mut inner);
+            (
+                events,
+                revision,
+                mode,
+                json!({
+                    "user_id": user.user_id,
+                    "display_name": user.display_name,
+                }),
+            )
+        };
+        if !events.is_empty() {
+            let runtime = self.require_flow()?;
+            for event in events {
+                runtime.ingest(event).await?;
+            }
+        }
+        self.publish(revision, mode);
+        Ok(write_ok(revision, result))
+    }
+
+    async fn import_live_users(
+        &self,
+        expected_revision: u64,
+        user_ids: Vec<String>,
+    ) -> Result<SandboxWriteResult, SandboxError> {
+        let runtime = self.require_flow()?;
+        if user_ids.is_empty() {
+            return Err(SandboxError::new("invalid_argument", "请选择要导入的成员"));
+        }
+        let (events, revision, mode, result) = {
+            let mut inner = self.lock_inner();
+            require_revision(&inner, expected_revision)?;
+            require_simulate(&inner, "真实模式不能修改虚拟用户")?;
+            let live_users = collect_live_users(&inner.live);
+            let mut imported = Vec::new();
+            let mut skipped = Vec::new();
+            let mut events = Vec::new();
+            let now = unix_ms();
+            let account_id = inner.account_id.clone();
+            for raw_id in user_ids {
+                let user_id = require_identity(&raw_id, "OpenID")?;
+                let Some(source) = live_users.iter().find(|user| user.user_id == user_id) else {
+                    return Err(SandboxError::new(
+                        "not_found",
+                        format!("真实数据中没有成员 `{user_id}`"),
+                    ));
+                };
+                match place_simulate_user(&mut inner, &user_id, &source.display_name, now) {
+                    Ok((group, user)) => {
+                        events.push(sandbox_event(
+                            &account_id,
+                            &group,
+                            &user,
+                            BotEventKind::MemberJoined,
+                            None,
+                            i64::try_from(now).unwrap_or(i64::MAX),
+                        )?);
+                        imported.push(json!({
+                            "user_id": user.user_id,
+                            "display_name": user.display_name,
+                        }));
+                    }
+                    Err(error)
+                        if error.code == "already_exists" || error.code == "invalid_state" =>
+                    {
+                        skipped.push(json!({ "user_id": user_id, "reason": error.code }));
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            let (revision, mode) = finish(&mut inner);
+            (
+                events,
+                revision,
+                mode,
+                json!({ "imported": imported, "skipped": skipped }),
+            )
+        };
+        for event in events {
+            runtime.ingest(event).await?;
+        }
         self.publish(revision, mode);
         Ok(write_ok(revision, result))
     }
@@ -430,6 +562,7 @@ impl SandboxApi for SandboxService {
             flow_available: self.runtime().is_some(),
             account_id: inner.account_id.clone(),
             conversations,
+            live_users: collect_live_users(&inner.live),
         })
     }
 
@@ -462,6 +595,23 @@ impl SandboxApi for SandboxService {
                 Ok(write_ok(revision, json!({ "mode": mode })))
             }
             SandboxAction::AddUser => self.add_user(request.expected_revision).await,
+            SandboxAction::UpdateUser {
+                user_id,
+                new_user_id,
+                display_name,
+            } => {
+                self.update_user(
+                    request.expected_revision,
+                    user_id,
+                    new_user_id,
+                    display_name,
+                )
+                .await
+            }
+            SandboxAction::ImportLiveUsers { user_ids } => {
+                self.import_live_users(request.expected_revision, user_ids)
+                    .await
+            }
             SandboxAction::RemoveUser { user_id } => {
                 self.remove_user(request.expected_revision, user_id).await
             }
@@ -684,6 +834,23 @@ fn require_text(text: &str) -> Result<String, SandboxError> {
     Ok(text.to_owned())
 }
 
+fn require_identity(value: &str, field: &str) -> Result<String, SandboxError> {
+    let value = value.trim();
+    if value.is_empty()
+        || value.len() > 128
+        || value
+            .chars()
+            .any(|ch| ch.is_whitespace() || ch.is_control() || ch == '|')
+        || value == SANDBOX_GROUP_ID
+    {
+        return Err(SandboxError::new(
+            "invalid_argument",
+            format!("{field} 无效"),
+        ));
+    }
+    Ok(value.to_owned())
+}
+
 fn require_simulate(inner: &Inner, message: &str) -> Result<(), SandboxError> {
     if inner.mode == SandboxMode::Simulate {
         Ok(())
@@ -717,6 +884,134 @@ fn group_conversation_id(store: &Store) -> Result<String, SandboxError> {
         .find(|item| item.view.kind == BotConversationKind::Group)
         .map(|item| item.view.conversation_id.clone())
         .ok_or_else(|| SandboxError::new("not_found", "沙盒群不存在"))
+}
+
+fn collect_live_users(store: &Store) -> Vec<SandboxUserView> {
+    let mut users = HashMap::<String, SandboxUserView>::new();
+    for stored in store.conversations.values() {
+        for user in stored.users.values() {
+            users
+                .entry(user.user_id.clone())
+                .and_modify(|existing| {
+                    if existing.last_seen_unix_ms <= user.last_seen_unix_ms {
+                        *existing = user.clone();
+                    }
+                })
+                .or_insert_with(|| user.clone());
+        }
+    }
+    let mut users = users.into_values().collect::<Vec<_>>();
+    users.sort_by(|left, right| {
+        right
+            .last_seen_unix_ms
+            .cmp(&left.last_seen_unix_ms)
+            .then_with(|| left.user_id.cmp(&right.user_id))
+    });
+    users
+}
+
+fn place_simulate_user(
+    inner: &mut Inner,
+    user_id: &str,
+    display_name: &str,
+    now: u64,
+) -> Result<(QqConversationRef, SandboxUserView), SandboxError> {
+    let taken = group_user_ids(&inner.simulate);
+    if taken.iter().any(|id| id == user_id) {
+        return Err(SandboxError::new(
+            "already_exists",
+            format!("用户 `{user_id}` 已在沙盒中"),
+        ));
+    }
+    if taken.len() >= SANDBOX_USER_LIMIT {
+        return Err(SandboxError::new(
+            "invalid_state",
+            "可创建的用户数量已达上限",
+        ));
+    }
+    let account_id = inner.account_id.clone();
+    let group_id = group_conversation_id(&inner.simulate)?;
+    let stored = conversation_mut(&mut inner.simulate, &group_id)?;
+    set_user(stored, user_id, display_name, now);
+    let group = stored.view.conversation.clone();
+    let user = stored.users[user_id].clone();
+    let private = private_ref(&account_id, user_id);
+    let private_key = private.origin_key();
+    if !inner.simulate.conversations.contains_key(&private_key) {
+        insert_conversation(&mut inner.simulate, private, display_name, now)?;
+    }
+    if let Some(stored) = inner.simulate.conversations.get_mut(&private_key) {
+        stored.view.title = display_name.to_owned();
+        set_user(stored, user_id, display_name, now);
+    }
+    Ok((group, user))
+}
+
+fn relocate_simulate_user(
+    inner: &mut Inner,
+    old_id: &str,
+    new_id: &str,
+    display_name: &str,
+    now: u64,
+) -> Result<SandboxUserView, SandboxError> {
+    let account_id = inner.account_id.clone();
+    let group_id = group_conversation_id(&inner.simulate)?;
+    let stored = conversation_mut(&mut inner.simulate, &group_id)?;
+    let mut user = stored
+        .users
+        .remove(old_id)
+        .ok_or_else(|| SandboxError::new("not_found", format!("用户 `{old_id}` 不在当前会话")))?;
+    user.user_id = new_id.to_owned();
+    display_name.clone_into(&mut user.display_name);
+    user.last_seen_unix_ms = now;
+    rewrite_sender(&mut stored.messages, old_id, new_id, display_name);
+    stored.users.insert(new_id.to_owned(), user.clone());
+    let old_private = private_ref(&account_id, old_id).origin_key();
+    let conversation = private_ref(&account_id, new_id);
+    let new_private = conversation.origin_key();
+    if let Some(mut stored) = inner.simulate.conversations.remove(&old_private) {
+        stored.view.conversation = conversation;
+        stored.view.conversation_id = new_private.clone();
+        stored.view.title = display_name.to_owned();
+        stored.users.remove(old_id);
+        set_user(&mut stored, new_id, display_name, now);
+        rewrite_sender(&mut stored.messages, old_id, new_id, display_name);
+        for message in &mut stored.messages {
+            message.conversation_id.clone_from(&new_private);
+        }
+        inner.simulate.conversations.insert(new_private, stored);
+    }
+    Ok(user)
+}
+
+fn rewrite_sender(
+    messages: &mut [SandboxMessageView],
+    old_id: &str,
+    new_id: &str,
+    display_name: &str,
+) {
+    for message in messages {
+        if message.sender_id == old_id {
+            message.sender_id = new_id.to_owned();
+            message.sender_name = display_name.to_owned();
+        }
+    }
+}
+
+fn set_user(stored: &mut StoredConversation, user_id: &str, display_name: &str, now: u64) {
+    let user = stored
+        .users
+        .entry(user_id.to_owned())
+        .or_insert_with(|| SandboxUserView {
+            user_id: user_id.to_owned(),
+            display_name: display_name.to_owned(),
+            last_seen_unix_ms: now,
+            message_count: 0,
+        });
+    user.user_id = user_id.to_owned();
+    display_name.clone_into(&mut user.display_name);
+    user.last_seen_unix_ms = now;
+    stored.view.last_activity_unix_ms = stored.view.last_activity_unix_ms.max(now);
 }
 
 fn upsert_user(

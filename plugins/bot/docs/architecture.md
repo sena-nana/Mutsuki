@@ -73,7 +73,8 @@ Sandbox console (virtual user)
 - `mutsuki-bot-sandbox`: in-memory QQ conversation sandbox. Simulate mode is a
   Koishi-style closed loop (virtual users always enter `mutsuki.bot.flow/ingress@1`,
   outbound `message/send` for `sandbox:` conversations is intercepted back into the
-  console). Live mode projects real Gateway inbound events and confirmed bot sends.
+  console). Simulate roster OpenID/nickname can be edited, and observed live members
+  can be imported into simulate. Live mode projects real Gateway inbound events and confirmed bot sends.
 - `mutsuki-plugin-bot-sandbox-web`: WebExtension for the shared simulate/live conversation client
   (Stapxs-style three-pane session / chat / member layout).
 - `mutsuki-plugin-bot-adapter-qqbot`: QQBot platform translation and OpenAPI side effects.
