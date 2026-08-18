@@ -729,49 +729,29 @@ mod tests {
         let service = SandboxService::with_account("qq-main");
         let runtime = runtime();
         service.set_runtime(runtime.clone());
-        service.observe_event(BotEvent {
-            event_id: "evt-live-member".into(),
-            platform: BotPlatform::QqBot,
-            bot: BotAccountRef {
-                account_id: "qq-main".into(),
-                platform: BotPlatform::QqBot,
-            },
-            kind: BotEventKind::MessageCreated,
-            time_ms: 1_700_000_000_000,
-            target: BotTarget::Group {
-                group_id: "group-1".into(),
-            },
-            actor: Some(BotUser {
-                user_id: "member-1".into(),
-                display_name: Some("群友甲".into()),
-                avatar_url: Some("https://q.qlogo.cn/qqapp/APP_ID/member-1/640".into()),
-            }),
-            message: Some(BotMessage::text(
-                BotTarget::Group {
-                    group_id: "group-1".into(),
-                },
-                "在吗",
-            )),
-            raw: None,
-            ext: BotExtMap::new(),
-        });
-        let snapshot = service.snapshot("").await.unwrap();
-        assert_eq!(snapshot.mode, SandboxMode::Simulate);
-        assert!(
-            snapshot
-                .live_users
-                .iter()
-                .any(|user| user.user_id == "member-1"
-                    && user.display_name == "群友甲"
-                    && user.avatar_url.as_deref()
-                        == Some("https://q.qlogo.cn/qqapp/APP_ID/member-1/640"))
-        );
+        service.observe_event(live_group_event("live-member", "在吗", 1_700_000_000_000));
+        switch_live(&service).await;
+        let live = service.snapshot("").await.unwrap();
+        assert_eq!(live.mode, SandboxMode::Live);
+        assert!(live.live_users.iter().any(|user| user.user_id == "member-1"
+            && user.display_name == "群友甲"
+            && user.avatar_url.as_deref() == Some("https://q.qlogo.cn/qqapp/APP_ID/member-1/640")));
         write(
             &service,
-            snapshot.revision,
+            live.revision,
             "op-import",
             SandboxAction::ImportLiveUsers {
                 user_ids: vec!["member-1".into()],
+            },
+        )
+        .await
+        .unwrap();
+        write(
+            &service,
+            service.snapshot("").await.unwrap().revision,
+            "op-simulate",
+            SandboxAction::SetMode {
+                mode: SandboxMode::Simulate,
             },
         )
         .await

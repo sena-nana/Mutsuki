@@ -81,7 +81,9 @@ Sandbox console (virtual user)
   text, mention and media. Media bytes stay in a bounded sandbox blob map, not in
   the message list JSON. Live mode projects real Gateway inbound events and
   confirmed bot sends, including live member avatar URLs. Group sessions show a
-  member photo. Console CSP allows QQ image CDNs (`*.qlogo.cn`, `*.qpic.cn`,
+  member photo. The right-hand roster shows nicknames only; OpenID is copied from
+  the member context menu, and live members can be imported into the simulate roster.
+  Console CSP allows QQ image CDNs (`*.qlogo.cn`, `*.qpic.cn`,
   `*.gtimg.cn`, `*.qq.com.cn`, `*.nt.qq.com.cn`) and sandbox `<img>` uses
   `referrerpolicy=no-referrer`.
   Unquoted live send is allowed only after that conversation

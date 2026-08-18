@@ -423,7 +423,6 @@ impl SandboxService {
         let (events, revision, mode, result) = {
             let mut inner = self.lock_inner();
             require_revision(&inner, expected_revision)?;
-            require_simulate(&inner, "真实模式不能修改虚拟用户")?;
             let live_users = collect_live_users(&inner.live);
             let mut imported = Vec::new();
             let mut skipped = Vec::new();
