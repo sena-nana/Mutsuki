@@ -50,15 +50,16 @@ img.sandbox-avatar { display: block; object-fit: cover; object-position: center;
 .sandbox-session-preview { margin: 1px 0 0; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sandbox-session-time { font-size: 10px; white-space: nowrap; min-width: max-content; justify-self: end; align-self: start; padding-top: 1px; }
 .sandbox-messages { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; background: var(--bg-subtle, transparent); }
-.sandbox-row { display: flex; gap: 8px; max-width: 78%; align-items: center; }
+.sandbox-row { display: flex; gap: 8px; max-width: 78%; align-items: flex-end; }
 .sandbox-row--user { align-self: flex-start; }
 .sandbox-row--bot { align-self: flex-end; flex-direction: row-reverse; }
 .sandbox-row--system { align-self: center; max-width: 90%; }
+.sandbox-row-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .sandbox-bubble { position: relative; border-radius: 12px; padding: 8px 12px; background: var(--bg-elev, transparent); min-width: 0; }
 .sandbox-row--bot .sandbox-bubble { background: var(--accent-soft, var(--bg-hover, transparent)); }
 .sandbox-row--system .sandbox-bubble { background: transparent; }
 .sandbox-client .sandbox-reply { position: absolute; top: 6px; right: 6px; opacity: 0; pointer-events: none; }
-.sandbox-row:hover .sandbox-reply, .sandbox-row:focus-within .sandbox-reply { opacity: 1; pointer-events: auto; }
+.sandbox-bubble:hover .sandbox-reply, .sandbox-bubble:focus-within .sandbox-reply { opacity: 1; pointer-events: auto; }
 .sandbox-quote { margin: 0 0 6px; padding: 4px 8px; border-left: 3px solid var(--accent, #7aa2ff); opacity: 0.8; font-size: 12px; }
 .sandbox-compose { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--border, transparent); flex: 0 0 auto; }
 .sandbox-compose-row { display: flex; gap: 8px; align-items: center; min-width: 0; }
@@ -273,6 +274,17 @@ function mentionName(users, userId) {
 
 function botProfile(snapshot) {
   return snapshot?.bot || { user_id: "bot", display_name: "机器人" };
+}
+
+function groupConsecutiveMessages(messages) {
+  const groups = [];
+  for (const message of messages || []) {
+    const prev = groups.at(-1)?.[0];
+    if (prev && prev.role !== "system" && prev.role === message.role && prev.sender_id === message.sender_id) {
+      groups.at(-1).push(message);
+    } else groups.push([message]);
+  }
+  return groups;
 }
 
 function arkFields(payload) {
@@ -542,14 +554,18 @@ export function mountSandboxPanel(host, rpc, events) {
     const messages = element("div", "sandbox-messages");
     if (!conversation) messages.append(element("p", "muted sandbox-empty", "选择一个会话开始"));
     else if (!state.messages.length) messages.append(element("p", "muted sandbox-empty", "暂无消息"));
-    else state.messages.forEach((message) => {
-      const row = element("div", `sandbox-row sandbox-row--${message.role}`);
-      if (message.role !== "system") {
-        const sender = message.role === "bot" ? botProfile(state.snapshot) : userById(conversation.users, message.sender_id);
-        const name = sender?.display_name || message.sender_name;
-        row.append(avatar(name, "sandbox-avatar sandbox-avatar--sm", sender?.avatar_url));
+    else groupConsecutiveMessages(state.messages).forEach((group) => {
+      const first = group[0];
+      const row = element("div", `sandbox-row sandbox-row--${first.role}`);
+      const sender = first.role === "bot" ? botProfile(state.snapshot) : userById(conversation.users, first.sender_id);
+      const name = sender?.display_name || first.sender_name;
+      if (first.role !== "system") row.append(avatar(name, "sandbox-avatar sandbox-avatar--sm", sender?.avatar_url));
+      const body = element("div", "sandbox-row-body");
+      group.forEach((message, index) => {
         const bubble = element("div", "sandbox-bubble");
-        bubble.append(element("p", "muted", `${name} · ${formatTime(message.time_ms)}`));
+        if (first.role !== "system" && index === 0) {
+          bubble.append(element("p", "muted", `${name} · ${formatTime(message.time_ms)}`));
+        }
         bubble.append(renderSegments(message, state.messages, rpc));
         if (message.role === "user") {
           const reply = iconButton("回复", ICONS.reply);
@@ -561,12 +577,9 @@ export function mountSandboxPanel(host, rpc, events) {
           };
           bubble.append(reply);
         }
-        row.append(bubble);
-      } else {
-        const bubble = element("div", "sandbox-bubble");
-        bubble.append(renderSegments(message, state.messages, rpc));
-        row.append(bubble);
-      }
+        body.append(bubble);
+      });
+      row.append(body);
       messages.append(row);
     });
     pane.append(messages);

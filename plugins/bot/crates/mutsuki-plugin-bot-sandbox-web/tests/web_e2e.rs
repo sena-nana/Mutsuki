@@ -92,6 +92,10 @@ async fn sandbox_rpc_simulate_send_and_confirm_live_send() {
     assert!(frontend.contains("ui-input--sm"));
     assert!(frontend.contains("ui-textarea"));
     assert!(frontend.contains("stickerPicker.hidden = !state.stickerOpen"));
+    assert!(frontend.contains("groupConsecutiveMessages"));
+    assert!(frontend.contains("sandbox-row-body"));
+    assert!(frontend.contains("align-items: flex-end"));
+    assert!(frontend.contains("first.role !== \"system\" && index === 0"));
     assert!(!frontend.contains("🖼"));
     assert!(!frontend.contains("📎"));
     assert!(!frontend.contains("☺"));
