@@ -7,7 +7,8 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::types::{
-    SANDBOX_MAX_MEDIA_BYTES, SANDBOX_MAX_MEDIA_ITEMS, SandboxAsset, SandboxUserView,
+    SANDBOX_MAX_MEDIA_BYTES, SANDBOX_MAX_MEDIA_ITEMS, SANDBOX_MAX_STICKER_ITEMS, SandboxAsset,
+    SandboxFace, SandboxSticker, SandboxUserView,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -19,6 +20,7 @@ pub enum SandboxRefKind {
     File,
     Audio,
     Video,
+    Sticker,
     Emoji,
     Ark,
     Markdown,
@@ -43,6 +45,12 @@ pub struct SandboxContentRef {
     pub url: Option<String>,
     #[serde(rename = "p", default, skip_serializing_if = "Option::is_none")]
     pub payload: Option<Value>,
+}
+
+impl SandboxRefKind {
+    pub(crate) fn is_media(self) -> bool {
+        matches!(self, Self::Img | Self::File | Self::Audio | Self::Video)
+    }
 }
 
 impl SandboxContentRef {
@@ -159,6 +167,10 @@ pub fn hydrate_segments(
                 segments.push(MessageSegment::MentionAll);
                 cursor = at + mention_span(item);
             }
+            SandboxRefKind::Sticker => {
+                segments.push(hydrate_sticker(item));
+                cursor = at;
+            }
             SandboxRefKind::Emoji => {
                 segments.push(hydrate_emoji(item));
                 cursor = at;
@@ -256,6 +268,67 @@ pub(crate) fn gc_assets(assets: &mut HashMap<String, SandboxAsset>, referenced: 
     assets.retain(|hash, _| referenced.contains(hash) || keep_drafts.contains(hash));
 }
 
+pub(crate) fn gc_stickers(stickers: &mut HashMap<String, SandboxSticker>) {
+    if stickers.len() <= SANDBOX_MAX_STICKER_ITEMS {
+        return;
+    }
+    let mut items = stickers.values().cloned().collect::<Vec<_>>();
+    items.sort_by(|left, right| {
+        left.created_at_unix_ms
+            .cmp(&right.created_at_unix_ms)
+            .then_with(|| left.content_hash.cmp(&right.content_hash))
+    });
+    let drop_count = stickers.len() - SANDBOX_MAX_STICKER_ITEMS;
+    for item in items.into_iter().take(drop_count) {
+        stickers.remove(&item.content_hash);
+    }
+}
+
+pub(crate) fn record_faces(
+    faces: &mut HashMap<String, SandboxFace>,
+    refs: &[SandboxContentRef],
+    now: u64,
+) {
+    for item in refs {
+        if item.kind != SandboxRefKind::Emoji {
+            continue;
+        }
+        let Some(id) = item.id.as_deref() else {
+            continue;
+        };
+        let Some((face_type, face_id)) = parse_face_id(id) else {
+            continue;
+        };
+        let face_key = format!("qq:{face_type}:{face_id}");
+        match faces.get_mut(&face_key) {
+            Some(existing) => {
+                existing.last_seen_unix_ms = existing.last_seen_unix_ms.max(now);
+            }
+            None => {
+                faces.insert(
+                    face_key.clone(),
+                    SandboxFace {
+                        face_key,
+                        face_type,
+                        face_id,
+                        last_seen_unix_ms: now,
+                    },
+                );
+            }
+        }
+    }
+}
+
+#[must_use]
+pub fn parse_face_id(id: &str) -> Option<(String, String)> {
+    let rest = id.strip_prefix("qq:").unwrap_or(id);
+    let (face_type, face_id) = rest.split_once(':')?;
+    if face_type.is_empty() && face_id.is_empty() {
+        return None;
+    }
+    Some((face_type.to_owned(), face_id.to_owned()))
+}
+
 pub fn remap_sandbox_media_ids(segments: &mut [MessageSegment], aliases: &HashMap<String, String>) {
     for segment in segments {
         let MessageSegment::PlatformSpecific {
@@ -314,6 +387,28 @@ fn push_inline(
         | MessageSegment::File { .. }
         | MessageSegment::Audio { .. }
         | MessageSegment::Video { .. } => {}
+        MessageSegment::PlatformSpecific {
+            platform,
+            kind,
+            payload,
+        } if platform == "sandbox" && kind == "sticker" => {
+            let mut item = SandboxContentRef::at(SandboxRefKind::Sticker, text);
+            item.h = payload
+                .get("sticker_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| is_content_hash(value))
+                .map(str::to_owned);
+            item.mime = payload
+                .get("mime")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            item.name = payload
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            refs.push(item);
+        }
         MessageSegment::PlatformSpecific {
             platform,
             kind,
@@ -442,6 +537,18 @@ fn hydrate_media(item: &SandboxContentRef) -> MessageSegment {
             "url": item.url,
             "content_type": item.mime,
             "filename": item.name,
+        }),
+    }
+}
+
+fn hydrate_sticker(item: &SandboxContentRef) -> MessageSegment {
+    MessageSegment::PlatformSpecific {
+        platform: "sandbox".into(),
+        kind: "sticker".into(),
+        payload: serde_json::json!({
+            "sticker_id": item.h,
+            "mime": item.mime.clone().unwrap_or_else(|| "image/*".into()),
+            "name": item.name.clone().unwrap_or_default(),
         }),
     }
 }
@@ -579,6 +686,7 @@ fn ref_label(item: &SandboxContentRef) -> String {
         SandboxRefKind::File => format!("[{}]", item.name.as_deref().unwrap_or("文件")),
         SandboxRefKind::Audio => "[语音]".into(),
         SandboxRefKind::Video => "[视频]".into(),
+        SandboxRefKind::Sticker => "[表情包]".into(),
         SandboxRefKind::Emoji => "[表情]".into(),
         SandboxRefKind::Ark | SandboxRefKind::Embed => "[小卡片]".into(),
         SandboxRefKind::Markdown => "[Markdown]".into(),
@@ -730,6 +838,60 @@ mod tests {
             assets[hash].url.as_deref(),
             Some("https://cdn.example/new.png")
         );
+    }
+
+    #[test]
+    fn sticker_segments_do_not_enter_media_assets() {
+        let hash = hash_bytes(b"sticker");
+        let mut assets = HashMap::new();
+        let segments = vec![MessageSegment::PlatformSpecific {
+            platform: "sandbox".into(),
+            kind: "sticker".into(),
+            payload: serde_json::json!({
+                "sticker_id": hash,
+                "mime": "image/png",
+                "name": "pack.png"
+            }),
+        }];
+        let (text, refs) = normalize_segments(&segments, &[], &mut assets, 1);
+        assert!(text.is_empty());
+        assert!(assets.is_empty());
+        assert_eq!(refs[0].kind, SandboxRefKind::Sticker);
+        assert_eq!(refs[0].h.as_deref(), Some(hash.as_str()));
+        let hydrated = hydrate_segments(&text, &refs, None);
+        assert!(hydrated.iter().any(|segment| matches!(
+            segment,
+            MessageSegment::PlatformSpecific { kind, payload, .. }
+                if kind == "sticker"
+                    && payload.get("sticker_id").and_then(Value::as_str) == Some(hash.as_str())
+        )));
+    }
+
+    #[test]
+    fn official_faces_record_ids_without_blobs() {
+        let mut faces = HashMap::new();
+        let segments = vec![MessageSegment::PlatformSpecific {
+            platform: "qqbot".into(),
+            kind: "face".into(),
+            payload: serde_json::json!({ "face_type": "6", "face_id": "0" }),
+        }];
+        let mut assets = HashMap::new();
+        let (text, refs) = normalize_segments(&segments, &[], &mut assets, 9);
+        assert!(assets.is_empty());
+        record_faces(&mut faces, &refs, 9);
+        assert_eq!(faces.len(), 1);
+        let face = &faces["qq:6:0"];
+        assert_eq!(face.face_type, "6");
+        assert_eq!(face.face_id, "0");
+        assert_eq!(face.last_seen_unix_ms, 9);
+        let hydrated = hydrate_segments(&text, &refs, None);
+        assert!(hydrated.iter().any(|segment| matches!(
+            segment,
+            MessageSegment::PlatformSpecific { kind, payload, .. }
+                if kind == "face"
+                    && payload.get("face_type").and_then(Value::as_str) == Some("6")
+                    && payload.get("face_id").and_then(Value::as_str) == Some("0")
+        )));
     }
 
     fn test_resource(ref_id: &str, hash: &str) -> mutsuki_runtime_contracts::ResourceRef {

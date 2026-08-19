@@ -90,6 +90,21 @@ img.sandbox-avatar { display: block; object-fit: cover; object-position: center;
   min-width: 160px; max-width: 240px; max-height: 160px; overflow: auto;
 }
 .sandbox-mention-picker[hidden] { display: none; }
+.sandbox-sticker-picker {
+  position: absolute; z-index: 1850; left: 0; bottom: calc(100% + 4px);
+  width: min(320px, 100%); max-height: 220px; overflow: auto;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(56px, 1fr)); gap: 6px;
+  padding: 8px; box-sizing: border-box;
+}
+.sandbox-sticker-picker[hidden] { display: none; }
+.sandbox-sticker-picker .sandbox-sticker-add,
+.sandbox-sticker-picker .sandbox-sticker-empty { grid-column: 1 / -1; }
+.sandbox-sticker-item {
+  display: grid; place-items: center; width: 56px; height: 56px; padding: 0;
+  border: 0; border-radius: 8px; background: var(--bg-hover, transparent); cursor: pointer; overflow: hidden;
+}
+.sandbox-sticker-item img { width: 48px; height: 48px; object-fit: cover; border-radius: 8px; }
+.sandbox-sticker-face { font-size: 10px; line-height: 1.2; text-align: center; padding: 4px; }
 @media (max-width: 960px) {
   .sandbox-client { height: auto; min-height: 0; }
   .sandbox-frame { grid-template-columns: 1fr; min-height: 720px; }
@@ -218,20 +233,29 @@ function copyText(text) {
 
 const mediaUrls = new Map();
 
-function bindMedia(node, mediaId, rpc) {
-  if (!mediaId) return;
-  if (mediaUrls.has(mediaId)) {
-    node.src = mediaUrls.get(mediaId);
+function bindBlob(node, id, method, key, rpc) {
+  if (!id) return;
+  const cacheKey = `${method}:${id}`;
+  if (mediaUrls.has(cacheKey)) {
+    node.src = mediaUrls.get(cacheKey);
     return;
   }
-  void rpc.read("sandbox", "media.get", { media_id: mediaId }).then((blob) => {
+  void rpc.read("sandbox", method, { [key]: id }).then((blob) => {
     const binary = Uint8Array.from(atob(blob.bytes || ""), (ch) => ch.charCodeAt(0));
     const url = URL.createObjectURL(new Blob([binary], { type: blob.mime || "application/octet-stream" }));
-    mediaUrls.set(mediaId, url);
+    mediaUrls.set(cacheKey, url);
     node.src = url;
   }).catch(() => {
     node.replaceWith(document.createTextNode("[媒体不可用]"));
   });
+}
+
+function bindMedia(node, mediaId, rpc) {
+  bindBlob(node, mediaId, "media.get", "media_id", rpc);
+}
+
+function bindSticker(node, stickerId, rpc) {
+  bindBlob(node, stickerId, "sticker.get", "sticker_id", rpc);
 }
 
 function renderSegments(message, messages, rpc) {
@@ -268,6 +292,12 @@ function renderRefs(body, message, rpc) {
 function appendRef(body, ref, rpc) {
   if (ref.t === "emoji") {
     body.append(element("span", "sandbox-file", "[表情]"));
+    return;
+  }
+  if (ref.t === "sticker") {
+    const img = remoteImage("sandbox-media", ref.name || "表情包");
+    if (ref.h) bindSticker(img, ref.h, rpc);
+    body.append(img);
     return;
   }
   if (ref.t === "img" || ref.t === "audio" || ref.t === "video" || ref.t === "file") {
@@ -345,7 +375,7 @@ function renderPlatform(body, segment, rpc) {
 
 /** Mount the QQ sandbox conversation console. */
 export function mountSandboxPanel(host, rpc, events) {
-  const state = { snapshot: null, messages: [], selectedId: null, draft: "", draftSegments: [], speakerId: "", query: "", quote: null, dialog: "", menu: null };
+  const state = { snapshot: null, messages: [], selectedId: null, draft: "", draftSegments: [], speakerId: "", query: "", quote: null, dialog: "", menu: null, stickerOpen: false, stickers: [] };
   host.innerHTML = "";
   const style = document.createElement("style");
   style.textContent = STYLE;
@@ -494,18 +524,27 @@ export function mountSandboxPanel(host, rpc, events) {
     if (mode() === "simulate") {
       const tools = element("div", "sandbox-compose-tools");
       const imageBtn = button("图片");
-      imageBtn.onclick = () => void attachFile("image/*");
+      imageBtn.onclick = () => void pickAndUpload("image/*");
       const fileBtn = button("文件");
-      fileBtn.onclick = () => void attachFile("*/*");
+      fileBtn.onclick = () => void pickAndUpload("*/*");
+      const stickerBtn = button("表情包");
+      stickerBtn.onclick = () => {
+        state.stickerOpen = !state.stickerOpen;
+        if (state.stickerOpen) void loadStickers().then(() => render());
+        else render();
+      };
       const cardBtn = button("小卡片");
       cardBtn.onclick = () => openDialog("card");
       const markdownBtn = button("Markdown");
       markdownBtn.onclick = () => openDialog("markdown");
-      tools.append(imageBtn, fileBtn, cardBtn, markdownBtn);
+      tools.append(imageBtn, fileBtn, stickerBtn, cardBtn, markdownBtn);
       compose.append(tools);
     }
     const picker = element("div", "sandbox-context-menu sandbox-mention-picker");
     picker.hidden = true;
+    const stickerPicker = element("div", "sandbox-context-menu sandbox-sticker-picker");
+    stickerPicker.hidden = mode() !== "simulate" || !state.stickerOpen;
+    if (!stickerPicker.hidden) renderStickerPicker(stickerPicker);
     const row = element("div", "sandbox-compose-row");
     const field = element("div", "sandbox-compose-field");
     const input = element("input", "ui-input");
@@ -568,6 +607,7 @@ export function mountSandboxPanel(host, rpc, events) {
         state.draft = "";
         state.draftSegments = [];
         state.quote = null;
+        state.stickerOpen = false;
         showStatus("");
         await refresh();
       } catch (error) {
@@ -576,42 +616,124 @@ export function mountSandboxPanel(host, rpc, events) {
     };
     send.onclick = () => void submit();
     input.onkeydown = (event) => { if (event.key === "Enter") { event.preventDefault(); void submit(); } };
-    field.append(picker, input);
+    const onPaste = (event) => {
+      if (mode() !== "simulate") return;
+      const image = pasteImage(event);
+      if (!image) return;
+      event.preventDefault();
+      void uploadDraftFile(image);
+    };
+    input.onpaste = onPaste;
+    compose.addEventListener("paste", onPaste);
+    field.append(picker, stickerPicker, input);
     row.append(field, send);
     compose.append(row);
     refreshPicker();
     pane.append(compose);
   }
 
-  async function attachFile(accept) {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = accept;
-    input.onchange = async () => {
-      const file = input.files?.[0];
+  function pasteImage(event) {
+    const files = [...(event.clipboardData?.files || [])];
+    const items = [...(event.clipboardData?.items || [])];
+    return files.find((file) => file.type.startsWith("image/"))
+      || items.find((item) => item.type.startsWith("image/"))?.getAsFile()
+      || null;
+  }
+
+  async function fileToBase64(file) {
+    const buffer = new Uint8Array(await file.arrayBuffer());
+    let binary = "";
+    buffer.forEach((byte) => { binary += String.fromCharCode(byte); });
+    return btoa(binary);
+  }
+
+  async function uploadDraftFile(file) {
+    try {
+      const uploaded = await rpc.write("sandbox", "media.upload", {
+        name: file.name || "paste.png",
+        mime: file.type || "image/png",
+        bytes: await fileToBase64(file),
+      });
+      state.draftSegments.push({
+        type: "platform_specific",
+        platform: "sandbox",
+        kind: "media",
+        payload: { media_id: uploaded.media_id, mime: uploaded.mime, name: uploaded.name },
+      });
+      showStatus("");
+      render();
+    } catch (error) {
+      reportError(error);
+    }
+  }
+
+  async function pickAndUpload(accept) {
+    const file = await pickFile(accept);
+    if (file) await uploadDraftFile(file);
+  }
+
+  function pickFile(accept) {
+    return new Promise((resolve) => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = accept;
+      input.onchange = () => resolve(input.files?.[0] || null);
+      input.click();
+    });
+  }
+
+  async function loadStickers() {
+    try {
+      state.stickers = await rpc.read("sandbox", "sticker.list", {}) || [];
+    } catch (error) {
+      reportError(error);
+      state.stickers = [];
+    }
+  }
+
+  function renderStickerPicker(picker) {
+    picker.replaceChildren();
+    const add = button("添加");
+    add.className = "sandbox-sticker-add";
+    add.onclick = async () => {
+      const file = await pickFile("image/*");
       if (!file) return;
       try {
-        const buffer = new Uint8Array(await file.arrayBuffer());
-        let binary = "";
-        buffer.forEach((byte) => { binary += String.fromCharCode(byte); });
-        const uploaded = await rpc.write("sandbox", "media.upload", {
-          name: file.name,
-          mime: file.type || "application/octet-stream",
-          bytes: btoa(binary),
+        await rpc.write("sandbox", "sticker.upload", {
+          name: file.name || "sticker.png",
+          mime: file.type || "image/png",
+          bytes: await fileToBase64(file),
         });
-        state.draftSegments.push({
-          type: "platform_specific",
-          platform: "sandbox",
-          kind: "media",
-          payload: { media_id: uploaded.media_id, mime: uploaded.mime, name: uploaded.name },
-        });
-        showStatus("");
+        await loadStickers();
         render();
       } catch (error) {
         reportError(error);
       }
     };
-    input.click();
+    picker.append(add);
+    if (!state.stickers?.length) {
+      picker.append(element("p", "muted sandbox-sticker-empty", "还没有表情包"));
+      return;
+    }
+    state.stickers.forEach((item) => {
+      const btn = element("button", "sandbox-sticker-item");
+      btn.type = "button";
+      if (item.kind === "qq_face") {
+        btn.append(element("span", "sandbox-sticker-face", `[表情 ${item.face_type || "?"}:${item.face_id || "?"}]`));
+      } else {
+        const img = remoteImage("", item.name || "表情包");
+        bindSticker(img, item.id, rpc);
+        btn.append(img);
+      }
+      btn.onclick = () => {
+        state.draftSegments.push(item.kind === "qq_face"
+          ? { type: "platform_specific", platform: "qqbot", kind: "face", payload: { face_type: item.face_type || "", face_id: item.face_id || "" } }
+          : { type: "platform_specific", platform: "sandbox", kind: "sticker", payload: { sticker_id: item.id, mime: item.mime, name: item.name } });
+        state.stickerOpen = false;
+        render();
+      };
+      picker.append(btn);
+    });
   }
 
   function draftLabel(segment, users) {
@@ -620,6 +742,8 @@ export function mountSandboxPanel(host, rpc, events) {
     if (segment.type === "platform_specific" && segment.kind === "ark") return "[小卡片]";
     if (segment.type === "platform_specific" && segment.kind === "markdown") return "[Markdown]";
     if (segment.type === "platform_specific" && segment.kind === "media") return `[${segment.payload?.name || "媒体"}]`;
+    if (segment.type === "platform_specific" && segment.kind === "sticker") return `[${segment.payload?.name || "表情包"}]`;
+    if (segment.type === "platform_specific" && segment.kind === "face") return "[表情]";
     return segment.type || "附件";
   }
 

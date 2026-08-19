@@ -2,10 +2,11 @@ use std::collections::HashMap;
 
 use mutsuki_bot_protocol::{BotConversationKind, MessageSegment, QqConversationRef};
 use mutsuki_bot_sandbox::{
-    SANDBOX_MAX_MESSAGES, SandboxAsset, SandboxConversationView, SandboxError,
-    SandboxHistoryConversation, SandboxHistoryKind, SandboxHistorySnapshot, SandboxHistoryStore,
-    SandboxMediaBlob, SandboxMessageView, SandboxMode, SandboxSpeakerRole, SandboxUserView,
-    hash_bytes, normalize_segments, remap_sandbox_media_ids,
+    SANDBOX_MAX_MESSAGES, SandboxAsset, SandboxContentRef, SandboxConversationView, SandboxError,
+    SandboxFace, SandboxHistoryConversation, SandboxHistoryKind, SandboxHistorySnapshot,
+    SandboxHistoryStore, SandboxMediaBlob, SandboxMessageView, SandboxMode, SandboxRefKind,
+    SandboxSpeakerRole, SandboxSticker, SandboxUserView, hash_bytes, normalize_segments,
+    parse_face_id, remap_sandbox_media_ids,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -70,6 +71,19 @@ pub(super) const SANDBOX_SCHEMA_SQL: &str = "
              bytes BLOB NOT NULL,
              url TEXT,
              created_at_unix_ms INTEGER NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS bot_sandbox_sticker(
+             content_hash TEXT PRIMARY KEY,
+             mime TEXT NOT NULL,
+             name TEXT NOT NULL,
+             bytes BLOB NOT NULL,
+             created_at_unix_ms INTEGER NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS bot_sandbox_face(
+             face_key TEXT PRIMARY KEY,
+             face_type TEXT NOT NULL,
+             face_id TEXT NOT NULL,
+             last_seen_unix_ms INTEGER NOT NULL
          );";
 
 pub(super) fn load(connection: &Connection) -> Result<SandboxHistorySnapshot, BotStateDbError> {
@@ -88,6 +102,8 @@ pub(super) fn load(connection: &Connection) -> Result<SandboxHistorySnapshot, Bo
         simulate,
         live,
         media: load_media(connection)?,
+        stickers: load_stickers(connection)?,
+        faces: load_faces(connection)?,
     })
 }
 
@@ -378,6 +394,73 @@ fn load_media(connection: &Connection) -> Result<Vec<SandboxAsset>, BotStateDbEr
         .collect()
 }
 
+fn load_stickers(connection: &Connection) -> Result<Vec<SandboxSticker>, BotStateDbError> {
+    if !table_exists(connection, "bot_sandbox_sticker")? {
+        return Ok(Vec::new());
+    }
+    let mut statement = connection.prepare(
+        "SELECT content_hash, mime, name, bytes, created_at_unix_ms
+         FROM bot_sandbox_sticker
+         ORDER BY created_at_unix_ms ASC, content_hash ASC",
+    )?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Vec<u8>>(3)?,
+                row.get::<_, i64>(4)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    rows.into_iter()
+        .map(|(content_hash, mime, name, bytes, created_at_unix_ms)| {
+            Ok(SandboxSticker {
+                content_hash,
+                mime,
+                name,
+                bytes,
+                created_at_unix_ms: super::sqlite_unsigned(
+                    created_at_unix_ms,
+                    "created_at_unix_ms",
+                )?,
+            })
+        })
+        .collect()
+}
+
+fn load_faces(connection: &Connection) -> Result<Vec<SandboxFace>, BotStateDbError> {
+    if !table_exists(connection, "bot_sandbox_face")? {
+        return Ok(Vec::new());
+    }
+    let mut statement = connection.prepare(
+        "SELECT face_key, face_type, face_id, last_seen_unix_ms
+         FROM bot_sandbox_face
+         ORDER BY last_seen_unix_ms DESC, face_key ASC",
+    )?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    rows.into_iter()
+        .map(|(face_key, face_type, face_id, last_seen_unix_ms)| {
+            Ok(SandboxFace {
+                face_key,
+                face_type,
+                face_id,
+                last_seen_unix_ms: super::sqlite_unsigned(last_seen_unix_ms, "last_seen_unix_ms")?,
+            })
+        })
+        .collect()
+}
+
 pub(super) fn save(
     connection: &mut Connection,
     snapshot: &SandboxHistorySnapshot,
@@ -392,6 +475,8 @@ pub(super) fn save(
     transaction.execute("DELETE FROM bot_sandbox_user", [])?;
     transaction.execute("DELETE FROM bot_sandbox_conversation", [])?;
     transaction.execute("DELETE FROM bot_sandbox_asset", [])?;
+    transaction.execute("DELETE FROM bot_sandbox_sticker", [])?;
+    transaction.execute("DELETE FROM bot_sandbox_face", [])?;
     write_conversations(
         &transaction,
         SandboxHistoryKind::Simulate,
@@ -410,6 +495,31 @@ pub(super) fn save(
                 media.bytes,
                 media.url,
                 sqlite_integer(media.created_at_unix_ms)?,
+            ],
+        )?;
+    }
+    for sticker in &snapshot.stickers {
+        transaction.execute(
+            "INSERT INTO bot_sandbox_sticker(content_hash, mime, name, bytes, created_at_unix_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                sticker.content_hash,
+                sticker.mime,
+                sticker.name,
+                sticker.bytes,
+                sqlite_integer(sticker.created_at_unix_ms)?,
+            ],
+        )?;
+    }
+    for face in &snapshot.faces {
+        transaction.execute(
+            "INSERT INTO bot_sandbox_face(face_key, face_type, face_id, last_seen_unix_ms)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                face.face_key,
+                face.face_type,
+                face.face_id,
+                sqlite_integer(face.last_seen_unix_ms)?,
             ],
         )?;
     }
@@ -557,6 +667,52 @@ pub(super) fn migrate_sandbox_v9(connection: &Connection) -> Result<(), BotState
     let columns = table_columns(connection, "bot_sandbox_message")?;
     if columns.iter().any(|column| column == "segments_json") {
         migrate_legacy_messages(connection, &aliases)?;
+    }
+    Ok(())
+}
+
+pub(super) fn migrate_sandbox_v10(connection: &Connection) -> Result<(), BotStateDbError> {
+    backfill_faces(connection)
+}
+
+fn backfill_faces(connection: &Connection) -> Result<(), BotStateDbError> {
+    if !table_exists(connection, "bot_sandbox_message")?
+        || !table_exists(connection, "bot_sandbox_face")?
+    {
+        return Ok(());
+    }
+    let mut statement = connection.prepare("SELECT refs_json, time_ms FROM bot_sandbox_message")?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(statement);
+    for (refs_json, time_ms) in rows {
+        let refs: Vec<SandboxContentRef> = match decode(&refs_json) {
+            Ok(refs) => refs,
+            Err(_) => continue,
+        };
+        let seen = super::sqlite_unsigned(time_ms.max(0), "time_ms")?;
+        for item in refs {
+            if item.kind != SandboxRefKind::Emoji {
+                continue;
+            }
+            let Some(id) = item.id.as_deref() else {
+                continue;
+            };
+            let Some((face_type, face_id)) = parse_face_id(id) else {
+                continue;
+            };
+            let face_key = format!("qq:{face_type}:{face_id}");
+            connection.execute(
+                "INSERT INTO bot_sandbox_face(face_key, face_type, face_id, last_seen_unix_ms)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(face_key) DO UPDATE SET
+                    last_seen_unix_ms = MAX(bot_sandbox_face.last_seen_unix_ms, excluded.last_seen_unix_ms)",
+                params![face_key, face_type, face_id, sqlite_integer(seen)?],
+            )?;
+        }
     }
     Ok(())
 }

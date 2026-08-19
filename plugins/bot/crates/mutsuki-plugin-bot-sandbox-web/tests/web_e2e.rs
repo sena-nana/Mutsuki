@@ -70,6 +70,11 @@ async fn sandbox_rpc_simulate_send_and_confirm_live_send() {
     assert!(frontend.contains("sandbox-mention"));
     assert!(frontend.contains("sandbox-card"));
     assert!(frontend.contains("media.upload"));
+    assert!(frontend.contains("sticker.list"));
+    assert!(frontend.contains("sticker.upload"));
+    assert!(frontend.contains("表情包"));
+    assert!(frontend.contains("pasteImage"));
+    assert!(frontend.contains("onpaste"));
     assert!(frontend.contains("小卡片"));
     assert!(!frontend.contains("inject_into_flow"));
     std::fs::write(
@@ -219,6 +224,33 @@ async fn sandbox_rpc_simulate_send_and_confirm_live_send() {
     .await
     .unwrap();
     assert_eq!(uploaded_again["media_id"], media_id);
+
+    let sticker = rpc(
+        &address,
+        "sticker.upload",
+        json!({
+            "name": "pack.png",
+            "mime": "image/png",
+            "bytes": "c3RpY2tlcg=="
+        }),
+    )
+    .await
+    .unwrap();
+    let sticker_id = sticker["sticker_id"].as_str().unwrap().to_owned();
+    assert!(sticker_id.starts_with("sha256:"));
+    assert_ne!(sticker_id, media_id);
+    let listed = rpc(&address, "sticker.list", json!({})).await.unwrap();
+    assert!(
+        listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["id"] == sticker_id && item["kind"] == "custom")
+    );
+    let sticker_blob = rpc(&address, "sticker.get", json!({ "sticker_id": sticker_id }))
+        .await
+        .unwrap();
+    assert_eq!(sticker_blob["bytes"], "c3RpY2tlcg==");
 
     let with_media = rpc(
         &address,

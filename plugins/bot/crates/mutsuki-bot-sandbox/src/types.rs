@@ -18,6 +18,8 @@ pub const SANDBOX_USER_NAMES: [&str; SANDBOX_USER_LIMIT] = [
 pub const SANDBOX_MAX_MESSAGES: usize = 200;
 pub const SANDBOX_MAX_MEDIA_ITEMS: usize = 20;
 pub const SANDBOX_MAX_MEDIA_BYTES: usize = 2 * 1024 * 1024;
+pub const SANDBOX_MAX_STICKER_ITEMS: usize = 50;
+pub const SANDBOX_MAX_STICKER_BYTES: usize = SANDBOX_MAX_MEDIA_BYTES;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -83,6 +85,10 @@ pub struct SandboxHistorySnapshot {
     pub simulate: Vec<SandboxHistoryConversation>,
     pub live: Vec<SandboxHistoryConversation>,
     pub media: Vec<SandboxAsset>,
+    #[serde(default)]
+    pub stickers: Vec<SandboxSticker>,
+    #[serde(default)]
+    pub faces: Vec<SandboxFace>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -209,6 +215,45 @@ pub struct SandboxAsset {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
     pub created_at_unix_ms: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SandboxSticker {
+    pub content_hash: String,
+    pub mime: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bytes: Vec<u8>,
+    pub created_at_unix_ms: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SandboxFace {
+    pub face_key: String,
+    pub face_type: String,
+    pub face_id: String,
+    pub last_seen_unix_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SandboxStickerKind {
+    Custom,
+    QqFace,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SandboxStickerView {
+    pub id: String,
+    pub kind: SandboxStickerKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub face_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub face_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -368,6 +413,8 @@ fn preview_platform_kind(kind: &str, payload: &Value) -> String {
         "markdown" => "[Markdown]".into(),
         "keyboard" => "[按钮]".into(),
         "attachment" | "media" => preview_media_label(payload),
+        "sticker" => "[表情包]".into(),
+        "face" => "[表情]".into(),
         other => format!("[{other}]"),
     }
 }
