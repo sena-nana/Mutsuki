@@ -75,6 +75,8 @@ pub struct QqAccountView {
     pub capability: QqBotCapabilityMatrix,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub self_user: Option<BotUser>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connected_since_unix_ms: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -964,6 +966,7 @@ pub fn account_view_from_config(input: QqAccountViewInput) -> QqAccountView {
         rate_limit_status: "ready".into(),
         capability: input.capability,
         self_user: input.self_user,
+        connected_since_unix_ms: None,
     }
 }
 

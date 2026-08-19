@@ -57,6 +57,7 @@ impl QqBotManagementApi for Api {
                     display_name: Some("mutsuki".into()),
                     avatar_url: Some("https://q.qlogo.cn/qqapp/app/BOT_OPENID/640".into()),
                 }),
+                connected_since_unix_ms: Some(100),
             }],
             deliveries: Vec::new(),
             interactions: Vec::new(),
@@ -97,6 +98,12 @@ async fn qq_management_rpc_uses_authenticated_capabilities_confirmation_and_fixe
     assert!(frontend.contains("self_user"));
     assert!(frontend.contains("OpenID"));
     assert!(frontend.contains("qq-account-avatar"));
+    assert!(frontend.contains("在线时长"));
+    assert!(!frontend.contains("签名"));
+    assert!(!frontend.contains("健康检查"));
+    assert!(!frontend.contains("重新连接"));
+    assert!(!frontend.contains("发送测试"));
+    assert!(!frontend.contains("App ID"));
     std::fs::write(
         shell_dir.path().join("index.html"),
         "<!doctype html><main></main>",
@@ -145,6 +152,7 @@ async fn qq_management_rpc_uses_authenticated_capabilities_confirmation_and_fixe
         authenticated["accounts"][0]["self_user"]["display_name"],
         "mutsuki"
     );
+    assert_eq!(authenticated["accounts"][0]["connected_since_unix_ms"], 100);
 
     let forged = json!({
         "actor_id": "operator",
