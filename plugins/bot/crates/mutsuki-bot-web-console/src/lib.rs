@@ -52,8 +52,7 @@ use mutsuki_plugin_bot_upgrade_web::{
     UpgradeWebExtension, materialize_frontend_assets as materialize_upgrade_assets,
 };
 use mutsuki_plugin_config_web::{
-    ConfigNavigationGroup, ConfigNavigationItem, ConfigWebExtension,
-    materialize_frontend_assets as materialize_config_assets,
+    ConfigWebExtension, materialize_frontend_assets as materialize_config_assets,
 };
 use mutsuki_service_control::ControlHandler;
 use mutsuki_web_extension::content_hash;
@@ -63,15 +62,9 @@ use mutsuki_web_host::{
 use mutsuki_web_protocol::{DeploymentMode, WebApplicationDescriptor, WebShellAssets};
 use serde_json::json;
 
-pub const CONSOLE_APPLICATION_ID: &str = "mutsuki.bot.console";
+pub use mutsuki_plugin_config_web::{ConfigNavigationGroup, ConfigNavigationItem};
 
-const CONSOLE_EXTRA_IMG_SRC: &[&str] = &[
-    "https://*.qlogo.cn",
-    "https://*.qpic.cn",
-    "https://*.gtimg.cn",
-    "https://*.qq.com.cn",
-    "https://*.nt.qq.com.cn",
-];
+pub const CONSOLE_APPLICATION_ID: &str = "mutsuki.bot.console";
 
 /// Console enablement parsed from product config (`[web.console]`).
 #[derive(Clone, Debug, Default, serde::Deserialize, PartialEq, Eq)]
@@ -91,45 +84,15 @@ pub struct WebConsoleConfig {
     pub config_provider_ids: Vec<String>,
     /// Product-owned primary provider shown before plugin configuration.
     pub primary_config_provider_id: Option<String>,
+    /// Product-owned config navigation grouping and labels.
+    #[serde(default, skip)]
+    pub config_navigation_groups: Vec<ConfigNavigationGroup>,
     /// Relative path to active release set manifest (enables auto-upgrade page).
     pub release_set: Option<String>,
 }
 
 fn default_listen() -> String {
     "127.0.0.1:0".into()
-}
-
-fn config_navigation_item(provider_id: &str) -> ConfigNavigationItem {
-    ConfigNavigationItem {
-        provider_id: provider_id.to_string(),
-        label: match provider_id {
-            "mutsuki.product" | "product" => Some("工作区".into()),
-            "mutsuki.bot.adapter.qqbot" => Some("QQ 登录".into()),
-            "mutsuki.agent.runtime.local" => Some("模型".into()),
-            "mutsuki.plugin.bot.agent" => Some("回复".into()),
-            _ => None,
-        },
-    }
-}
-
-fn config_navigation_groups(primary: &str) -> [ConfigNavigationGroup; 3] {
-    [
-        ConfigNavigationGroup {
-            label: None,
-            items: vec![config_navigation_item(primary)],
-        },
-        ConfigNavigationGroup {
-            label: Some("接入".into()),
-            items: vec![config_navigation_item("mutsuki.bot.adapter.qqbot")],
-        },
-        ConfigNavigationGroup {
-            label: Some("助手".into()),
-            items: vec![
-                config_navigation_item("mutsuki.agent.runtime.local"),
-                config_navigation_item("mutsuki.plugin.bot.agent"),
-            ],
-        },
-    ]
 }
 
 impl WebConsoleConfig {
@@ -278,8 +241,8 @@ pub fn build_console_host_with_agent(
         if !config.config_provider_ids.is_empty() {
             extension = extension.with_visible_providers(config.config_provider_ids.clone());
         }
-        if let Some(primary) = &config.primary_config_provider_id {
-            extension = extension.with_navigation_groups(config_navigation_groups(primary));
+        if !config.config_navigation_groups.is_empty() {
+            extension = extension.with_navigation_groups(config.config_navigation_groups.clone());
         }
         builder = builder.extension(extension);
     }
@@ -352,24 +315,16 @@ pub(crate) fn base_builder(
         import_map: Default::default(),
     };
     MutsukiWebHost::builder()
-        .application(
-            MinimalWebApplication::new(
-                WebApplicationDescriptor {
-                    id: CONSOLE_APPLICATION_ID.into(),
-                    name: "Mutsuki Console".into(),
-                    version: "0.1.0".into(),
-                    brand: Some("Mutsuki".into()),
-                    theme: Some("lilia".into()),
-                },
-                shell,
-            )
-            .with_extra_img_src(
-                CONSOLE_EXTRA_IMG_SRC
-                    .iter()
-                    .map(|source| (*source).to_string())
-                    .collect(),
-            ),
-        )
+        .application(MinimalWebApplication::new(
+            WebApplicationDescriptor {
+                id: CONSOLE_APPLICATION_ID.into(),
+                name: "Mutsuki Console".into(),
+                version: "0.1.0".into(),
+                brand: Some("Mutsuki".into()),
+                theme: Some("lilia".into()),
+            },
+            shell,
+        ))
         .listen(&config.listen)
         .mode(DeploymentMode::Embedded)
         .shell_dir(&asset_dirs.shell_root)
@@ -597,6 +552,17 @@ fn materialize_lilia_fonts(out_dir: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+fn document_csp(include_qq: bool, include_sandbox: bool) -> String {
+    let extra = if include_qq || include_sandbox {
+        format!(" {}", mutsuki_plugin_bot_qq_web::EXTRA_IMG_SRC.join(" "))
+    } else {
+        String::new()
+    };
+    format!(
+        "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data: blob:{extra}; media-src 'self' blob:{extra}; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'"
+    )
+}
+
 pub(crate) fn materialize_console_shell(
     out_dir: &Path,
     include_config: bool,
@@ -626,6 +592,10 @@ pub(crate) fn materialize_console_shell(
         include_bytes!("../../../../../hosts/web/packages/web-shell/browser/web-shell.js");
 
     let index = index_template
+        .replace(
+            "__CONSOLE_CSP__",
+            &document_csp(include_qq, include_sandbox),
+        )
         .replace("./mutsuki-ui.css", &format!("./mutsuki-ui.css?v={css_v}"))
         .replace(
             &format!("./{bootstrap_name}"),
@@ -689,6 +659,12 @@ pub(crate) fn materialize_console_shell(
         json!({"id": "automation", "label": "自动化", "icon": "flow", "order": 20, "position": "top"}),
         json!({"id": "system", "label": "系统", "icon": "system", "order": 30, "position": "top"}),
     ];
+    if include_sandbox {
+        activities.insert(
+            2,
+            json!({"id": "sandbox", "label": "沙盒", "icon": "sandbox", "order": 12, "position": "top"}),
+        );
+    }
     if include_config {
         activities.push(json!({
             "id": "config",
@@ -802,49 +778,6 @@ mod owner_console_tests {
                 "missing versioned {module_path}"
             );
         }
-    }
-
-    #[test]
-    fn config_navigation_labels_separate_setup_from_runtime_pages() {
-        assert_eq!(
-            config_navigation_item("mutsuki.product").label.as_deref(),
-            Some("工作区")
-        );
-        assert_eq!(
-            config_navigation_item("mutsuki.bot.adapter.qqbot")
-                .label
-                .as_deref(),
-            Some("QQ 登录")
-        );
-        assert_eq!(
-            config_navigation_item("mutsuki.agent.runtime.local")
-                .label
-                .as_deref(),
-            Some("模型")
-        );
-        assert_eq!(
-            config_navigation_item("mutsuki.plugin.bot.agent")
-                .label
-                .as_deref(),
-            Some("回复")
-        );
-    }
-
-    #[test]
-    fn config_navigation_groups_split_access_and_assistant() {
-        let groups = config_navigation_groups("mutsuki.product");
-        assert_eq!(groups[0].items[0].label.as_deref(), Some("工作区"));
-        assert_eq!(groups[1].label.as_deref(), Some("接入"));
-        assert_eq!(groups[1].items[0].label.as_deref(), Some("QQ 登录"));
-        assert_eq!(groups[2].label.as_deref(), Some("助手"));
-        assert_eq!(
-            groups[2]
-                .items
-                .iter()
-                .filter_map(|item| item.label.as_deref())
-                .collect::<Vec<_>>(),
-            ["模型", "回复"]
-        );
     }
 
     #[test]

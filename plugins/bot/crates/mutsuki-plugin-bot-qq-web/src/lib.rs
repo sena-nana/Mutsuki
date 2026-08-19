@@ -19,6 +19,14 @@ pub const CAPABILITY_BOT_DELIVERY_WRITE: &str = "bot.delivery.write";
 pub const CAPABILITY_BOT_SESSION_WRITE: &str = "bot.session.write";
 pub const CAPABILITY_BOT_SECRET_STATUS: &str = "bot.secret.status";
 
+pub const EXTRA_IMG_SRC: &[&str] = &[
+    "https://*.qlogo.cn",
+    "https://*.qpic.cn",
+    "https://*.gtimg.cn",
+    "https://*.qq.com.cn",
+    "https://*.nt.qq.com.cn",
+];
+
 pub struct QqBotWebExtension {
     api: Arc<dyn QqBotManagementApi>,
     assets_root: Option<PathBuf>,
@@ -163,6 +171,13 @@ impl WebExtension for QqBotWebExtension {
     ) -> Result<(), ExtensionError> {
         registry.register_topic("changed");
         Ok(())
+    }
+
+    fn extra_img_src(&self) -> Vec<String> {
+        EXTRA_IMG_SRC
+            .iter()
+            .map(|source| (*source).to_string())
+            .collect()
     }
 }
 

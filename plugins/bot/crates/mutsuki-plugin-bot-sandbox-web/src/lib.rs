@@ -17,6 +17,14 @@ pub const CAPABILITY_BOT_READ: &str = "bot.read";
 pub const CAPABILITY_SANDBOX_WRITE: &str = "bot.sandbox.write";
 pub const CAPABILITY_BOT_DELIVERY_WRITE: &str = "bot.delivery.write";
 
+const EXTRA_IMG_SRC: &[&str] = &[
+    "https://*.qlogo.cn",
+    "https://*.qpic.cn",
+    "https://*.gtimg.cn",
+    "https://*.qq.com.cn",
+    "https://*.nt.qq.com.cn",
+];
+
 pub struct SandboxWebExtension {
     api: Arc<dyn SandboxApi>,
     assets_root: Option<PathBuf>,
@@ -220,6 +228,13 @@ impl WebExtension for SandboxWebExtension {
     ) -> Result<(), ExtensionError> {
         registry.register_topic("changed");
         Ok(())
+    }
+
+    fn extra_img_src(&self) -> Vec<String> {
+        EXTRA_IMG_SRC
+            .iter()
+            .map(|source| (*source).to_string())
+            .collect()
     }
 }
 

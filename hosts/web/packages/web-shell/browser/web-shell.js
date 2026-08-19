@@ -111,6 +111,9 @@ function ownedRegistry(registry, scope) {
   return {
     register(item) {
       return scope.own(registry.register(item));
+    },
+    list() {
+      return registry.list();
     }
   };
 }

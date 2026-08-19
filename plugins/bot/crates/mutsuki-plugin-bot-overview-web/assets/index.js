@@ -42,7 +42,8 @@ function metricGrid(metrics) {
     .join("")}</div>`;
 }
 
-function mountOverview(host, rpc, events) {
+function mountOverview(host, ctx) {
+  const { rpc, events } = ctx;
   host.className = "page-body overview-dashboard";
   host.innerHTML = `
     <div class="toolbar row-item">
@@ -50,10 +51,10 @@ function mountOverview(host, rpc, events) {
       <span class="muted" data-refresh-state></span>
     </div>
     <div data-overview-body><div class="muted">加载中…</div></div>
-    <div data-qq-accounts></div>
+    <div data-overview-cards></div>
   `;
   const body = host.querySelector("[data-overview-body]");
-  const qqHost = host.querySelector("[data-qq-accounts]");
+  const cardsHost = host.querySelector("[data-overview-cards]");
   const state = host.querySelector("[data-refresh-state]");
   let disposed = false;
   let timer = null;
@@ -65,7 +66,7 @@ function mountOverview(host, rpc, events) {
   let opened = false;
   let snapshot = null;
   let snapshotAt = 0;
-  let qqPanel = null;
+  const cardPanels = [];
 
   const render = () => {
     if (!snapshot || disposed) return;
@@ -136,16 +137,19 @@ function mountOverview(host, rpc, events) {
   host.querySelector("[data-refresh]").onclick = () => void refresh();
   document.addEventListener("visibilitychange", visibility);
   uptimeTimer = setInterval(render, 1_000);
-  void import(new URL("../qq-bot/index.js", import.meta.url))
-    .then((mod) => {
-      if (!disposed) qqPanel = mod.mountQqAccountCards?.(qqHost, rpc, events);
-    })
-    .catch(() => {});
+  for (const item of ctx.slots.list().filter((entry) => entry.slot === "overview.cards")) {
+    const node = document.createElement("div");
+    cardsHost.append(node);
+    const mounted = item.component?.mount?.(node);
+    if (mounted) cardPanels.push(mounted);
+  }
   void refresh();
   return {
     dispose() {
       disposed = true;
-      qqPanel?.destroy?.();
+      for (const panel of cardPanels) {
+        panel.dispose?.() ?? panel.destroy?.();
+      }
       clearTimeout(timer);
       clearTimeout(debounceTimer);
       clearInterval(uptimeTimer);
@@ -171,7 +175,7 @@ export default {
       id: "overview.page",
       path: "/overview",
       title: "概览",
-      component: { mount: (element) => mountOverview(element, ctx.rpc, ctx.events) },
+      component: { mount: (element) => mountOverview(element, ctx) },
       requiredCapability: "runtime.read",
     });
   },

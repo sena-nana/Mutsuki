@@ -42,11 +42,12 @@ Default listen is loopback. Non-loopback requires TLS or explicit remote auth to
 
 ## Frontend navigation
 
-`@mutsuki/web-shell` renders extension pages from three scoped registries:
+`@mutsuki/web-shell` renders extension pages from scoped registries:
 
 - `activities`: top/bottom work domains shown in the compact activity bar.
 - `pages`: mountable page components with stable ids and Hash-route paths.
 - `navigation`: links an `activityId` to a `pageId`; paths are never duplicated here.
+- `slots`: named hosts such as `overview.cards` and `config.editor`.
 
 The product WebApplication declares its fixed activity catalog. WebExtensions register only real
 pages backed by their owner RPC, and the Shell removes entries unavailable to the authenticated

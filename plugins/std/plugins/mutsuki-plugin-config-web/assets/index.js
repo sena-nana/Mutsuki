@@ -10,21 +10,13 @@ export function registerConfigRenderer(format, renderer) {
   rendererRegistry.set(String(format), renderer);
 }
 
-function configEditorStore() {
-  return (globalThis.__mutsukiConfigEditors ??= new Map());
-}
-
-export function registerConfigEditor(entry) {
-  if (!entry?.providerId || !entry?.pageId) {
-    throw new Error("registerConfigEditor requires providerId and pageId");
+function configEditorForProvider(slots, providerId) {
+  for (const item of slots?.list?.() || []) {
+    if (item.slot === "config.editor" && item.component?.providerId === providerId) {
+      return item.component;
+    }
   }
-  configEditorStore().set(entry.providerId, {
-    providerId: entry.providerId,
-    activityId: entry.activityId || "",
-    pageId: entry.pageId,
-    label: entry.label || "打开管理界面",
-    mode: entry.mode === "replace" ? "replace" : "supplement",
-  });
+  return undefined;
 }
 
 function deepEqual(a, b) {
@@ -592,7 +584,7 @@ function appendEditorCard(parent, editor) {
 }
 
 /** Embeddable config panel (no outer console shell). Used by the unified overview shell. */
-export function mountConfigPanel(host, rpc, events, fixedProviderId = null) {
+export function mountConfigPanel(host, rpc, events, fixedProviderId = null, slots = null) {
   const state = {
     providers: [],
     selected: null,
@@ -690,7 +682,7 @@ export function mountConfigPanel(host, rpc, events, fixedProviderId = null) {
       root.appendChild(banner);
     }
 
-    const editor = configEditorStore().get(state.selected);
+    const editor = configEditorForProvider(slots, state.selected);
     if (editor) appendEditorCard(root, editor);
     const replaceForm = editor?.mode === "replace";
 
@@ -924,7 +916,7 @@ export default {
         title,
         component: {
           mount(el) {
-            const panel = mountConfigPanel(el, ctx.rpc, ctx.events, providerId);
+            const panel = mountConfigPanel(el, ctx.rpc, ctx.events, providerId, ctx.slots);
             return { dispose: () => panel?.destroy?.() };
           },
         },

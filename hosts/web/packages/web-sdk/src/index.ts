@@ -114,6 +114,7 @@ export interface ExtensionContext {
 
 export interface Registry<T> {
   register(item: T): Disposable;
+  list(): T[];
 }
 
 export interface WebExtension {

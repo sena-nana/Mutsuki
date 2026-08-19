@@ -12,7 +12,8 @@ Use for `crates/mutsuki-web-{host,protocol,bridge,extension,recovery}`.
 - Own HTTP/WS lifecycle, static assets, one `WebApplication`, optional extensions.
 - Frontend talks only through typed RPC/Event envelopes; capability checks are server-side.
 - Static responses set `Content-Security-Policy`. Baseline `img-src` is `'self' data: blob:`;
-  applications may add extra https image hosts via `WebApplication::extra_img_src`.
+  applications may add extra https image hosts via `WebApplication::extra_img_src`, and
+  WebExtensions may add hosts they need via `WebExtension::extra_img_src`. Host unions both.
 - Tokens authenticate once and never appear in logs, errors, or extension APIs.
 - Recovery Shell: status, load failures, disable extension, clear cache, safe mode, minimal errors — not a plugin admin console.
 - Default listen is loopback; non-loopback requires TLS or explicit remote auth.

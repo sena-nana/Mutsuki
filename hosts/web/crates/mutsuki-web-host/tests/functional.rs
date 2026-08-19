@@ -21,6 +21,7 @@ struct ExampleExtension {
     manifest: ExtensionManifest,
     assets: Option<WebFrontendAssets>,
     fail: bool,
+    extra_img_src: Vec<String>,
 }
 
 impl ExampleExtension {
@@ -54,6 +55,7 @@ impl ExampleExtension {
                 root_dir: root.to_path_buf(),
             }),
             fail: false,
+            extra_img_src: Vec::new(),
         }
     }
 
@@ -71,6 +73,7 @@ impl ExampleExtension {
             },
             assets: None,
             fail: true,
+            extra_img_src: Vec::new(),
         }
     }
 }
@@ -99,6 +102,10 @@ impl WebExtension for ExampleExtension {
     fn register_events(&self, ctx: &mut EventRegistry) -> Result<(), ExtensionError> {
         ctx.register_topic("ticks");
         Ok(())
+    }
+
+    fn extra_img_src(&self) -> Vec<String> {
+        self.extra_img_src.clone()
     }
 }
 
@@ -211,6 +218,23 @@ async fn static_csp_includes_application_image_hosts() {
     host.stop().await.unwrap();
     std::mem::forget(assets);
     std::mem::forget(dest);
+}
+
+#[tokio::test]
+async fn static_csp_includes_extension_image_hosts() {
+    let dir = tempdir().unwrap();
+    let mut extension = ExampleExtension::ok(dir.path());
+    extension.extra_img_src = vec!["https://*.qlogo.cn".into()];
+    let mut host = start_host(false, Some(extension)).await;
+    let addr = host.listen_addr().unwrap().to_string();
+    let (code, body) = http_get(&addr, "/").await;
+    assert_eq!(code, 200);
+    assert!(
+        body.to_ascii_lowercase()
+            .contains("img-src 'self' data: blob: https://*.qlogo.cn"),
+        "extension extra img-src must appear in the Host CSP header"
+    );
+    host.stop().await.unwrap();
 }
 
 #[tokio::test]

@@ -195,19 +195,30 @@ export function mountQqAccountCards(host, rpc, events) {
   };
 }
 
-function registerConfigEditor(entry) {
-  (globalThis.__mutsukiConfigEditors ??= new Map()).set(entry.providerId, entry);
-}
-
 export default {
   id: "qq-bot",
-  setup() {
-    registerConfigEditor({
-      providerId: QQ_PROVIDER_ID,
-      activityId: "home",
-      pageId: "overview.page",
-      label: "查看连接状态",
-      mode: "supplement",
+  setup(ctx) {
+    ctx.slots.register({
+      id: "qq-bot.overview.cards",
+      slot: "overview.cards",
+      requiredCapability: "bot.read",
+      component: {
+        mount(el) {
+          const panel = mountQqAccountCards(el, ctx.rpc, ctx.events);
+          return { dispose: () => panel.destroy() };
+        },
+      },
+    });
+    ctx.slots.register({
+      id: "qq-bot.config.editor",
+      slot: "config.editor",
+      component: {
+        providerId: QQ_PROVIDER_ID,
+        activityId: "home",
+        pageId: "overview.page",
+        label: "查看连接状态",
+        mode: "supplement",
+      },
     });
   },
 };

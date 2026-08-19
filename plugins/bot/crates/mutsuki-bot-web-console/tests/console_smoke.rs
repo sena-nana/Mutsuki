@@ -98,7 +98,9 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
     let overview_js = http_get_body(&addr, "/extensions/overview/index.js").await;
     assert!(overview_js.contains("overview-dashboard"));
     assert!(overview_js.contains("metric-grid"));
-    assert!(overview_js.contains("mountQqAccountCards"));
+    assert!(overview_js.contains("overview.cards"));
+    assert!(!overview_js.contains("mountQqAccountCards"));
+    assert!(!overview_js.contains("qq-bot/index.js"));
     let control_js = http_get_body(&addr, "/extensions/control/index.js").await;
     assert!(control_js.contains("mountTrajectoryView"));
     assert!(control_js.contains("./trajectory-view.js"));
@@ -124,16 +126,12 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
     let (headers, shell) = http_get_parts(&addr, "/index.html").await;
     let header_csp = headers.to_ascii_lowercase();
     assert!(
-        header_csp.contains("img-src 'self' data: blob:")
-            && header_csp.contains("https://*.qlogo.cn")
-            && header_csp.contains("https://*.nt.qq.com.cn"),
-        "Host CSP header must allow QR data, blob media, QQ avatars and inbound attachment CDNs"
+        header_csp.contains("img-src 'self' data: blob:") && !header_csp.contains("qlogo"),
+        "Host CSP header must stay at baseline when QQ/sandbox WebExtensions are not selected"
     );
     assert!(
-        shell.contains("img-src 'self' data: blob:")
-            && shell.contains("https://*.qlogo.cn")
-            && shell.contains("https://*.nt.qq.com.cn"),
-        "console CSP must allow QR data, blob media, QQ avatars and inbound attachment CDNs"
+        shell.contains("img-src 'self' data: blob:") && !shell.contains("qlogo"),
+        "console document CSP must stay at baseline when QQ/sandbox WebExtensions are not selected"
     );
 
     let bootstrap = http_get_body(&addr, "/console-bootstrap.js").await;
@@ -365,7 +363,8 @@ async fn embedded_console_demo_config_provider_is_usable() {
     )
     .await
     .unwrap();
-    assert_eq!(navigation[0]["items"][0]["label"], "工作区");
+    assert_eq!(navigation[0]["items"][0]["provider_id"], "product");
+    assert!(navigation[0]["items"][0]["label"].is_null());
     host.stop().await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 }
@@ -385,6 +384,7 @@ async fn embedded_console_starts_upgrade_extension_when_release_set_configured()
         config_provider_ids: Vec::new(),
         primary_config_provider_id: None,
         release_set: Some(root.join("release-set.toml").to_string_lossy().into()),
+        ..Default::default()
     };
     let secrets = WebConsoleSecrets {
         auth_token: "local-dev".into(),
@@ -537,10 +537,22 @@ async fn embedded_console_mounts_qq_management_extension() {
     .unwrap();
     host.start().await.unwrap();
     let addr = host.listen_addr().unwrap().to_string();
+    let (headers, shell) = http_get_parts(&addr, "/index.html").await;
+    let header_csp = headers.to_ascii_lowercase();
+    assert!(
+        header_csp.contains("https://*.qlogo.cn") && header_csp.contains("https://*.nt.qq.com.cn"),
+        "qq WebExtension must declare QQ image hosts in the Host CSP header"
+    );
+    assert!(
+        shell.contains("https://*.qlogo.cn") && shell.contains("https://*.nt.qq.com.cn"),
+        "qq WebExtension must declare QQ image hosts in the document CSP"
+    );
     let options = http_get_body(&addr, "/console-options.json").await;
     let qq_path = versioned_module_path(&options, "./extensions/qq-bot/index.js");
     let qq_js = http_get_body(&addr, &format!("/{qq_path}")).await;
     assert!(qq_js.contains("mountQqAccountCards"));
+    assert!(qq_js.contains("overview.cards"));
+    assert!(qq_js.contains("config.editor"));
     assert!(qq_js.contains("请到配置里填写账号"));
     assert!(qq_js.contains("self_user"));
     assert!(qq_js.contains("qq-account-avatar"));
@@ -585,11 +597,29 @@ async fn embedded_console_serves_sandbox_panel() {
     .unwrap();
     host.start().await.unwrap();
     let addr = host.listen_addr().unwrap().to_string();
+    let (headers, shell) = http_get_parts(&addr, "/index.html").await;
+    assert!(
+        headers.to_ascii_lowercase().contains("https://*.qlogo.cn"),
+        "sandbox WebExtension must declare QQ image hosts in the Host CSP header"
+    );
+    assert!(
+        shell.contains("https://*.qlogo.cn"),
+        "sandbox WebExtension must declare QQ image hosts in the document CSP"
+    );
     let options = http_get_body(&addr, "/console-options.json").await;
+    let parsed: serde_json::Value = serde_json::from_str(&options).unwrap();
+    assert!(
+        parsed["activities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["id"] == "sandbox")
+    );
     let path = versioned_module_path(&options, "./extensions/sandbox/index.js");
     let js = http_get_body(&addr, &format!("/{path}")).await;
     assert!(js.contains("mountSandboxPanel"));
     assert!(js.contains("activityId: \"sandbox\""));
+    assert!(!js.contains("ctx.activities.register"));
     assert!(js.contains("添加用户"));
     assert!(js.contains("真实数据"));
     assert!(!js.contains("inject_into_flow"));
