@@ -29,7 +29,7 @@ pub(super) const SANDBOX_SCHEMA_SQL: &str = "
              last_preview TEXT,
              last_activity_unix_ms INTEGER NOT NULL,
              message_count INTEGER NOT NULL,
-             active_message INTEGER NOT NULL DEFAULT 0,
+             active_message INTEGER NOT NULL DEFAULT 1,
              PRIMARY KEY(store, conversation_id)
          );
          CREATE TABLE IF NOT EXISTS bot_sandbox_user(
@@ -673,6 +673,18 @@ pub(super) fn migrate_sandbox_v9(connection: &Connection) -> Result<(), BotState
 
 pub(super) fn migrate_sandbox_v10(connection: &Connection) -> Result<(), BotStateDbError> {
     backfill_faces(connection)
+}
+
+pub(super) fn migrate_sandbox_v11(connection: &Connection) -> Result<(), BotStateDbError> {
+    if !table_exists(connection, "bot_sandbox_conversation")? {
+        return Ok(());
+    }
+    connection.execute(
+        "UPDATE bot_sandbox_conversation SET active_message = 1
+         WHERE store = 'live' AND active_message = 0",
+        [],
+    )?;
+    Ok(())
 }
 
 fn backfill_faces(connection: &Connection) -> Result<(), BotStateDbError> {
