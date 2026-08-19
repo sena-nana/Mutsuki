@@ -208,7 +208,14 @@ function formatTime(unixMs) {
 
 function quotedText(messages, replyTo) {
   const quoted = (messages || []).find((item) => item.message_id === replyTo);
-  return quoted ? `${quoted.sender_name}: ${quoted.text || "消息"}` : "引用消息";
+  if (!quoted) return "引用消息";
+  const img = (quoted.refs || []).find((ref) => ref.t === "img");
+  const text = stripImagePlaceholder(quoted.text || "", img);
+  return `${quoted.sender_name}: ${text || (img ? "[图片]" : "消息")}`;
+}
+
+function stripImagePlaceholder(text, ref) {
+  return ref?.t === "img" && text.endsWith("[图片]") ? text.slice(0, -"[图片]".length) : text;
 }
 
 function mentionName(users, userId) {
@@ -286,7 +293,10 @@ function renderRefs(body, message, rpc) {
   const refs = (message.refs || []).slice().sort((left, right) => (left.at || 0) - (right.at || 0));
   refs.forEach((ref) => {
     const at = Math.min(ref.at || 0, chars.length);
-    if (at > cursor) body.append(document.createTextNode(chars.slice(cursor, at).join("")));
+    if (at > cursor) {
+      const plain = stripImagePlaceholder(chars.slice(cursor, at).join(""), ref);
+      if (plain) body.append(document.createTextNode(plain));
+    }
     if (ref.t === "mention" || ref.t === "mention_all") {
       const length = ref.t === "mention_all" ? [..."@全体成员"].length : 1 + [...(ref.name || "")].length;
       body.append(element("span", "sandbox-mention", chars.slice(at, at + length).join("") || `@${ref.name || ref.id || ""}`));
@@ -296,7 +306,12 @@ function renderRefs(body, message, rpc) {
     cursor = at;
     appendRef(body, ref, rpc);
   });
-  if (cursor < chars.length) body.append(document.createTextNode(chars.slice(cursor).join("")));
+  if (cursor < chars.length) {
+    const rest = chars.slice(cursor).join("");
+    if (!(rest === "[图片]" && (message.refs || []).some((ref) => ref.t === "img"))) {
+      body.append(document.createTextNode(rest));
+    }
+  }
 }
 
 function appendRef(body, ref, rpc) {

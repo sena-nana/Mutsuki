@@ -81,6 +81,7 @@ async fn sandbox_rpc_simulate_send_and_confirm_live_send() {
     assert!(frontend.contains("表情包"));
     assert!(frontend.contains("pasteImage"));
     assert!(frontend.contains("onpaste"));
+    assert!(frontend.contains("stripImagePlaceholder"));
     assert!(!frontend.contains("发送小卡片"));
     assert!(!frontend.contains("发送 Markdown"));
     assert!(!frontend.contains("inject_into_flow"));

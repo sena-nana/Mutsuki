@@ -130,6 +130,7 @@ pub fn normalize_segments(
         }
     }
     flush_attachments(&text, &mut refs, &mut pending);
+    strip_image_placeholder(&mut text, &mut refs);
     (text, refs)
 }
 
@@ -715,6 +716,31 @@ fn ref_label(item: &SandboxContentRef) -> String {
     }
 }
 
+fn strip_image_placeholder(text: &mut String, refs: &mut [SandboxContentRef]) {
+    const LABEL: [char; 4] = ['[', '图', '片', ']'];
+    let mut chars = text.chars().collect::<Vec<_>>();
+    for index in 0..refs.len() {
+        if refs[index].kind != SandboxRefKind::Img {
+            continue;
+        }
+        let at = span_at(refs[index].at, chars.len());
+        let Some(start) = at.checked_sub(LABEL.len()) else {
+            continue;
+        };
+        if chars.get(start..at) != Some(LABEL.as_slice()) {
+            continue;
+        }
+        chars.drain(start..at);
+        let shift = u32::try_from(LABEL.len()).unwrap_or(0);
+        for item in &mut refs[index..] {
+            if usize::try_from(item.at).unwrap_or(usize::MAX) >= at {
+                item.at = item.at.saturating_sub(shift);
+            }
+        }
+    }
+    *text = chars.into_iter().collect();
+}
+
 fn payload_text(payload: &Value, key: &str) -> String {
     match payload.get(key) {
         Some(Value::String(value)) => value.clone(),
@@ -945,6 +971,50 @@ mod tests {
                 .iter()
                 .any(|segment| matches!(segment, MessageSegment::Markdown { .. }))
         );
+    }
+
+    #[test]
+    fn qq_image_placeholder_is_stripped_when_attachment_exists() {
+        let mut assets = HashMap::new();
+        let attachment = |url: &str| MessageSegment::PlatformSpecific {
+            platform: "qqbot".into(),
+            kind: "attachment".into(),
+            payload: serde_json::json!({
+                "url": url,
+                "content_type": "image/png",
+                "filename": "a.png"
+            }),
+        };
+        let (text, refs) = normalize_segments(
+            &[
+                MessageSegment::text("[图片]"),
+                attachment("https://cdn.example/a.png"),
+            ],
+            &[],
+            &mut assets,
+            1,
+        );
+        assert_eq!(text, "");
+        assert_eq!(refs[0].kind, SandboxRefKind::Img);
+        assert_eq!(refs[0].at, 0);
+        assert_eq!(preview_content(&text, &refs), "[图片]");
+
+        let (text, refs) = normalize_segments(
+            &[
+                MessageSegment::text("hello[图片]"),
+                attachment("https://cdn.example/b.png"),
+            ],
+            &[],
+            &mut assets,
+            2,
+        );
+        assert_eq!(text, "hello");
+        assert_eq!(refs[0].at, 5);
+
+        let (text, refs) =
+            normalize_segments(&[MessageSegment::text("[图片]")], &[], &mut assets, 3);
+        assert_eq!(text, "[图片]");
+        assert!(refs.is_empty());
     }
 
     fn test_resource(ref_id: &str, hash: &str) -> mutsuki_runtime_contracts::ResourceRef {
