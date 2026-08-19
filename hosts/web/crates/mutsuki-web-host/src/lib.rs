@@ -191,6 +191,18 @@ impl MutsukiWebHost {
             .materialize(&self.shell_dir)
             .map_err(|err| WebHostError::Io(err.to_string()))
     }
+
+    fn collect_extra_img_src(&self) -> Vec<String> {
+        let mut sources = self.application.extra_img_src();
+        for extension in &self.extensions {
+            for source in extension.extra_img_src() {
+                if !sources.iter().any(|existing| existing == &source) {
+                    sources.push(source);
+                }
+            }
+        }
+        sources
+    }
 }
 
 impl WebHost for MutsukiWebHost {
@@ -214,7 +226,7 @@ impl WebHost for MutsukiWebHost {
             self.config.clone(),
             bridge.clone(),
             shell,
-            self.application.extra_img_src(),
+            self.collect_extra_img_src(),
             self.cancel.child_token(),
         );
 

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  createExtensionContext,
   createShellState,
   createWebUiThemeController,
   groupNavigationItems,
@@ -13,6 +14,9 @@ function registry(label, disposed) {
   return {
     register() {
       return { dispose: () => disposed.push(label) };
+    },
+    list() {
+      return [];
     },
   };
 }
@@ -151,4 +155,30 @@ test("theme controller persists preference, follows system, and releases listene
   controller.dispose();
   assert.equal(mediaListener, undefined);
   delete globalThis.document;
+});
+
+test("slot contributions remain available after all extensions load", async () => {
+  const state = createShellState();
+  globalThis.__mutsukiSlotHost = () => undefined;
+  globalThis.__mutsukiSlotGuest = (ctx) => {
+    ctx.slots.register({
+      id: "guest.card",
+      slot: "overview.cards",
+      component: { mount() {} },
+    });
+  };
+  await loadExtensions(
+    state,
+    [
+      { id: "host", url: extensionUrl("__mutsukiSlotHost") },
+      { id: "guest", url: extensionUrl("__mutsukiSlotGuest") },
+    ],
+    () => createExtensionContext(state, {}, { subscribe() { return { dispose() {} }; } }),
+  );
+  assert.deepEqual(
+    state.slots.list().map((item) => item.id),
+    ["guest.card"],
+  );
+  delete globalThis.__mutsukiSlotHost;
+  delete globalThis.__mutsukiSlotGuest;
 });

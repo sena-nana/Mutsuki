@@ -23,6 +23,10 @@ pub trait WebExtension: Send + Sync {
     fn frontend_assets(&self) -> Option<WebFrontendAssets>;
     fn register_rpc(&self, ctx: &mut RpcRegistry) -> Result<(), ExtensionError>;
     fn register_events(&self, ctx: &mut EventRegistry) -> Result<(), ExtensionError>;
+    /// Extra https `img-src` / `media-src` hosts required by this extension's UI.
+    fn extra_img_src(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]

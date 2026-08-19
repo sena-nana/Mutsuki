@@ -155,6 +155,9 @@ function ownedRegistry<T>(registry: Registry<T>, scope: DisposableScope): Regist
     register(item) {
       return scope.own(registry.register(item));
     },
+    list() {
+      return registry.list();
+    },
   };
 }
 

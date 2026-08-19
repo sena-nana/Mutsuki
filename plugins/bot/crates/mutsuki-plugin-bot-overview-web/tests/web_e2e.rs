@@ -18,6 +18,10 @@ async fn start(fail_statistics: bool) -> MutsukiWebHost {
     let assets_dir = tempfile::tempdir().unwrap();
     let shell_dir = tempfile::tempdir().unwrap();
     let assets = materialize_frontend_assets(assets_dir.path()).unwrap();
+    let frontend = std::fs::read_to_string(assets.join("index.js")).unwrap();
+    assert!(frontend.contains("overview.cards"));
+    assert!(!frontend.contains("mountQqAccountCards"));
+    assert!(!frontend.contains("qq-bot/index.js"));
     std::fs::write(
         assets.join("test-shell.html"),
         "<!doctype html><title>Mutsuki Console</title><div id=app></div>",

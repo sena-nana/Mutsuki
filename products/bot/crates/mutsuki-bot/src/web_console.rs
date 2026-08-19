@@ -8,10 +8,11 @@ use mutsuki_bot_service_host_integration::{
     BotFlowConsoleBridge, LocalAgentConsoleBridge, QqConsoleBridge, SandboxConsoleBridge,
 };
 use mutsuki_bot_web_console::{
-    BotAgentConsoleServices, ConsoleAssetDirs, ControlChangeBridge, ManagementChangeBridge,
-    SecretKeyResolver, SecretMonitor, WebConsoleConfig, WebConsolePaths, WebConsoleSecrets,
-    attach_control_changed_bridge, attach_management_changed_bridges,
-    attach_revision_changed_bridge, build_console_host_with_agent,
+    BotAgentConsoleServices, ConfigNavigationGroup, ConfigNavigationItem, ConsoleAssetDirs,
+    ControlChangeBridge, ManagementChangeBridge, SecretKeyResolver, SecretMonitor,
+    WebConsoleConfig, WebConsolePaths, WebConsoleSecrets, attach_control_changed_bridge,
+    attach_management_changed_bridges, attach_revision_changed_bridge,
+    build_console_host_with_agent,
 };
 use mutsuki_plugin_bot_adapter_qqbot::QQBOT_ADAPTER_PLUGIN_ID;
 use mutsuki_plugin_bot_agent::BOT_AGENT_BRIDGE_PLUGIN_ID;
@@ -49,19 +50,6 @@ impl WebConsoleGuard {
         if !config.enabled {
             return Ok(None);
         }
-        let mut config = config;
-        let bilibili = BilibiliConsoleBridge::get(runtime);
-        if bilibili.is_some() && !config.extensions.iter().any(|id| id == "bilibili") {
-            config.extensions.push("bilibili".into());
-        }
-        if config
-            .extensions
-            .iter()
-            .any(|extension| matches!(extension.as_str(), "qq" | "agent" | "bot-flow-editor"))
-            && !config.extensions.iter().any(|id| id == "sandbox")
-        {
-            config.extensions.push("sandbox".into());
-        }
         let workspace_enabled = config.extensions.iter().any(|extension| {
             matches!(
                 extension.as_str(),
@@ -83,6 +71,7 @@ impl WebConsoleGuard {
             extensions: config.extensions,
             config_provider_ids,
             primary_config_provider_id: Some(PRODUCT_CONFIG_PROVIDER_ID.into()),
+            config_navigation_groups: config_navigation_groups(),
             release_set: config.release_set,
         };
         let secrets = resolve_secrets(service, &config)?;
@@ -203,4 +192,36 @@ fn build_secret_monitor(
         keys.into_iter().collect(),
         Arc::new(HostSecretResolver { store }),
     ))
+}
+
+fn config_navigation_groups() -> Vec<ConfigNavigationGroup> {
+    vec![
+        ConfigNavigationGroup {
+            label: None,
+            items: vec![ConfigNavigationItem {
+                provider_id: PRODUCT_CONFIG_PROVIDER_ID.into(),
+                label: Some("工作区".into()),
+            }],
+        },
+        ConfigNavigationGroup {
+            label: Some("接入".into()),
+            items: vec![ConfigNavigationItem {
+                provider_id: QQBOT_ADAPTER_PLUGIN_ID.into(),
+                label: Some("QQ 登录".into()),
+            }],
+        },
+        ConfigNavigationGroup {
+            label: Some("助手".into()),
+            items: vec![
+                ConfigNavigationItem {
+                    provider_id: LOCAL_AGENT_CONFIG_PROVIDER_ID.into(),
+                    label: Some("模型".into()),
+                },
+                ConfigNavigationItem {
+                    provider_id: BOT_AGENT_BRIDGE_PLUGIN_ID.into(),
+                    label: Some("回复".into()),
+                },
+            ],
+        },
+    ]
 }
