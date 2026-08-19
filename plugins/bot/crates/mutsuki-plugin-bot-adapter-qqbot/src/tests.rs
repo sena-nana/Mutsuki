@@ -337,6 +337,36 @@ fn gateway_runner_uses_official_group_member_openid_and_c2c_id_fallbacks() {
 }
 
 #[test]
+fn gateway_runner_copies_group_name_into_event_ext() {
+    let mut runner = QqGatewayMapRunner::new(1, "main");
+    let group = Task::new(
+        "group",
+        QQBOT_GATEWAY_FRAME_PROTOCOL_ID,
+        json!({
+            "op": 0,
+            "s": 1,
+            "t": "GROUP_AT_MESSAGE_CREATE",
+            "id": "group-event",
+            "d": {
+                "id": "group-message",
+                "group_openid": "GROUP_OPENID",
+                "group_name": "读书分享会",
+                "content": "hello",
+                "author": {"member_openid": "MEMBER_OPENID"}
+            }
+        }),
+    );
+
+    let completion = run_tasks(&mut runner, vec![group]);
+    let event = decode_ingress_event(&completion.results[0].result.as_ref().unwrap().tasks[0]);
+
+    assert_eq!(
+        event.ext.get("qqbot.group_name").and_then(Value::as_str),
+        Some("读书分享会")
+    );
+}
+
+#[test]
 fn gateway_runner_synthesizes_group_qqapp_avatar_and_keeps_channel_avatar() {
     let mut runner = QqGatewayMapRunner::with_app_id(1, "main", "APP_ID");
     let group = Task::new(

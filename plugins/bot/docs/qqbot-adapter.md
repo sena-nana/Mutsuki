@@ -9,7 +9,7 @@ the adapter through the configured plugin catalog.
 | Area | Support |
 | --- | --- |
 | Gateway | HTTPS discovery, WSS, Hello, Identify, Ready, heartbeat/ACK, Resume and reconnect |
-| Inbound | Group @, C2C, guild/channel @ and direct messages; available delete, member and reaction events. Content `<@id>` / `@all` is inlined as mention segments. `<faceType>` tags are stripped so image placeholders do not appear as text. Attachments (CDN URL) map to `PlatformSpecific`. Custom markdown `content` maps to `MessageSegment::Markdown`; template markdown plus `ark` / `embed` / `keyboard` map to `PlatformSpecific`. A media provider may additionally add `Image`/`File`/`Audio`/`Video` ResourceRef segments. Group/C2C actors without `author.avatar` receive `https://q.qlogo.cn/qqapp/{app_id}/{user_openid}/640`; `group_openid` is not used. Guild `author.avatar` is kept as-is. QQ CDN `http://` avatar and attachment URLs are stored and fetched as `https://`. |
+| Inbound | Group @, C2C, guild/channel @ and direct messages; available delete, member and reaction events. Content `<@id>` / `@all` is inlined as mention segments. `<faceType>` tags are stripped so image placeholders do not appear as text. Attachments (CDN URL) map to `PlatformSpecific`. Custom markdown `content` maps to `MessageSegment::Markdown`; template markdown plus `ark` / `embed` / `keyboard` map to `PlatformSpecific`. A media provider may additionally add `Image`/`File`/`Audio`/`Video` ResourceRef segments. Group/C2C actors without `author.avatar` receive `https://q.qlogo.cn/qqapp/{app_id}/{user_openid}/640`; `group_openid` is not used. Guild `author.avatar` is kept as-is. QQ CDN `http://` avatar and attachment URLs are stored and fetched as `https://`. Gateway payloads that include `group_name` (or `name` on `GROUP_*` events) copy it to `qqbot.group_name`. |
 | Standard effects | Group/C2C text, mention, reply, custom Markdown (optional keyboard on the same payload) and message recall |
 | QQ-specific effects | Account query (mapped `user` plus raw `openapi_user`), Gateway query and relative-path raw call |
 | Media | Validated image/audio/video/file `ResourceRef` input and Group/C2C upload/send, only when the product injects a real provider |
@@ -82,6 +82,11 @@ last error, and the bot self profile from `/users/@me` (READY only fills empty f
 `event_source_list` shows the source lifecycle; `event_source_restart` performs an
 explicit supervised restart. Logs use account ID, a session digest, event type, sequence and
 correlation ID, never credentials or authorization headers.
+
+Sandbox live group titles never display `group_openid`. The EventSource copies `qqbot.group_name`
+when the Gateway payload has it, then asynchronously calls `GET /v2/groups/{group_openid}/info`
+(30 QPM). Permission error 11253 and other non-retryable failures are cached for the process
+lifetime; the console shows `群聊` until a real name is known.
 
 Failures are classified as recoverable disconnect, Gateway rate limit, Identify/Resume
 rejection, auth/config rejection or permanent protocol/account rejection. Opcode 9

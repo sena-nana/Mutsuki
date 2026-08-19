@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -6,7 +7,7 @@ use mutsuki_service_runtime::{
     HostEventSource, HostEventSourceContext, HostEventSourceDescriptor, HostEventSourceFuture,
     HostEventSourceHealth,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_tungstenite::tungstenite::Message;
 
@@ -15,12 +16,12 @@ use mutsuki_bot_management::{
     QQ_GATEWAY_ERROR_OPERATOR_RECONNECT, QQ_GATEWAY_ERROR_SERVER_RECONNECT,
     QQ_GATEWAY_ERROR_SESSION_EXPIRED, QQ_GATEWAY_ERROR_SESSION_INVALID,
 };
-use mutsuki_bot_protocol::{BotEvent, BotEventKind, BotUser};
+use mutsuki_bot_protocol::{BotEvent, BotEventKind, BotTarget, BotUser};
 use mutsuki_plugin_bot_adapter_qqbot::{
     GatewayAction, GatewayFrame, HttpMethod, QQBOT_ADAPTER_PLUGIN_ID, QqAuthManager, QqBotConfig,
     QqGatewayPump, QqOpenApiError, QqOpenApiTransport, ReqwestQqHttpClient, SharedQqCredentials,
-    adapter::{qq_gateway_frame_to_bot_event, qq_self_user},
-    session_summary, validate_gateway_url,
+    adapter::{qq_gateway_frame_to_bot_event, qq_group_name_from_info, qq_self_user},
+    qq_group_info_path, session_summary, validate_gateway_url,
 };
 
 pub const QQBOT_GATEWAY_SOURCE_ID: &str = "mutsuki.bot.adapter.qqbot.gateway.source";
@@ -64,11 +65,16 @@ pub struct QqGatewayControlHandle {
 #[derive(Clone, Default)]
 pub struct QqInboundObserveHandle {
     observer: Arc<Mutex<Option<Arc<dyn Fn(BotEvent) + Send + Sync>>>>,
+    titles: Arc<Mutex<Option<Arc<dyn Fn(String, String) + Send + Sync>>>>,
 }
 
 impl QqInboundObserveHandle {
     pub fn set(&self, observer: Arc<dyn Fn(BotEvent) + Send + Sync>) {
         *self.observer.lock().expect("QQ inbound observer mutex") = Some(observer);
+    }
+
+    pub fn set_title_sink(&self, sink: Arc<dyn Fn(String, String) + Send + Sync>) {
+        *self.titles.lock().expect("QQ inbound title mutex") = Some(sink);
     }
 
     fn notify(&self, event: BotEvent) {
@@ -79,6 +85,12 @@ impl QqInboundObserveHandle {
             .clone()
         {
             observer(event);
+        }
+    }
+
+    fn notify_title(&self, group_id: &str, title: &str) {
+        if let Some(sink) = self.titles.lock().expect("QQ inbound title mutex").clone() {
+            sink(group_id.to_owned(), title.to_owned());
         }
     }
 }
@@ -273,6 +285,7 @@ async fn run_gateway(
     let mut host_stop = ctx.shutdown.clone();
     let mut pump = QqGatewayPump::with_account(&config.account_id, config.gateway_dedup_window);
     let mut reconnect_attempt = 0_u32;
+    let group_names = GroupNameCache::default();
     loop {
         if host_stop.is_cancelled() || *local_stop.borrow() {
             mark_stopped(&health);
@@ -285,6 +298,7 @@ async fn run_gateway(
             GatewayConnectionContext {
                 health: &health,
                 inbound: &inbound,
+                group_names: &group_names,
                 ctx: &ctx,
                 reconnect_attempt: &mut reconnect_attempt,
                 host_stop: &mut host_stop,
@@ -366,6 +380,7 @@ async fn run_gateway(
 struct GatewayConnectionContext<'a> {
     health: &'a QqGatewayHealthHandle,
     inbound: &'a QqInboundObserveHandle,
+    group_names: &'a GroupNameCache,
     ctx: &'a HostEventSourceContext,
     reconnect_attempt: &'a mut u32,
     host_stop: &'a mut mutsuki_service_runtime::HostShutdownToken,
@@ -382,6 +397,7 @@ async fn run_connection(
     let GatewayConnectionContext {
         health,
         inbound,
+        group_names,
         ctx,
         reconnect_attempt,
         host_stop,
@@ -649,7 +665,12 @@ async fn run_connection(
                                 {
                                     health.set_self_user(actor);
                                 }
-                                inbound.notify(event);
+                                notify_group_event(
+                                    inbound,
+                                    api.clone(),
+                                    group_names,
+                                    event,
+                                );
                             }
                             let mut snapshot = health.inner.lock().expect("QQBot health mutex");
                             snapshot.last_event_unix_ms = unix_ms();
@@ -722,6 +743,137 @@ async fn gateway_credentials(
     .await
     .map_err(recoverable_failure)?;
     result.map_err(|error| classify_api_error(config, error))
+}
+
+#[derive(Clone, Default)]
+struct GroupNameCache {
+    inner: Arc<Mutex<HashMap<String, GroupNameEntry>>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum GroupNameEntry {
+    Name(String),
+    Denied,
+    Pending,
+}
+
+impl GroupNameCache {
+    fn cached_name(&self, group_id: &str) -> Option<String> {
+        match self
+            .inner
+            .lock()
+            .expect("QQ group name cache")
+            .get(group_id)
+        {
+            Some(GroupNameEntry::Name(name)) => Some(name.clone()),
+            _ => None,
+        }
+    }
+
+    fn start_fetch(&self, group_id: &str) -> bool {
+        let mut cache = self.inner.lock().expect("QQ group name cache");
+        match cache.get(group_id) {
+            Some(GroupNameEntry::Name(_) | GroupNameEntry::Denied | GroupNameEntry::Pending) => {
+                false
+            }
+            None => {
+                cache.insert(group_id.to_owned(), GroupNameEntry::Pending);
+                true
+            }
+        }
+    }
+
+    fn store_name(&self, group_id: &str, name: String) {
+        self.inner
+            .lock()
+            .expect("QQ group name cache")
+            .insert(group_id.to_owned(), GroupNameEntry::Name(name));
+    }
+
+    fn store_denied(&self, group_id: &str) {
+        self.inner
+            .lock()
+            .expect("QQ group name cache")
+            .insert(group_id.to_owned(), GroupNameEntry::Denied);
+    }
+
+    fn clear_pending(&self, group_id: &str) {
+        let mut cache = self.inner.lock().expect("QQ group name cache");
+        if matches!(cache.get(group_id), Some(GroupNameEntry::Pending)) {
+            cache.remove(group_id);
+        }
+    }
+}
+
+fn notify_group_event(
+    inbound: &QqInboundObserveHandle,
+    api: Arc<Mutex<QqOpenApiTransport>>,
+    cache: &GroupNameCache,
+    mut event: BotEvent,
+) {
+    let Some(group_id) = group_openid_from_event(&event).map(str::to_owned) else {
+        inbound.notify(event);
+        return;
+    };
+    if let Some(name) = event
+        .ext
+        .get("qqbot.group_name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+    {
+        cache.store_name(&group_id, name);
+        inbound.notify(event);
+        return;
+    }
+    if let Some(name) = cache.cached_name(&group_id) {
+        event.ext.insert("qqbot.group_name".into(), json!(name));
+        inbound.notify(event);
+        return;
+    }
+    inbound.notify(event);
+    if cache.start_fetch(&group_id) {
+        schedule_group_name_fetch(api, cache.clone(), inbound.clone(), group_id);
+    }
+}
+
+fn group_openid_from_event(event: &BotEvent) -> Option<&str> {
+    match &event.target {
+        BotTarget::Group { group_id } if !group_id.is_empty() && group_id != "unknown_group" => {
+            Some(group_id)
+        }
+        _ => None,
+    }
+}
+
+fn schedule_group_name_fetch(
+    api: Arc<Mutex<QqOpenApiTransport>>,
+    cache: GroupNameCache,
+    inbound: QqInboundObserveHandle,
+    group_id: String,
+) {
+    tokio::spawn(async move {
+        let path = qq_group_info_path(&group_id);
+        let fetched = tokio::task::spawn_blocking(move || {
+            let mut api = api.lock().expect("QQBot API mutex");
+            api.execute_json(HttpMethod::Get, path, Value::Null)
+        })
+        .await;
+        match fetched {
+            Ok(Ok(body)) => {
+                if let Some(name) = qq_group_name_from_info(&body) {
+                    cache.store_name(&group_id, name.clone());
+                    inbound.notify_title(&group_id, &name);
+                } else {
+                    cache.store_denied(&group_id);
+                }
+            }
+            Ok(Err(error)) if error.retryable() => cache.clear_pending(&group_id),
+            Ok(Err(_)) => cache.store_denied(&group_id),
+            Err(_) => cache.clear_pending(&group_id),
+        }
+    });
 }
 
 fn classify_api_error(_config: &QqBotConfig, error: QqOpenApiError) -> GatewayFailure {
@@ -1181,5 +1333,22 @@ mod tests {
             cached.avatar_url.as_deref(),
             Some("https://example.test/bot.png")
         );
+    }
+
+    #[test]
+    fn group_name_cache_fetches_once_and_keeps_resolved_or_denied() {
+        let cache = GroupNameCache::default();
+        assert!(cache.start_fetch("group-1"));
+        assert!(!cache.start_fetch("group-1"));
+        cache.store_name("group-1", "读书分享会".into());
+        assert_eq!(cache.cached_name("group-1").as_deref(), Some("读书分享会"));
+        assert!(!cache.start_fetch("group-1"));
+
+        assert!(cache.start_fetch("group-2"));
+        cache.clear_pending("group-2");
+        assert!(cache.start_fetch("group-2"));
+        cache.store_denied("group-2");
+        assert!(!cache.start_fetch("group-2"));
+        assert_eq!(cache.cached_name("group-2"), None);
     }
 }

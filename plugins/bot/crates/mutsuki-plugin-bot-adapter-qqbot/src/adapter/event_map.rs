@@ -58,6 +58,9 @@ pub fn qq_gateway_frame_to_bot_event(
     {
         ext.insert("qqbot.thread_id".into(), Value::String(thread_id.into()));
     }
+    if let Some(group_name) = qq_payload_group_name(event_type, data) {
+        ext.insert("qqbot.group_name".into(), Value::String(group_name));
+    }
     Ok(BotEvent {
         event_id: frame
             .id
@@ -108,6 +111,27 @@ fn qq_event_kind(event_type: &str) -> BotEventKind {
 pub fn qq_self_user(user: &Value, app_id: &str) -> Option<BotUser> {
     let (user_id, _) = qq_actor_id(user)?;
     Some(qq_user_fields(user, user_id, true, app_id))
+}
+
+/// Reads `group_name` from a QQ `GET /v2/groups/{group_openid}/info` body.
+#[must_use]
+pub fn qq_group_name_from_info(body: &Value) -> Option<String> {
+    nonempty_json_string(body.get("group_name"))
+}
+
+fn qq_payload_group_name(event_type: &str, data: &Value) -> Option<String> {
+    if !event_type.starts_with("GROUP") {
+        return None;
+    }
+    nonempty_json_string(data.get("group_name")).or_else(|| nonempty_json_string(data.get("name")))
+}
+
+fn nonempty_json_string(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
 }
 
 fn qq_actor(data: &Value, app_id: &str) -> Option<BotUser> {

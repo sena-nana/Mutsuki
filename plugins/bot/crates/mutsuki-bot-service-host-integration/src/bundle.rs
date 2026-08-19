@@ -234,7 +234,13 @@ impl QqBotPluginBundle {
                 }));
                 intercept_for_factory.bind(sandbox.clone());
                 let observed = sandbox.clone();
-                inbound.set(Arc::new(move |event| observed.observe_event(event)));
+                inbound.set(Arc::new({
+                    let observed = observed.clone();
+                    move |event| observed.observe_event(event)
+                }));
+                inbound.set_title_sink(Arc::new(move |group_id, title| {
+                    observed.apply_live_title(&group_id, &title);
+                }));
                 let mut host_services = vec![
                     RuntimeBootstrapperService::new(
                         QQ_MANAGEMENT_SERVICE_ID,

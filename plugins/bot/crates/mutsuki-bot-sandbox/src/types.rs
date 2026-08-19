@@ -11,6 +11,7 @@ pub const SANDBOX_SERVICE_ID: &str = "mutsuki.bot.sandbox";
 pub const DEFAULT_SANDBOX_ACCOUNT_ID: &str = "sandbox";
 pub const SANDBOX_ID_PREFIX: &str = "sandbox:";
 pub const SANDBOX_GROUP_ID: &str = "sandbox:default";
+pub const LIVE_GROUP_TITLE_FALLBACK: &str = "群聊";
 pub const SANDBOX_USER_LIMIT: usize = 10;
 pub const SANDBOX_USER_NAMES: [&str; SANDBOX_USER_LIMIT] = [
     "Alice", "Bob", "Carol", "Dave", "Eve", "Frank", "Grace", "Hank", "Ivy", "Jack",
