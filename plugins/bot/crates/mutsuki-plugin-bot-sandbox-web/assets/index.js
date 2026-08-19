@@ -1211,13 +1211,16 @@ export function mountSandboxPanel(host, rpc, events) {
 export default {
   id: "sandbox",
   setup(ctx) {
+    ctx.activities.register({
+      id: "sandbox", label: "沙盒", icon: "sandbox", order: 12, position: "top",
+    });
     ctx.pages.register({
-      id: "sandbox.page", path: "/sandbox", title: "QQ 沙盒",
+      id: "sandbox.page", path: "/sandbox", title: "沙盒",
       component: { mount(el) { const panel = mountSandboxPanel(el, ctx.rpc, ctx.events); return { dispose: () => panel.destroy() }; } },
       requiredCapability: "bot.read",
     });
     ctx.navigation.register({
-      id: "sandbox.nav", activityId: "bot", pageId: "sandbox.page", label: "QQ 沙盒", order: 15,
+      id: "sandbox.nav", activityId: "sandbox", pageId: "sandbox.page", label: "沙盒", order: 10,
       requiredCapability: "bot.read",
     });
   },
