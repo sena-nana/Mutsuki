@@ -952,11 +952,12 @@ fn migrate_schema(connection: &Connection) -> Result<(), BotStateDbError> {
          CREATE INDEX IF NOT EXISTS bot_interaction_active
              ON bot_interaction(origin_key, status, session_id);
          {}
-         PRAGMA user_version=8;
+         PRAGMA user_version=9;
          COMMIT;",
         sandbox_history::SANDBOX_SCHEMA_SQL
     );
     connection.execute_batch(&sql)?;
+    sandbox_history::migrate_sandbox_v9(connection)?;
 
     let has_receipt_status = {
         let mut statement = connection.prepare("PRAGMA table_info(bot_delivery_receipt)")?;
@@ -3099,6 +3100,74 @@ mod tests {
                 .iter()
                 .any(|item| item.text == "persisted")
         );
+    }
+
+    #[test]
+    fn sandbox_history_migrates_segments_json_to_hash_refs() {
+        use mutsuki_bot_sandbox::SandboxHistoryStore;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("legacy.db");
+        {
+            let connection = rusqlite::Connection::open(&path).unwrap();
+            let conversation = serde_json::json!({
+                "version": 1,
+                "account_id": "qq-main",
+                "kind": "group",
+                "group_id": "sandbox:default"
+            })
+            .to_string();
+            connection
+                .execute_batch(
+                    "PRAGMA foreign_keys=ON;
+                 CREATE TABLE bot_sandbox_meta(singleton INTEGER PRIMARY KEY CHECK(singleton = 1), mode TEXT NOT NULL, account_id TEXT NOT NULL);
+                 CREATE TABLE bot_sandbox_conversation(
+                     store TEXT NOT NULL, conversation_id TEXT NOT NULL, account_id TEXT NOT NULL, kind TEXT NOT NULL,
+                     title TEXT NOT NULL, avatar_url TEXT, conversation_json TEXT NOT NULL, last_preview TEXT,
+                     last_activity_unix_ms INTEGER NOT NULL, message_count INTEGER NOT NULL, active_message INTEGER NOT NULL DEFAULT 0,
+                     PRIMARY KEY(store, conversation_id));
+                 CREATE TABLE bot_sandbox_message(
+                     store TEXT NOT NULL, message_id TEXT NOT NULL, conversation_id TEXT NOT NULL, sender_id TEXT NOT NULL,
+                     sender_name TEXT NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL, segments_json TEXT NOT NULL,
+                     reply_to TEXT, time_ms INTEGER NOT NULL, PRIMARY KEY(store, message_id));
+                 CREATE TABLE bot_sandbox_media(
+                     media_id TEXT PRIMARY KEY, mime TEXT NOT NULL, name TEXT NOT NULL, bytes BLOB NOT NULL,
+                     created_at_unix_ms INTEGER NOT NULL);
+                 INSERT INTO bot_sandbox_meta VALUES (1, 'simulate', 'qq-main');
+                 INSERT INTO bot_sandbox_media VALUES ('media-old', 'image/png', 'pic.png', x'706e67', 1);",
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO bot_sandbox_conversation VALUES ('simulate', 'sandbox:default', 'qq-main', 'group', '群', NULL, ?1, 'pic', 1, 1, 0)",
+                    rusqlite::params![conversation],
+                )
+                .unwrap();
+            let segments = serde_json::json!([{
+                "type": "platform_specific",
+                "platform": "sandbox",
+                "kind": "media",
+                "payload": {"media_id": "media-old", "mime": "image/png", "name": "pic.png"}
+            }]);
+            connection
+                .execute(
+                    "INSERT INTO bot_sandbox_message VALUES ('simulate', 'msg-1', 'sandbox:default', 'u', 'Alice', 'user', '[图片]', ?1, NULL, 1)",
+                    rusqlite::params![segments.to_string()],
+                )
+                .unwrap();
+        }
+
+        let repository = BotStateDbRepository::open(&path).unwrap();
+        let loaded = SandboxHistoryStore::load(&repository).unwrap();
+        let hash = mutsuki_bot_sandbox::hash_bytes(b"png");
+        assert_eq!(loaded.media.len(), 1);
+        assert_eq!(loaded.media[0].content_hash, hash);
+        let message = loaded.simulate[0]
+            .messages
+            .iter()
+            .find(|item| item.message_id == "msg-1")
+            .unwrap();
+        assert_eq!(message.refs[0].h.as_deref(), Some(hash.as_str()));
+        assert!(repository.sandbox_media(&hash).unwrap().is_some());
     }
 
     struct NoopSandboxRuntime;

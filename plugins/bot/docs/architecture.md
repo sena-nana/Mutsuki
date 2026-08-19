@@ -70,8 +70,8 @@ Sandbox console (virtual user)
 - `mutsuki-bot-delivery`: attempt, receipt, retry, CAS claim and reply-part delivery behavior.
 - `mutsuki-bot-state-db`: durable session, delivery, interaction and sandbox history
   repository; historical Flow tables are neither read nor destructively removed.
-  Sandbox live/simulate conversations, roster users, messages and bounded simulate
-  media persist in `bot_sandbox_*` tables. Other plugins query those tables through
+  Sandbox live/simulate conversations, roster users, messages and content-addressed
+  assets persist in `bot_sandbox_*` tables. Other plugins query those tables through
   `BotStateDbRepository` or `inspect_rows`; sandbox startup hydrates from a snapshot.
 - `mutsuki-bot-sandbox`: QQ conversation sandbox with durable history in `BotStateDb`.
   Simulate mode is a Koishi-style closed loop (virtual users always enter `mutsuki.bot.flow/ingress@1`,
@@ -81,8 +81,11 @@ Sandbox console (virtual user)
   can send mentions, local media,
   Ark cards and Markdown into Flow; the console renders those segments plus live
   inbound attachments/ark/markdown/keyboard. Live outbound stays on Adapter-supported
-  text, mention and media. Media bytes stay in a bounded sandbox blob map, not in
-  the message list JSON, and the same bound is persisted for restart. Live mode projects real Gateway inbound events and
+  text, mention and media. Messages persist as plain text plus a compact hash index.
+  Image bytes are stored once in `bot_sandbox_asset` keyed by `sha256:`; QQ wrapping
+  the same file in a new CDN URL / `ResourceRef` only writes an index hit and
+  refreshes the display URL. Official faces are indexed as `qq:{faceType}:{faceId}`
+  without a blob. Live mode projects real Gateway inbound events and
   confirmed bot sends, including live member avatar URLs. Bot bubbles use the connected bot's
   name and avatar when known, otherwise `机器人`. Group sessions show a
   member photo. The right-hand roster shows nicknames only. The member context menu

@@ -1,8 +1,11 @@
-use mutsuki_bot_protocol::{BotConversationKind, QqConversationRef};
+use std::collections::HashMap;
+
+use mutsuki_bot_protocol::{BotConversationKind, MessageSegment, QqConversationRef};
 use mutsuki_bot_sandbox::{
-    SANDBOX_MAX_MEDIA_ITEMS, SANDBOX_MAX_MESSAGES, SandboxConversationView, SandboxError,
+    SANDBOX_MAX_MESSAGES, SandboxAsset, SandboxConversationView, SandboxError,
     SandboxHistoryConversation, SandboxHistoryKind, SandboxHistorySnapshot, SandboxHistoryStore,
     SandboxMediaBlob, SandboxMessageView, SandboxMode, SandboxSpeakerRole, SandboxUserView,
+    hash_bytes, normalize_segments, remap_sandbox_media_ids,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -49,7 +52,7 @@ pub(super) const SANDBOX_SCHEMA_SQL: &str = "
              sender_name TEXT NOT NULL,
              role TEXT NOT NULL,
              text TEXT NOT NULL,
-             segments_json TEXT NOT NULL,
+             refs_json TEXT NOT NULL,
              reply_to TEXT,
              time_ms INTEGER NOT NULL,
              PRIMARY KEY(store, message_id),
@@ -59,11 +62,13 @@ pub(super) const SANDBOX_SCHEMA_SQL: &str = "
          );
          CREATE INDEX IF NOT EXISTS bot_sandbox_message_conversation
              ON bot_sandbox_message(store, conversation_id, time_ms);
-         CREATE TABLE IF NOT EXISTS bot_sandbox_media(
-             media_id TEXT PRIMARY KEY,
+         CREATE TABLE IF NOT EXISTS bot_sandbox_asset(
+             content_hash TEXT PRIMARY KEY,
+             kind TEXT NOT NULL,
              mime TEXT NOT NULL,
              name TEXT NOT NULL,
              bytes BLOB NOT NULL,
+             url TEXT,
              created_at_unix_ms INTEGER NOT NULL
          );";
 
@@ -127,7 +132,7 @@ pub(super) fn load_media_by_id(
 ) -> Result<Option<SandboxMediaBlob>, BotStateDbError> {
     connection
         .query_row(
-            "SELECT media_id, mime, name, bytes FROM bot_sandbox_media WHERE media_id=?1",
+            "SELECT content_hash, mime, name, bytes FROM bot_sandbox_asset WHERE content_hash=?1",
             params![media_id],
             |row| {
                 Ok(SandboxMediaBlob {
@@ -295,7 +300,7 @@ fn load_messages(
     conversation_id: &str,
 ) -> Result<Vec<SandboxMessageView>, BotStateDbError> {
     let mut statement = connection.prepare(
-        "SELECT message_id, sender_id, sender_name, role, text, segments_json, reply_to, time_ms
+        "SELECT message_id, sender_id, sender_name, role, text, refs_json, reply_to, time_ms
          FROM bot_sandbox_message
          WHERE store=?1 AND conversation_id=?2
          ORDER BY time_ms ASC, message_id ASC",
@@ -315,7 +320,7 @@ fn load_messages(
         })?
         .collect::<Result<Vec<_>, _>>()?;
     let mut messages = Vec::new();
-    for (message_id, sender_id, sender_name, role, text, segments_json, reply_to, time_ms) in rows {
+    for (message_id, sender_id, sender_name, role, text, refs_json, reply_to, time_ms) in rows {
         messages.push(SandboxMessageView {
             message_id,
             conversation_id: conversation_id.to_owned(),
@@ -323,7 +328,7 @@ fn load_messages(
             sender_name,
             role: parse_role(&role)?,
             text,
-            segments: decode(&segments_json)?,
+            refs: decode(&refs_json)?,
             reply_to,
             time_ms,
         });
@@ -334,23 +339,43 @@ fn load_messages(
     Ok(messages)
 }
 
-fn load_media(connection: &Connection) -> Result<Vec<SandboxMediaBlob>, BotStateDbError> {
+fn load_media(connection: &Connection) -> Result<Vec<SandboxAsset>, BotStateDbError> {
     let mut statement = connection.prepare(
-        "SELECT media_id, mime, name, bytes
-         FROM bot_sandbox_media
-         ORDER BY created_at_unix_ms ASC, media_id ASC",
+        "SELECT content_hash, kind, mime, name, bytes, url, created_at_unix_ms
+         FROM bot_sandbox_asset
+         ORDER BY created_at_unix_ms ASC, content_hash ASC",
     )?;
-    statement
+    let rows = statement
         .query_map([], |row| {
-            Ok(SandboxMediaBlob {
-                media_id: row.get(0)?,
-                mime: row.get(1)?,
-                name: row.get(2)?,
-                bytes: row.get(3)?,
-            })
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, Vec<u8>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, i64>(6)?,
+            ))
         })?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(BotStateDbError::from)
+        .collect::<Result<Vec<_>, _>>()?;
+    rows.into_iter()
+        .map(
+            |(content_hash, kind, mime, name, bytes, url, created_at_unix_ms)| {
+                Ok(SandboxAsset {
+                    content_hash,
+                    kind,
+                    mime,
+                    name,
+                    bytes,
+                    url,
+                    created_at_unix_ms: super::sqlite_unsigned(
+                        created_at_unix_ms,
+                        "created_at_unix_ms",
+                    )?,
+                })
+            },
+        )
+        .collect()
 }
 
 pub(super) fn save(
@@ -366,24 +391,25 @@ pub(super) fn save(
     transaction.execute("DELETE FROM bot_sandbox_message", [])?;
     transaction.execute("DELETE FROM bot_sandbox_user", [])?;
     transaction.execute("DELETE FROM bot_sandbox_conversation", [])?;
-    transaction.execute("DELETE FROM bot_sandbox_media", [])?;
+    transaction.execute("DELETE FROM bot_sandbox_asset", [])?;
     write_conversations(
         &transaction,
         SandboxHistoryKind::Simulate,
         &snapshot.simulate,
     )?;
     write_conversations(&transaction, SandboxHistoryKind::Live, &snapshot.live)?;
-    let start = snapshot.media.len().saturating_sub(SANDBOX_MAX_MEDIA_ITEMS);
-    for (index, media) in snapshot.media[start..].iter().enumerate() {
+    for media in &snapshot.media {
         transaction.execute(
-            "INSERT INTO bot_sandbox_media(media_id, mime, name, bytes, created_at_unix_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO bot_sandbox_asset(content_hash, kind, mime, name, bytes, url, created_at_unix_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
-                media.media_id,
+                media.content_hash,
+                media.kind,
                 media.mime,
                 media.name,
                 media.bytes,
-                sqlite_integer(u64::try_from(index).unwrap_or(u64::MAX))?,
+                media.url,
+                sqlite_integer(media.created_at_unix_ms)?,
             ],
         )?;
     }
@@ -470,7 +496,7 @@ fn insert_message(
 ) -> Result<(), BotStateDbError> {
     connection.execute(
         "INSERT INTO bot_sandbox_message(
-             store, message_id, conversation_id, sender_id, sender_name, role, text, segments_json, reply_to, time_ms
+             store, message_id, conversation_id, sender_id, sender_name, role, text, refs_json, reply_to, time_ms
          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             kind.as_str(),
@@ -480,7 +506,7 @@ fn insert_message(
             message.sender_name,
             role_name(message.role),
             message.text,
-            encode(&message.segments)?,
+            encode(&message.refs)?,
             message.reply_to,
             message.time_ms,
         ],
@@ -524,6 +550,186 @@ fn role_name(role: SandboxSpeakerRole) -> &'static str {
         SandboxSpeakerRole::Bot => "bot",
         SandboxSpeakerRole::System => "system",
     }
+}
+
+pub(super) fn migrate_sandbox_v9(connection: &Connection) -> Result<(), BotStateDbError> {
+    let aliases = migrate_legacy_media(connection)?;
+    let columns = table_columns(connection, "bot_sandbox_message")?;
+    if columns.iter().any(|column| column == "segments_json") {
+        migrate_legacy_messages(connection, &aliases)?;
+    }
+    Ok(())
+}
+
+fn migrate_legacy_media(
+    connection: &Connection,
+) -> Result<HashMap<String, String>, BotStateDbError> {
+    let mut aliases = HashMap::new();
+    if !table_exists(connection, "bot_sandbox_media")? {
+        return Ok(aliases);
+    }
+    let mut statement = connection
+        .prepare("SELECT media_id, mime, name, bytes, created_at_unix_ms FROM bot_sandbox_media")?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Vec<u8>>(3)?,
+                row.get::<_, i64>(4)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(statement);
+    for (media_id, mime, name, bytes, created_at_unix_ms) in rows {
+        let hash = hash_bytes(&bytes);
+        aliases.insert(media_id, hash.clone());
+        let kind = if mime.starts_with("image/") {
+            "image"
+        } else if mime.starts_with("audio/") {
+            "audio"
+        } else if mime.starts_with("video/") {
+            "video"
+        } else {
+            "file"
+        };
+        connection.execute(
+            "INSERT INTO bot_sandbox_asset(content_hash, kind, mime, name, bytes, url, created_at_unix_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6)
+             ON CONFLICT(content_hash) DO NOTHING",
+            params![hash, kind, mime, name, bytes, created_at_unix_ms],
+        )?;
+    }
+    connection.execute("DROP TABLE bot_sandbox_media", [])?;
+    Ok(aliases)
+}
+
+fn migrate_legacy_messages(
+    connection: &Connection,
+    aliases: &HashMap<String, String>,
+) -> Result<(), BotStateDbError> {
+    let mut statement = connection.prepare(
+        "SELECT store, message_id, conversation_id, sender_id, sender_name, role, text, segments_json, reply_to, time_ms
+         FROM bot_sandbox_message",
+    )?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, String>(7)?,
+                row.get::<_, Option<String>>(8)?,
+                row.get::<_, i64>(9)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(statement);
+    connection.execute_batch(
+        "CREATE TABLE bot_sandbox_message_v9(
+             store TEXT NOT NULL,
+             message_id TEXT NOT NULL,
+             conversation_id TEXT NOT NULL,
+             sender_id TEXT NOT NULL,
+             sender_name TEXT NOT NULL,
+             role TEXT NOT NULL,
+             text TEXT NOT NULL,
+             refs_json TEXT NOT NULL,
+             reply_to TEXT,
+             time_ms INTEGER NOT NULL,
+             PRIMARY KEY(store, message_id)
+         );",
+    )?;
+    let mut assets = load_media(connection)?
+        .into_iter()
+        .map(|asset| (asset.content_hash.clone(), asset))
+        .collect::<HashMap<_, _>>();
+    for (
+        store,
+        message_id,
+        conversation_id,
+        sender_id,
+        sender_name,
+        role,
+        _text,
+        segments_json,
+        reply_to,
+        time_ms,
+    ) in rows
+    {
+        let mut segments: Vec<MessageSegment> = decode(&segments_json)?;
+        remap_sandbox_media_ids(&mut segments, aliases);
+        let (text, refs) = normalize_segments(&segments, &[], &mut assets, 0);
+        connection.execute(
+            "INSERT INTO bot_sandbox_message_v9(
+                 store, message_id, conversation_id, sender_id, sender_name, role, text, refs_json, reply_to, time_ms
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                store,
+                message_id,
+                conversation_id,
+                sender_id,
+                sender_name,
+                role,
+                text,
+                encode(&refs)?,
+                reply_to,
+                time_ms,
+            ],
+        )?;
+    }
+    connection.execute("DROP TABLE bot_sandbox_message", [])?;
+    connection.execute(
+        "ALTER TABLE bot_sandbox_message_v9 RENAME TO bot_sandbox_message",
+        [],
+    )?;
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS bot_sandbox_message_conversation
+         ON bot_sandbox_message(store, conversation_id, time_ms)",
+        [],
+    )?;
+    for asset in assets.values() {
+        connection.execute(
+            "INSERT INTO bot_sandbox_asset(content_hash, kind, mime, name, bytes, url, created_at_unix_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(content_hash) DO NOTHING",
+            params![
+                asset.content_hash,
+                asset.kind,
+                asset.mime,
+                asset.name,
+                asset.bytes,
+                asset.url,
+                sqlite_integer(asset.created_at_unix_ms)?,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+fn table_exists(connection: &Connection, name: &str) -> Result<bool, BotStateDbError> {
+    let count: i64 = connection.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+        params![name],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
+}
+
+fn table_columns(connection: &Connection, table: &str) -> Result<Vec<String>, BotStateDbError> {
+    if !table_exists(connection, table)? {
+        return Ok(Vec::new());
+    }
+    let mut statement = connection.prepare(&format!("PRAGMA table_info(\"{table}\")"))?;
+    statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(BotStateDbError::from)
 }
 
 fn sandbox_error(error: BotStateDbError) -> SandboxError {
