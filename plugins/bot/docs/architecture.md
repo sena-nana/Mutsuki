@@ -80,8 +80,9 @@ Sandbox console (virtual user)
   console). Simulate roster OpenID/nickname can be edited, and observed live members
   can be imported into simulate together with their avatar URL. Simulate compose
   can send mentions, local media (file picker or clipboard paste),
-  custom stickers, official faces, Ark cards and Markdown into Flow; the console renders those segments plus live
-  inbound attachments/ark/markdown/keyboard. Live outbound stays on Adapter-supported
+  custom stickers and official faces into Flow. Compose puts image, file and
+  sticker icons left of the input; reply is an icon on the bubble. The console
+  still renders live inbound attachments/ark/markdown/keyboard. Live outbound stays on Adapter-supported
   text, mention and media. Messages persist as plain text plus a compact hash index.
   Image bytes are stored once in `bot_sandbox_asset` keyed by `sha256:`; QQ wrapping
   the same file in a new CDN URL / `ResourceRef` only writes an index hit and

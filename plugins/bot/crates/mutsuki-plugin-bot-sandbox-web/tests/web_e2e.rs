@@ -66,6 +66,7 @@ async fn sandbox_rpc_simulate_send_and_confirm_live_send() {
     assert!(frontend.contains("remoteImage"));
     assert!(frontend.contains("httpsQqCdn"));
     assert!(frontend.contains("sandbox-reply"));
+    assert!(frontend.contains("iconButton"));
     assert!(frontend.contains("conversation.active_message"));
     assert!(frontend.contains("sandbox-mention"));
     assert!(frontend.contains("sandbox-card"));
@@ -75,7 +76,8 @@ async fn sandbox_rpc_simulate_send_and_confirm_live_send() {
     assert!(frontend.contains("表情包"));
     assert!(frontend.contains("pasteImage"));
     assert!(frontend.contains("onpaste"));
-    assert!(frontend.contains("小卡片"));
+    assert!(!frontend.contains("发送小卡片"));
+    assert!(!frontend.contains("发送 Markdown"));
     assert!(!frontend.contains("inject_into_flow"));
     std::fs::write(
         shell_dir.path().join("index.html"),

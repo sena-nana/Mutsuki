@@ -44,7 +44,7 @@ img.sandbox-avatar { display: block; object-fit: cover; object-position: center;
 .sandbox-bubble { position: relative; border-radius: 12px; padding: 8px 12px; background: var(--bg-elev, transparent); min-width: 0; }
 .sandbox-row--bot .sandbox-bubble { background: var(--accent-soft, var(--bg-hover, transparent)); }
 .sandbox-row--system .sandbox-bubble { background: transparent; }
-.sandbox-client .sandbox-reply { position: absolute; top: 6px; right: 6px; height: 20px; padding: 0 6px; font-size: 11px; opacity: 0; pointer-events: none; }
+.sandbox-client .sandbox-reply { position: absolute; top: 6px; right: 6px; opacity: 0; pointer-events: none; }
 .sandbox-row:hover .sandbox-reply, .sandbox-row:focus-within .sandbox-reply { opacity: 1; pointer-events: auto; }
 .sandbox-quote { margin: 0 0 6px; padding: 4px 8px; border-left: 3px solid var(--accent, #7aa2ff); opacity: 0.8; font-size: 12px; }
 .sandbox-compose { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--border, transparent); flex: 0 0 auto; }
@@ -83,7 +83,7 @@ img.sandbox-avatar { display: block; object-fit: cover; object-position: center;
 .sandbox-card-desc, .sandbox-markdown, .sandbox-keyboard { font-size: 12px; white-space: pre-wrap; }
 .sandbox-keyboard { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .sandbox-keyboard span { border: 1px solid var(--border, transparent); border-radius: 8px; padding: 4px 8px; font-size: 11px; }
-.sandbox-compose-tools, .sandbox-draft-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.sandbox-draft-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .sandbox-draft-chip { display: inline-flex; align-items: center; gap: 4px; border-radius: 999px; padding: 2px 8px; font-size: 11px; background: var(--bg-hover, transparent); }
 .sandbox-mention-picker {
   position: absolute; z-index: 1850; left: 0; bottom: calc(100% + 4px);
@@ -125,6 +125,14 @@ function element(tag, className, content) {
 function button(label) {
   const node = element("button", "ghost", label);
   node.type = "button";
+  return node;
+}
+
+function iconButton(title, glyph) {
+  const node = button(glyph);
+  node.classList.add("sandbox-add");
+  node.title = title;
+  node.setAttribute("aria-label", title);
   return node;
 }
 
@@ -482,9 +490,8 @@ export function mountSandboxPanel(host, rpc, events) {
         bubble.append(element("p", "muted", `${name} · ${formatTime(message.time_ms)}`));
         bubble.append(renderSegments(message, state.messages, rpc));
         if (message.role === "user") {
-          const reply = button("回复");
-          reply.classList.add("ghost", "sandbox-reply");
-          reply.title = "引用并回复这条消息";
+          const reply = iconButton("回复", "↩");
+          reply.classList.add("sandbox-reply");
           reply.onclick = (event) => {
             event.stopPropagation();
             state.quote = message;
@@ -521,31 +528,25 @@ export function mountSandboxPanel(host, rpc, events) {
       });
       compose.append(chips);
     }
-    if (mode() === "simulate") {
-      const tools = element("div", "sandbox-compose-tools");
-      const imageBtn = button("图片");
-      imageBtn.onclick = () => void pickAndUpload("image/*");
-      const fileBtn = button("文件");
-      fileBtn.onclick = () => void pickAndUpload("*/*");
-      const stickerBtn = button("表情包");
-      stickerBtn.onclick = () => {
-        state.stickerOpen = !state.stickerOpen;
-        if (state.stickerOpen) void loadStickers().then(() => render());
-        else render();
-      };
-      const cardBtn = button("小卡片");
-      cardBtn.onclick = () => openDialog("card");
-      const markdownBtn = button("Markdown");
-      markdownBtn.onclick = () => openDialog("markdown");
-      tools.append(imageBtn, fileBtn, stickerBtn, cardBtn, markdownBtn);
-      compose.append(tools);
-    }
     const picker = element("div", "sandbox-context-menu sandbox-mention-picker");
     picker.hidden = true;
     const stickerPicker = element("div", "sandbox-context-menu sandbox-sticker-picker");
     stickerPicker.hidden = mode() !== "simulate" || !state.stickerOpen;
     if (!stickerPicker.hidden) renderStickerPicker(stickerPicker);
     const row = element("div", "sandbox-compose-row");
+    if (mode() === "simulate") {
+      const imageBtn = iconButton("图片", "🖼");
+      imageBtn.onclick = () => void pickAndUpload("image/*");
+      const fileBtn = iconButton("文件", "📎");
+      fileBtn.onclick = () => void pickAndUpload("*/*");
+      const stickerBtn = iconButton("表情包", "☺");
+      stickerBtn.onclick = () => {
+        state.stickerOpen = !state.stickerOpen;
+        if (state.stickerOpen) void loadStickers().then(() => render());
+        else render();
+      };
+      row.append(imageBtn, fileBtn, stickerBtn);
+    }
     const field = element("div", "sandbox-compose-field");
     const input = element("input", "ui-input");
     input.type = "text";
@@ -739,8 +740,6 @@ export function mountSandboxPanel(host, rpc, events) {
   function draftLabel(segment, users) {
     if (segment.type === "mention_user") return `@${mentionName(users, segment.user_id)}`;
     if (segment.type === "mention_all") return "@全体成员";
-    if (segment.type === "platform_specific" && segment.kind === "ark") return "[小卡片]";
-    if (segment.type === "platform_specific" && segment.kind === "markdown") return "[Markdown]";
     if (segment.type === "platform_specific" && segment.kind === "media") return `[${segment.payload?.name || "媒体"}]`;
     if (segment.type === "platform_specific" && segment.kind === "sticker") return `[${segment.payload?.name || "表情包"}]`;
     if (segment.type === "platform_specific" && segment.kind === "face") return "[表情]";
@@ -811,82 +810,6 @@ export function mountSandboxPanel(host, rpc, events) {
     const foot = element("div", "sandbox-dialog-foot");
     const cancel = button("取消");
     cancel.onclick = () => closeDialog();
-    if (dialog === "card") {
-      card.setAttribute("aria-label", "发送小卡片");
-      head.append(element("h2", "", "发送小卡片"));
-      const title = element("input", "ui-input");
-      title.placeholder = "标题";
-      const desc = element("input", "ui-input");
-      desc.placeholder = "描述";
-      const image = element("input", "ui-input");
-      image.placeholder = "封面 URL（可选）";
-      const link = element("input", "ui-input");
-      link.placeholder = "跳转链接（可选）";
-      const titleField = element("label", "sandbox-dialog-field", "标题");
-      const descField = element("label", "sandbox-dialog-field", "描述");
-      const imageField = element("label", "sandbox-dialog-field", "封面");
-      const linkField = element("label", "sandbox-dialog-field", "链接");
-      titleField.append(title);
-      descField.append(desc);
-      imageField.append(image);
-      linkField.append(link);
-      body.append(titleField, descField, imageField, linkField);
-      const save = button("加入草稿");
-      save.onclick = () => {
-        if (!title.value.trim()) { showStatus("请填写卡片标题"); return; }
-        state.draftSegments.push({
-          type: "platform_specific",
-          platform: "qqbot",
-          kind: "ark",
-          payload: {
-            template_id: 23,
-            kv: [
-              { key: "#METATITLE#", value: title.value.trim() },
-              { key: "#METADESC#", value: desc.value.trim() },
-              { key: "#PIC#", value: image.value.trim() },
-              { key: "#METAURL#", value: link.value.trim() },
-            ],
-          },
-        });
-        closeDialog();
-        render();
-      };
-      foot.append(cancel, save);
-      card.append(head, body, foot);
-      overlay.append(card);
-      root.append(overlay);
-      title.focus();
-      return;
-    }
-    if (dialog === "markdown") {
-      card.setAttribute("aria-label", "发送 Markdown");
-      head.append(element("h2", "", "发送 Markdown"));
-      const content = document.createElement("textarea");
-      content.className = "ui-input";
-      content.rows = 6;
-      content.placeholder = "Markdown 文本";
-      const field = element("label", "sandbox-dialog-field", "内容");
-      field.append(content);
-      body.append(field);
-      const save = button("加入草稿");
-      save.onclick = () => {
-        if (!content.value.trim()) { showStatus("请填写 Markdown"); return; }
-        state.draftSegments.push({
-          type: "platform_specific",
-          platform: "qqbot",
-          kind: "markdown",
-          payload: { content: content.value },
-        });
-        closeDialog();
-        render();
-      };
-      foot.append(cancel, save);
-      card.append(head, body, foot);
-      overlay.append(card);
-      root.append(overlay);
-      content.focus();
-      return;
-    }
     if (dialog !== "import") {
       const user = (state.snapshot?.conversations || []).flatMap((item) => item.users || []).find((item) => item.user_id === dialog);
       if (!user) { closeDialog(); return; }
