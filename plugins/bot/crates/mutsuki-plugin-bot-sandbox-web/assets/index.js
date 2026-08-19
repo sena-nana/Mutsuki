@@ -10,11 +10,24 @@ const STYLE = `
 .sandbox-status { margin: 0; padding: 0 10px 6px; font-size: 12px; }
 .sandbox-status:empty, .sandbox-status[hidden] { display: none; }
 .sandbox-search-row { display: flex; align-items: center; gap: 6px; padding: 8px 8px 6px; min-width: 0; flex: 0 0 auto; }
-.sandbox-search-row input[type="search"] { flex: 1; min-width: 0; width: auto; height: 28px; margin: 0; box-sizing: border-box; font-size: 12px; }
+.sandbox-search-row .ui-input { flex: 1; min-width: 0; width: auto; height: 28px; margin: 0; box-sizing: border-box; }
+.sandbox-client .ui-input,
+.sandbox-client .ui-textarea {
+  width: 100%; max-width: 100%; min-width: 0;
+  border: 1px solid var(--border, transparent); border-radius: var(--radius-sm, 8px);
+  background: var(--bg, transparent); color: var(--text, inherit); font: inherit;
+}
+.sandbox-client .ui-input { height: 30px; padding: 0 9px; font-size: 13px; }
+.sandbox-client .ui-input--sm { height: 28px; padding: 0 8px; font-size: 12px; }
+.sandbox-client .ui-textarea { min-height: 96px; padding: 9px; font-size: 13px; line-height: 1.45; resize: vertical; }
+.sandbox-client .ui-input:focus-visible,
+.sandbox-client .ui-textarea:focus-visible { border-color: var(--accent, #7aa2ff); outline: none; }
 .sandbox-client .sandbox-add {
   box-sizing: border-box; width: 28px; min-width: 28px; max-width: 28px; height: 28px; padding: 0;
-  flex: none; font-size: 16px; line-height: 1; border-radius: 8px;
+  display: inline-grid; place-items: center; flex: none; border-radius: 8px;
 }
+.sandbox-client .sandbox-add svg { width: 16px; height: 16px; display: block; }
+.sandbox-draft-chip .sandbox-add { width: 18px; min-width: 18px; max-width: 18px; height: 18px; }
 .sandbox-clear { margin-left: auto; flex: none; }
 .sandbox-session-list, .sandbox-member-list, .sandbox-messages { flex: 1; min-height: 0; overflow: auto; }
 .sandbox-client .sandbox-session, .sandbox-client .sandbox-member {
@@ -50,8 +63,8 @@ img.sandbox-avatar { display: block; object-fit: cover; object-position: center;
 .sandbox-compose { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--border, transparent); flex: 0 0 auto; }
 .sandbox-compose-row { display: flex; gap: 8px; align-items: center; min-width: 0; }
 .sandbox-compose-field { position: relative; flex: 1; min-width: 0; display: flex; }
-.sandbox-compose-row input[type="text"], .sandbox-compose-row textarea { flex: 1; min-width: 0; margin: 0; box-sizing: border-box; }
-.sandbox-compose-row textarea { min-height: 64px; max-height: 160px; resize: vertical; font-size: 13px; }
+.sandbox-compose-row .ui-input, .sandbox-compose-row .ui-textarea { flex: 1; min-width: 0; margin: 0; box-sizing: border-box; }
+.sandbox-compose-row .ui-textarea { min-height: 64px; max-height: 160px; }
 .sandbox-compose-row .sandbox-add.is-active { background: var(--accent-soft, var(--bg-hover, transparent)); }
 .sandbox-pane--chat { overflow: visible; }
 .sandbox-quote-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
@@ -70,7 +83,8 @@ img.sandbox-avatar { display: block; object-fit: cover; object-position: center;
 .sandbox-dialog-head h2 { margin: 0; font-size: 14px; font-weight: 650; flex: 1; min-width: 0; }
 .sandbox-dialog-body { padding: 12px 14px; overflow: auto; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
 .sandbox-dialog-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-muted); }
-.sandbox-dialog-field textarea { width: 100%; min-width: 0; min-height: 72px; margin: 0; box-sizing: border-box; }
+.sandbox-dialog-field .ui-input, .sandbox-dialog-field .ui-textarea { width: 100%; min-width: 0; margin: 0; box-sizing: border-box; }
+.sandbox-dialog-field .ui-textarea { min-height: 72px; }
 .sandbox-dialog-foot { justify-content: flex-end; border-top: 1px solid var(--border, transparent); }
 .sandbox-dialog .sandbox-member { border-radius: 8px; padding: 8px 10px; }
 .sandbox-dialog .sandbox-member:disabled { opacity: 0.45; cursor: default; }
@@ -130,12 +144,47 @@ function button(label) {
   return node;
 }
 
-function iconButton(title, glyph) {
-  const node = button(glyph);
-  node.classList.add("sandbox-add");
+const ICONS = {
+  plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+  image: '<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>',
+  paperclip: '<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
+  smile: '<circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/>',
+  markdown: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>',
+  grid: '<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>',
+  reply: '<polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/>',
+  close: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
+};
+
+function svgIcon(markup) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "2");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("aria-hidden", "true");
+  svg.innerHTML = markup;
+  return svg;
+}
+
+function iconButton(title, markup) {
+  const node = element("button", "ghost sandbox-add");
+  node.type = "button";
   node.title = title;
   node.setAttribute("aria-label", title);
+  node.append(svgIcon(markup));
   return node;
+}
+
+function liliaInput(type = "text") {
+  const input = element("input", "ui-input ui-input--sm");
+  input.type = type;
+  return input;
+}
+
+function liliaTextarea() {
+  return element("textarea", "ui-textarea");
 }
 
 function menuButton(label, onclick) {
@@ -438,17 +487,13 @@ export function mountSandboxPanel(host, rpc, events) {
     head.append(tabs);
     pane.append(head, status);
     const searchRow = element("div", "sandbox-search-row");
-    const search = element("input", "ui-input");
-    search.type = "search";
+    const search = liliaInput("search");
     search.placeholder = "搜索会话";
     search.value = state.query;
     search.oninput = () => { state.query = search.value; render(); };
     searchRow.append(search);
     if (mode() === "simulate") {
-      const addUser = button("+");
-      addUser.className = "ghost sandbox-add";
-      addUser.setAttribute("aria-label", "添加用户");
-      addUser.title = "添加用户";
+      const addUser = iconButton("添加用户", ICONS.plus);
       addUser.onclick = async () => { try { await write({ action: "add_user" }); await refresh(); } catch (error) { reportError(error); } };
       searchRow.append(addUser);
     }
@@ -507,7 +552,7 @@ export function mountSandboxPanel(host, rpc, events) {
         bubble.append(element("p", "muted", `${name} · ${formatTime(message.time_ms)}`));
         bubble.append(renderSegments(message, state.messages, rpc));
         if (message.role === "user") {
-          const reply = iconButton("回复", "↩");
+          const reply = iconButton("回复", ICONS.reply);
           reply.classList.add("sandbox-reply");
           reply.onclick = (event) => {
             event.stopPropagation();
@@ -538,7 +583,7 @@ export function mountSandboxPanel(host, rpc, events) {
       const chips = element("div", "sandbox-draft-chips");
       state.draftSegments.forEach((segment, index) => {
         const chip = element("span", "sandbox-draft-chip", draftLabel(segment, conversation.users));
-        const remove = button("×");
+        const remove = iconButton("移除", ICONS.close);
         remove.onclick = () => { state.draftSegments.splice(index, 1); render(); };
         chip.append(remove);
         chips.append(chip);
@@ -548,23 +593,21 @@ export function mountSandboxPanel(host, rpc, events) {
     const picker = element("div", "sandbox-context-menu sandbox-mention-picker");
     picker.hidden = true;
     const stickerPicker = element("div", "sandbox-context-menu sandbox-sticker-picker");
-    stickerPicker.hidden = mode() !== "simulate" || !state.stickerOpen;
+    stickerPicker.hidden = !state.stickerOpen;
     if (!stickerPicker.hidden) renderStickerPicker(stickerPicker);
     const row = element("div", "sandbox-compose-row");
-    if (mode() === "simulate") {
-      const imageBtn = iconButton("图片", "🖼");
-      imageBtn.onclick = () => void pickAndUpload("image/*");
-      const fileBtn = iconButton("文件", "📎");
-      fileBtn.onclick = () => void pickAndUpload("*/*");
-      const stickerBtn = iconButton("表情包", "☺");
-      stickerBtn.onclick = () => {
-        state.stickerOpen = !state.stickerOpen;
-        if (state.stickerOpen) void loadStickers().then(() => render());
-        else render();
-      };
-      row.append(imageBtn, fileBtn, stickerBtn);
-    }
-    const markdownBtn = iconButton("Markdown", "MD");
+    const imageBtn = iconButton("图片", ICONS.image);
+    imageBtn.onclick = () => void pickAndUpload("image/*");
+    const fileBtn = iconButton("文件", ICONS.paperclip);
+    fileBtn.onclick = () => void pickAndUpload("*/*");
+    const stickerBtn = iconButton("表情包", ICONS.smile);
+    stickerBtn.onclick = () => {
+      state.stickerOpen = !state.stickerOpen;
+      if (state.stickerOpen) void loadStickers().then(() => render());
+      else render();
+    };
+    row.append(imageBtn, fileBtn, stickerBtn);
+    const markdownBtn = iconButton("Markdown", ICONS.markdown);
     if (state.markdown) markdownBtn.classList.add("is-active");
     markdownBtn.onclick = () => {
       state.markdown = !state.markdown;
@@ -573,7 +616,7 @@ export function mountSandboxPanel(host, rpc, events) {
       }
       render();
     };
-    const keyboardBtn = iconButton("消息按钮", "⌘");
+    const keyboardBtn = iconButton("消息按钮", ICONS.grid);
     if (state.draftSegments.some(isKeyboardSegment)) keyboardBtn.classList.add("is-active");
     keyboardBtn.onclick = () => {
       if (!state.markdown) state.markdown = true;
@@ -581,11 +624,10 @@ export function mountSandboxPanel(host, rpc, events) {
     };
     row.append(markdownBtn, keyboardBtn);
     const field = element("div", "sandbox-compose-field");
-    const input = state.markdown ? element("textarea", "ui-input") : element("input", "ui-input");
-    if (!state.markdown) input.type = "text";
+    const input = state.markdown ? liliaTextarea() : liliaInput("text");
     const canActive = conversation.active_message !== false;
     input.placeholder = state.markdown
-      ? "输入 Markdown，Ctrl/⌘+Enter 发送"
+      ? "输入 Markdown，Ctrl/Cmd+Enter 发送"
       : mode() === "live"
       ? (canActive ? "可直接发送主动消息，或悬停消息后回复" : "请先悬停用户消息并点击回复")
       : "输入消息，Enter 发送";
@@ -658,7 +700,6 @@ export function mountSandboxPanel(host, rpc, events) {
       void submit();
     };
     const onPaste = (event) => {
-      if (mode() !== "simulate") return;
       const image = pasteImage(event);
       if (!image) return;
       event.preventDefault();
@@ -757,6 +798,7 @@ export function mountSandboxPanel(host, rpc, events) {
       return;
     }
     state.stickers.forEach((item) => {
+      if (item.kind === "qq_face" && mode() === "live") return;
       const btn = element("button", "sandbox-sticker-item");
       btn.type = "button";
       if (item.kind === "qq_face") {
@@ -828,7 +870,7 @@ export function mountSandboxPanel(host, rpc, events) {
     close.onclick = () => closeDialog();
     head.append(element("h2", "", "消息按钮"), close);
     const field = element("label", "sandbox-dialog-field", "每行一个按钮，可用 文字 | 指令");
-    const area = element("textarea", "ui-input");
+    const area = liliaTextarea();
     const current = state.draftSegments.find(isKeyboardSegment);
     const rows = current?.payload?.content?.rows || [];
     area.value = rows.flatMap((row) => row.buttons || []).map((item) => {
@@ -940,10 +982,10 @@ export function mountSandboxPanel(host, rpc, events) {
       if (!user) { closeDialog(); return; }
       card.setAttribute("aria-label", "编辑成员");
       head.append(element("h2", "", "编辑成员"));
-      const openid = element("input", "ui-input");
+      const openid = liliaInput("text");
       openid.placeholder = "OpenID";
       openid.value = user.user_id;
-      const nickname = element("input", "ui-input");
+      const nickname = liliaInput("text");
       nickname.placeholder = "昵称";
       nickname.value = user.display_name || "";
       const openidField = element("label", "sandbox-dialog-field", "OpenID");
