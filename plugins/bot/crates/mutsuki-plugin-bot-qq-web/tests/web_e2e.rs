@@ -104,6 +104,9 @@ async fn qq_management_rpc_uses_authenticated_capabilities_confirmation_and_fixe
     assert!(!frontend.contains("重新连接"));
     assert!(!frontend.contains("发送测试"));
     assert!(!frontend.contains("App ID"));
+    assert!(frontend.contains("交互会话"));
+    assert!(!frontend.contains("主动投递"));
+    assert!(frontend.contains("搜索账号或会话"));
     std::fs::write(
         shell_dir.path().join("index.html"),
         "<!doctype html><main></main>",
