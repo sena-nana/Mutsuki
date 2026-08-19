@@ -12,9 +12,17 @@ use mutsuki_config_service::{
     RestartPolicy, SecretState,
 };
 
-pub const DEFAULT_QQBOT_INTENTS: u64 = 1_325_405_185;
+pub const QQ_INTENT_GUILDS: u64 = 1 << 0;
 pub const QQ_INTENT_GROUP_AND_C2C: u64 = 1 << 25;
+pub const QQ_INTENT_INTERACTION: u64 = 1 << 26;
+pub const QQ_INTENT_MESSAGE_AUDIT: u64 = 1 << 27;
 pub const QQ_INTENT_PUBLIC_GUILD: u64 = 1 << 30;
+/// Documented default Identify mask. Omits undocumented bit 24 from the previous numeric default.
+pub const DEFAULT_QQBOT_INTENTS: u64 = QQ_INTENT_GUILDS
+    | QQ_INTENT_GROUP_AND_C2C
+    | QQ_INTENT_INTERACTION
+    | QQ_INTENT_MESSAGE_AUDIT
+    | QQ_INTENT_PUBLIC_GUILD;
 pub const QQ_CLIENT_SECRET_FIELD: &str = "client_secret";
 pub const QQ_CLIENT_SECRET_KEY: &str = "QQBOT_CLIENT_SECRET";
 pub const QQ_RECEIVE_PRIVATE_AND_GROUP_FIELD: &str = "receive_private_and_group";
@@ -583,5 +591,18 @@ mod tests {
         assert_eq!(next, extra | QQ_INTENT_GROUP_AND_C2C);
         assert!(receive_private_and_group(next));
         assert!(!receive_guild(next));
+    }
+
+    #[test]
+    fn default_intents_keep_documented_bits_and_omit_undocumented_bit_24() {
+        assert_eq!(
+            DEFAULT_QQBOT_INTENTS,
+            QQ_INTENT_GUILDS
+                | QQ_INTENT_GROUP_AND_C2C
+                | QQ_INTENT_INTERACTION
+                | QQ_INTENT_MESSAGE_AUDIT
+                | QQ_INTENT_PUBLIC_GUILD
+        );
+        assert_eq!(DEFAULT_QQBOT_INTENTS & (1 << 24), 0);
     }
 }
