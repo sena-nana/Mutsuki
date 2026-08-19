@@ -70,6 +70,11 @@ async fn sandbox_rpc_simulate_send_and_confirm_live_send() {
     assert!(frontend.contains("conversation.active_message"));
     assert!(frontend.contains("sandbox-mention"));
     assert!(frontend.contains("sandbox-card"));
+    assert!(frontend.contains("sandbox-markdown"));
+    assert!(frontend.contains("iconButton(\"Markdown\""));
+    assert!(frontend.contains("消息按钮"));
+    assert!(frontend.contains("type: \"markdown\""));
+    assert!(frontend.contains("kind: \"keyboard\""));
     assert!(frontend.contains("media.upload"));
     assert!(frontend.contains("sticker.list"));
     assert!(frontend.contains("sticker.upload"));

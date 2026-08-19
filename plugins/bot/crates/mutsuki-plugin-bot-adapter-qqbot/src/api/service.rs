@@ -152,10 +152,12 @@ impl QqOpenApiService {
                 }
                 MessageSegment::Text { .. }
                 | MessageSegment::MentionUser { .. }
-                | MessageSegment::MentionAll => pending.push(segment),
+                | MessageSegment::MentionAll
+                | MessageSegment::Markdown { .. }
+                | MessageSegment::PlatformSpecific { .. } => pending.push(segment),
                 _ => {
                     return Err(QqOpenApiError::InvalidPayload(
-                        "QQ message/send supports text, mention, reply, quote and media segments"
+                        "QQ message/send supports text, mention, markdown, keyboard, reply, quote and media segments"
                             .into(),
                     ));
                 }
@@ -166,7 +168,7 @@ impl QqOpenApiService {
         }
         if responses.is_empty() {
             return Err(QqOpenApiError::InvalidPayload(
-                "QQ message/send requires text, mention or media content".into(),
+                "QQ message/send requires text, mention, markdown or media content".into(),
             ));
         }
         if responses.len() == 1 {

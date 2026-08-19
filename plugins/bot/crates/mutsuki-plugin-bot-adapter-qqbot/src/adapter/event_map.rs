@@ -391,7 +391,7 @@ fn extend_qq_rich_segments(segments: &mut Vec<MessageSegment>, data: &Value) {
         }
     }
     push_named_payload(segments, data, "ark");
-    push_named_payload(segments, data, "markdown");
+    push_inbound_markdown(segments, data);
     push_named_payload(segments, data, "embed");
     if let Some(embeds) = data.get("embeds").and_then(Value::as_array) {
         for embed in embeds {
@@ -399,6 +399,22 @@ fn extend_qq_rich_segments(segments: &mut Vec<MessageSegment>, data: &Value) {
         }
     }
     push_named_payload(segments, data, "keyboard");
+}
+
+fn push_inbound_markdown(segments: &mut Vec<MessageSegment>, data: &Value) {
+    let Some(payload) = data.get("markdown") else {
+        return;
+    };
+    if let Some(content) = payload
+        .get("content")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        segments.push(MessageSegment::markdown(content));
+        return;
+    }
+    segments.push(platform_payload("markdown", payload.clone()));
 }
 
 fn push_named_payload(segments: &mut Vec<MessageSegment>, data: &Value, kind: &str) {

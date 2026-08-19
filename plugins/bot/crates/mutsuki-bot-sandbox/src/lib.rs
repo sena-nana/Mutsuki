@@ -27,7 +27,7 @@ mod tests {
         ResourceAccess, ResourceId, ResourceLifetime, ResourceRef, ResourceSealState,
         ResourceSemantic,
     };
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     use super::*;
 
@@ -509,6 +509,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn live_send_accepts_markdown_and_keyboard() {
+        let service = SandboxService::with_account("qq-main");
+        let runtime = runtime();
+        service.set_runtime(runtime.clone());
+        service.observe_event(live_group_event("qq-msg-1", "在吗", now_ms()));
+        switch_live(&service).await;
+        let live = service.snapshot("").await.unwrap();
+        write(
+            &service,
+            live.revision,
+            "op-md",
+            SandboxAction::SendAsBot {
+                conversation_id: live.conversations[0].conversation_id.clone(),
+                text: String::new(),
+                segments: vec![
+                    MessageSegment::markdown("# 签到"),
+                    MessageSegment::platform_specific(
+                        "qqbot",
+                        "keyboard",
+                        json!({ "content": { "rows": [] } }),
+                    ),
+                ],
+                reply_to: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            runtime.deliver.lock().expect("deliver").as_slice(),
+            [("[Markdown][按钮]".into(), None)]
+        );
+    }
+
+    #[tokio::test]
     async fn sandbox_bot_profile_appears_in_snapshot_and_outbound() {
         let service = SandboxService::with_account("qq-main");
         assert_eq!(service.snapshot("").await.unwrap().bot, None);
@@ -945,6 +979,86 @@ mod tests {
             .unwrap();
         assert!(rich.refs.iter().any(|item| item.kind == SandboxRefKind::Img
             && item.h.as_deref() == Some(uploaded.media_id.as_str())));
+    }
+
+    #[tokio::test]
+    async fn simulate_ingests_markdown_and_keyboard() {
+        let service = SandboxService::with_account("qq-main");
+        service.set_runtime(runtime());
+        let snapshot = service.snapshot("").await.unwrap();
+        let group = group(&snapshot);
+        write(
+            &service,
+            snapshot.revision,
+            "op-md",
+            SandboxAction::IngestAsUser {
+                conversation_id: group.conversation_id.clone(),
+                user_id: sandbox_user_id("Alice"),
+                text: String::new(),
+                segments: vec![
+                    MessageSegment::markdown("**hi**"),
+                    MessageSegment::platform_specific(
+                        "qqbot",
+                        "keyboard",
+                        json!({
+                            "content": {
+                                "rows": [{
+                                    "buttons": [{
+                                        "id": "btn_1",
+                                        "render_data": { "label": "签到" },
+                                        "action": { "type": 2, "data": "/签到" }
+                                    }]
+                                }]
+                            }
+                        }),
+                    ),
+                ],
+                reply_to: None,
+            },
+        )
+        .await
+        .unwrap();
+        let message = service
+            .messages(&group.conversation_id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|item| {
+                item.refs
+                    .iter()
+                    .any(|item| item.kind == SandboxRefKind::Markdown)
+            })
+            .unwrap();
+        assert!(message.refs.iter().any(|item| {
+            item.kind == SandboxRefKind::Markdown
+                && item
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("content"))
+                    .and_then(Value::as_str)
+                    == Some("**hi**")
+        }));
+        assert!(
+            message
+                .refs
+                .iter()
+                .any(|item| item.kind == SandboxRefKind::Keyboard)
+        );
+        let mixed = write(
+            &service,
+            service.snapshot("").await.unwrap().revision,
+            "op-mix",
+            SandboxAction::IngestAsUser {
+                conversation_id: group.conversation_id.clone(),
+                user_id: sandbox_user_id("Alice"),
+                text: "plain".into(),
+                segments: vec![MessageSegment::markdown("# no")],
+                reply_to: None,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(mixed.code, "invalid_argument");
     }
 
     #[tokio::test]

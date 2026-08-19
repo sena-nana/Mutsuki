@@ -31,6 +31,9 @@ pub enum MessageSegment {
     Quote {
         message_id: String,
     },
+    Markdown {
+        content: String,
+    },
     PlatformSpecific {
         platform: String,
         kind: String,
@@ -41,5 +44,23 @@ pub enum MessageSegment {
 impl MessageSegment {
     pub fn text(text: impl Into<String>) -> Self {
         Self::Text { text: text.into() }
+    }
+
+    pub fn markdown(content: impl Into<String>) -> Self {
+        Self::Markdown {
+            content: content.into(),
+        }
+    }
+
+    pub fn platform_specific(
+        platform: impl Into<String>,
+        kind: impl Into<String>,
+        payload: Value,
+    ) -> Self {
+        Self::PlatformSpecific {
+            platform: platform.into(),
+            kind: kind.into(),
+            payload,
+        }
     }
 }

@@ -3,7 +3,7 @@ use std::fmt::Write as _;
 
 use mutsuki_bot_protocol::MessageSegment;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::types::{
@@ -175,10 +175,11 @@ pub fn hydrate_segments(
                 segments.push(hydrate_emoji(item));
                 cursor = at;
             }
-            SandboxRefKind::Ark
-            | SandboxRefKind::Markdown
-            | SandboxRefKind::Keyboard
-            | SandboxRefKind::Embed => {
+            SandboxRefKind::Markdown => {
+                segments.push(hydrate_markdown(item));
+                cursor = at;
+            }
+            SandboxRefKind::Ark | SandboxRefKind::Keyboard | SandboxRefKind::Embed => {
                 segments.push(MessageSegment::PlatformSpecific {
                     platform: "qqbot".into(),
                     kind: payload_kind_name(item.kind).into(),
@@ -387,6 +388,11 @@ fn push_inline(
         | MessageSegment::File { .. }
         | MessageSegment::Audio { .. }
         | MessageSegment::Video { .. } => {}
+        MessageSegment::Markdown { content } => {
+            let mut item = SandboxContentRef::at(SandboxRefKind::Markdown, text);
+            item.payload = Some(json!({ "content": content }));
+            refs.push(item);
+        }
         MessageSegment::PlatformSpecific {
             platform,
             kind,
@@ -671,6 +677,20 @@ fn payload_kind(kind: &str) -> SandboxRefKind {
     }
 }
 
+fn hydrate_markdown(item: &SandboxContentRef) -> MessageSegment {
+    let payload = item.payload.clone().unwrap_or(Value::Null);
+    if let Some(content) = payload
+        .get("content")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        MessageSegment::markdown(content)
+    } else {
+        MessageSegment::platform_specific("qqbot", "markdown", payload)
+    }
+}
+
 fn payload_kind_name(kind: SandboxRefKind) -> &'static str {
     match kind {
         SandboxRefKind::Ark => "ark",
@@ -892,6 +912,39 @@ mod tests {
                     && payload.get("face_type").and_then(Value::as_str) == Some("6")
                     && payload.get("face_id").and_then(Value::as_str) == Some("0")
         )));
+    }
+
+    #[test]
+    fn first_class_markdown_roundtrips_and_template_stays_platform_specific() {
+        let mut assets = HashMap::new();
+        let custom = vec![MessageSegment::markdown("**hi**")];
+        let (text, refs) = normalize_segments(&custom, &[], &mut assets, 1);
+        assert!(text.is_empty());
+        assert_eq!(refs[0].kind, SandboxRefKind::Markdown);
+        let hydrated = hydrate_segments(&text, &refs, None);
+        assert!(hydrated.iter().any(|segment| matches!(
+            segment,
+            MessageSegment::Markdown { content } if content == "**hi**"
+        )));
+
+        let template = vec![MessageSegment::platform_specific(
+            "qqbot",
+            "markdown",
+            serde_json::json!({"custom_template_id": "tpl-1"}),
+        )];
+        let (text, refs) = normalize_segments(&template, &[], &mut assets, 1);
+        let hydrated = hydrate_segments(&text, &refs, None);
+        assert!(hydrated.iter().any(|segment| matches!(
+            segment,
+            MessageSegment::PlatformSpecific { kind, payload, .. }
+                if kind == "markdown"
+                    && payload.get("custom_template_id").and_then(Value::as_str) == Some("tpl-1")
+        )));
+        assert!(
+            !hydrated
+                .iter()
+                .any(|segment| matches!(segment, MessageSegment::Markdown { .. }))
+        );
     }
 
     fn test_resource(ref_id: &str, hash: &str) -> mutsuki_runtime_contracts::ResourceRef {

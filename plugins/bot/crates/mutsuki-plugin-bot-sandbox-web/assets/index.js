@@ -50,7 +50,9 @@ img.sandbox-avatar { display: block; object-fit: cover; object-position: center;
 .sandbox-compose { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--border, transparent); flex: 0 0 auto; }
 .sandbox-compose-row { display: flex; gap: 8px; align-items: center; min-width: 0; }
 .sandbox-compose-field { position: relative; flex: 1; min-width: 0; display: flex; }
-.sandbox-compose-row input[type="text"] { flex: 1; min-width: 0; }
+.sandbox-compose-row input[type="text"], .sandbox-compose-row textarea { flex: 1; min-width: 0; margin: 0; box-sizing: border-box; }
+.sandbox-compose-row textarea { min-height: 64px; max-height: 160px; resize: vertical; font-size: 13px; }
+.sandbox-compose-row .sandbox-add.is-active { background: var(--accent-soft, var(--bg-hover, transparent)); }
 .sandbox-pane--chat { overflow: visible; }
 .sandbox-quote-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
 .sandbox-client .sandbox-member .ghost { height: 22px; padding: 0 6px; font-size: 11px; flex: none; }
@@ -68,7 +70,7 @@ img.sandbox-avatar { display: block; object-fit: cover; object-position: center;
 .sandbox-dialog-head h2 { margin: 0; font-size: 14px; font-weight: 650; flex: 1; min-width: 0; }
 .sandbox-dialog-body { padding: 12px 14px; overflow: auto; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
 .sandbox-dialog-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-muted); }
-.sandbox-dialog-field input { width: 100%; min-width: 0; height: 32px; margin: 0; box-sizing: border-box; }
+.sandbox-dialog-field textarea { width: 100%; min-width: 0; min-height: 72px; margin: 0; box-sizing: border-box; }
 .sandbox-dialog-foot { justify-content: flex-end; border-top: 1px solid var(--border, transparent); }
 .sandbox-dialog .sandbox-member { border-radius: 8px; padding: 8px 10px; }
 .sandbox-dialog .sandbox-member:disabled { opacity: 0.45; cursor: default; }
@@ -383,7 +385,7 @@ function renderPlatform(body, segment, rpc) {
 
 /** Mount the QQ sandbox conversation console. */
 export function mountSandboxPanel(host, rpc, events) {
-  const state = { snapshot: null, messages: [], selectedId: null, draft: "", draftSegments: [], speakerId: "", query: "", quote: null, dialog: "", menu: null, stickerOpen: false, stickers: [] };
+  const state = { snapshot: null, messages: [], selectedId: null, draft: "", draftSegments: [], speakerId: "", query: "", quote: null, dialog: "", menu: null, stickerOpen: false, stickers: [], markdown: false };
   host.innerHTML = "";
   const style = document.createElement("style");
   style.textContent = STYLE;
@@ -547,11 +549,29 @@ export function mountSandboxPanel(host, rpc, events) {
       };
       row.append(imageBtn, fileBtn, stickerBtn);
     }
+    const markdownBtn = iconButton("Markdown", "MD");
+    if (state.markdown) markdownBtn.classList.add("is-active");
+    markdownBtn.onclick = () => {
+      state.markdown = !state.markdown;
+      if (!state.markdown) {
+        state.draftSegments = state.draftSegments.filter((segment) => !isKeyboardSegment(segment));
+      }
+      render();
+    };
+    const keyboardBtn = iconButton("消息按钮", "⌘");
+    if (state.draftSegments.some(isKeyboardSegment)) keyboardBtn.classList.add("is-active");
+    keyboardBtn.onclick = () => {
+      if (!state.markdown) state.markdown = true;
+      openKeyboardDialog();
+    };
+    row.append(markdownBtn, keyboardBtn);
     const field = element("div", "sandbox-compose-field");
-    const input = element("input", "ui-input");
-    input.type = "text";
+    const input = state.markdown ? element("textarea", "ui-input") : element("input", "ui-input");
+    if (!state.markdown) input.type = "text";
     const canActive = conversation.active_message !== false;
-    input.placeholder = mode() === "live"
+    input.placeholder = state.markdown
+      ? "输入 Markdown，Ctrl/⌘+Enter 发送"
+      : mode() === "live"
       ? (canActive ? "可直接发送主动消息，或悬停消息后回复" : "请先悬停用户消息并点击回复")
       : "输入消息，Enter 发送";
     input.value = state.draft;
@@ -576,9 +596,8 @@ export function mountSandboxPanel(host, rpc, events) {
     input.oninput = () => { state.draft = input.value; refreshPicker(); };
     const send = button(mode() === "live" ? "发送到 QQ" : "发送");
     const submit = async () => {
-      const text = state.draft.trim();
-      const segments = state.draftSegments.slice();
-      if (!text && !segments.length) { showStatus("请填写消息"); return; }
+      const payload = buildComposePayload();
+      if (!payload) return;
       if (mode() === "live" && !state.quote?.message_id && conversation.active_message === false) {
         showStatus("当前会话没有主动消息权限，请先悬停用户消息并点击回复");
         return;
@@ -589,8 +608,8 @@ export function mountSandboxPanel(host, rpc, events) {
           await write({
             action: "send_as_bot",
             conversation_id: conversation.conversation_id,
-            text,
-            segments,
+            text: payload.text,
+            segments: payload.segments,
             reply_to: state.quote?.message_id || null,
           }, true);
         } else {
@@ -600,8 +619,8 @@ export function mountSandboxPanel(host, rpc, events) {
             action: "ingest_as_user",
             conversation_id: conversation.conversation_id,
             user_id: speaker,
-            text,
-            segments,
+            text: payload.text,
+            segments: payload.segments,
             reply_to: state.quote?.message_id || null,
           });
         }
@@ -609,6 +628,7 @@ export function mountSandboxPanel(host, rpc, events) {
         state.draftSegments = [];
         state.quote = null;
         state.stickerOpen = false;
+        state.markdown = false;
         showStatus("");
         await refresh();
       } catch (error) {
@@ -616,7 +636,12 @@ export function mountSandboxPanel(host, rpc, events) {
       }
     };
     send.onclick = () => void submit();
-    input.onkeydown = (event) => { if (event.key === "Enter") { event.preventDefault(); void submit(); } };
+    input.onkeydown = (event) => {
+      if (event.key !== "Enter") return;
+      if (state.markdown && !event.metaKey && !event.ctrlKey) return;
+      event.preventDefault();
+      void submit();
+    };
     const onPaste = (event) => {
       if (mode() !== "simulate") return;
       const image = pasteImage(event);
@@ -740,10 +765,95 @@ export function mountSandboxPanel(host, rpc, events) {
   function draftLabel(segment, users) {
     if (segment.type === "mention_user") return `@${mentionName(users, segment.user_id)}`;
     if (segment.type === "mention_all") return "@全体成员";
+    if (segment.type === "markdown") return "[Markdown]";
     if (segment.type === "platform_specific" && segment.kind === "media") return `[${segment.payload?.name || "媒体"}]`;
     if (segment.type === "platform_specific" && segment.kind === "sticker") return `[${segment.payload?.name || "表情包"}]`;
     if (segment.type === "platform_specific" && segment.kind === "face") return "[表情]";
+    if (segment.type === "platform_specific" && segment.kind === "keyboard") return "[按钮]";
     return segment.type || "附件";
+  }
+
+  function isKeyboardSegment(segment) {
+    return segment?.type === "platform_specific" && segment.kind === "keyboard";
+  }
+
+  function buildComposePayload() {
+    const text = state.draft.trim();
+    const segments = state.draftSegments.slice();
+    const keyboard = segments.some(isKeyboardSegment);
+    if (state.markdown) {
+      if (segments.some((segment) => segment.type !== "reply" && segment.type !== "quote" && !isKeyboardSegment(segment) && segment.type !== "markdown")) {
+        showStatus("Markdown 不能与文本、艾特或媒体混发");
+        return null;
+      }
+      if (!text) {
+        showStatus(keyboard ? "按钮需要附在 Markdown 消息上" : "请填写消息");
+        return null;
+      }
+      return { text: "", segments: [{ type: "markdown", content: text }, ...segments.filter(isKeyboardSegment)] };
+    }
+    if (!text && !segments.length) { showStatus("请填写消息"); return null; }
+    if (keyboard) { showStatus("按钮需要附在 Markdown 消息上"); return null; }
+    return { text, segments };
+  }
+
+  function openKeyboardDialog() {
+    state.dialog = "keyboard";
+    const existing = root.querySelector(".sandbox-dialog-overlay");
+    if (existing?.dataset.dialog === "keyboard") return;
+    closeMemberMenu();
+    existing?.remove();
+    const overlay = element("div", "sandbox-dialog-overlay");
+    overlay.dataset.dialog = "keyboard";
+    overlay.onclick = (event) => { if (event.target === overlay) closeDialog(); };
+    const card = element("div", "sandbox-dialog");
+    card.setAttribute("role", "dialog");
+    const head = element("div", "sandbox-dialog-head");
+    const close = button("关闭");
+    close.onclick = () => closeDialog();
+    head.append(element("h2", "", "消息按钮"), close);
+    const field = element("label", "sandbox-dialog-field", "每行一个按钮，可用 文字 | 指令");
+    const area = element("textarea", "ui-input");
+    const current = state.draftSegments.find(isKeyboardSegment);
+    const rows = current?.payload?.content?.rows || [];
+    area.value = rows.flatMap((row) => row.buttons || []).map((item) => {
+      const label = item.render_data?.label || item.label || "";
+      const data = item.action?.data || "";
+      return data && data !== label ? `${label} | ${data}` : label;
+    }).join("\n");
+    field.append(area);
+    const body = element("div", "sandbox-dialog-body");
+    body.append(field);
+    const save = button("保存");
+    save.onclick = () => {
+      const buttons = area.value.split("\n").flatMap((line, index) => {
+        const [label, data] = line.split("|").map((part) => part.trim());
+        if (!label) return [];
+        return [{
+          id: `btn_${index + 1}`,
+          render_data: { label, style: 1 },
+          action: { type: 2, permission: { type: 2 }, data: data || label, enter: true },
+        }];
+      });
+      state.draftSegments = state.draftSegments.filter((segment) => !isKeyboardSegment(segment));
+      if (buttons.length) {
+        const packed = [];
+        for (let index = 0; index < buttons.length; index += 5) packed.push({ buttons: buttons.slice(index, index + 5) });
+        state.draftSegments.push({
+          type: "platform_specific",
+          platform: "qqbot",
+          kind: "keyboard",
+          payload: { content: { rows: packed } },
+        });
+      }
+      closeDialog();
+      render();
+    };
+    const foot = element("div", "sandbox-dialog-foot");
+    foot.append(save);
+    card.append(head, body, foot);
+    overlay.append(card);
+    root.append(overlay);
   }
 
   function closeMemberMenu() {
@@ -951,7 +1061,8 @@ export function mountSandboxPanel(host, rpc, events) {
     renderMessages(chat, current());
     renderMembers(members, current());
     frame.replaceChildren(sessions, chat, members);
-    if (state.dialog) openDialog(state.dialog);
+    if (state.dialog === "keyboard") openKeyboardDialog();
+    else if (state.dialog) openDialog(state.dialog);
   }
 
   async function loadConversation() {

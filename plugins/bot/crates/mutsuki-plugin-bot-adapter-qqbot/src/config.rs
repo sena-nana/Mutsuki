@@ -226,6 +226,8 @@ impl QqBotConfig {
                 QqMessageSegmentKind::MentionUser,
                 QqMessageSegmentKind::Reply,
                 QqMessageSegmentKind::Quote,
+                QqMessageSegmentKind::Markdown,
+                QqMessageSegmentKind::Keyboard,
             ]
         };
         inbound_segments.extend(inbound_media.iter().map(media_segment_kind));
@@ -238,6 +240,8 @@ impl QqBotConfig {
                 QqMessageSegmentKind::MentionAll,
                 QqMessageSegmentKind::Reply,
                 QqMessageSegmentKind::Quote,
+                QqMessageSegmentKind::Markdown,
+                QqMessageSegmentKind::Keyboard,
             ]
         };
         outbound_segments.extend(outbound_media.iter().map(media_segment_kind));
