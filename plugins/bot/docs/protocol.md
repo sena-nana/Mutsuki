@@ -46,7 +46,9 @@ and shard, required QQ permission categories, truthful inbound/outbound conversa
 surfaces, optional media constraints, reply/quote/mention, active delivery, edit/recall and
 streaming strategy. The QQ-specific rate-limit policy declares server-governed quotas,
 `Retry-After` handling, bounded retry attempts/backoff and the Gateway rate-limit delay. New fields
-are serde-defaulted so older recorded responses remain readable.
+are serde-defaulted so older recorded responses remain readable. Which official Gateway events and
+message types are first-class versus `PlatformSpecific` or unsupported is recorded in
+`docs/qqbot-adapter.md`.
 
 Business plugins should prefer the standard protocols. Adapter-specific protocols are escape hatches.
 

@@ -21,7 +21,7 @@ use crate::api::{
     HttpMethod, MediaChunk, QqAuthManager, QqMediaError, QqMediaProvider, QqOpenApiError,
     QqOpenApiTransport,
 };
-use crate::config::QqBotConfig;
+use crate::config::{DEFAULT_QQBOT_INTENTS, QqBotConfig};
 use crate::gateway::{GatewayAction, QqGatewayPump};
 use crate::tasks::{
     QQBOT_GATEWAY_FRAME_PROTOCOL_ID, QqGatewayMapRunner, QqOpenApiRunner, openapi_descriptor,
@@ -1220,7 +1220,7 @@ fn openapi_runner_gets_gateway_status_from_openapi() {
     assert_eq!(response["platform"], "qqbot");
     assert_eq!(response["gateway"]["url"], "wss://gateway.example.invalid");
     assert_eq!(response["shard"], json!([0, 1]));
-    assert_eq!(response["intents"], 1_325_405_185);
+    assert_eq!(response["intents"], DEFAULT_QQBOT_INTENTS);
     let requests = requests.lock().unwrap();
     assert_eq!(requests[1].method, HttpMethod::Get);
     assert!(requests[1].url.ends_with("/gateway/bot"));
@@ -1926,6 +1926,32 @@ fn gateway_pump_bounds_dedup_window_and_tolerates_unknown_frames() {
         pump.pop_action(),
         Some(GatewayAction::UnknownEvent("FUTURE_EVENT".into()))
     );
+}
+
+#[test]
+fn gateway_pump_ingests_default_intent_events_previously_dropped() {
+    let mut pump = QqGatewayPump::with_account("main", 8);
+    let mut runner = QqGatewayMapRunner::new(1, "main");
+    for (sequence, event_type) in [(40, "GUILD_CREATE"), (41, "MESSAGE_AUDIT_PASS")] {
+        let task = pump
+            .handle_raw_frame(
+                json!({
+                    "op": 0,
+                    "s": sequence,
+                    "t": event_type,
+                    "id": format!("event-{sequence}"),
+                    "d": {"id": format!("payload-{sequence}"), "guild_id": "guild"}
+                }),
+                1,
+            )
+            .unwrap()
+            .unwrap();
+        let event = decode_ingress_event(&run_one(&mut runner, task).unwrap().tasks[0]);
+        assert_eq!(
+            event.kind,
+            BotEventKind::PlatformSpecific(event_type.into())
+        );
+    }
 }
 
 #[test]

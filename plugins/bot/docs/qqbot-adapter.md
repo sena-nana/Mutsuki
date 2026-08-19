@@ -30,6 +30,20 @@ rate-limit policy. QQ remains the quota authority; the adapter declares that it 
 permissions appear only when a real resource provider is configured. The matrix describes QQ only;
 it is not a cross-platform compatibility promise.
 
+First-class event kinds (and Flow sources) are message create/update/delete, reaction add/remove,
+member join/leave and bot connected. Default Identify is documented `GUILDS`, `GROUP_AND_C2C`,
+`INTERACTION`, `MESSAGE_AUDIT` and `PUBLIC_GUILD_MESSAGES`; undocumented bit 24 is omitted.
+Official events for those intents, and forum/audio names if later subscribed, are ingested.
+Unmapped kinds stay `BotEventKind::PlatformSpecific` with no Flow source:
+`INTERACTION_CREATE`, `GROUP_ADD_ROBOT`/`DEL_ROBOT`, active-message switches, guild/channel
+create-update-delete, message audit, forum, audio and `GUILD_MEMBER_UPDATE`. They are not promoted
+to first-class kinds. `PUT /interactions/{id}` and `BotDisconnected` emission are not provided.
+
+Inbound gaps: Group/C2C cards use `ark_data` (only `ark` is read); `message_type` 3/101/102/103
+and `msg_elements` are ignored; face/attachment/keyboard/embed stay `PlatformSpecific`;
+`author.member_role` and `message_scene` are not copied. Outbound gaps: no Ark, Embed,
+`msg_type=6`, channel send, or `event_id` replies to non-message events.
+
 ## Configuration
 
 Select the native plugins under `[[plugins.configured]]`:
