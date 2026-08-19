@@ -25,20 +25,10 @@ const labels = {
   connected: "已连接",
   identified: "已上线",
   resumable: "等待恢复",
-  configured: "已配置",
-  absent: "未配置",
-  restricted: "仅可写入",
-  ready: "可用",
-  pending: "等待投递",
-  delivered: "已送达",
-  retry_scheduled: "等待重试",
-  permanently_failed: "投递失败",
-  reconcile_required: "需要处理",
   cancelled: "已取消",
   waiting: "等待处理",
   completed: "已完成",
   expired: "已过期",
-  keep: "已保存",
 };
 
 const productLabel = (value) => labels[value] || text(value);
@@ -222,31 +212,29 @@ function withLoadMore(section, cursor, load) {
 }
 
 /** Mount the QQ operations panel into the shared console shell. */
-export function mountQqBotPanel(host, rpc, events, options = {}) {
+export function mountQqBotPanel(host, rpc, events) {
   ensureStyle();
   const state = {
-    rpc,
     snapshot: null,
-    deliveries: [],
     interactions: [],
-    deliveryCursor: null,
     interactionCursor: null,
-    deliveryExpanded: false,
     interactionExpanded: false,
-    actorId: options.actorId || "web-console",
     ownerUnavailable: false,
   };
   host.innerHTML = "";
   const root = element("div", "qq-bot-panel settings-page stack");
   const search = element("input", "");
   search.type = "search";
-  search.placeholder = "搜索账号、会话或投递";
+  search.placeholder = "搜索账号或会话";
   const status = element("div", "muted", "正在加载…");
   const refreshButton = element("button", "ghost", "刷新");
   refreshButton.type = "button";
   const toolbar = element("div", "toolbar row-item");
   toolbar.append(search, refreshButton, status);
-  root.append(toolbar);
+  const accountsHost = element("div");
+  const agentHost = element("div");
+  const interactionsHost = element("div");
+  root.append(toolbar, accountsHost, agentHost, interactionsHost);
   host.append(root);
 
   state.reportError = (error) => {
@@ -255,34 +243,13 @@ export function mountQqBotPanel(host, rpc, events, options = {}) {
   };
 
   function render() {
-    root.querySelectorAll("section, article").forEach((node) => node.remove());
+    accountsHost.replaceChildren();
+    interactionsHost.replaceChildren();
     if (state.ownerUnavailable) {
-      root.append(element("p", "muted", "尚未登录 QQ，请到配置里填写账号。"));
+      accountsHost.append(element("p", "muted", "尚未登录 QQ，请到配置里填写账号。"));
       return;
     }
-    (state.snapshot?.accounts || []).forEach((account) => root.append(accountCard(account)));
-    const deliveries = tableSection("主动投递", state.deliveries, [
-      ["投递记录", (row) => row.receipt.delivery_id],
-      ["状态", (row) => productLabel(row.receipt.status)],
-      ["尝试次数", (row) => row.receipt.attempt_count],
-    ], (row) => {
-      const buttons = [actionButton("预览", {
-        action: "delivery_preview",
-        delivery_id: row.receipt.delivery_id,
-      }, state, rpc, refresh, {
-        confirm: false,
-        onResult: (result) => {
-          const attemptCount = result?.result?.attempt_count;
-          status.className = "muted";
-          status.textContent = `投递预览：已尝试 ${attemptCount ?? row.receipt.attempt_count} 次，未改变投递状态`;
-        },
-      })];
-      if (["retry_scheduled", "permanently_failed", "reconcile_required"].includes(row.receipt.status)) buttons.push(actionButton("重试", { action: "delivery_retry", delivery_id: row.receipt.delivery_id }, state, rpc, refresh));
-      if (["retry_scheduled", "reconcile_required"].includes(row.receipt.status)) buttons.push(actionButton("取消", { action: "delivery_cancel", delivery_id: row.receipt.delivery_id }, state, rpc, refresh));
-      return buttons;
-    });
-    root.append(withLoadMore(deliveries, state.deliveryCursor, loadMoreDeliveries));
-
+    (state.snapshot?.accounts || []).forEach((account) => accountsHost.append(accountCard(account)));
     const interactions = tableSection("交互会话", state.interactions, [
       ["会话", (row) => row.session_id],
       ["状态", (row) => productLabel(row.status)],
@@ -291,19 +258,7 @@ export function mountQqBotPanel(host, rpc, events, options = {}) {
       action: "interaction_cancel",
       session_id: row.session_id,
     }, state, rpc, refresh)] : []);
-    root.append(withLoadMore(interactions, state.interactionCursor, loadMoreInteractions));
-  }
-
-  async function loadMoreDeliveries(after) {
-    try {
-      const page = await rpc.read("qq-bot", "deliveries.list", { query: search.value, after, limit: 50 });
-      state.deliveries.push(...page.items);
-      state.deliveryCursor = page.next_cursor;
-      state.deliveryExpanded = true;
-      render();
-    } catch (error) {
-      if (!isOwnerUnavailable(error)) state.reportError(error);
-    }
+    interactionsHost.append(withLoadMore(interactions, state.interactionCursor, loadMoreInteractions));
   }
 
   async function loadMoreInteractions(after) {
@@ -346,29 +301,22 @@ export function mountQqBotPanel(host, rpc, events, options = {}) {
     inFlight = (async () => {
       try {
         try {
-          const [snapshot, deliveries, interactions] = await Promise.all([
+          const [snapshot, interactions] = await Promise.all([
             rpc.read("qq-bot", "snapshot", { query }),
-            rpc.read("qq-bot", "deliveries.list", { query, limit: 50 }),
             rpc.read("qq-bot", "interactions.list", { query, limit: 50 }),
           ]);
           if (disposed || query !== search.value) return;
           state.snapshot = snapshot;
-          state.deliveries = merge && state.deliveryExpanded
-            ? mergeRows(deliveries.items, state.deliveries, (item) => item.receipt.delivery_id)
-            : deliveries.items;
           state.interactions = merge && state.interactionExpanded
             ? mergeRows(interactions.items, state.interactions, (item) => item.session_id)
             : interactions.items;
-          if (!state.deliveryExpanded || !merge) state.deliveryCursor = deliveries.next_cursor;
           if (!state.interactionExpanded || !merge) state.interactionCursor = interactions.next_cursor;
           state.ownerUnavailable = false;
         } catch (error) {
           if (!isOwnerUnavailable(error)) throw error;
           if (disposed || query !== search.value) return;
           state.snapshot = { revision: 0, accounts: [] };
-          state.deliveries = [];
           state.interactions = [];
-          state.deliveryCursor = null;
           state.interactionCursor = null;
           state.ownerUnavailable = true;
         }
@@ -393,7 +341,6 @@ export function mountQqBotPanel(host, rpc, events, options = {}) {
   }
 
   search.oninput = () => {
-    state.deliveryExpanded = false;
     state.interactionExpanded = false;
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
@@ -420,6 +367,11 @@ export function mountQqBotPanel(host, rpc, events, options = {}) {
     opened = true;
   });
   document.addEventListener("visibilitychange", visibility);
+  void import(new URL("../bot-agent/index.js", import.meta.url))
+    .then((mod) => {
+      if (!disposed) void mod.mountAgentConnectionsPanel?.(agentHost, rpc);
+    })
+    .catch(() => {});
   void refresh(false);
   return {
     refresh,
@@ -442,6 +394,7 @@ function registerConfigEditor(entry) {
 export default {
   id: "qq-bot",
   setup(ctx) {
+    globalThis.__mutsukiQqConnectionPage = { activityId: "bot", pageId: "qq-bot.page" };
     ctx.pages.register({
       id: "qq-bot.page", path: "/qq-bot", title: "QQ 连接",
       component: { mount(el) { const panel = mountQqBotPanel(el, ctx.rpc, ctx.events); return { dispose: () => panel.destroy() }; } },

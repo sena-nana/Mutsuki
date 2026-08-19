@@ -48,7 +48,7 @@ cargo run --locked -p mutsuki-bot
 - 鉴权 Console 固定监听 `127.0.0.1:8787`。
 
 旧 `local.toml`、旧 bootstrap、旧 SQLite 和旧 secret 不读取、不迁移；升级后需在新实例中重新
-配置。QQ 登录、模型和回复只在配置页填写；Bot 页显示连接、投递、会话和 QQ 沙盒。沙盒默认可
+配置。QQ 登录、模型和回复只在配置页填写；Bot 页显示 QQ 连接（含会话）和 QQ 沙盒。沙盒默认可
 模拟群聊，接入 QQ 后可切换真实数据查看近期发言用户并从后台发送消息。系统不会
 自动生成 Flow。
 
