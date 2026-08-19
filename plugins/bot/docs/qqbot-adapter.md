@@ -86,8 +86,8 @@ Standard outbound `Reply` and `Quote` segments lower to QQ's `msg_id`, the same 
 `BotMessage.reply_to`. Empty or conflicting message IDs return `qqbot.openapi.invalid_request`
 before any network request; they never fall back to a new active message. Omitting `reply_to`
 sends a Group/C2C active message (no `msg_id`). Standard `message/send` still does not send
-Ark, Markdown or keyboard payloads; those remain inbound `PlatformSpecific` segments (and
-sandbox simulate compose). The sandbox allows unquoted live send by default, and
+Ark, Markdown or keyboard payloads; those remain inbound `PlatformSpecific` segments.
+The sandbox allows unquoted live send by default, and
 records `GROUP_MSG_REJECT` / `C2C_MSG_REJECT` (or bot removal) as closed.
 
 ## Verification
