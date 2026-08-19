@@ -96,6 +96,8 @@ async fn sandbox_rpc_simulate_send_and_confirm_live_send() {
     assert!(frontend.contains("sandbox-row-body"));
     assert!(frontend.contains("align-items: flex-end"));
     assert!(frontend.contains("first.role !== \"system\" && index === 0"));
+    assert!(frontend.contains(":has(.sandbox-client)"));
+    assert!(!frontend.contains("100vh - 140px"));
     assert!(!frontend.contains("🖼"));
     assert!(!frontend.contains("📎"));
     assert!(!frontend.contains("☺"));
