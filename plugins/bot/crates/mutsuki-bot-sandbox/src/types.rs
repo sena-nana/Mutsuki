@@ -399,6 +399,7 @@ pub fn preview_segments(segments: &[MessageSegment]) -> String {
             MessageSegment::Audio { .. } => parts.push("[语音]".into()),
             MessageSegment::Video { .. } => parts.push("[视频]".into()),
             MessageSegment::Reply { .. } | MessageSegment::Quote { .. } => {}
+            MessageSegment::Markdown { .. } => parts.push("[Markdown]".into()),
             MessageSegment::PlatformSpecific { kind, payload, .. } => {
                 parts.push(preview_platform_kind(kind, payload));
             }

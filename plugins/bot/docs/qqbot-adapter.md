@@ -9,8 +9,8 @@ the adapter through the configured plugin catalog.
 | Area | Support |
 | --- | --- |
 | Gateway | HTTPS discovery, WSS, Hello, Identify, Ready, heartbeat/ACK, Resume and reconnect |
-| Inbound | Group @, C2C, guild/channel @ and direct messages; available delete, member and reaction events. Content `<@id>` / `@all` is inlined as mention segments. `<faceType>` tags are stripped so image placeholders do not appear as text. Attachments (CDN URL), plus `ark` / `markdown` / `embed` / `keyboard`, map to `PlatformSpecific`. A media provider may additionally add `Image`/`File`/`Audio`/`Video` ResourceRef segments. Group/C2C actors without `author.avatar` receive `https://q.qlogo.cn/qqapp/{app_id}/{user_openid}/640`; `group_openid` is not used. Guild `author.avatar` is kept as-is. QQ CDN `http://` avatar and attachment URLs are stored and fetched as `https://`. |
-| Standard effects | Group/C2C text, mention, reply and message recall |
+| Inbound | Group @, C2C, guild/channel @ and direct messages; available delete, member and reaction events. Content `<@id>` / `@all` is inlined as mention segments. `<faceType>` tags are stripped so image placeholders do not appear as text. Attachments (CDN URL) map to `PlatformSpecific`. Custom markdown `content` maps to `MessageSegment::Markdown`; template markdown plus `ark` / `embed` / `keyboard` map to `PlatformSpecific`. A media provider may additionally add `Image`/`File`/`Audio`/`Video` ResourceRef segments. Group/C2C actors without `author.avatar` receive `https://q.qlogo.cn/qqapp/{app_id}/{user_openid}/640`; `group_openid` is not used. Guild `author.avatar` is kept as-is. QQ CDN `http://` avatar and attachment URLs are stored and fetched as `https://`. |
+| Standard effects | Group/C2C text, mention, reply, custom Markdown (optional keyboard on the same payload) and message recall |
 | QQ-specific effects | Account query (mapped `user` plus raw `openapi_user`), Gateway query and relative-path raw call |
 | Media | Validated image/audio/video/file `ResourceRef` input and Group/C2C upload/send, only when the product injects a real provider |
 | Message edit / media download | Not provided |
@@ -85,9 +85,12 @@ carry `qqbot.sequence` as ordering information.
 Standard outbound `Reply` and `Quote` segments lower to QQ's `msg_id`, the same as
 `BotMessage.reply_to`. Empty or conflicting message IDs return `qqbot.openapi.invalid_request`
 before any network request; they never fall back to a new active message. Omitting `reply_to`
-sends a Group/C2C active message (no `msg_id`). Standard `message/send` still does not send
-Ark, Markdown or keyboard payloads; those remain inbound `PlatformSpecific` segments.
-The sandbox allows unquoted live send by default, and
+sends a Group/C2C active message (no `msg_id`). Standard `message/send` sends Group/C2C custom
+Markdown as `msg_type=2` (`MessageSegment::Markdown`). A single `qqbot` `keyboard`
+`PlatformSpecific` segment may attach to that same payload. Custom markdown `content` must use the
+first-class segment; QQ template markdown (`custom_template_id`) stays `PlatformSpecific`. Mixing
+Markdown with text, mention or Ark in one send group fails before any network request. Ark is still
+not sent. The sandbox allows unquoted live send by default, and
 records `GROUP_MSG_REJECT` / `C2C_MSG_REJECT` (or bot removal) as closed.
 
 ## Verification

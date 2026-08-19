@@ -1276,17 +1276,28 @@ fn compose_segments(
     } else {
         let mut body = segments;
         if !text.trim().is_empty() {
+            if body
+                .iter()
+                .any(|segment| is_markdown(segment) || is_keyboard(segment))
+            {
+                return Err(SandboxError::new(
+                    "invalid_argument",
+                    "Markdown 不能与普通文本混发",
+                ));
+            }
             body.extend(parse_sandbox_mentions(text.trim(), users));
         }
         body
     };
     body.retain(|segment| match segment {
         MessageSegment::Text { text } => !text.is_empty(),
+        MessageSegment::Markdown { content } => !content.trim().is_empty(),
         _ => true,
     });
     if body.is_empty() {
         return Err(SandboxError::new("invalid_argument", "消息不能为空"));
     }
+    require_markdown_combo(&body)?;
     Ok(body)
 }
 
@@ -1301,16 +1312,75 @@ fn require_live_outbound(segments: &[MessageSegment]) -> Result<(), SandboxError
             | MessageSegment::Audio { .. }
             | MessageSegment::Video { .. }
             | MessageSegment::Reply { .. }
-            | MessageSegment::Quote { .. } => {}
+            | MessageSegment::Quote { .. }
+            | MessageSegment::Markdown { .. } => {}
+            MessageSegment::PlatformSpecific { platform, kind, .. }
+                if platform == "qqbot" && kind == "keyboard" => {}
             _ => {
                 return Err(SandboxError::new(
                     "invalid_argument",
-                    "真实模式只能发送文本、艾特和媒体",
+                    "真实模式只能发送文本、艾特、媒体、Markdown 和按钮",
                 ));
             }
         }
     }
     Ok(())
+}
+
+fn require_markdown_combo(segments: &[MessageSegment]) -> Result<(), SandboxError> {
+    let markdown = segments
+        .iter()
+        .filter(|segment| is_markdown(segment))
+        .count();
+    let keyboard = segments
+        .iter()
+        .filter(|segment| is_keyboard(segment))
+        .count();
+    if keyboard > 0 && markdown == 0 {
+        return Err(SandboxError::new(
+            "invalid_argument",
+            "按钮需要附在 Markdown 消息上",
+        ));
+    }
+    if markdown > 1 || keyboard > 1 {
+        return Err(SandboxError::new(
+            "invalid_argument",
+            "一次只能发送一条 Markdown 和一组按钮",
+        ));
+    }
+    if markdown > 0
+        && segments.iter().any(|segment| {
+            !matches!(
+                segment,
+                MessageSegment::Markdown { .. }
+                    | MessageSegment::Reply { .. }
+                    | MessageSegment::Quote { .. }
+            ) && !is_keyboard(segment)
+                && !is_markdown(segment)
+        })
+    {
+        return Err(SandboxError::new(
+            "invalid_argument",
+            "Markdown 不能与文本、艾特或媒体混发",
+        ));
+    }
+    Ok(())
+}
+
+fn is_markdown(segment: &MessageSegment) -> bool {
+    matches!(segment, MessageSegment::Markdown { .. }) || qq_kind(segment, "markdown")
+}
+
+fn is_keyboard(segment: &MessageSegment) -> bool {
+    qq_kind(segment, "keyboard")
+}
+
+fn qq_kind(segment: &MessageSegment, kind: &str) -> bool {
+    matches!(
+        segment,
+        MessageSegment::PlatformSpecific { platform, kind: k, .. }
+            if platform == "qqbot" && k == kind
+    )
 }
 
 fn require_sandbox_refs(inner: &Inner, segments: &[MessageSegment]) -> Result<(), SandboxError> {

@@ -13,6 +13,12 @@ Standard Bot protocols:
 - `mutsuki.bot.command/parse@1`
 - `mutsuki.bot.delivery/reply@1`
 
+`mutsuki.bot.message/send@1` carries a `BotMessage` whose `segments` are the plugin-composed
+outbound types. Plugins do not declare sendable kinds through `PluginProvides`; the Adapter
+capability matrix is the account-scoped source of truth. First-class `MessageSegment::Markdown`
+is custom markdown content. QQ keyboard and template markdown stay `PlatformSpecific` under
+`platform: "qqbot"`.
+
 `PluginProvides.extensions` carries versioned domain-neutral extension payloads. Bot plugins use
 `mutsuki.bot.flow.nodes@1` for their node catalog. `BotFlowEventEnvelope`, `BotNodeInvocation` and
 `BotNodeResult` preserve typed ports plus Bot/trace/correlation context across graph execution.

@@ -215,6 +215,21 @@ fn capability_matrix_follows_intents_and_resource_provider_configuration() {
             .outbound_segments
             .contains(&QqMessageSegmentKind::Quote)
     );
+    assert!(
+        text_only
+            .outbound_segments
+            .contains(&QqMessageSegmentKind::Markdown)
+    );
+    assert!(
+        text_only
+            .outbound_segments
+            .contains(&QqMessageSegmentKind::Keyboard)
+    );
+    assert!(
+        text_only
+            .inbound_segments
+            .contains(&QqMessageSegmentKind::Markdown)
+    );
     assert!(text_only.quote);
     assert!(text_only.rate_limit.server_driven);
     assert!(text_only.rate_limit.honors_retry_after);
@@ -613,12 +628,53 @@ fn gateway_runner_maps_attachments_ark_markdown_and_keyboard() {
     )));
     assert!(segments.iter().any(|segment| matches!(
         segment,
-        MessageSegment::PlatformSpecific { kind, .. } if kind == "markdown"
+        MessageSegment::Markdown { content } if content == "**hi**"
     )));
     assert!(segments.iter().any(|segment| matches!(
         segment,
         MessageSegment::PlatformSpecific { kind, .. } if kind == "keyboard"
     )));
+}
+
+#[test]
+fn gateway_runner_maps_template_markdown_to_platform_specific() {
+    let mut runner = QqGatewayMapRunner::new(1, "main");
+    let task = Task::new(
+        "template-md",
+        QQBOT_GATEWAY_FRAME_PROTOCOL_ID,
+        json!({
+            "op": 0,
+            "s": 8,
+            "t": "C2C_MESSAGE_CREATE",
+            "id": "template-md-event",
+            "d": {
+                "id": "template-md-message",
+                "author": {"user_openid": "USER_OPENID"},
+                "markdown": {
+                    "custom_template_id": "tpl-1",
+                    "params": [{"key": "title", "values": ["hi"]}]
+                }
+            }
+        }),
+    );
+
+    let result = run_one(&mut runner, task).unwrap();
+    let segments = decode_ingress_event(&result.tasks[0])
+        .message
+        .unwrap()
+        .segments;
+    assert!(segments.iter().any(|segment| matches!(
+        segment,
+        MessageSegment::PlatformSpecific { platform, kind, payload, .. }
+            if platform == "qqbot"
+                && kind == "markdown"
+                && payload.get("custom_template_id").and_then(Value::as_str) == Some("tpl-1")
+    )));
+    assert!(
+        !segments
+            .iter()
+            .any(|segment| matches!(segment, MessageSegment::Markdown { .. }))
+    );
 }
 
 #[test]
@@ -1012,6 +1068,25 @@ fn openapi_runner_sends_audio_video_and_file_through_qq_media_messages() {
             "SOURCE_MESSAGE_ID"
         );
     }
+}
+
+fn c2c_send_task(task_id: &str, segments: Vec<MessageSegment>) -> Task {
+    Task::new(
+        task_id,
+        BOT_MESSAGE_SEND_PROTOCOL_ID,
+        serde_json::to_value(BotMessage {
+            message_id: None,
+            target: BotTarget::User {
+                user_id: "USER_OPENID".into(),
+            },
+            sender: None,
+            segments,
+            reply_to: None,
+            time_ms: None,
+            ext: Default::default(),
+        })
+        .unwrap(),
+    )
 }
 
 fn test_image_resource() -> mutsuki_runtime_contracts::ResourceRef {
@@ -1440,6 +1515,80 @@ fn openapi_runner_rejects_qqbot_raw_body_in_standard_send() {
 
     assert!(result.is_err());
     assert!(requests.lock().unwrap().is_empty());
+}
+
+#[test]
+fn openapi_runner_sends_markdown_and_keyboard_in_one_body() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut runner = openapi_runner_with_shared(
+        requests.clone(),
+        vec![
+            token_response("TOKEN_A"),
+            ok_response(json!({"id": "MESSAGE_ID"})),
+        ],
+        Box::new(NoopIdSource::new(901)),
+    );
+
+    run_one(
+        &mut runner,
+        c2c_send_task(
+            "send-md-keyboard",
+            vec![
+                MessageSegment::markdown("# title"),
+                MessageSegment::platform_specific(
+                    "qqbot",
+                    "keyboard",
+                    json!({"content": {"rows": []}}),
+                ),
+            ],
+        ),
+    )
+    .unwrap();
+
+    let requests = requests.lock().unwrap();
+    let body = requests[1].body.as_ref().unwrap();
+    assert_eq!(body["msg_type"], 2);
+    assert_eq!(body["markdown"]["content"], "# title");
+    assert_eq!(body["keyboard"]["content"]["rows"], json!([]));
+    assert!(body.get("content").is_none());
+}
+
+#[test]
+fn openapi_runner_splits_markdown_then_image_into_two_sends() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut runner = openapi_runner_with_shared(
+        requests.clone(),
+        vec![
+            token_response("TOKEN_A"),
+            ok_response(json!({"id": "MD_MESSAGE"})),
+            ok_response(json!({"upload_id": "UPLOAD", "block_size": 1024})),
+            ok_response(json!({"file_info": "FILE_INFO"})),
+            ok_response(json!({"id": "IMAGE_MESSAGE"})),
+        ],
+        Box::new(NoopIdSource::new(902)),
+    );
+
+    run_one(
+        &mut runner,
+        c2c_send_task(
+            "md-image",
+            vec![
+                MessageSegment::markdown("# pic"),
+                MessageSegment::Image {
+                    resource: test_image_resource(),
+                },
+            ],
+        ),
+    )
+    .unwrap();
+
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests[1].body.as_ref().unwrap()["msg_type"], 2);
+    assert_eq!(
+        requests[1].body.as_ref().unwrap()["markdown"]["content"],
+        "# pic"
+    );
+    assert_eq!(requests[4].body.as_ref().unwrap()["msg_type"], 7);
 }
 
 #[test]

@@ -36,7 +36,9 @@ impl BotMessage {
         self.segments
             .iter()
             .filter_map(|segment| match segment {
-                MessageSegment::Text { text } => Some(text.as_str()),
+                MessageSegment::Text { text } | MessageSegment::Markdown { content: text } => {
+                    Some(text.as_str())
+                }
                 _ => None,
             })
             .collect::<Vec<_>>()

@@ -1,4 +1,5 @@
 use mutsuki_bot_protocol::{BotExtMap, BotMessage, BotTarget, MessageSegment};
+use serde_json::Value;
 
 #[derive(Clone, Debug)]
 pub struct MessageBuilder {
@@ -25,6 +26,22 @@ impl MessageBuilder {
         self.segments.push(MessageSegment::MentionUser {
             user_id: user_id.into(),
         });
+        self
+    }
+
+    pub fn markdown(mut self, content: impl Into<String>) -> Self {
+        self.segments.push(MessageSegment::markdown(content));
+        self
+    }
+
+    pub fn platform_specific(
+        mut self,
+        platform: impl Into<String>,
+        kind: impl Into<String>,
+        payload: Value,
+    ) -> Self {
+        self.segments
+            .push(MessageSegment::platform_specific(platform, kind, payload));
         self
     }
 

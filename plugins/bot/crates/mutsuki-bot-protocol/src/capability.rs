@@ -42,6 +42,8 @@ pub enum QqMessageSegmentKind {
     File,
     Reply,
     Quote,
+    Markdown,
+    Keyboard,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
