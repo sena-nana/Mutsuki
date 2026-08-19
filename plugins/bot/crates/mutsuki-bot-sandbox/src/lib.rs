@@ -613,6 +613,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn live_send_expands_sandbox_media_to_image() {
+        let service = SandboxService::with_account("qq-main");
+        let runtime = runtime();
+        service.set_runtime(runtime.clone());
+        service.observe_event(live_group_event("qq-msg-1", "在吗", now_ms()));
+        switch_live(&service).await;
+        let uploaded = service
+            .upload_media("pic.png", "image/png", b"fake-png".to_vec())
+            .await
+            .unwrap();
+        let live = service.snapshot("").await.unwrap();
+        write(
+            &service,
+            live.revision,
+            "op-media",
+            SandboxAction::SendAsBot {
+                conversation_id: live.conversations[0].conversation_id.clone(),
+                text: String::new(),
+                segments: vec![MessageSegment::PlatformSpecific {
+                    platform: "sandbox".into(),
+                    kind: "media".into(),
+                    payload: json!({
+                        "media_id": uploaded.media_id,
+                        "mime": "image/png",
+                        "name": "pic.png"
+                    }),
+                }],
+                reply_to: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            runtime.deliver.lock().expect("deliver").as_slice(),
+            [("[图片]".into(), None)]
+        );
+    }
+
+    #[tokio::test]
+    async fn live_send_rejects_qq_face() {
+        let service = SandboxService::with_account("qq-main");
+        let runtime = runtime();
+        service.set_runtime(runtime.clone());
+        service.observe_event(live_group_event("qq-msg-1", "在吗", now_ms()));
+        switch_live(&service).await;
+        let live = service.snapshot("").await.unwrap();
+        let error = write(
+            &service,
+            live.revision,
+            "op-face",
+            SandboxAction::SendAsBot {
+                conversation_id: live.conversations[0].conversation_id.clone(),
+                text: String::new(),
+                segments: vec![MessageSegment::PlatformSpecific {
+                    platform: "qqbot".into(),
+                    kind: "face".into(),
+                    payload: json!({ "face_type": "1", "face_id": "14" }),
+                }],
+                reply_to: None,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, "invalid_argument");
+        assert!(error.message.contains("QQ 表情"));
+    }
+
+    #[tokio::test]
     async fn sandbox_bot_profile_appears_in_snapshot_and_outbound() {
         let service = SandboxService::with_account("qq-main");
         assert_eq!(service.snapshot("").await.unwrap().bot, None);

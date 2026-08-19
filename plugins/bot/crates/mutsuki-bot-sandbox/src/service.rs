@@ -8,6 +8,9 @@ use mutsuki_bot_protocol::{
     BotAccountRef, BotConversationKind, BotEvent, BotEventKind, BotExtMap, BotMessage, BotPlatform,
     BotUser, MessageSegment, QQ_CONVERSATION_REF_VERSION, QqConversationRef,
 };
+use mutsuki_runtime_contracts::{
+    ResourceAccess, ResourceId, ResourceLifetime, ResourceRef, ResourceSealState, ResourceSemantic,
+};
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
 use uuid::Uuid;
@@ -658,10 +661,16 @@ impl SandboxService {
                     ));
                 }
             };
+            let conversation = stored.view.conversation.clone();
             let roster = stored.users.values().cloned().collect::<Vec<_>>();
             let segments = compose_segments(&text, segments, &roster)?;
+            require_sandbox_refs(&inner, &segments)?;
+            let segments = segments
+                .into_iter()
+                .map(|segment| expand_live_segment(&inner, segment))
+                .collect::<Result<Vec<_>, _>>()?;
             require_live_outbound(&segments)?;
-            (stored.view.conversation.clone(), segments, reply_to)
+            (conversation, segments, reply_to)
         };
         let delivery = runtime
             .deliver(operation_id, &conversation, &segments, reply_to.as_deref())
@@ -1358,6 +1367,74 @@ fn require_live_outbound(segments: &[MessageSegment]) -> Result<(), SandboxError
         }
     }
     Ok(())
+}
+
+fn expand_live_segment(
+    inner: &Inner,
+    segment: MessageSegment,
+) -> Result<MessageSegment, SandboxError> {
+    if let Some(media_id) = sandbox_payload_id(&segment, "media", "media_id") {
+        let asset = inner
+            .media
+            .get(media_id)
+            .ok_or_else(|| SandboxError::new("not_found", format!("媒体 `{media_id}` 不存在")))?;
+        return Ok(media_segment_from_asset(asset));
+    }
+    if let Some(sticker_id) = sandbox_payload_id(&segment, "sticker", "sticker_id") {
+        let sticker = inner.stickers.get(sticker_id).ok_or_else(|| {
+            SandboxError::new("not_found", format!("表情包 `{sticker_id}` 不存在"))
+        })?;
+        return Ok(MessageSegment::Image {
+            resource: sandbox_resource(&sticker.content_hash, &sticker.mime, sticker.bytes.len()),
+        });
+    }
+    match &segment {
+        MessageSegment::PlatformSpecific { kind, .. } if kind == "face" => Err(SandboxError::new(
+            "invalid_argument",
+            "真实模式不能发送 QQ 表情，请改用图片表情包",
+        )),
+        _ => Ok(segment),
+    }
+}
+
+fn media_segment_from_asset(asset: &SandboxAsset) -> MessageSegment {
+    let resource = sandbox_resource(&asset.content_hash, &asset.mime, asset.bytes.len());
+    if asset.mime.starts_with("image/") {
+        MessageSegment::Image { resource }
+    } else if asset.mime.starts_with("audio/") {
+        MessageSegment::Audio { resource }
+    } else if asset.mime.starts_with("video/") {
+        MessageSegment::Video { resource }
+    } else {
+        MessageSegment::File {
+            resource,
+            name: Some(asset.name.clone()).filter(|name| !name.is_empty()),
+        }
+    }
+}
+
+fn sandbox_resource(hash: &str, mime: &str, size: usize) -> ResourceRef {
+    ResourceRef {
+        ref_id: format!("sandbox:{hash}").into(),
+        resource_id: ResourceId {
+            kind_id: "blob".into(),
+            slot_id: hash.into(),
+            generation: 1,
+            version: 1,
+        },
+        semantic: ResourceSemantic::FrozenValue,
+        provider_id: "sandbox".into(),
+        resource_kind: "blob".into(),
+        schema: mime.into(),
+        version: 1,
+        generation: 1,
+        access: ResourceAccess::Inline,
+        size_hint: Some(size as u64),
+        content_hash: Some(hash.into()),
+        lifetime: ResourceLifetime::Persistent,
+        lease: None,
+        seal_state: ResourceSealState::Sealed,
+    }
 }
 
 fn require_markdown_combo(segments: &[MessageSegment]) -> Result<(), SandboxError> {

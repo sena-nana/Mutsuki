@@ -71,7 +71,11 @@ async fn sandbox_rpc_simulate_send_and_confirm_live_send() {
     assert!(frontend.contains("sandbox-mention"));
     assert!(frontend.contains("sandbox-card"));
     assert!(frontend.contains("sandbox-markdown"));
-    assert!(frontend.contains("iconButton(\"Markdown\""));
+    assert!(frontend.contains("iconButton(\"Markdown\", ICONS.markdown)"));
+    assert!(frontend.contains("iconButton(\"图片\", ICONS.image)"));
+    assert!(frontend.contains("iconButton(\"文件\", ICONS.paperclip)"));
+    assert!(frontend.contains("iconButton(\"表情包\", ICONS.smile)"));
+    assert!(frontend.contains("item.kind === \"qq_face\" && mode() === \"live\""));
     assert!(frontend.contains("消息按钮"));
     assert!(frontend.contains("type: \"markdown\""));
     assert!(frontend.contains("kind: \"keyboard\""));
@@ -82,6 +86,15 @@ async fn sandbox_rpc_simulate_send_and_confirm_live_send() {
     assert!(frontend.contains("pasteImage"));
     assert!(frontend.contains("onpaste"));
     assert!(frontend.contains("stripImagePlaceholder"));
+    assert!(frontend.contains("liliaInput"));
+    assert!(frontend.contains("liliaTextarea"));
+    assert!(frontend.contains("ui-input--sm"));
+    assert!(frontend.contains("ui-textarea"));
+    assert!(frontend.contains("stickerPicker.hidden = !state.stickerOpen"));
+    assert!(!frontend.contains("🖼"));
+    assert!(!frontend.contains("📎"));
+    assert!(!frontend.contains("☺"));
+    assert!(!frontend.contains("⌘"));
     assert!(!frontend.contains("发送小卡片"));
     assert!(!frontend.contains("发送 Markdown"));
     assert!(!frontend.contains("inject_into_flow"));

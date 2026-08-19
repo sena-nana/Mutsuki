@@ -108,6 +108,14 @@ pub fn normalize_segments(
             | MessageSegment::File { resource, .. } => {
                 let kind = media_kind(segment);
                 let attachment = take_front(&mut pending);
+                let mime = attachment
+                    .as_ref()
+                    .and_then(|item| item.mime.clone())
+                    .or_else(|| {
+                        let schema = resource.schema.trim();
+                        (!schema.is_empty()).then(|| schema.to_owned())
+                    })
+                    .or_else(|| mime_for(kind));
                 push_media(
                     &text,
                     &mut refs,
@@ -116,10 +124,7 @@ pub fn normalize_segments(
                     kind,
                     resource.content_hash.as_deref(),
                     attachment.as_ref().and_then(|item| item.url.clone()),
-                    attachment
-                        .as_ref()
-                        .and_then(|item| item.mime.clone())
-                        .or_else(|| mime_for(kind)),
+                    mime,
                     file_name(segment).or_else(|| attachment.and_then(|item| item.name)),
                 );
             }
@@ -522,7 +527,11 @@ fn flush_attachments(
 }
 
 fn take_front(pending: &mut Vec<AttachmentMeta>) -> Option<AttachmentMeta> {
-    pending.drain(..1).next()
+    if pending.is_empty() {
+        None
+    } else {
+        Some(pending.remove(0))
+    }
 }
 
 fn hydrate_media(item: &SandboxContentRef) -> MessageSegment {
@@ -1015,6 +1024,24 @@ mod tests {
             normalize_segments(&[MessageSegment::text("[图片]")], &[], &mut assets, 3);
         assert_eq!(text, "[图片]");
         assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn first_class_image_without_qq_attachment_keeps_hash() {
+        let mut assets = HashMap::new();
+        let hash = hash_bytes(b"png");
+        let (text, refs) = normalize_segments(
+            &[MessageSegment::Image {
+                resource: test_resource("ref-live", &hash),
+            }],
+            &[],
+            &mut assets,
+            1,
+        );
+        assert!(text.is_empty());
+        assert_eq!(refs[0].kind, SandboxRefKind::Img);
+        assert_eq!(refs[0].h.as_deref(), Some(hash.as_str()));
+        assert_eq!(refs[0].mime.as_deref(), Some("image/png"));
     }
 
     fn test_resource(ref_id: &str, hash: &str) -> mutsuki_runtime_contracts::ResourceRef {
