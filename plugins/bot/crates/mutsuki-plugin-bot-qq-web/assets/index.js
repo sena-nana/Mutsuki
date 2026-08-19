@@ -25,10 +25,6 @@ const labels = {
   connected: "已连接",
   identified: "已上线",
   resumable: "等待恢复",
-  cancelled: "已取消",
-  waiting: "等待处理",
-  completed: "已完成",
-  expired: "已过期",
 };
 
 const productLabel = (value) => labels[value] || text(value);
@@ -113,37 +109,6 @@ function avatar(name, className, avatarUrl) {
   return img;
 }
 
-function actionButton(label, action, state, rpc, refresh, options = {}) {
-  const button = element("button", "ghost", label);
-  button.type = "button";
-  button.onclick = async () => {
-    if (options.confirm !== false && !window.confirm(`确认${label}？`)) return;
-    const resolved = typeof action === "function" ? action() : action;
-    if (!resolved) return;
-    const operationId = button.dataset.operationId || crypto.randomUUID();
-    button.dataset.operationId = operationId;
-    button.disabled = true;
-    try {
-      const result = await rpc.write("qq-bot", "write", {
-        confirmed: options.confirm !== false,
-        request: {
-          operation_id: operationId,
-          expected_revision: state.snapshot?.revision ?? 0,
-          action: resolved,
-        },
-      });
-      delete button.dataset.operationId;
-      await refresh();
-      options.onResult?.(result);
-    } catch (error) {
-      state.reportError?.(error);
-    } finally {
-      button.disabled = false;
-    }
-  };
-  return button;
-}
-
 function accountCard(account) {
   const card = element("article", "card card--outlined");
   const selfUser = account.self_user || {};
@@ -166,222 +131,65 @@ function accountCard(account) {
   return card;
 }
 
-function tableSection(title, rows, columns, actions) {
-  const section = element("section", "card card--outlined");
-  section.append(element("h2", "", title));
-  if (!rows.length) {
-    section.append(element("p", "muted", "暂无记录"));
-    return section;
-  }
-  const table = element("table", "data-table");
-  const head = element("tr");
-  columns.forEach(([label]) => head.append(element("th", "", label)));
-  if (actions) head.append(element("th", "", "操作"));
-  table.append(head);
-  rows.forEach((row) => {
-    const tr = element("tr");
-    columns.forEach(([, value]) => tr.append(element("td", "", text(value(row)))));
-    if (actions) {
-      const cell = element("td", "actions");
-      const buttons = actions(row);
-      if (buttons) cell.append(...buttons);
-      tr.append(cell);
-    }
-    table.append(tr);
-  });
-  section.append(table);
-  return section;
-}
-
-function withLoadMore(section, cursor, load) {
-  if (!cursor) return section;
-  const footer = element("div", "actions");
-  const button = element("button", "ghost", "加载更多");
-  button.type = "button";
-  button.onclick = async () => {
-    button.disabled = true;
-    try {
-      await load(cursor);
-    } finally {
-      button.disabled = false;
-    }
-  };
-  footer.append(button);
-  section.append(footer);
-  return section;
-}
-
-/** Mount the QQ operations panel into the shared console shell. */
-export function mountQqBotPanel(host, rpc, events) {
+export function mountQqAccountCards(host, rpc, events) {
   ensureStyle();
-  const state = {
-    snapshot: null,
-    interactions: [],
-    interactionCursor: null,
-    interactionExpanded: false,
-    ownerUnavailable: false,
-  };
-  host.innerHTML = "";
-  const root = element("div", "qq-bot-panel settings-page stack");
-  const search = element("input", "");
-  search.type = "search";
-  search.placeholder = "搜索账号或会话";
-  const status = element("div", "muted", "正在加载…");
-  const refreshButton = element("button", "ghost", "刷新");
-  refreshButton.type = "button";
-  const toolbar = element("div", "toolbar row-item");
-  toolbar.append(search, refreshButton, status);
-  const accountsHost = element("div");
-  const agentHost = element("div");
-  const interactionsHost = element("div");
-  root.append(toolbar, accountsHost, agentHost, interactionsHost);
-  host.append(root);
-
-  state.reportError = (error) => {
-    status.className = "error-banner";
-    status.textContent = errorMessage(error);
-  };
-
-  function render() {
-    accountsHost.replaceChildren();
-    interactionsHost.replaceChildren();
-    if (state.ownerUnavailable) {
-      accountsHost.append(element("p", "muted", "尚未登录 QQ，请到配置里填写账号。"));
-      return;
-    }
-    (state.snapshot?.accounts || []).forEach((account) => accountsHost.append(accountCard(account)));
-    const interactions = tableSection("交互会话", state.interactions, [
-      ["会话", (row) => row.session_id],
-      ["状态", (row) => productLabel(row.status)],
-      ["版本", (row) => row.version],
-    ], (row) => row.status === "waiting" ? [actionButton("取消", {
-      action: "interaction_cancel",
-      session_id: row.session_id,
-    }, state, rpc, refresh)] : []);
-    interactionsHost.append(withLoadMore(interactions, state.interactionCursor, loadMoreInteractions));
-  }
-
-  async function loadMoreInteractions(after) {
-    try {
-      const page = await rpc.read("qq-bot", "interactions.list", { query: search.value, after, limit: 50 });
-      state.interactions.push(...page.items);
-      state.interactionCursor = page.next_cursor;
-      state.interactionExpanded = true;
-      render();
-    } catch (error) {
-      if (!isOwnerUnavailable(error)) state.reportError(error);
-    }
-  }
-
-  const mergeRows = (fresh, existing, key) => {
-    const seen = new Set(fresh.map(key));
-    return [...fresh, ...existing.filter((item) => !seen.has(key(item)))];
-  };
+  const root = element("div", "stack");
+  host.replaceChildren(root);
   let disposed = false;
   let pollTimer = null;
-  let eventTimer = null;
-  let searchTimer = null;
   let inFlight = null;
-  let pendingRefresh = null;
-  let lastRevision = 0;
-  let opened = false;
+
+  function render(snapshot, ownerUnavailable) {
+    root.replaceChildren();
+    if (ownerUnavailable) {
+      root.append(element("p", "muted", "尚未登录 QQ，请到配置里填写账号。"));
+      return;
+    }
+    (snapshot?.accounts || []).forEach((account) => root.append(accountCard(account)));
+  }
 
   function schedule() {
     clearTimeout(pollTimer);
-    if (!disposed && !document.hidden) pollTimer = setTimeout(() => void refresh(true), 60_000);
+    if (!disposed && !document.hidden) pollTimer = setTimeout(() => void refresh(), 60_000);
   }
 
-  function refresh(merge = true) {
-    if (disposed) return Promise.resolve();
-    if (inFlight) {
-      pendingRefresh = pendingRefresh === false ? false : merge;
-      return inFlight;
-    }
-    const query = search.value;
-    inFlight = (async () => {
-      try {
-        try {
-          const [snapshot, interactions] = await Promise.all([
-            rpc.read("qq-bot", "snapshot", { query }),
-            rpc.read("qq-bot", "interactions.list", { query, limit: 50 }),
-          ]);
-          if (disposed || query !== search.value) return;
-          state.snapshot = snapshot;
-          state.interactions = merge && state.interactionExpanded
-            ? mergeRows(interactions.items, state.interactions, (item) => item.session_id)
-            : interactions.items;
-          if (!state.interactionExpanded || !merge) state.interactionCursor = interactions.next_cursor;
-          state.ownerUnavailable = false;
-        } catch (error) {
-          if (!isOwnerUnavailable(error)) throw error;
-          if (disposed || query !== search.value) return;
-          state.snapshot = { revision: 0, accounts: [] };
-          state.interactions = [];
-          state.interactionCursor = null;
-          state.ownerUnavailable = true;
-        }
-        if (disposed || query !== search.value) return;
-        status.className = "muted";
-        status.textContent = state.ownerUnavailable ? "尚未登录 QQ，请到配置里填写账号" : "";
-        render();
-      } catch (error) {
-        if (!disposed) state.reportError(error);
-      }
-    })().finally(() => {
-      inFlight = null;
-      if (pendingRefresh !== null) {
-        const mergePending = pendingRefresh;
-        pendingRefresh = null;
-        void refresh(mergePending);
-      } else {
+  function refresh() {
+    if (disposed || inFlight) return Promise.resolve();
+    inFlight = rpc
+      .read("qq-bot", "snapshot", {})
+      .then((snapshot) => {
+        if (!disposed) render(snapshot, false);
+      })
+      .catch((error) => {
+        if (disposed) return;
+        if (isOwnerUnavailable(error)) render({ accounts: [] }, true);
+        else root.replaceChildren(element("p", "error-banner", errorMessage(error)));
+      })
+      .finally(() => {
+        inFlight = null;
         schedule();
-      }
-    });
+      });
     return inFlight;
   }
 
-  search.oninput = () => {
-    state.interactionExpanded = false;
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => {
-      if (inFlight) pendingRefresh = false;
-      else void refresh(false);
-    }, 180);
-  };
-  refreshButton.onclick = () => void refresh(true);
   const visibility = () => {
     clearTimeout(pollTimer);
-    if (!document.hidden) void refresh(true);
+    if (!document.hidden) void refresh();
   };
-  const eventSubscription = events.subscribe("qq.changed", (payload) => {
-    const revision = Number(payload?.revision || 0);
-    if (revision <= lastRevision) return;
-    lastRevision = revision;
-    if (document.hidden) return;
-    clearTimeout(eventTimer);
-    eventTimer = setTimeout(() => void refresh(true), 50);
+  const changed = events.subscribe("qq.changed", () => {
+    if (!document.hidden) void refresh();
   }, "bot.read");
-  const connectionSubscription = events.onStateChange?.((connection) => {
-    if (connection !== "open" || document.hidden) return;
-    if (opened) void refresh(true);
-    opened = true;
+  const connection = events.onStateChange?.((state) => {
+    if (state === "open" && !document.hidden) void refresh();
   });
   document.addEventListener("visibilitychange", visibility);
-  void import(new URL("../bot-agent/index.js", import.meta.url))
-    .then((mod) => {
-      if (!disposed) void mod.mountAgentConnectionsPanel?.(agentHost, rpc);
-    })
-    .catch(() => {});
-  void refresh(false);
+  void refresh();
   return {
-    refresh,
     destroy() {
       disposed = true;
-      clearTimeout(searchTimer);
       clearTimeout(pollTimer);
-      clearTimeout(eventTimer);
-      eventSubscription.dispose();
-      connectionSubscription?.dispose();
+      changed.dispose();
+      connection?.dispose();
       document.removeEventListener("visibilitychange", visibility);
     },
   };
@@ -393,23 +201,13 @@ function registerConfigEditor(entry) {
 
 export default {
   id: "qq-bot",
-  setup(ctx) {
-    globalThis.__mutsukiQqConnectionPage = { activityId: "bot", pageId: "qq-bot.page" };
-    ctx.pages.register({
-      id: "qq-bot.page", path: "/qq-bot", title: "QQ 连接",
-      component: { mount(el) { const panel = mountQqBotPanel(el, ctx.rpc, ctx.events); return { dispose: () => panel.destroy() }; } },
-      requiredCapability: "bot.read",
-    });
+  setup() {
     registerConfigEditor({
       providerId: QQ_PROVIDER_ID,
-      activityId: "bot",
-      pageId: "qq-bot.page",
+      activityId: "home",
+      pageId: "overview.page",
       label: "查看连接状态",
       mode: "supplement",
-    });
-    ctx.navigation.register({
-      id: "qq-bot.nav", activityId: "bot", pageId: "qq-bot.page", label: "QQ 连接", order: 10,
-      requiredCapability: "bot.read",
     });
   },
 };

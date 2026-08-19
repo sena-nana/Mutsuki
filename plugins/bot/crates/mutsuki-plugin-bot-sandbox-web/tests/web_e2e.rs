@@ -46,6 +46,7 @@ async fn sandbox_rpc_simulate_send_and_confirm_live_send() {
     let frontend = std::fs::read_to_string(assets.join("index.js")).unwrap();
     assert!(frontend.contains("添加用户"));
     assert!(frontend.contains("真实数据"));
+    assert!(frontend.contains("activityId: \"sandbox\""));
     assert!(frontend.contains("发送到 QQ"));
     assert!(!frontend.contains("将以机器人身份向真实 QQ 会话发送消息"));
     assert!(frontend.contains("update_user"));

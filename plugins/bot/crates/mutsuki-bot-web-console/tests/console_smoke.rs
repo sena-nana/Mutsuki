@@ -98,6 +98,7 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
     let overview_js = http_get_body(&addr, "/extensions/overview/index.js").await;
     assert!(overview_js.contains("overview-dashboard"));
     assert!(overview_js.contains("metric-grid"));
+    assert!(overview_js.contains("mountQqAccountCards"));
     let control_js = http_get_body(&addr, "/extensions/control/index.js").await;
     assert!(control_js.contains("mountTrajectoryView"));
     assert!(control_js.contains("./trajectory-view.js"));
@@ -539,13 +540,14 @@ async fn embedded_console_mounts_qq_management_extension() {
     let options = http_get_body(&addr, "/console-options.json").await;
     let qq_path = versioned_module_path(&options, "./extensions/qq-bot/index.js");
     let qq_js = http_get_body(&addr, &format!("/{qq_path}")).await;
-    assert!(qq_js.contains("mountQqBotPanel"));
+    assert!(qq_js.contains("mountQqAccountCards"));
     assert!(qq_js.contains("请到配置里填写账号"));
     assert!(qq_js.contains("self_user"));
     assert!(qq_js.contains("qq-account-avatar"));
     assert!(qq_js.contains("在线时长"));
-    assert!(qq_js.contains("交互会话"));
+    assert!(!qq_js.contains("qq-bot.page"));
     assert!(!qq_js.contains("主动投递"));
+    assert!(!qq_js.contains("搜索账号"));
     assert!(!qq_js.contains("保存登录配置"));
     let snap = ws_rpc_params(&addr, "qq-bot", "snapshot", json!({}))
         .await
@@ -587,6 +589,7 @@ async fn embedded_console_serves_sandbox_panel() {
     let path = versioned_module_path(&options, "./extensions/sandbox/index.js");
     let js = http_get_body(&addr, &format!("/{path}")).await;
     assert!(js.contains("mountSandboxPanel"));
+    assert!(js.contains("activityId: \"sandbox\""));
     assert!(js.contains("添加用户"));
     assert!(js.contains("真实数据"));
     assert!(!js.contains("inject_into_flow"));

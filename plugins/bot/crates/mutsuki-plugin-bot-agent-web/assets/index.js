@@ -220,26 +220,28 @@ function registerConfigEditor(entry) {
 export default {
   id: "bot-agent",
   setup(ctx) {
-    const host = globalThis.__mutsukiQqConnectionPage;
-    if (!host) {
-      ctx.pages.register({
-        id: "bot-agent.page", path: "/agent", title: "会话",
-        component: { mount: (el) => mountAgentConnectionsPanel(el, ctx.rpc) },
-        requiredCapability: "runtime.read",
-      });
-      ctx.navigation.register({
-        id: "bot-agent.nav", activityId: "bot", pageId: "bot-agent.page", label: "会话", order: 30,
-        requiredCapability: "runtime.read",
-      });
-    }
-    for (const providerId of ["mutsuki.agent.runtime.local", "mutsuki.plugin.bot.agent"]) {
-      registerConfigEditor({
-        providerId,
-        activityId: host?.activityId || "bot",
-        pageId: host?.pageId || "bot-agent.page",
-        label: "查看会话",
-        mode: "supplement",
-      });
-    }
+    ctx.pages.register({
+      id: "bot-agent.page", path: "/agent", title: "会话",
+      component: { mount: (el) => mountAgentConnectionsPanel(el, ctx.rpc) },
+      requiredCapability: "runtime.read",
+    });
+    registerConfigEditor({
+      providerId: "mutsuki.agent.runtime.local",
+      activityId: "bot",
+      pageId: "bot-agent.page",
+      label: "查看会话",
+      mode: "supplement",
+    });
+    registerConfigEditor({
+      providerId: "mutsuki.plugin.bot.agent",
+      activityId: "bot",
+      pageId: "bot-agent.page",
+      label: "查看会话",
+      mode: "supplement",
+    });
+    ctx.navigation.register({
+      id: "bot-agent.nav", activityId: "bot", pageId: "bot-agent.page", label: "会话", order: 30,
+      requiredCapability: "runtime.read",
+    });
   },
 };

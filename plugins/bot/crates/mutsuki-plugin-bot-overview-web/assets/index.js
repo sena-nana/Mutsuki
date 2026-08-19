@@ -50,8 +50,10 @@ function mountOverview(host, rpc, events) {
       <span class="muted" data-refresh-state></span>
     </div>
     <div data-overview-body><div class="muted">加载中…</div></div>
+    <div data-qq-accounts></div>
   `;
   const body = host.querySelector("[data-overview-body]");
+  const qqHost = host.querySelector("[data-qq-accounts]");
   const state = host.querySelector("[data-refresh-state]");
   let disposed = false;
   let timer = null;
@@ -63,6 +65,7 @@ function mountOverview(host, rpc, events) {
   let opened = false;
   let snapshot = null;
   let snapshotAt = 0;
+  let qqPanel = null;
 
   const render = () => {
     if (!snapshot || disposed) return;
@@ -133,10 +136,16 @@ function mountOverview(host, rpc, events) {
   host.querySelector("[data-refresh]").onclick = () => void refresh();
   document.addEventListener("visibilitychange", visibility);
   uptimeTimer = setInterval(render, 1_000);
+  void import(new URL("../qq-bot/index.js", import.meta.url))
+    .then((mod) => {
+      if (!disposed) qqPanel = mod.mountQqAccountCards?.(qqHost, rpc, events);
+    })
+    .catch(() => {});
   void refresh();
   return {
     dispose() {
       disposed = true;
+      qqPanel?.destroy?.();
       clearTimeout(timer);
       clearTimeout(debounceTimer);
       clearInterval(uptimeTimer);
