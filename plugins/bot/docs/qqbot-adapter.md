@@ -87,9 +87,8 @@ Standard outbound `Reply` and `Quote` segments lower to QQ's `msg_id`, the same 
 before any network request; they never fall back to a new active message. Omitting `reply_to`
 sends a Group/C2C active message (no `msg_id`). Standard `message/send` still does not send
 Ark, Markdown or keyboard payloads; those remain inbound `PlatformSpecific` segments (and
-sandbox simulate compose). The sandbox records per-conversation permission
-from `GROUP_MSG_RECEIVE` / `GROUP_MSG_REJECT` and C2C equivalents, and otherwise requires the
-user-message reply button.
+sandbox simulate compose). The sandbox allows unquoted live send by default, and
+records `GROUP_MSG_REJECT` / `C2C_MSG_REJECT` (or bot removal) as closed.
 
 ## Verification
 

@@ -427,23 +427,6 @@ mod tests {
                 .any(|item| item.text == "机器人自己" && item.role == SandboxSpeakerRole::Bot)
         );
 
-        let missing = write(
-            &service,
-            service.snapshot("").await.unwrap().revision,
-            "op-send-missing",
-            SandboxAction::SendAsBot {
-                conversation_id: conversation_id.clone(),
-                text: "后台回复".into(),
-                segments: vec![],
-                reply_to: None,
-            },
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(missing.code, "invalid_argument");
-        assert!(missing.message.contains("主动消息权限"));
-        assert!(runtime.deliver.lock().expect("deliver").is_empty());
-
         write(
             &service,
             service.snapshot("").await.unwrap().revision,
@@ -485,7 +468,6 @@ mod tests {
         let runtime = runtime();
         service.set_runtime(runtime.clone());
         service.observe_event(live_group_event("qq-msg-1", "在吗", now_ms()));
-        service.observe_event(live_group_toggle("GROUP_MSG_RECEIVE", now_ms()));
         switch_live(&service).await;
         let live = service.snapshot("").await.unwrap();
         assert!(live.conversations[0].active_message);

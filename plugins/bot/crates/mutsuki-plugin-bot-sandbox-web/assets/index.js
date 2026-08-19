@@ -549,7 +549,7 @@ export function mountSandboxPanel(host, rpc, events) {
     const field = element("div", "sandbox-compose-field");
     const input = element("input", "ui-input");
     input.type = "text";
-    const canActive = Boolean(conversation.active_message);
+    const canActive = conversation.active_message !== false;
     input.placeholder = mode() === "live"
       ? (canActive ? "可直接发送主动消息，或悬停消息后回复" : "请先悬停用户消息并点击回复")
       : "输入消息，Enter 发送";
@@ -578,7 +578,7 @@ export function mountSandboxPanel(host, rpc, events) {
       const text = state.draft.trim();
       const segments = state.draftSegments.slice();
       if (!text && !segments.length) { showStatus("请填写消息"); return; }
-      if (mode() === "live" && !state.quote?.message_id && !canActive) {
+      if (mode() === "live" && !state.quote?.message_id && conversation.active_message === false) {
         showStatus("当前会话没有主动消息权限，请先悬停用户消息并点击回复");
         return;
       }

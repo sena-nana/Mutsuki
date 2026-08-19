@@ -856,6 +856,7 @@ fn configure_connection(connection: &Connection) -> Result<String, BotStateDbErr
 }
 
 fn migrate_schema(connection: &Connection) -> Result<(), BotStateDbError> {
+    let user_version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     let sql = format!(
         "BEGIN IMMEDIATE;
          CREATE TABLE IF NOT EXISTS bot_conversation_policy(
@@ -952,13 +953,15 @@ fn migrate_schema(connection: &Connection) -> Result<(), BotStateDbError> {
          CREATE INDEX IF NOT EXISTS bot_interaction_active
              ON bot_interaction(origin_key, status, session_id);
          {}
-         PRAGMA user_version=9;
          COMMIT;",
         sandbox_history::SANDBOX_SCHEMA_SQL
     );
     connection.execute_batch(&sql)?;
     sandbox_history::migrate_sandbox_v9(connection)?;
     sandbox_history::migrate_sandbox_v10(connection)?;
+    if user_version < 11 {
+        sandbox_history::migrate_sandbox_v11(connection)?;
+    }
 
     let has_receipt_status = {
         let mut statement = connection.prepare("PRAGMA table_info(bot_delivery_receipt)")?;
@@ -987,6 +990,7 @@ fn migrate_schema(connection: &Connection) -> Result<(), BotStateDbError> {
             )?;
         }
     }
+    connection.pragma_update(None, "user_version", 11)?;
     Ok(())
 }
 
@@ -3265,6 +3269,58 @@ mod tests {
                 .iter()
                 .any(|item| item.face_key == "qq:6:0" && item.face_id == "0")
         );
+    }
+
+    #[test]
+    fn sandbox_history_backfills_live_active_message_once() {
+        use mutsuki_bot_sandbox::SandboxHistoryStore;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("active-message.db");
+        let conversation = serde_json::json!({
+            "version": 1,
+            "account_id": "qq-main",
+            "kind": "group",
+            "group_id": "group-1"
+        })
+        .to_string();
+        {
+            let connection = rusqlite::Connection::open(&path).unwrap();
+            connection
+                .execute_batch(
+                    "PRAGMA user_version=9;
+                 CREATE TABLE bot_sandbox_meta(singleton INTEGER PRIMARY KEY CHECK(singleton = 1), mode TEXT NOT NULL, account_id TEXT NOT NULL);
+                 CREATE TABLE bot_sandbox_conversation(
+                     store TEXT NOT NULL, conversation_id TEXT NOT NULL, account_id TEXT NOT NULL, kind TEXT NOT NULL,
+                     title TEXT NOT NULL, avatar_url TEXT, conversation_json TEXT NOT NULL, last_preview TEXT,
+                     last_activity_unix_ms INTEGER NOT NULL, message_count INTEGER NOT NULL, active_message INTEGER NOT NULL DEFAULT 0,
+                     PRIMARY KEY(store, conversation_id));
+                 INSERT INTO bot_sandbox_meta VALUES (1, 'live', 'qq-main');",
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO bot_sandbox_conversation VALUES ('live', 'live-group', 'qq-main', 'group', '群', NULL, ?1, '', 1, 0, 0)",
+                    rusqlite::params![conversation],
+                )
+                .unwrap();
+        }
+        let loaded = {
+            let repository = BotStateDbRepository::open(&path).unwrap();
+            SandboxHistoryStore::load(&repository).unwrap()
+        };
+        assert!(loaded.live[0].view.active_message);
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute(
+                "UPDATE bot_sandbox_conversation SET active_message=0 WHERE store='live'",
+                [],
+            )
+            .unwrap();
+        let loaded = {
+            let repository = BotStateDbRepository::open(&path).unwrap();
+            SandboxHistoryStore::load(&repository).unwrap()
+        };
+        assert!(!loaded.live[0].view.active_message);
     }
 
     struct NoopSandboxRuntime;

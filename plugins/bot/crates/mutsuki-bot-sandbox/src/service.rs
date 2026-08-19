@@ -1231,7 +1231,7 @@ fn insert_conversation(
             last_preview: None,
             last_activity_unix_ms: now,
             message_count: 0,
-            active_message: false,
+            active_message: true,
         },
         users: HashMap::new(),
         messages: Vec::new(),
