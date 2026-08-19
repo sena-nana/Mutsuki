@@ -243,6 +243,12 @@ async fn serve_http(
         json!({"id": "BOT_OPENID", "username": "fake-bot", "bot": true})
     } else if first_line.starts_with("GET /gateway/bot ") {
         json!({"url": format!("ws://{ws_addr}")})
+    } else if let Some(group_openid) = fake_group_info_openid(first_line) {
+        json!({
+            "group_openid": group_openid,
+            "group_name": "测试群",
+            "group_member_num": 2
+        })
     } else if first_line.starts_with("POST /v2/groups/GROUP_1/messages ") {
         let value: Value = serde_json::from_str(&body).unwrap();
         sends.lock().unwrap().push(value);
@@ -263,6 +269,13 @@ async fn serve_http(
     stream.write_all(response_head.as_bytes()).await.unwrap();
     stream.write_all(bytes.as_bytes()).await.unwrap();
     stream.shutdown().await.unwrap();
+}
+
+fn fake_group_info_openid(first_line: &str) -> Option<String> {
+    let rest = first_line.strip_prefix("GET /v2/groups/")?;
+    let path = rest.split(' ').next().unwrap_or(rest);
+    let group_openid = path.strip_suffix("/info")?;
+    (!group_openid.is_empty() && !group_openid.contains('/')).then(|| group_openid.to_owned())
 }
 
 async fn read_http_request(stream: &mut TcpStream) -> (String, String) {

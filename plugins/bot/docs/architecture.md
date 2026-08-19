@@ -94,7 +94,10 @@ Sandbox console (virtual user)
   as `qq:{faceType}:{faceId}` without a blob so history restore and the sticker
   picker can list seen IDs. Live mode projects real Gateway inbound events and
   confirmed bot sends, including live member avatar URLs. Bot bubbles use the connected bot's
-  name and avatar when known, otherwise `机器人`. Group sessions show a
+  name and avatar when known, otherwise `机器人`. Live group session titles prefer
+  `qqbot.group_name` from the event, then `GET /v2/groups/{group_openid}/info`
+  (30 QPM, whitelist-only; 11253 is cached as unavailable). Failures and missing names
+  display `群聊` rather than the OpenID. Group sessions show a
   member photo. The right-hand roster shows nicknames only. The member context menu
   inserts `@nickname` into compose, copies OpenID, and can import a live member into
   the simulate roster. Typing `@` in compose opens a compact mention menu above the

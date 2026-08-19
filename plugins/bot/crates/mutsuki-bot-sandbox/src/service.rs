@@ -17,13 +17,14 @@ use crate::content::{
     record_faces, upsert_asset,
 };
 use crate::types::{
-    DEFAULT_SANDBOX_ACCOUNT_ID, SANDBOX_GROUP_ID, SANDBOX_ID_PREFIX, SANDBOX_MAX_MEDIA_BYTES,
-    SANDBOX_MAX_MESSAGES, SANDBOX_MAX_STICKER_BYTES, SANDBOX_USER_LIMIT, SANDBOX_USER_NAMES,
-    SandboxAction, SandboxAsset, SandboxChangeEvent, SandboxConversationView, SandboxError,
-    SandboxFace, SandboxHistoryConversation, SandboxHistorySnapshot, SandboxMediaBlob,
-    SandboxMediaRef, SandboxMessageView, SandboxMode, SandboxSnapshot, SandboxSpeakerRole,
-    SandboxSticker, SandboxStickerKind, SandboxStickerView, SandboxUserView, SandboxWriteRequest,
-    SandboxWriteResult, is_sandbox_conversation, parse_sandbox_mentions, sandbox_user_id,
+    DEFAULT_SANDBOX_ACCOUNT_ID, LIVE_GROUP_TITLE_FALLBACK, SANDBOX_GROUP_ID, SANDBOX_ID_PREFIX,
+    SANDBOX_MAX_MEDIA_BYTES, SANDBOX_MAX_MESSAGES, SANDBOX_MAX_STICKER_BYTES, SANDBOX_USER_LIMIT,
+    SANDBOX_USER_NAMES, SandboxAction, SandboxAsset, SandboxChangeEvent, SandboxConversationView,
+    SandboxError, SandboxFace, SandboxHistoryConversation, SandboxHistorySnapshot,
+    SandboxMediaBlob, SandboxMediaRef, SandboxMessageView, SandboxMode, SandboxSnapshot,
+    SandboxSpeakerRole, SandboxSticker, SandboxStickerKind, SandboxStickerView, SandboxUserView,
+    SandboxWriteRequest, SandboxWriteResult, is_sandbox_conversation, parse_sandbox_mentions,
+    sandbox_user_id,
 };
 
 const MAX_MESSAGES: usize = SANDBOX_MAX_MESSAGES;
@@ -219,6 +220,28 @@ impl SandboxService {
         inner.bot = Some(user);
         let (revision, mode) = finish(&mut inner);
         drop(inner);
+        self.publish(revision, mode);
+    }
+
+    pub fn apply_live_title(&self, group_id: &str, title: &str) {
+        let group_id = group_id.trim();
+        let title = title.trim();
+        if group_id.is_empty() || title.is_empty() {
+            return;
+        }
+        let mut inner = self.lock_inner();
+        let Some(stored) = inner.live.conversations.values_mut().find(|item| {
+            item.view.kind == BotConversationKind::Group
+                && item.view.conversation.group_id.as_deref() == Some(group_id)
+        }) else {
+            return;
+        };
+        if !assign_live_group_title(stored, title) {
+            return;
+        }
+        let (revision, mode) = finish(&mut inner);
+        drop(inner);
+        self.persist_best_effort();
         self.publish(revision, mode);
     }
 
@@ -836,6 +859,13 @@ impl SandboxApi for SandboxService {
         }
         let now = u64::try_from(event.time_ms.max(0)).unwrap_or(unix_ms());
         let active_message = active_message_permission(&event);
+        let group_name = event
+            .ext
+            .get("qqbot.group_name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
         let mut inner = self.lock_inner();
         let account_id = inner.account_id.clone();
         {
@@ -843,6 +873,9 @@ impl SandboxApi for SandboxService {
                 live, media, faces, ..
             } = &mut *inner;
             let stored = ensure_conversation(live, conversation, &live_title, now);
+            if let Some(name) = group_name.as_deref() {
+                assign_live_group_title(stored, name);
+            }
             if let Some(allowed) = active_message {
                 stored.view.active_message = allowed;
             }
@@ -1824,6 +1857,15 @@ fn projected_conversation(stored: &StoredConversation) -> SandboxConversationVie
             .or(users.first())
             .and_then(|user| user.avatar_url.clone());
     }
+    if view.kind == BotConversationKind::Group
+        && view
+            .conversation
+            .group_id
+            .as_deref()
+            .is_some_and(|group_id| view.title == group_id)
+    {
+        view.title = LIVE_GROUP_TITLE_FALLBACK.into();
+    }
     view.users = users;
     view.message_count = stored.messages.len() as u64;
     view
@@ -1882,10 +1924,7 @@ fn live_title(conversation: &QqConversationRef) -> String {
             .user_id
             .clone()
             .unwrap_or_else(|| "私聊".into()),
-        BotConversationKind::Group => conversation
-            .group_id
-            .clone()
-            .unwrap_or_else(|| "群聊".into()),
+        BotConversationKind::Group => LIVE_GROUP_TITLE_FALLBACK.into(),
         BotConversationKind::Channel => conversation
             .channel_id
             .clone()
@@ -1913,6 +1952,24 @@ fn sandbox_title(conversation: &QqConversationRef) -> String {
         }
         BotConversationKind::Channel => "沙盒频道".into(),
     }
+}
+
+fn assign_live_group_title(stored: &mut StoredConversation, title: &str) -> bool {
+    if !is_replaceable_live_group_title(
+        &stored.view.title,
+        stored.view.conversation.group_id.as_deref(),
+    ) || stored.view.title == title
+    {
+        return false;
+    }
+    stored.view.title = title.to_owned();
+    true
+}
+
+fn is_replaceable_live_group_title(title: &str, group_id: Option<&str>) -> bool {
+    title.is_empty()
+        || title == LIVE_GROUP_TITLE_FALLBACK
+        || group_id.is_some_and(|group_id| title == group_id)
 }
 
 fn require_revision(inner: &Inner, expected: u64) -> Result<(), SandboxError> {

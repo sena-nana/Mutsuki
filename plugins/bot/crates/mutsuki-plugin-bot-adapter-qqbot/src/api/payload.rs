@@ -47,6 +47,11 @@ impl QqScene {
     }
 }
 
+#[must_use]
+pub fn qq_group_info_path(group_openid: &str) -> String {
+    format!("/v2/groups/{group_openid}/info")
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SendMessagePayload {
     pub scene: QqScene,

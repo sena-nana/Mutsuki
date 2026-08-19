@@ -393,6 +393,7 @@ mod tests {
         switch_live(&service).await;
         let live = service.snapshot("").await.unwrap();
         assert_eq!(live.mode, SandboxMode::Live);
+        assert_eq!(live.conversations[0].title, "群聊");
         assert_eq!(live.conversations[0].users[0].display_name, "群友甲");
         assert_eq!(
             live.conversations[0].users[0].avatar_url.as_deref(),
@@ -460,6 +461,75 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(error.code, "invalid_state");
+    }
+
+    #[tokio::test]
+    async fn live_group_title_uses_event_name_and_upgrades_placeholder() {
+        let service = SandboxService::with_account("qq-main");
+        service.set_runtime(runtime());
+        service.observe_event(live_group_event("qq-msg-1", "在吗", now_ms()));
+        switch_live(&service).await;
+        assert_eq!(
+            service.snapshot("").await.unwrap().conversations[0].title,
+            "群聊"
+        );
+
+        service.apply_live_title("group-1", "读书分享会");
+        assert_eq!(
+            service.snapshot("").await.unwrap().conversations[0].title,
+            "读书分享会"
+        );
+        service.apply_live_title("group-1", "另一个名字");
+        assert_eq!(
+            service.snapshot("").await.unwrap().conversations[0].title,
+            "读书分享会"
+        );
+
+        let mut named = live_group_event("qq-msg-2", "带群名", now_ms());
+        named
+            .ext
+            .insert("qqbot.group_name".into(), json!("事件群名"));
+        let fresh = SandboxService::with_account("qq-main");
+        fresh.set_runtime(runtime());
+        fresh.observe_event(named);
+        switch_live(&fresh).await;
+        assert_eq!(
+            fresh.snapshot("").await.unwrap().conversations[0].title,
+            "事件群名"
+        );
+    }
+
+    #[tokio::test]
+    async fn live_group_openid_history_title_projects_as_group_chat() {
+        let store = Arc::new(MemoryHistoryStore::default());
+        let seed = SandboxService::with_history("qq-main", store.clone()).unwrap();
+        seed.set_runtime(runtime());
+        seed.observe_event(live_group_event("qq-msg-1", "在吗", now_ms()));
+        {
+            let mut snapshot = store.load().unwrap();
+            snapshot.live[0].view.title = "group-1".into();
+            store.save(&snapshot).unwrap();
+        }
+        let restored = SandboxService::with_history("qq-main", store).unwrap();
+        write(
+            &restored,
+            restored.snapshot("").await.unwrap().revision,
+            "op-live",
+            SandboxAction::SetMode {
+                mode: SandboxMode::Live,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            restored.snapshot("").await.unwrap().conversations[0].title,
+            "群聊"
+        );
+        restored.apply_live_title("group-1", "读书分享会");
+        assert_eq!(
+            restored.snapshot("").await.unwrap().conversations[0].title,
+            "读书分享会"
+        );
     }
 
     #[tokio::test]
