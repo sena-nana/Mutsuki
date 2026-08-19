@@ -1,8 +1,12 @@
 //! Headless QQ conversation sandbox used by the Bot Web Console.
 
+mod content;
 mod service;
 mod types;
 
+pub use content::{
+    SandboxContentRef, SandboxRefKind, hash_bytes, normalize_segments, remap_sandbox_media_ids,
+};
 pub use service::{
     SandboxApi, SandboxChangeSubscription, SandboxHistoryStore, SandboxRuntime, SandboxService,
 };
@@ -17,6 +21,10 @@ mod tests {
         BotAccountRef, BotConversationKind, BotEvent, BotEventKind, BotExtMap, BotMessage,
         BotPlatform, BotTarget, BotUser, MessageSegment, QQ_CONVERSATION_REF_VERSION,
         QqConversationRef,
+    };
+    use mutsuki_runtime_contracts::{
+        ResourceAccess, ResourceId, ResourceLifetime, ResourceRef, ResourceSealState,
+        ResourceSemantic,
     };
     use serde_json::json;
 
@@ -358,12 +366,6 @@ mod tests {
             .find(|item| item.text == "reply")
             .unwrap();
         assert_eq!(quoted.reply_to.as_deref(), Some(hello_id.as_str()));
-        assert!(
-            quoted
-                .segments
-                .iter()
-                .any(|segment| matches!(segment, MessageSegment::Quote { message_id } if message_id == &hello_id))
-        );
 
         let outbound = service
             .observe_outbound(&group.conversation, &[MessageSegment::text("pong")], None)
@@ -897,10 +899,10 @@ mod tests {
             .into_iter()
             .find(|item| item.text.contains("@sandbox:bob") || item.text.contains("@Bob"))
             .unwrap();
-        assert!(mentioned.segments.iter().any(|segment| matches!(
-            segment,
-            MessageSegment::MentionUser { user_id } if user_id == &sandbox_user_id("Bob")
-        )));
+        assert!(mentioned.refs.iter().any(|item| {
+            item.kind == SandboxRefKind::Mention
+                && item.id.as_deref() == Some(&sandbox_user_id("Bob"))
+        }));
 
         let uploaded = service
             .upload_media("pic.png", "image/png", b"fake-png".to_vec())
@@ -941,17 +943,25 @@ mod tests {
         .unwrap();
         let blob = service.media_blob(&uploaded.media_id).await.unwrap();
         assert_eq!(blob.bytes, b"fake-png");
+        assert!(uploaded.media_id.starts_with("sha256:"));
+        let again = service
+            .upload_media("pic.png", "image/png", b"fake-png".to_vec())
+            .await
+            .unwrap();
+        assert_eq!(again.media_id, uploaded.media_id);
         let rich = service
             .messages(&group.conversation_id)
             .await
             .unwrap()
             .into_iter()
-            .find(|item| item.text.contains("[小卡片]"))
+            .find(|item| {
+                item.refs
+                    .iter()
+                    .any(|item| item.kind == SandboxRefKind::Ark)
+            })
             .unwrap();
-        assert!(rich.segments.iter().any(|segment| matches!(
-            segment,
-            MessageSegment::PlatformSpecific { kind, .. } if kind == "ark"
-        )));
+        assert!(rich.refs.iter().any(|item| item.kind == SandboxRefKind::Img
+            && item.h.as_deref() == Some(uploaded.media_id.as_str())));
     }
 
     #[tokio::test]
@@ -1112,5 +1122,155 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[tokio::test]
+    async fn live_same_image_hash_dedups_and_refreshes_url() {
+        let store = Arc::new(MemoryHistoryStore::default());
+        let service = SandboxService::with_history("qq-main", store.clone()).unwrap();
+        let hash = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        service.observe_event(live_image_event(
+            "qq-img-1",
+            "https://cdn.example/old.png",
+            "ref-old",
+            hash,
+            now_ms(),
+        ));
+        service.observe_event(live_image_event(
+            "qq-img-2",
+            "https://cdn.example/new.png",
+            "ref-new",
+            hash,
+            now_ms(),
+        ));
+        let snapshot = store.load().unwrap();
+        assert_eq!(snapshot.media.len(), 1);
+        assert_eq!(
+            snapshot.media[0].url.as_deref(),
+            Some("https://cdn.example/new.png")
+        );
+        switch_live(&service).await;
+        let conversation_id = service.snapshot("").await.unwrap().conversations[0]
+            .conversation_id
+            .clone();
+        let messages = service.messages(&conversation_id).await.unwrap();
+        let hashed = messages
+            .iter()
+            .filter(|item| item.refs.iter().any(|item| item.h.as_deref() == Some(hash)))
+            .count();
+        assert_eq!(hashed, 2);
+        assert_eq!(
+            messages
+                .iter()
+                .rev()
+                .find(|item| item.message_id == "qq-img-2")
+                .unwrap()
+                .refs[0]
+                .url
+                .as_deref(),
+            Some("https://cdn.example/new.png")
+        );
+    }
+
+    #[tokio::test]
+    async fn truncated_messages_release_unreferenced_assets() {
+        let store = Arc::new(MemoryHistoryStore::default());
+        let service = SandboxService::with_history("qq-main", store.clone()).unwrap();
+        service.set_runtime(runtime());
+        let snapshot = service.snapshot("").await.unwrap();
+        let conversation_id = group(&snapshot).conversation_id.clone();
+        let user_id = sandbox_user_id("Alice");
+        let mut revision = snapshot.revision;
+        let mut first_hash = String::new();
+        let overflow = SANDBOX_MAX_MESSAGES + SANDBOX_MAX_MEDIA_ITEMS + 1;
+        for index in 0..overflow {
+            let uploaded = service
+                .upload_media("pic.png", "image/png", format!("blob-{index}").into_bytes())
+                .await
+                .unwrap();
+            if index == 0 {
+                first_hash = uploaded.media_id.clone();
+            }
+            revision = write(
+                &service,
+                revision,
+                &format!("op-gc-{index}"),
+                SandboxAction::IngestAsUser {
+                    conversation_id: conversation_id.clone(),
+                    user_id: user_id.clone(),
+                    text: String::new(),
+                    segments: vec![MessageSegment::PlatformSpecific {
+                        platform: "sandbox".into(),
+                        kind: "media".into(),
+                        payload: json!({
+                            "media_id": uploaded.media_id,
+                            "mime": "image/png",
+                            "name": "pic.png"
+                        }),
+                    }],
+                    reply_to: None,
+                },
+            )
+            .await
+            .unwrap()
+            .revision;
+        }
+        let messages = service.messages(&conversation_id).await.unwrap();
+        assert_eq!(messages.len(), SANDBOX_MAX_MESSAGES);
+        assert!(messages.iter().all(|item| {
+            item.refs
+                .iter()
+                .all(|item| item.h.as_deref() != Some(first_hash.as_str()))
+        }));
+        let media = store.load().unwrap().media;
+        assert!(media.iter().all(|asset| asset.content_hash != first_hash));
+        assert_eq!(media.len(), SANDBOX_MAX_MESSAGES + SANDBOX_MAX_MEDIA_ITEMS);
+    }
+
+    fn live_image_event(
+        message_id: &str,
+        url: &str,
+        ref_id: &str,
+        hash: &str,
+        time_ms: i64,
+    ) -> BotEvent {
+        let mut event = live_group_event(message_id, "", time_ms);
+        if let Some(message) = event.message.as_mut() {
+            message.segments = vec![
+                MessageSegment::PlatformSpecific {
+                    platform: "qqbot".into(),
+                    kind: "attachment".into(),
+                    payload: json!({
+                        "url": url,
+                        "content_type": "image/png",
+                        "filename": "a.png"
+                    }),
+                },
+                MessageSegment::Image {
+                    resource: ResourceRef {
+                        ref_id: ref_id.into(),
+                        resource_id: ResourceId {
+                            kind_id: "blob".into(),
+                            slot_id: hash.into(),
+                            generation: 1,
+                            version: 1,
+                        },
+                        semantic: ResourceSemantic::FrozenValue,
+                        provider_id: "test".into(),
+                        resource_kind: "blob".into(),
+                        schema: "image/png".into(),
+                        version: 1,
+                        generation: 1,
+                        access: ResourceAccess::Inline,
+                        size_hint: Some(1),
+                        content_hash: Some(hash.into()),
+                        lifetime: ResourceLifetime::Persistent,
+                        lease: None,
+                        seal_state: ResourceSealState::Sealed,
+                    },
+                },
+            ];
+        }
+        event
     }
 }

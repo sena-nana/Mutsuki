@@ -5,6 +5,8 @@ use mutsuki_bot_protocol::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::content::SandboxContentRef;
+
 pub const SANDBOX_SERVICE_ID: &str = "mutsuki.bot.sandbox";
 pub const DEFAULT_SANDBOX_ACCOUNT_ID: &str = "sandbox";
 pub const SANDBOX_ID_PREFIX: &str = "sandbox:";
@@ -80,7 +82,7 @@ pub struct SandboxHistorySnapshot {
     pub account_id: String,
     pub simulate: Vec<SandboxHistoryConversation>,
     pub live: Vec<SandboxHistoryConversation>,
-    pub media: Vec<SandboxMediaBlob>,
+    pub media: Vec<SandboxAsset>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -118,7 +120,8 @@ pub struct SandboxMessageView {
     pub sender_name: String,
     pub role: SandboxSpeakerRole,
     pub text: String,
-    pub segments: Vec<MessageSegment>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub refs: Vec<SandboxContentRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_to: Option<String>,
     pub time_ms: i64,
@@ -193,6 +196,19 @@ pub struct SandboxMediaBlob {
     pub mime: String,
     pub name: String,
     pub bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SandboxAsset {
+    pub content_hash: String,
+    pub kind: String,
+    pub mime: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bytes: Vec<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    pub created_at_unix_ms: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

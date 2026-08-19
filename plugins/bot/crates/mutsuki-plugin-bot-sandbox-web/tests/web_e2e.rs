@@ -189,12 +189,101 @@ async fn sandbox_rpc_simulate_send_and_confirm_live_send() {
     assert_eq!(renamed["result"]["user_id"], "custom-openid");
     assert_eq!(renamed["result"]["display_name"], "测试昵称");
 
-    let switched = rpc(
+    let uploaded = rpc(
+        &address,
+        "media.upload",
+        json!({
+            "name": "pic.png",
+            "mime": "image/png",
+            "bytes": "aGk="
+        }),
+    )
+    .await
+    .unwrap();
+    let media_id = uploaded["media_id"].as_str().unwrap().to_owned();
+    assert!(media_id.starts_with("sha256:"));
+    let blob = rpc(&address, "media.get", json!({ "media_id": media_id }))
+        .await
+        .unwrap();
+    assert_eq!(blob["mime"], "image/png");
+    assert_eq!(blob["bytes"], "aGk=");
+    let uploaded_again = rpc(
+        &address,
+        "media.upload",
+        json!({
+            "name": "pic-again.png",
+            "mime": "image/png",
+            "bytes": "aGk="
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(uploaded_again["media_id"], media_id);
+
+    let with_media = rpc(
         &address,
         "write",
         json!({
             "request": {
                 "expected_revision": renamed["revision"],
+                "action": {
+                    "action": "ingest_as_user",
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                    "segments": [{
+                        "type": "platform_specific",
+                        "platform": "sandbox",
+                        "kind": "media",
+                        "payload": {
+                            "media_id": media_id,
+                            "mime": "image/png",
+                            "name": "pic.png"
+                        }
+                    }]
+                }
+            }
+        }),
+    )
+    .await
+    .unwrap();
+    let messages = rpc(
+        &address,
+        "messages",
+        json!({ "conversation_id": conversation_id }),
+    )
+    .await
+    .unwrap();
+    let media_message = messages
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| {
+            item["refs"].as_array().is_some_and(|refs| {
+                refs.iter()
+                    .any(|item| item["h"].as_str() == Some(media_id.as_str()))
+            })
+        })
+        .expect("hashed media ref");
+    assert!(
+        media_message
+            .get("segments")
+            .and_then(Value::as_array)
+            .is_none_or(Vec::is_empty)
+    );
+    assert!(
+        media_message["refs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item.get("resource").is_none())
+    );
+
+    let switched = rpc(
+        &address,
+        "write",
+        json!({
+            "request": {
+                "expected_revision": with_media["revision"],
                 "action": { "action": "set_mode", "mode": "live" }
             }
         }),
@@ -220,24 +309,6 @@ async fn sandbox_rpc_simulate_send_and_confirm_live_send() {
         .await
         .is_err()
     );
-
-    let uploaded = rpc(
-        &address,
-        "media.upload",
-        json!({
-            "name": "pic.png",
-            "mime": "image/png",
-            "bytes": "aGk="
-        }),
-    )
-    .await
-    .unwrap();
-    let media_id = uploaded["media_id"].as_str().unwrap();
-    let blob = rpc(&address, "media.get", json!({ "media_id": media_id }))
-        .await
-        .unwrap();
-    assert_eq!(blob["mime"], "image/png");
-    assert_eq!(blob["bytes"], "aGk=");
 
     host.stop().await.unwrap();
     tokio::time::sleep(Duration::from_millis(20)).await;

@@ -216,53 +216,72 @@ function copyText(text) {
   });
 }
 
+const mediaUrls = new Map();
+
 function bindMedia(node, mediaId, rpc) {
+  if (!mediaId) return;
+  if (mediaUrls.has(mediaId)) {
+    node.src = mediaUrls.get(mediaId);
+    return;
+  }
   void rpc.read("sandbox", "media.get", { media_id: mediaId }).then((blob) => {
     const binary = Uint8Array.from(atob(blob.bytes || ""), (ch) => ch.charCodeAt(0));
-    node.src = URL.createObjectURL(new Blob([binary], { type: blob.mime || "application/octet-stream" }));
+    const url = URL.createObjectURL(new Blob([binary], { type: blob.mime || "application/octet-stream" }));
+    mediaUrls.set(mediaId, url);
+    node.src = url;
   }).catch(() => {
     node.replaceWith(document.createTextNode("[媒体不可用]"));
   });
 }
 
-function renderSegments(message, messages, users, rpc) {
+function renderSegments(message, messages, rpc) {
   const wrap = document.createDocumentFragment();
   if (message.reply_to) wrap.append(element("p", "sandbox-quote muted", quotedText(messages, message.reply_to)));
   const body = element("div", "sandbox-rich");
-  const segments = Array.isArray(message.segments) && message.segments.length
-    ? message.segments
-    : [{ type: "text", text: message.text || "" }];
-  const hasAttachment = segments.some((segment) => segment.type === "platform_specific" && segment.kind === "attachment");
-  segments.forEach((segment) => {
-    if (segment.type === "text") body.append(document.createTextNode(segment.text || ""));
-    else if (segment.type === "mention_user") body.append(element("span", "sandbox-mention", `@${mentionName(users, segment.user_id)}`));
-    else if (segment.type === "mention_all") body.append(element("span", "sandbox-mention", "@全体成员"));
-    else if (hasAttachment && (segment.type === "image" || segment.type === "file" || segment.type === "audio" || segment.type === "video")) return;
-    else if (segment.type === "image") {
-      const mediaId = segment.resource?.ref_id;
-      if (!mediaId) body.append(document.createTextNode("[图片]"));
-      else {
-        const img = remoteImage("sandbox-media", "图片");
-        bindMedia(img, mediaId, rpc);
-        body.append(img);
-      }
-    } else if (segment.type === "file") body.append(element("span", "sandbox-file", `[${segment.name || "文件"}]`));
-    else if (segment.type === "audio" || segment.type === "video") {
-      const node = document.createElement(segment.type);
-      node.className = "sandbox-media";
-      node.controls = true;
-      node.setAttribute("referrerpolicy", "no-referrer");
-      const mediaId = segment.resource?.ref_id;
-      if (mediaId) bindMedia(node, mediaId, rpc);
-      body.append(node);
-    } else if (segment.type === "platform_specific") renderPlatform(body, segment, rpc);
-    else if (segment.type !== "reply" && segment.type !== "quote") body.append(document.createTextNode(message.text || ""));
-  });
+  renderRefs(body, message, rpc);
   if (!body.textContent && !body.querySelector("img, audio, video, .sandbox-card") && !message.reply_to) {
     body.textContent = message.text || "";
   }
   wrap.append(body);
   return wrap;
+}
+
+function renderRefs(body, message, rpc) {
+  const chars = [...(message.text || "")];
+  let cursor = 0;
+  const refs = (message.refs || []).slice().sort((left, right) => (left.at || 0) - (right.at || 0));
+  refs.forEach((ref) => {
+    const at = Math.min(ref.at || 0, chars.length);
+    if (at > cursor) body.append(document.createTextNode(chars.slice(cursor, at).join("")));
+    if (ref.t === "mention" || ref.t === "mention_all") {
+      const length = ref.t === "mention_all" ? [..."@全体成员"].length : 1 + [...(ref.name || "")].length;
+      body.append(element("span", "sandbox-mention", chars.slice(at, at + length).join("") || `@${ref.name || ref.id || ""}`));
+      cursor = at + length;
+      return;
+    }
+    cursor = at;
+    appendRef(body, ref, rpc);
+  });
+  if (cursor < chars.length) body.append(document.createTextNode(chars.slice(cursor).join("")));
+}
+
+function appendRef(body, ref, rpc) {
+  if (ref.t === "emoji") {
+    body.append(element("span", "sandbox-file", "[表情]"));
+    return;
+  }
+  if (ref.t === "img" || ref.t === "audio" || ref.t === "video" || ref.t === "file") {
+    renderPlatform(body, {
+      kind: ref.url ? "attachment" : "media",
+      payload: { url: ref.url, media_id: ref.h, mime: ref.mime, content_type: ref.mime, name: ref.name, filename: ref.name },
+    }, rpc);
+    return;
+  }
+  if (ref.t === "ark" || ref.t === "embed" || ref.t === "markdown" || ref.t === "keyboard") {
+    renderPlatform(body, { kind: ref.t === "embed" ? "embed" : ref.t, payload: ref.p || {} }, rpc);
+    return;
+  }
+  body.append(document.createTextNode(`[${ref.t}]`));
 }
 
 function renderPlatform(body, segment, rpc) {
@@ -431,7 +450,7 @@ export function mountSandboxPanel(host, rpc, events) {
         row.append(avatar(name, "sandbox-avatar sandbox-avatar--sm", sender?.avatar_url));
         const bubble = element("div", "sandbox-bubble");
         bubble.append(element("p", "muted", `${name} · ${formatTime(message.time_ms)}`));
-        bubble.append(renderSegments(message, state.messages, conversation.users, rpc));
+        bubble.append(renderSegments(message, state.messages, rpc));
         if (message.role === "user") {
           const reply = button("回复");
           reply.classList.add("ghost", "sandbox-reply");
@@ -446,7 +465,7 @@ export function mountSandboxPanel(host, rpc, events) {
         row.append(bubble);
       } else {
         const bubble = element("div", "sandbox-bubble");
-        bubble.append(renderSegments(message, state.messages, conversation.users, rpc));
+        bubble.append(renderSegments(message, state.messages, rpc));
         row.append(bubble);
       }
       messages.append(row);

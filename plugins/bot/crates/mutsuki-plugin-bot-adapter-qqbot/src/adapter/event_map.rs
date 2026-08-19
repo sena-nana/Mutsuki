@@ -299,6 +299,10 @@ fn next_mention(content: &str) -> Option<(usize, usize, MessageSegment)> {
             consider(&mut best, start, start + mention.0, mention.1);
             break;
         }
+        if let Some(face) = parse_qq_face(rest) {
+            consider(&mut best, start, start + face.0, face.1);
+            break;
+        }
         search = start + 1;
     }
 
@@ -445,22 +449,36 @@ fn message_content(event_type: &str, data: &Value) -> String {
             content = remainder.trim_start();
         }
     }
-    strip_qq_face_tags(content.trim())
+    content.trim().to_owned()
 }
 
-fn strip_qq_face_tags(content: &str) -> String {
-    let mut out = String::with_capacity(content.len());
-    let mut rest = content;
-    while let Some(start) = rest.find("<faceType=") {
-        out.push_str(&rest[..start]);
-        let after = &rest[start + "<faceType=".len()..];
-        match after.find('>') {
-            Some(end) => rest = &after[end + 1..],
-            None => break,
-        }
+fn parse_qq_face(rest: &str) -> Option<(usize, MessageSegment)> {
+    let body = rest.strip_prefix("<faceType=")?;
+    let end = body.find('>')?;
+    let inner = &body[..end];
+    let mut parts = inner.split(',');
+    let face_type = parts.next()?.trim();
+    if face_type.is_empty() {
+        return None;
     }
-    out.push_str(rest);
-    out.trim().to_owned()
+    let face_id = parts
+        .find_map(|part| {
+            part.trim()
+                .strip_prefix("faceId=")
+                .map(|value| value.trim_matches('"'))
+        })
+        .unwrap_or("");
+    Some((
+        "<faceType=".len() + end + 1,
+        MessageSegment::PlatformSpecific {
+            platform: "qqbot".into(),
+            kind: "face".into(),
+            payload: json!({
+                "face_type": face_type,
+                "face_id": face_id,
+            }),
+        },
+    ))
 }
 
 fn event_time_ms(data: &Value) -> Option<i64> {

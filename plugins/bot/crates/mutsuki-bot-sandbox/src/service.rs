@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -12,18 +12,19 @@ use serde_json::{Value, json};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
+use crate::content::{
+    gc_assets, hash_bytes, hydrate_segments, normalize_segments, preview_content, upsert_asset,
+};
 use crate::types::{
     DEFAULT_SANDBOX_ACCOUNT_ID, SANDBOX_GROUP_ID, SANDBOX_ID_PREFIX, SANDBOX_MAX_MEDIA_BYTES,
-    SANDBOX_MAX_MEDIA_ITEMS, SANDBOX_MAX_MESSAGES, SANDBOX_USER_LIMIT, SANDBOX_USER_NAMES,
-    SandboxAction, SandboxChangeEvent, SandboxConversationView, SandboxError,
-    SandboxHistoryConversation, SandboxHistorySnapshot, SandboxMediaBlob, SandboxMediaRef,
-    SandboxMessageView, SandboxMode, SandboxSnapshot, SandboxSpeakerRole, SandboxUserView,
-    SandboxWriteRequest, SandboxWriteResult, is_sandbox_conversation, parse_sandbox_mentions,
-    preview_segments, sandbox_user_id,
+    SANDBOX_MAX_MESSAGES, SANDBOX_USER_LIMIT, SANDBOX_USER_NAMES, SandboxAction, SandboxAsset,
+    SandboxChangeEvent, SandboxConversationView, SandboxError, SandboxHistoryConversation,
+    SandboxHistorySnapshot, SandboxMediaBlob, SandboxMediaRef, SandboxMessageView, SandboxMode,
+    SandboxSnapshot, SandboxSpeakerRole, SandboxUserView, SandboxWriteRequest, SandboxWriteResult,
+    is_sandbox_conversation, parse_sandbox_mentions, sandbox_user_id,
 };
 
 const MAX_MESSAGES: usize = SANDBOX_MAX_MESSAGES;
-const MAX_MEDIA_ITEMS: usize = SANDBOX_MAX_MEDIA_ITEMS;
 const MAX_MEDIA_BYTES: usize = SANDBOX_MAX_MEDIA_BYTES;
 const PASSIVE_REPLY_WINDOW_MS: u64 = 5 * 60 * 1_000;
 
@@ -107,21 +108,13 @@ struct Store {
     conversations: HashMap<String, StoredConversation>,
 }
 
-#[derive(Clone)]
-struct StoredMedia {
-    media_id: String,
-    mime: String,
-    name: String,
-    bytes: Vec<u8>,
-}
-
 struct Inner {
     revision: u64,
     mode: SandboxMode,
     account_id: String,
     simulate: Store,
     live: Store,
-    media: VecDeque<StoredMedia>,
+    media: HashMap<String, SandboxAsset>,
     bot: Option<BotUser>,
 }
 
@@ -185,7 +178,7 @@ impl SandboxService {
         mut simulate: Store,
         live: Store,
         mode: SandboxMode,
-        media: Vec<SandboxMediaBlob>,
+        media: Vec<SandboxAsset>,
         history: Option<Arc<dyn SandboxHistoryStore>>,
     ) -> Result<Self, SandboxError> {
         let (changes, _) = broadcast::channel(64);
@@ -195,12 +188,7 @@ impl SandboxService {
         }
         let media = media
             .into_iter()
-            .map(|blob| StoredMedia {
-                media_id: blob.media_id,
-                mime: blob.mime,
-                name: blob.name,
-                bytes: blob.bytes,
-            })
+            .map(|asset| (asset.content_hash.clone(), asset))
             .collect();
         let service = Self {
             write_lock: tokio::sync::Mutex::new(()),
@@ -311,17 +299,23 @@ impl SandboxService {
             }
             let conversation = stored.view.conversation.clone();
             let account_id = inner.account_id.clone();
-            let stored = conversation_mut(&mut inner.simulate, &conversation_id)?;
-            let message = append_message(
-                stored,
-                &user.user_id,
-                &user.display_name,
-                SandboxSpeakerRole::User,
-                segments,
-                reply_to,
-                None,
-                None,
-            );
+            let message = {
+                let Inner {
+                    simulate, media, ..
+                } = &mut *inner;
+                let stored = conversation_mut(simulate, &conversation_id)?;
+                append_message(
+                    stored,
+                    media,
+                    &user.user_id,
+                    &user.display_name,
+                    SandboxSpeakerRole::User,
+                    segments,
+                    reply_to,
+                    None,
+                    None,
+                )
+            };
             let event = sandbox_event(
                 &account_id,
                 &conversation,
@@ -655,17 +649,21 @@ impl SandboxService {
         let recorded = {
             let mut inner = self.lock_inner();
             let (sender_id, sender_name) = bot_speaker(&inner);
-            let stored = conversation_mut(&mut inner.live, &conversation_id)?;
-            let message = append_message(
-                stored,
-                &sender_id,
-                &sender_name,
-                SandboxSpeakerRole::Bot,
-                segments,
-                reply_to,
-                None,
-                None,
-            );
+            let message = {
+                let Inner { live, media, .. } = &mut *inner;
+                let stored = conversation_mut(live, &conversation_id)?;
+                append_message(
+                    stored,
+                    media,
+                    &sender_id,
+                    &sender_name,
+                    SandboxSpeakerRole::Bot,
+                    segments,
+                    reply_to,
+                    None,
+                    None,
+                )
+            };
             let (revision, mode) = finish(&mut inner);
             (revision, mode, message)
         };
@@ -841,7 +839,8 @@ impl SandboxApi for SandboxService {
         let mut inner = self.lock_inner();
         let account_id = inner.account_id.clone();
         {
-            let stored = ensure_conversation(&mut inner.live, conversation, &live_title, now);
+            let Inner { live, media, .. } = &mut *inner;
+            let stored = ensure_conversation(live, conversation, &live_title, now);
             if let Some(allowed) = active_message {
                 stored.view.active_message = allowed;
             }
@@ -867,6 +866,7 @@ impl SandboxApi for SandboxService {
                 };
                 append_message(
                     stored,
+                    media,
                     sender_id,
                     sender_name,
                     role,
@@ -894,16 +894,22 @@ impl SandboxApi for SandboxService {
         let mut inner = self.lock_inner();
         let (sender_id, sender_name) = bot_speaker(&inner);
         let message = {
-            let store = if sandbox {
-                &mut inner.simulate
-            } else {
-                &mut inner.live
-            };
             let title: fn(&QqConversationRef) -> String =
                 if sandbox { sandbox_title } else { live_title };
-            let stored = ensure_conversation(store, conversation.clone(), &title, now);
+            let Inner {
+                simulate,
+                live,
+                media,
+                ..
+            } = &mut *inner;
+            let stored = if sandbox {
+                ensure_conversation(simulate, conversation.clone(), &title, now)
+            } else {
+                ensure_conversation(live, conversation.clone(), &title, now)
+            };
             append_message(
                 stored,
+                media,
                 &sender_id,
                 &sender_name,
                 SandboxSpeakerRole::Bot,
@@ -940,27 +946,41 @@ impl SandboxApi for SandboxService {
                 format!("媒体大小必须在 1 到 {MAX_MEDIA_BYTES} 字节之间"),
             ));
         }
-        let media_id = format!("media-{}", Uuid::new_v4());
-        let blob = SandboxMediaBlob {
-            media_id: media_id.clone(),
-            mime: mime.to_owned(),
-            name: name.to_owned(),
-            bytes,
+        let kind = if mime.starts_with("image/") {
+            "image"
+        } else if mime.starts_with("audio/") {
+            "audio"
+        } else if mime.starts_with("video/") {
+            "video"
+        } else {
+            "file"
         };
+        let hash = hash_bytes(&bytes);
         let mut inner = self.lock_inner();
-        inner.media.push_back(StoredMedia {
-            media_id: blob.media_id.clone(),
-            mime: blob.mime.clone(),
-            name: blob.name.clone(),
-            bytes: blob.bytes.clone(),
-        });
-        while inner.media.len() > MAX_MEDIA_ITEMS {
-            inner.media.pop_front();
+        if let Some(existing) = inner.media.get(&hash) {
+            return Ok(SandboxMediaRef {
+                media_id: existing.content_hash.clone(),
+                mime: existing.mime.clone(),
+                name: existing.name.clone(),
+            });
         }
+        upsert_asset(
+            &mut inner.media,
+            SandboxAsset {
+                content_hash: hash.clone(),
+                kind: kind.into(),
+                mime: mime.to_owned(),
+                name: name.to_owned(),
+                bytes,
+                url: None,
+                created_at_unix_ms: unix_ms(),
+            },
+        );
+        gc_inner(&mut inner);
         drop(inner);
         self.persist()?;
         Ok(SandboxMediaRef {
-            media_id,
+            media_id: hash,
             mime: mime.to_owned(),
             name: name.to_owned(),
         })
@@ -973,9 +993,13 @@ impl SandboxApi for SandboxService {
         }
         {
             let inner = self.lock_inner();
-            if let Some(item) = inner.media.iter().find(|item| item.media_id == media_id) {
+            if let Some(item) = inner
+                .media
+                .get(media_id)
+                .filter(|item| !item.bytes.is_empty())
+            {
                 return Ok(SandboxMediaBlob {
-                    media_id: item.media_id.clone(),
+                    media_id: item.content_hash.clone(),
                     mime: item.mime.clone(),
                     name: item.name.clone(),
                     bytes: item.bytes.clone(),
@@ -1005,16 +1029,7 @@ fn snapshot_from_inner(inner: &Inner) -> SandboxHistorySnapshot {
             .values()
             .map(history_conversation)
             .collect(),
-        media: inner
-            .media
-            .iter()
-            .map(|item| SandboxMediaBlob {
-                media_id: item.media_id.clone(),
-                mime: item.mime.clone(),
-                name: item.name.clone(),
-                bytes: item.bytes.clone(),
-            })
-            .collect(),
+        media: inner.media.values().cloned().collect(),
     }
 }
 
@@ -1058,6 +1073,7 @@ fn seed_simulate(store: &mut Store, account_id: &str) {
         }
         append_message(
             stored,
+            &mut HashMap::new(),
             "system",
             "系统",
             SandboxSpeakerRole::System,
@@ -1193,7 +1209,7 @@ fn require_live_outbound(segments: &[MessageSegment]) -> Result<(), SandboxError
 fn require_sandbox_media(inner: &Inner, segments: &[MessageSegment]) -> Result<(), SandboxError> {
     for segment in segments {
         if let Some(media_id) = sandbox_media_id(segment)
-            && !inner.media.iter().any(|item| item.media_id == media_id)
+            && !inner.media.contains_key(media_id)
         {
             return Err(SandboxError::new(
                 "not_found",
@@ -1490,6 +1506,7 @@ fn bot_speaker(inner: &Inner) -> (String, String) {
 
 fn append_message(
     stored: &mut StoredConversation,
+    assets: &mut HashMap<String, SandboxAsset>,
     sender_id: &str,
     sender_name: &str,
     role: SandboxSpeakerRole,
@@ -1516,7 +1533,9 @@ fn append_message(
             user.message_count = user.message_count.saturating_add(1);
         }
     }
-    let text = preview_segments(&segments);
+    let users = stored.users.values().cloned().collect::<Vec<_>>();
+    let (text, refs) = normalize_segments(&segments, &users, assets, now);
+    let preview = preview_content(&text, &refs);
     let message = SandboxMessageView {
         message_id: message_id.unwrap_or_else(|| format!("msg-{}", Uuid::new_v4())),
         conversation_id: stored.view.conversation_id.clone(),
@@ -1524,7 +1543,7 @@ fn append_message(
         sender_name: sender_name.into(),
         role,
         text,
-        segments,
+        refs,
         reply_to,
         time_ms: i64::try_from(now).unwrap_or(i64::MAX),
     };
@@ -1534,7 +1553,7 @@ fn append_message(
             .messages
             .drain(0..stored.messages.len() - MAX_MESSAGES);
     }
-    stored.view.last_preview = Some(message.text.clone());
+    stored.view.last_preview = Some(preview);
     stored.view.last_activity_unix_ms = now;
     stored.view.message_count = stored.messages.len() as u64;
     message
@@ -1576,7 +1595,7 @@ fn sandbox_event(
             message_id: Some(item.message_id.clone()),
             target,
             sender: Some(actor),
-            segments: item.segments.clone(),
+            segments: hydrate_segments(&item.text, &item.refs, item.reply_to.as_deref()),
             reply_to: item.reply_to.clone(),
             time_ms: Some(item.time_ms),
             ext: BotExtMap::new(),
@@ -1721,8 +1740,25 @@ fn require_revision(inner: &Inner, expected: u64) -> Result<(), SandboxError> {
 }
 
 fn finish(inner: &mut Inner) -> (u64, SandboxMode) {
+    gc_inner(inner);
     inner.revision = inner.revision.saturating_add(1);
     (inner.revision, inner.mode)
+}
+
+fn gc_inner(inner: &mut Inner) {
+    let mut referenced = std::collections::HashSet::new();
+    for store in [&inner.simulate, &inner.live] {
+        for stored in store.conversations.values() {
+            for message in &stored.messages {
+                for item in &message.refs {
+                    if let Some(hash) = &item.h {
+                        referenced.insert(hash.clone());
+                    }
+                }
+            }
+        }
+    }
+    gc_assets(&mut inner.media, &referenced);
 }
 
 fn write_ok(revision: u64, result: Value) -> SandboxWriteResult {

@@ -622,7 +622,7 @@ fn gateway_runner_maps_attachments_ark_markdown_and_keyboard() {
 }
 
 #[test]
-fn gateway_runner_strips_face_placeholder_from_image_content() {
+fn gateway_runner_maps_face_placeholder_from_image_content() {
     let mut runner = QqGatewayMapRunner::new(1, "main");
     let task = Task::new(
         "image-face",
@@ -664,6 +664,13 @@ fn gateway_runner_strips_face_placeholder_from_image_content() {
     assert!(segments.iter().any(|segment| matches!(
         segment,
         MessageSegment::MentionUser { user_id } if user_id == "member"
+    )));
+    assert!(segments.iter().any(|segment| matches!(
+        segment,
+        MessageSegment::PlatformSpecific { kind, payload, .. }
+            if kind == "face"
+                && payload.get("face_type").and_then(|value| value.as_str()) == Some("6")
+                && payload.get("face_id").and_then(|value| value.as_str()) == Some("0")
     )));
     assert!(segments.iter().any(|segment| matches!(
         segment,

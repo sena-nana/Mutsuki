@@ -3916,8 +3916,10 @@ dependencies = [
  "async-trait",
  "mutsuki-bot-conversation",
  "mutsuki-bot-protocol",
+ "mutsuki-runtime-contracts",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "tokio",
  "uuid",
 ]
