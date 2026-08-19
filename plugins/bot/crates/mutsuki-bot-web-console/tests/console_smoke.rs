@@ -543,6 +543,7 @@ async fn embedded_console_mounts_qq_management_extension() {
     assert!(qq_js.contains("请到配置里填写账号"));
     assert!(qq_js.contains("self_user"));
     assert!(qq_js.contains("qq-account-avatar"));
+    assert!(qq_js.contains("在线时长"));
     assert!(!qq_js.contains("保存登录配置"));
     let snap = ws_rpc_params(&addr, "qq-bot", "snapshot", json!({}))
         .await

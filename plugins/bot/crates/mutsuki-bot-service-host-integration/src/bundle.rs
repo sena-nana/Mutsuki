@@ -355,6 +355,9 @@ impl OwnerBackedQqManagementProvider {
             reconnect_count: snapshot.reconnect_count,
             self_user: snapshot.self_user,
         });
+        account.connected_since_unix_ms = snapshot
+            .connected_since_unix_ms
+            .map(|value| u64::try_from(value).unwrap_or(u64::MAX));
         if !include_secret_status {
             account.credential_reference.clear();
             account.credential_status = "restricted".into();

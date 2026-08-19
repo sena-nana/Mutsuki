@@ -4,8 +4,13 @@ const STYLE = `
 .qq-account-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
 .qq-account-avatar { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; font-size: 18px; font-weight: 650; color: var(--accent-text, #fff); background: var(--accent, #7aa2ff); flex: none; overflow: hidden; object-fit: cover; object-position: center; }
 img.qq-account-avatar { display: block; padding: 0; }
-.qq-account-head h3 { margin: 0; }
+.qq-account-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.qq-account-title h3 { margin: 0; }
 .qq-account-head p { margin: 2px 0 0; }
+.qq-account-status { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 8px; border: 1px solid var(--border, #d0d7de); font-size: 12px; font-weight: 600; line-height: 1.2; }
+.qq-account-status.is-ok { color: var(--ok); border-color: color-mix(in oklch, var(--ok) 32%, var(--border, #d0d7de)); background: var(--ok-soft); }
+.qq-account-status.is-warn { color: var(--warn); border-color: color-mix(in oklch, var(--warn) 32%, var(--border, #d0d7de)); background: var(--warn-soft); }
+.qq-account-status.is-err { color: var(--err); border-color: color-mix(in oklch, var(--err) 32%, var(--border, #d0d7de)); background: var(--err-soft); }
 `;
 
 const text = (value) => String(value ?? "—");
@@ -70,12 +75,16 @@ function isOwnerUnavailable(error) {
   return code === "qq.owner_unavailable" || message.includes("尚未连接") || message.includes("尚未启用");
 }
 
-function formatTime(unixMs) {
-  const value = Number(unixMs);
-  if (!unixMs || Number.isNaN(value) || value <= 0) return "—";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleString();
+function formatDuration(unixMs) {
+  const started = Number(unixMs);
+  if (!unixMs || Number.isNaN(started) || started <= 0) return "—";
+  const minutes = Math.floor(Math.max(0, Date.now() - started) / 60_000);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+  if (days > 0) return `${days} 天 ${hours % 24} 小时`;
+  if (hours > 0) return `${hours} 小时 ${minutes % 60} 分`;
+  if (minutes > 0) return `${minutes} 分钟`;
+  return "不到 1 分钟";
 }
 
 function ensureStyle() {
@@ -145,79 +154,25 @@ function actionButton(label, action, state, rpc, refresh, options = {}) {
   return button;
 }
 
-function accountCard(account, state, rpc, refresh) {
+function accountCard(account) {
   const card = element("article", "card card--outlined");
-  card.dataset.accountId = account.account_id;
   const selfUser = account.self_user || {};
   const title = selfUser.display_name || account.account_id || "QQ 账号";
-  const head = element("div", "qq-account-head");
+  const status = element(
+    "span",
+    `qq-account-status ${account.health === "ok" ? "is-ok" : account.health === "degraded" ? "is-warn" : "is-err"}`,
+    `${productLabel(account.health)} · ${productLabel(account.connection_state)}`,
+  );
+  const heading = element("div", "qq-account-title");
+  heading.append(element("h3", "", title), status);
   const meta = element("div");
-  meta.append(element("h3", "", title));
+  meta.append(heading);
   if (selfUser.user_id) meta.append(element("p", "muted", `OpenID ${selfUser.user_id}`));
+  meta.append(element("p", "muted", `在线时长 ${formatDuration(account.connected_since_unix_ms)}`));
+  const head = element("div", "qq-account-head");
   head.append(avatar(title, "qq-account-avatar", selfUser.avatar_url), meta);
-  card.append(
-    head,
-    element("p", "muted", `${productLabel(account.health)} · ${productLabel(account.connection_state)}`),
-    element("p", "", `账号 ${text(account.account_id)} · App ID ${text(account.app_id)} · 分片 ${account.shard.join("/")}`),
-    element("p", "", `心跳 ${formatTime(account.last_heartbeat_unix_ms)} · 重连 ${text(account.reconnect_count)} 次`),
-    element("p", "", `凭据 ${productLabel(account.credential_status)} · 发送状态 ${productLabel(account.rate_limit_status)}`),
-  );
+  card.append(head);
   if (account.last_error) card.append(element("p", "error-banner", account.last_error));
-  const actions = element("div", "actions");
-  actions.append(
-    actionButton("健康检查", { action: "account_health_check", account_id: account.account_id }, state, rpc, refresh),
-    actionButton("重新连接", { action: "account_reconnect", account_id: account.account_id }, state, rpc, refresh),
-  );
-  card.append(actions);
-  if (!account.capability?.active_message) return card;
-  const sendForm = element("div", "toolbar nested");
-  const scene = element("select", "ui-input");
-  scene.dataset.draftField = "scene";
-  const activeKinds = new Set(account.capability?.active_message_kinds || []);
-  [["private", "私聊"], ["group", "群聊"], ["channel", "频道"]]
-    .filter(([value]) => activeKinds.has(value))
-    .forEach(([value, label]) => {
-    const option = element("option", "", label);
-    option.value = value;
-    scene.append(option);
-  });
-  if (!scene.options.length) return card;
-  const target = element("input", "ui-input");
-  target.dataset.draftField = "target";
-  target.placeholder = "用户 OpenID";
-  const channel = element("input", "ui-input");
-  channel.dataset.draftField = "channel";
-  channel.placeholder = "频道 ID";
-  channel.hidden = true;
-  const message = element("input", "ui-input");
-  message.dataset.draftField = "message";
-  message.placeholder = "测试消息";
-  const sendResult = element("span", "muted");
-  scene.onchange = () => {
-    target.placeholder = scene.value === "private" ? "用户 OpenID" : scene.value === "group" ? "群 OpenID" : "频道组 ID";
-    channel.hidden = scene.value !== "channel";
-  };
-  const send = actionButton("发送测试", () => {
-    const id = target.value.trim();
-    const textValue = message.value.trim();
-    if (!id || !textValue || (scene.value === "channel" && !channel.value.trim())) {
-      sendResult.textContent = "请填写接收目标和消息";
-      return null;
-    }
-    const conversation = { version: 1, account_id: account.account_id, kind: scene.value };
-    if (scene.value === "private") conversation.user_id = id;
-    if (scene.value === "group") conversation.group_id = id;
-    if (scene.value === "channel") {
-      conversation.guild_id = id;
-      conversation.channel_id = channel.value.trim();
-    }
-    return { action: "account_send_test", account_id: account.account_id, conversation, text: textValue };
-  }, state, rpc, async () => {
-    sendResult.textContent = "发送成功";
-    await refresh();
-  });
-  sendForm.append(scene, target, channel, message, send, sendResult);
-  card.append(sendForm);
   return card;
 }
 
@@ -300,30 +255,12 @@ export function mountQqBotPanel(host, rpc, events, options = {}) {
   };
 
   function render() {
-    const drafts = new Map();
-    root.querySelectorAll("[data-account-id]").forEach((card) => {
-      const values = {};
-      card.querySelectorAll("[data-draft-field]").forEach((field) => {
-        values[field.dataset.draftField] = field.value;
-      });
-      drafts.set(card.dataset.accountId, values);
-    });
     root.querySelectorAll("section, article").forEach((node) => node.remove());
     if (state.ownerUnavailable) {
       root.append(element("p", "muted", "尚未登录 QQ，请到配置里填写账号。"));
       return;
     }
-    (state.snapshot?.accounts || []).forEach((account) => {
-      const card = accountCard(account, state, rpc, refresh);
-      const values = drafts.get(account.account_id);
-      if (values) {
-        card.querySelectorAll("[data-draft-field]").forEach((field) => {
-          if (values[field.dataset.draftField] != null) field.value = values[field.dataset.draftField];
-        });
-        card.querySelector("[data-draft-field='scene']")?.onchange?.();
-      }
-      root.append(card);
-    });
+    (state.snapshot?.accounts || []).forEach((account) => root.append(accountCard(account)));
     const deliveries = tableSection("主动投递", state.deliveries, [
       ["投递记录", (row) => row.receipt.delivery_id],
       ["状态", (row) => productLabel(row.receipt.status)],
@@ -437,12 +374,8 @@ export function mountQqBotPanel(host, rpc, events, options = {}) {
         }
         if (disposed || query !== search.value) return;
         status.className = "muted";
-        if (root.contains(document.activeElement) && document.activeElement?.matches?.("[data-draft-field]")) {
-          status.textContent = "正在编辑，数据将在离开输入框后更新";
-        } else {
-          status.textContent = state.ownerUnavailable ? "尚未登录 QQ，请到配置里填写账号" : "";
-          render();
-        }
+        status.textContent = state.ownerUnavailable ? "尚未登录 QQ，请到配置里填写账号" : "";
+        render();
       } catch (error) {
         if (!disposed) state.reportError(error);
       }
@@ -469,15 +402,6 @@ export function mountQqBotPanel(host, rpc, events, options = {}) {
     }, 180);
   };
   refreshButton.onclick = () => void refresh(true);
-  root.addEventListener("focusout", (event) => {
-    if (!event.target?.matches?.("[data-draft-field]")) return;
-    setTimeout(() => {
-      if (!disposed && !(root.contains(document.activeElement) && document.activeElement?.matches?.("[data-draft-field]"))) {
-        status.textContent = state.ownerUnavailable ? "尚未登录 QQ，请到配置里填写账号" : "";
-        render();
-      }
-    }, 0);
-  });
   const visibility = () => {
     clearTimeout(pollTimer);
     if (!document.hidden) void refresh(true);
