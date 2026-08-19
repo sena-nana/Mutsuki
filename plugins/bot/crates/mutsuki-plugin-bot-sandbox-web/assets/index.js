@@ -659,7 +659,6 @@ export function mountSandboxPanel(host, rpc, events) {
         showStatus("当前会话没有主动消息权限，请先悬停用户消息并点击回复");
         return;
       }
-      if (mode() === "live" && !window.confirm("将以机器人身份向真实 QQ 会话发送消息，是否继续？")) return;
       try {
         if (mode() === "live") {
           await write({
