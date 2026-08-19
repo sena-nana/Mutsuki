@@ -133,7 +133,7 @@ function accountCard(account) {
 
 export function mountQqAccountCards(host, rpc, events) {
   ensureStyle();
-  const root = element("div", "stack");
+  const root = element("div", "overview-cards");
   host.replaceChildren(root);
   let disposed = false;
   let pollTimer = null;

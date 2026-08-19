@@ -46,16 +46,19 @@ function mountOverview(host, ctx) {
   const { rpc, events } = ctx;
   host.className = "page-body overview-dashboard";
   host.innerHTML = `
-    <div class="toolbar row-item">
-      <button type="button" class="ghost" data-refresh>刷新</button>
-      <span class="muted" data-refresh-state></span>
-    </div>
     <div data-overview-body><div class="muted">加载中…</div></div>
-    <div data-overview-cards></div>
+    <div class="overview-cards" data-overview-cards></div>
   `;
   const body = host.querySelector("[data-overview-body]");
   const cardsHost = host.querySelector("[data-overview-cards]");
-  const state = host.querySelector("[data-refresh-state]");
+  const refreshButton = document.createElement("button");
+  refreshButton.type = "button";
+  refreshButton.className = "ghost console-icon-btn";
+  refreshButton.setAttribute("aria-label", "刷新");
+  refreshButton.innerHTML =
+    '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6"/></svg>';
+  const headerActions = host.closest(".console-main")?.querySelector(".console-page-header__actions");
+  headerActions?.append(refreshButton);
   let disposed = false;
   let timer = null;
   let debounceTimer = null;
@@ -101,10 +104,10 @@ function mountOverview(host, ctx) {
         snapshot = data;
         snapshotAt = Date.now();
         render();
-        state.textContent = "";
+        refreshButton.removeAttribute("title");
       })
       .catch(() => {
-        if (!disposed) state.textContent = "更新失败，将自动重试";
+        if (!disposed) refreshButton.title = "更新失败，将自动重试";
       })
       .finally(() => {
         inFlight = null;
@@ -134,7 +137,7 @@ function mountOverview(host, ctx) {
     if (opened) void refresh();
     opened = true;
   });
-  host.querySelector("[data-refresh]").onclick = () => void refresh();
+  refreshButton.onclick = () => void refresh();
   document.addEventListener("visibilitychange", visibility);
   uptimeTimer = setInterval(render, 1_000);
   for (const item of ctx.slots.list().filter((entry) => entry.slot === "overview.cards")) {
@@ -147,6 +150,7 @@ function mountOverview(host, ctx) {
   return {
     dispose() {
       disposed = true;
+      refreshButton.remove();
       for (const panel of cardPanels) {
         panel.dispose?.() ?? panel.destroy?.();
       }

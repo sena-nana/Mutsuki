@@ -39,6 +39,9 @@ fn console_css_declares_two_column_workspace() {
     assert!(css.contains(".lilia-node-editor"));
     assert!(css.contains(".lilia-node-editor__viewport"));
     assert!(css.contains(".lilia-node-editor__wire"));
+    assert!(css.contains(".console-page-header__actions"));
+    assert!(css.contains(".mutsuki-console .overview-cards"));
+    assert!(css.contains(".is-context-hidden"));
 }
 
 #[tokio::test]
@@ -76,6 +79,9 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
     let shell_js = http_get_body(&addr, "/shared/web-shell.js").await;
     assert!(shell_js.contains("console-activity"));
     assert!(shell_js.contains("console-context"));
+    assert!(shell_js.contains("console-page-header__actions"));
+    assert!(shell_js.contains("is-context-hidden"));
+    assert!(shell_js.contains("sandbox:"));
     let options: serde_json::Value =
         serde_json::from_str(&http_get_body(&addr, "/console-options.json").await).unwrap();
     let activities = options["activities"].as_array().unwrap();
@@ -99,6 +105,8 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
     assert!(overview_js.contains("overview-dashboard"));
     assert!(overview_js.contains("metric-grid"));
     assert!(overview_js.contains("overview.cards"));
+    assert!(overview_js.contains("overview-cards"));
+    assert!(overview_js.contains(r#"aria-label", "刷新""#));
     assert!(!overview_js.contains("mountQqAccountCards"));
     assert!(!overview_js.contains("qq-bot/index.js"));
     let control_js = http_get_body(&addr, "/extensions/control/index.js").await;
@@ -109,6 +117,8 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
     assert!(css.contains(".mutsuki-console .trajectory-row"));
     assert!(css.contains(".mutsuki-console .overview-dashboard"));
     assert!(css.contains(".mutsuki-console .metric-grid"));
+    assert!(css.contains(".mutsuki-console .overview-cards"));
+    assert!(css.contains(".console-page-header__actions"));
     assert!(
         http_get_body(&addr, "/trajectory-model.js")
             .await

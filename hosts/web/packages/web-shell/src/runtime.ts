@@ -338,11 +338,17 @@ export function mountWebShell(
       <div class="console-context__brand"></div>
       <div class="console-context__title"></div>
       <nav class="console-context__nav"></nav>
-      <div class="console-context__footer"><span class="console-connection-dot"></span><span class="console-connection-label"></span></div>
     </aside>
     <button class="console-context-mask" type="button" aria-label="关闭导航"></button>
     <main class="console-main">
-      <header class="console-page-header"><button class="console-menu-toggle" type="button" aria-label="打开导航">☰</button><h1></h1></header>
+      <header class="console-page-header">
+        <button class="console-menu-toggle" type="button" aria-label="打开导航">☰</button>
+        <h1></h1>
+        <div class="console-page-header__actions">
+          <span class="console-connection-dot"></span>
+          <span class="console-connection-label"></span>
+        </div>
+      </header>
       <section class="console-page-content" id="content"></section>
     </main>
   </div>`;
@@ -352,6 +358,7 @@ export function mountWebShell(
   const contextTitle = shell.querySelector(".console-context__title") as HTMLElement;
   const contextNav = shell.querySelector(".console-context__nav") as HTMLElement;
   const pageTitle = shell.querySelector(".console-page-header h1") as HTMLElement;
+  const headerActions = shell.querySelector(".console-page-header__actions") as HTMLElement;
   const content = shell.querySelector(".console-page-content") as HTMLElement;
   const menuToggle = shell.querySelector(".console-menu-toggle") as HTMLButtonElement;
   const mask = shell.querySelector(".console-context-mask") as HTMLButtonElement;
@@ -405,8 +412,13 @@ export function mountWebShell(
 
   const drawContext = () => {
     const activity = activities.find((item) => item.id === activeActivityId);
+    const items = navByActivity.get(activeActivityId) ?? [];
+    const showContext = items.length > 1;
+    shell.classList.toggle("is-context-hidden", !showContext);
+    if (!showContext) closeContext();
     contextTitle.textContent = activity?.label ?? "";
     contextNav.replaceChildren();
+    if (!showContext) return;
     for (const section of groupNavigationItems(navByActivity.get(activeActivityId) ?? [])) {
       if (section.group) {
         const heading = document.createElement("div");
@@ -479,7 +491,7 @@ export function mountWebShell(
     retry.className = "console-extension-retry";
     retry.textContent = `重试 ${state.failures.length} 个页面`;
     retry.onclick = () => location.reload();
-    shell.querySelector(".console-context__footer")?.append(retry);
+    headerActions.append(retry);
   }
   const connection = runtime.bridge.onStateChange((value) => {
     const labels: Record<BridgeConnectionState, string> = {
@@ -545,6 +557,7 @@ function iconMarkup(icon: string, label: string): string {
     system: '<path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1m0-12.8-2.1 2.1m-8.6 8.6-2.1 2.1M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/>',
     config: '<path d="M5 4h14v5H5zM5 13h14v7H5zM8 6.5h4M8 16h8"/>',
     settings: '<path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm8 4 2-1-2-3-2 .4-1.4-1.4.4-2-3-2-1 2h-2l-1-2-3 2 .4 2L6 8.4 4 8l-2 3 2 1v2l-2 1 2 3 2-.4L7.4 19 7 21l3 2 1-2h2l1 2 3-2-.4-2 1.4-1.4 2 .4 2-3-2-1Z"/>',
+    sandbox: '<path d="M4 8h16v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8Zm0 0 8-4 8 4M8 12h8M8 16h5"/>',
   };
   const path = paths[icon];
   if (!path) return `<span aria-hidden="true">${escapeMarkup(label.slice(0, 1))}</span>`;

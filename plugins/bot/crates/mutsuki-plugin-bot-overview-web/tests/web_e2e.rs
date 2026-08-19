@@ -20,6 +20,8 @@ async fn start(fail_statistics: bool) -> MutsukiWebHost {
     let assets = materialize_frontend_assets(assets_dir.path()).unwrap();
     let frontend = std::fs::read_to_string(assets.join("index.js")).unwrap();
     assert!(frontend.contains("overview.cards"));
+    assert!(frontend.contains("overview-cards"));
+    assert!(frontend.contains(r#"aria-label", "刷新""#));
     assert!(!frontend.contains("mountQqAccountCards"));
     assert!(!frontend.contains("qq-bot/index.js"));
     std::fs::write(
