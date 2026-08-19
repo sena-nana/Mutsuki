@@ -157,6 +157,60 @@ impl WebExtension for SandboxWebExtension {
                 }))
             }
         });
+
+        let api = self.api.clone();
+        registry.register_async_contextual("sticker.upload", move |context, params| {
+            let api = api.clone();
+            async move {
+                context.require(CAPABILITY_SANDBOX_WRITE)?;
+                let name = params.get("name").and_then(Value::as_str).unwrap_or("");
+                let mime = params.get("mime").and_then(Value::as_str).unwrap_or("");
+                let raw = params
+                    .get("bytes")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| ExtensionError::Registration("missing bytes".into()))?;
+                let bytes = base64_decode(raw)
+                    .map_err(|error| ExtensionError::Registration(error.to_owned()))?;
+                let uploaded = api
+                    .upload_sticker(name, mime, bytes)
+                    .await
+                    .map_err(domain_error)?;
+                Ok(json!({
+                    "sticker_id": uploaded.media_id,
+                    "mime": uploaded.mime,
+                    "name": uploaded.name,
+                }))
+            }
+        });
+
+        let api = self.api.clone();
+        registry.register_async_contextual("sticker.list", move |context, _params| {
+            let api = api.clone();
+            async move {
+                context.require(CAPABILITY_BOT_READ)?;
+                serde_json::to_value(api.list_stickers().await.map_err(domain_error)?)
+                    .map_err(|error| encode_error(&error))
+            }
+        });
+
+        let api = self.api.clone();
+        registry.register_async_contextual("sticker.get", move |context, params| {
+            let api = api.clone();
+            async move {
+                context.require(CAPABILITY_BOT_READ)?;
+                let sticker_id = params
+                    .get("sticker_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| ExtensionError::Registration("missing sticker_id".into()))?;
+                let blob = api.sticker_blob(sticker_id).await.map_err(domain_error)?;
+                Ok(json!({
+                    "sticker_id": blob.media_id,
+                    "mime": blob.mime,
+                    "name": blob.name,
+                    "bytes": base64_encode(&blob.bytes),
+                }))
+            }
+        });
         Ok(())
     }
 

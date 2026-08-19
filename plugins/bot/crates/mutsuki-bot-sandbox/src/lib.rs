@@ -5,7 +5,8 @@ mod service;
 mod types;
 
 pub use content::{
-    SandboxContentRef, SandboxRefKind, hash_bytes, normalize_segments, remap_sandbox_media_ids,
+    SandboxContentRef, SandboxRefKind, hash_bytes, normalize_segments, parse_face_id,
+    remap_sandbox_media_ids,
 };
 pub use service::{
     SandboxApi, SandboxChangeSubscription, SandboxHistoryStore, SandboxRuntime, SandboxService,
@@ -962,6 +963,108 @@ mod tests {
             .unwrap();
         assert!(rich.refs.iter().any(|item| item.kind == SandboxRefKind::Img
             && item.h.as_deref() == Some(uploaded.media_id.as_str())));
+    }
+
+    #[tokio::test]
+    async fn stickers_and_faces_stay_separate_from_media() {
+        let store = Arc::new(MemoryHistoryStore::default());
+        let service = SandboxService::with_history("qq-main", store.clone()).unwrap();
+        service.set_runtime(runtime());
+        let sticker = service
+            .upload_sticker("pack.png", "image/png", b"sticker-bytes".to_vec())
+            .await
+            .unwrap();
+        let media = service
+            .upload_media("pic.png", "image/png", b"image-bytes".to_vec())
+            .await
+            .unwrap();
+        assert_ne!(sticker.media_id, media.media_id);
+        assert!(service.media_blob(&sticker.media_id).await.is_err());
+        assert!(service.sticker_blob(&media.media_id).await.is_err());
+        let blob = service.sticker_blob(&sticker.media_id).await.unwrap();
+        assert_eq!(blob.bytes, b"sticker-bytes");
+
+        let snapshot = service.snapshot("").await.unwrap();
+        write(
+            &service,
+            snapshot.revision,
+            "op-sticker",
+            SandboxAction::IngestAsUser {
+                conversation_id: group(&snapshot).conversation_id.clone(),
+                user_id: sandbox_user_id("Alice"),
+                text: String::new(),
+                segments: vec![MessageSegment::PlatformSpecific {
+                    platform: "sandbox".into(),
+                    kind: "sticker".into(),
+                    payload: json!({
+                        "sticker_id": sticker.media_id,
+                        "mime": "image/png",
+                        "name": "pack.png"
+                    }),
+                }],
+                reply_to: None,
+            },
+        )
+        .await
+        .unwrap();
+        let sent = service
+            .messages(&group(&service.snapshot("").await.unwrap()).conversation_id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|item| {
+                item.refs
+                    .iter()
+                    .any(|item| item.kind == SandboxRefKind::Sticker)
+            })
+            .unwrap();
+        assert!(
+            sent.refs
+                .iter()
+                .any(|item| item.kind == SandboxRefKind::Sticker
+                    && item.h.as_deref() == Some(sticker.media_id.as_str()))
+        );
+
+        let mut face_event = live_group_event("qq-face-1", "", now_ms());
+        if let Some(message) = face_event.message.as_mut() {
+            message.segments = vec![MessageSegment::PlatformSpecific {
+                platform: "qqbot".into(),
+                kind: "face".into(),
+                payload: json!({ "face_type": "6", "face_id": "0" }),
+            }];
+        }
+        service.observe_event(face_event);
+
+        let listed = service.list_stickers().await.unwrap();
+        assert!(listed.iter().any(|item| {
+            item.kind == SandboxStickerKind::Custom && item.id == sticker.media_id
+        }));
+        assert!(listed.iter().any(|item| {
+            item.kind == SandboxStickerKind::QqFace
+                && item.id == "qq:6:0"
+                && item.face_type.as_deref() == Some("6")
+                && item.face_id.as_deref() == Some("0")
+        }));
+        let persisted = store.load().unwrap();
+        assert!(
+            persisted
+                .media
+                .iter()
+                .all(|asset| asset.content_hash != sticker.media_id)
+        );
+        assert!(
+            persisted
+                .stickers
+                .iter()
+                .any(|item| item.content_hash == sticker.media_id
+                    && item.bytes == b"sticker-bytes")
+        );
+        assert!(
+            persisted
+                .faces
+                .iter()
+                .any(|item| item.face_key == "qq:6:0" && item.face_type == "6")
+        );
     }
 
     #[tokio::test]

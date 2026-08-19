@@ -236,6 +236,29 @@ impl SandboxApi for GenerationAwareSandbox {
     ) -> Result<mutsuki_bot_sandbox::SandboxMediaBlob, mutsuki_bot_sandbox::SandboxError> {
         self.service()?.media_blob(media_id).await
     }
+
+    async fn upload_sticker(
+        &self,
+        name: &str,
+        mime: &str,
+        bytes: Vec<u8>,
+    ) -> Result<mutsuki_bot_sandbox::SandboxMediaRef, mutsuki_bot_sandbox::SandboxError> {
+        self.service()?.upload_sticker(name, mime, bytes).await
+    }
+
+    async fn list_stickers(
+        &self,
+    ) -> Result<Vec<mutsuki_bot_sandbox::SandboxStickerView>, mutsuki_bot_sandbox::SandboxError>
+    {
+        self.service()?.list_stickers().await
+    }
+
+    async fn sticker_blob(
+        &self,
+        sticker_id: &str,
+    ) -> Result<mutsuki_bot_sandbox::SandboxMediaBlob, mutsuki_bot_sandbox::SandboxError> {
+        self.service()?.sticker_blob(sticker_id).await
+    }
 }
 
 impl GenerationAwareSandbox {

@@ -958,6 +958,7 @@ fn migrate_schema(connection: &Connection) -> Result<(), BotStateDbError> {
     );
     connection.execute_batch(&sql)?;
     sandbox_history::migrate_sandbox_v9(connection)?;
+    sandbox_history::migrate_sandbox_v10(connection)?;
 
     let has_receipt_status = {
         let mut statement = connection.prepare("PRAGMA table_info(bot_delivery_receipt)")?;
@@ -3041,6 +3042,18 @@ mod tests {
                 .iter()
                 .any(|table| table.name == "bot_sandbox_conversation")
         );
+        assert!(
+            snapshot
+                .tables
+                .iter()
+                .any(|table| table.name == "bot_sandbox_sticker")
+        );
+        assert!(
+            snapshot
+                .tables
+                .iter()
+                .any(|table| table.name == "bot_sandbox_face")
+        );
 
         let first = SandboxService::with_history("qq-main", repository.clone()).unwrap();
         first.set_runtime(Arc::new(NoopSandboxRuntime));
@@ -3063,6 +3076,32 @@ mod tests {
                         user_id: sandbox_user_id("Alice"),
                         text: "persisted".into(),
                         segments: vec![],
+                        reply_to: None,
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        first
+            .upload_sticker("pack.png", "image/png", b"sticker-bytes".to_vec())
+            .await
+            .unwrap();
+        let after = first.snapshot("").await.unwrap();
+        first
+            .write(
+                "tester",
+                mutsuki_bot_sandbox::SandboxWriteRequest {
+                    operation_id: "op-face".into(),
+                    expected_revision: after.revision,
+                    action: SandboxAction::IngestAsUser {
+                        conversation_id: group_id.clone(),
+                        user_id: sandbox_user_id("Alice"),
+                        text: String::new(),
+                        segments: vec![MessageSegment::PlatformSpecific {
+                            platform: "qqbot".into(),
+                            kind: "face".into(),
+                            payload: serde_json::json!({ "face_type": "6", "face_id": "0" }),
+                        }],
                         reply_to: None,
                     },
                 },
@@ -3099,6 +3138,18 @@ mod tests {
                 .unwrap()
                 .iter()
                 .any(|item| item.text == "persisted")
+        );
+        assert!(
+            loaded
+                .stickers
+                .iter()
+                .any(|item| item.name == "pack.png" && item.bytes == b"sticker-bytes")
+        );
+        assert!(
+            loaded
+                .faces
+                .iter()
+                .any(|item| item.face_key == "qq:6:0" && item.face_type == "6")
         );
     }
 
@@ -3168,6 +3219,52 @@ mod tests {
             .unwrap();
         assert_eq!(message.refs[0].h.as_deref(), Some(hash.as_str()));
         assert!(repository.sandbox_media(&hash).unwrap().is_some());
+    }
+
+    #[test]
+    fn sandbox_history_backfills_official_face_ids() {
+        use mutsuki_bot_sandbox::SandboxHistoryStore;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("faces.db");
+        {
+            let _repository = BotStateDbRepository::open(&path).unwrap();
+        }
+        {
+            let connection = rusqlite::Connection::open(&path).unwrap();
+            let conversation = serde_json::json!({
+                "version": 1,
+                "account_id": "qq-main",
+                "kind": "group",
+                "group_id": "sandbox:default"
+            })
+            .to_string();
+            connection
+                .execute(
+                    "INSERT INTO bot_sandbox_conversation(
+                         store, conversation_id, account_id, kind, title, avatar_url, conversation_json,
+                         last_preview, last_activity_unix_ms, message_count, active_message
+                     ) VALUES ('simulate', 'sandbox:default', 'qq-main', 'group', '群', NULL, ?1, '', 1, 1, 0)",
+                    rusqlite::params![conversation],
+                )
+                .unwrap();
+            let refs = serde_json::json!([{ "t": "emoji", "at": 0, "id": "qq:6:0" }]);
+            connection
+                .execute(
+                    "INSERT INTO bot_sandbox_message(
+                         store, message_id, conversation_id, sender_id, sender_name, role, text, refs_json, reply_to, time_ms
+                     ) VALUES ('simulate', 'msg-face', 'sandbox:default', 'u', 'Alice', 'user', '', ?1, NULL, 9)",
+                    rusqlite::params![refs.to_string()],
+                )
+                .unwrap();
+        }
+        let repository = BotStateDbRepository::open(&path).unwrap();
+        let loaded = SandboxHistoryStore::load(&repository).unwrap();
+        assert!(
+            loaded
+                .faces
+                .iter()
+                .any(|item| item.face_key == "qq:6:0" && item.face_id == "0")
+        );
     }
 
     struct NoopSandboxRuntime;
