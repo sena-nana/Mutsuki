@@ -724,6 +724,35 @@ async fn embedded_console_serves_lilia_flow_node_editor() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 }
 
+#[test]
+fn embedded_console_rejects_explicit_bilibili_extension_without_service() {
+    let error = build_console_host(
+        &WebConsoleConfig {
+            enabled: true,
+            listen: "127.0.0.1:0".into(),
+            extensions: vec!["bilibili".into()],
+            ..Default::default()
+        },
+        &WebConsoleSecrets {
+            auth_token: "local-dev".into(),
+        },
+        Arc::new(FixtureControlHandler::default()),
+        "local-dev",
+        None,
+        None,
+        &WebConsolePaths::default(),
+        None,
+        None,
+    )
+    .err()
+    .expect("missing management service");
+    assert!(
+        error
+            .to_string()
+            .contains("bilibili WebExtension requires its management service")
+    );
+}
+
 fn versioned_module_path(options: &str, module_path: &str) -> String {
     let start = options
         .find(module_path)
