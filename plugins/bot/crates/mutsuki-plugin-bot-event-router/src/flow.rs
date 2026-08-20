@@ -196,62 +196,55 @@ impl Runner for BotFlowIngressRunner {
     ) -> RuntimeResult<mutsuki_runtime_contracts::CompletionBatch> {
         let snapshot = self.registry.active();
         let graph_revision = snapshot.revision;
-        let flows = snapshot
-            .flows
-            .iter()
-            .cloned()
-            .map(Arc::new)
-            .collect::<Vec<_>>();
+        let flow = Arc::new(snapshot.flow.clone());
         map_work_batch_entries(&batch, |task| {
             let envelope = task
                 .payload
                 .decode_shared::<BotFlowEventEnvelope>()
                 .map_err(|error| runtime_error(task, "ingress.decode", error))?;
             let mut tasks = Vec::new();
-            for flow in flows.iter().filter(|flow| flow.enabled) {
-                for source in &flow.nodes {
-                    let Some(selector) = source.source.as_ref() else {
+            for source in &flow.nodes {
+                let Some(selector) = source.source.as_ref() else {
+                    continue;
+                };
+                if selector.protocol_id != envelope.protocol_id
+                    || selector
+                        .event_type
+                        .as_ref()
+                        .is_some_and(|event_type| event_type != &envelope.payload.event_type)
+                    || !source_accepts_envelope(source, &envelope)
+                {
+                    continue;
+                }
+                let execution_id = format!(
+                    "flow:{}:{}:{}",
+                    graph_revision, flow.flow_id, envelope.event_id
+                );
+                let outgoing = flow.edges.iter().filter(|edge| {
+                    edge.kind == BotFlowEdgeKind::Event && edge.from_node_id == source.node_id
+                });
+                for (ordinal, edge) in outgoing.enumerate() {
+                    let Some(target) = flow
+                        .nodes
+                        .iter()
+                        .find(|node| node.node_id == edge.to_node_id)
+                    else {
                         continue;
                     };
-                    if selector.protocol_id != envelope.protocol_id
-                        || selector
-                            .event_type
-                            .as_ref()
-                            .is_some_and(|event_type| event_type != &envelope.payload.event_type)
-                        || !source_accepts_envelope(source, &envelope)
-                    {
-                        continue;
-                    }
-                    let execution_id = format!(
-                        "flow:{}:{}:{}",
-                        graph_revision, flow.flow_id, envelope.event_id
+                    tasks.push(
+                        downstream_task(
+                            task,
+                            graph_revision,
+                            flow.clone(),
+                            &execution_id,
+                            target,
+                            edge,
+                            envelope.as_ref().clone(),
+                            ctx.registry_generation,
+                            ordinal,
+                        )
+                        .map_err(|error| error.error().clone())?,
                     );
-                    let outgoing = flow.edges.iter().filter(|edge| {
-                        edge.kind == BotFlowEdgeKind::Event && edge.from_node_id == source.node_id
-                    });
-                    for (ordinal, edge) in outgoing.enumerate() {
-                        let Some(target) = flow
-                            .nodes
-                            .iter()
-                            .find(|node| node.node_id == edge.to_node_id)
-                        else {
-                            continue;
-                        };
-                        tasks.push(
-                            downstream_task(
-                                task,
-                                graph_revision,
-                                flow.clone(),
-                                &execution_id,
-                                target,
-                                edge,
-                                envelope.as_ref().clone(),
-                                ctx.registry_generation,
-                                ordinal,
-                            )
-                            .map_err(|error| error.error().clone())?,
-                        );
-                    }
                 }
             }
             let mut result = RunnerResult::completed(task.task_id.clone());
@@ -551,21 +544,37 @@ mod tests {
     }
 
     #[test]
-    fn downstream_task_ids_are_scoped_by_graph_and_flow() {
+    fn downstream_task_ids_are_scoped_by_graph_and_edge() {
         let parent = Task::new("ingress", "mutsuki.bot.flow/ingress@1", json!({}));
-        let target = BotFlowNode {
-            node_id: "match".into(),
+        let left_target = BotFlowNode {
+            node_id: "match-left".into(),
             node_type_id: "test.match".into(),
             node_type_version: 1,
             config: json!({}),
             source: None,
             position: BotFlowNodePosition::default(),
         };
-        let edge = BotFlowEdge {
-            edge_id: "source-match".into(),
+        let right_target = BotFlowNode {
+            node_id: "match-right".into(),
+            node_type_id: "test.match".into(),
+            node_type_version: 1,
+            config: json!({}),
+            source: None,
+            position: BotFlowNodePosition::default(),
+        };
+        let left_edge = BotFlowEdge {
+            edge_id: "source-left".into(),
             from_node_id: "source".into(),
             from_port_id: "event".into(),
-            to_node_id: "match".into(),
+            to_node_id: "match-left".into(),
+            to_port_id: "event".into(),
+            kind: BotFlowEdgeKind::Event,
+        };
+        let right_edge = BotFlowEdge {
+            edge_id: "source-right".into(),
+            from_node_id: "source".into(),
+            from_port_id: "event".into(),
+            to_node_id: "match-right".into(),
             to_port_id: "event".into(),
             kind: BotFlowEdgeKind::Event,
         };
@@ -585,28 +594,20 @@ mod tests {
             trace_id: None,
             correlation_id: None,
         };
-        let left_flow = mutsuki_bot_protocol::BotFlowDocument {
-            flow_id: "flow.left".into(),
-            name: "left".into(),
-            enabled: true,
-            nodes: vec![target.clone()],
-            edges: vec![edge.clone()],
-        };
-        let right_flow = mutsuki_bot_protocol::BotFlowDocument {
-            flow_id: "flow.right".into(),
-            name: "right".into(),
-            enabled: true,
-            nodes: vec![target.clone()],
-            edges: vec![edge.clone()],
+        let flow = mutsuki_bot_protocol::BotFlowDocument {
+            flow_id: "default".into(),
+            name: "流程".into(),
+            nodes: vec![left_target.clone(), right_target.clone()],
+            edges: vec![left_edge.clone(), right_edge.clone()],
         };
 
         let left = downstream_task(
             &parent,
             1,
-            Arc::new(left_flow),
-            "execution-left",
-            &target,
-            &edge,
+            Arc::new(flow.clone()),
+            "execution",
+            &left_target,
+            &left_edge,
             envelope.clone(),
             1,
             0,
@@ -615,10 +616,10 @@ mod tests {
         let right = downstream_task(
             &parent,
             1,
-            Arc::new(right_flow),
-            "execution-right",
-            &target,
-            &edge,
+            Arc::new(flow),
+            "execution",
+            &right_target,
+            &right_edge,
             envelope,
             1,
             0,
@@ -626,7 +627,16 @@ mod tests {
         .unwrap();
 
         assert_ne!(left.task_id, right.task_id);
-        assert!(left.task_id.as_str().contains("graph:1:flow:flow.left"));
-        assert!(right.task_id.as_str().contains("graph:1:flow:flow.right"));
+        assert!(
+            left.task_id
+                .as_str()
+                .contains("graph:1:flow:default:edge:source-left")
+        );
+        assert!(
+            right
+                .task_id
+                .as_str()
+                .contains("graph:1:flow:default:edge:source-right")
+        );
     }
 }

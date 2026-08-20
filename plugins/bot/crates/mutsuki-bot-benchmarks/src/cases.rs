@@ -335,13 +335,12 @@ fn benchmark_fanout_registry(branch_count: usize) -> Arc<BotFlowRegistry> {
             catalog,
             BotFlowSnapshot {
                 revision: 1,
-                flows: vec![BotFlowDocument {
+                flow: BotFlowDocument {
                     flow_id: "benchmark.fanout".into(),
                     name: "explicit fan-out".into(),
-                    enabled: true,
                     nodes,
                     edges,
-                }],
+                },
             },
         )
         .unwrap(),

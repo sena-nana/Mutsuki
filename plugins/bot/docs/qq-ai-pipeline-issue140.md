@@ -58,10 +58,10 @@ retry, emits the configured retry prompt through `BOT_MESSAGE_SEND_PROTOCOL_ID`,
 waiting or becomes failed. Completed steps can transition to a new state/wait specification; reload
 recovery cancels stale generations and deterministically times out expired waiters.
 
-Functional acceptance consists of owner crate tests plus the ServiceRuntime E2E that applies a
+Functional acceptance consists of owner crate tests plus the ServiceRuntime E2E that saves a
 graph, routes QQ ingress through Agent and reliable delivery, suppresses replay, and recovers the
-same graph after restart. Flow Web RPC tests cover authenticated permission, browser-local draft,
-validation and apply CAS conflict. QQ Web keeps login and live connection status. Flow editing remains a separate real
+same graph after restart. Flow Web RPC tests cover authenticated permission, validation and apply
+CAS conflict. QQ Web keeps login and live connection status. Flow editing remains a separate real
 WebExtension with its own revision and permission contracts.
 It cannot be registered without an injected management API and is not enabled by the default
 catalog, so a product must bind those actions to its live account/secret/audit provider before the

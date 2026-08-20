@@ -8,10 +8,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use mutsuki_bot_flow::{BOT_FLOW_CONFIG_PROVIDER_ID, BotFlowRegistry};
+use mutsuki_bot_flow::{BOT_FLOW_CONFIG_PROVIDER_ID, BotFlowConfigProvider, BotFlowRegistry};
 use mutsuki_bot_protocol::BotFlowDocument;
 use mutsuki_config_service::{
-    ConfigApplyRequest, ConfigContext, ConfigRevision, ConfigService, ConfigValue, capability,
+    ConfigApplyRequest, ConfigContext, ConfigRevision, ConfigService, capability,
 };
 use mutsuki_web_extension::{
     ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, content_hash,
@@ -87,10 +87,12 @@ impl WebExtension for BotFlowEditorWebExtension {
                         &[capability::VALUE_READ.into()],
                     )
                     .await
-                    .map(|snapshot| {
-                        json!({
-                            "revision": snapshot.revision,
-                            "flows": snapshot.value.to_json()["flows"],
+                    .and_then(|snapshot| {
+                        BotFlowConfigProvider::decode(&snapshot.value).map(|flow| {
+                            json!({
+                                "revision": snapshot.revision,
+                                "flow": flow,
+                            })
                         })
                     })
                     .map_err(config_error)
@@ -100,7 +102,7 @@ impl WebExtension for BotFlowEditorWebExtension {
         let registry = self.registry.clone();
         rpc.register_contextual("validate", move |context, params| {
             context.require(CAPABILITY_FLOW_WRITE)?;
-            serde_json::to_value(registry.validate(&decode_flows(&params)?)).map_err(encode_error)
+            serde_json::to_value(registry.validate(&decode_flow(&params)?)).map_err(encode_error)
         });
 
         let config = self.config.clone();
@@ -113,7 +115,8 @@ impl WebExtension for BotFlowEditorWebExtension {
                     .apply(
                         BOT_FLOW_CONFIG_PROVIDER_ID,
                         ConfigApplyRequest {
-                            candidate: encode_flows(&request.flows),
+                            candidate: BotFlowConfigProvider::encode(&request.flow)
+                                .map_err(config_error)?,
                             expected_revision: ConfigRevision(request.expected_revision),
                             dry_run: false,
                         },
@@ -140,21 +143,17 @@ impl WebExtension for BotFlowEditorWebExtension {
 #[serde(deny_unknown_fields)]
 struct ApplyRequest {
     expected_revision: u64,
-    flows: Vec<BotFlowDocument>,
+    flow: BotFlowDocument,
 }
 
-fn decode_flows(params: &Value) -> Result<Vec<BotFlowDocument>, ExtensionError> {
+fn decode_flow(params: &Value) -> Result<BotFlowDocument, ExtensionError> {
     serde_json::from_value(
         params
-            .get("flows")
+            .get("flow")
             .cloned()
-            .ok_or_else(|| ExtensionError::Registration("missing flows".into()))?,
+            .ok_or_else(|| ExtensionError::Registration("missing flow".into()))?,
     )
     .map_err(decode_error)
-}
-
-fn encode_flows(flows: &[BotFlowDocument]) -> ConfigValue {
-    ConfigValue::from_json(&json!({ "flows": flows }))
 }
 
 fn manifest(assets: Vec<AssetEntry>) -> ExtensionManifest {
@@ -287,7 +286,7 @@ mod tests {
         let write = RpcCallContext::new(&[CAPABILITY_FLOW_WRITE.into()]);
         futures_executor::block_on(rpc.call_async_with_context(
             "apply",
-            json!({ "expected_revision": 0, "flows": [] }),
+            json!({ "expected_revision": 0, "flow": BotFlowDocument::default() }),
             write.clone(),
         ))
         .unwrap();
@@ -295,7 +294,7 @@ mod tests {
 
         let error = futures_executor::block_on(rpc.call_async_with_context(
             "apply",
-            json!({ "expected_revision": 0, "flows": [] }),
+            json!({ "expected_revision": 0, "flow": BotFlowDocument::default() }),
             write,
         ))
         .unwrap_err();
@@ -314,6 +313,11 @@ mod tests {
         assert!(include_str!("../assets/lilia-node-editor.js").contains("mountLiliaNodeEditor"));
         assert!(!include_str!("../assets/index.js").contains("节点 ID"));
         assert!(!include_str!("../assets/index.js").contains("输入事件协议"));
+        assert!(!include_str!("../assets/index.js").contains("新建流程"));
+        assert!(!include_str!("../assets/index.js").contains("DRAFT_KEY"));
+        assert!(!include_str!("../assets/index.js").contains("已发布"));
+        assert!(include_str!("../assets/index.js").contains("保存"));
+        assert!(include_str!("../assets/index.js").contains("已上线"));
     }
 
     #[test]

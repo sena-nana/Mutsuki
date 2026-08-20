@@ -184,24 +184,44 @@ fn default_edge_kind() -> BotFlowEdgeKind {
     BotFlowEdgeKind::Event
 }
 
+const BOT_FLOW_DEFAULT_ID: &str = "default";
+const BOT_FLOW_DEFAULT_NAME: &str = "流程";
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BotFlowDocument {
+    #[serde(default = "default_flow_id")]
     pub flow_id: String,
+    #[serde(default = "default_flow_name")]
     pub name: String,
-    #[serde(default = "default_enabled")]
-    pub enabled: bool,
+    #[serde(default)]
     pub nodes: Vec<BotFlowNode>,
+    #[serde(default)]
     pub edges: Vec<BotFlowEdge>,
 }
 
-fn default_enabled() -> bool {
-    true
+impl Default for BotFlowDocument {
+    fn default() -> Self {
+        Self {
+            flow_id: default_flow_id(),
+            name: default_flow_name(),
+            nodes: Vec::new(),
+            edges: Vec::new(),
+        }
+    }
+}
+
+fn default_flow_id() -> String {
+    BOT_FLOW_DEFAULT_ID.into()
+}
+
+fn default_flow_name() -> String {
+    BOT_FLOW_DEFAULT_NAME.into()
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BotFlowSnapshot {
     pub revision: u64,
-    pub flows: Vec<BotFlowDocument>,
+    pub flow: BotFlowDocument,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

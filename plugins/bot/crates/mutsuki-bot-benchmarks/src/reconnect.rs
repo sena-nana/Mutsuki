@@ -253,33 +253,17 @@ fn echo_flow_registry() -> std::sync::Arc<BotFlowRegistry> {
             catalog,
             BotFlowSnapshot {
                 revision: 1,
-                flows: vec![command_flow("echo"), command_flow("ping")],
+                flow: echo_and_ping_flow(),
             },
         )
         .unwrap(),
     )
 }
 
-fn command_flow(command: &str) -> BotFlowDocument {
-    let behavior = if command == "ping" {
-        "example.bot.ping"
-    } else {
-        "example.bot.echo"
-    };
-    let arguments = if command == "echo" {
-        json!([{
-            "name": "text",
-            "kind": "string",
-            "optional": false,
-            "variadic": true
-        }])
-    } else {
-        json!([])
-    };
+fn echo_and_ping_flow() -> BotFlowDocument {
     BotFlowDocument {
-        flow_id: format!("benchmark.qq.{command}"),
-        name: command.into(),
-        enabled: true,
+        flow_id: "benchmark.qq.commands".into(),
+        name: "QQ echo/ping".into(),
         nodes: vec![
             flow_node(
                 "source",
@@ -290,32 +274,57 @@ fn command_flow(command: &str) -> BotFlowDocument {
                     event_type: Some(BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1)),
                 }),
             ),
-            flow_node(
-                "command",
-                BOT_COMMAND_MATCH_NODE_TYPE_ID,
-                json!({
-                    "prefixes": ["/"],
-                    "path": [command],
-                    "aliases": [],
-                    "arguments": arguments
-                }),
-                None,
+            command_node(
+                "echo-command",
+                "echo",
+                json!([{
+                    "name": "text",
+                    "kind": "string",
+                    "optional": false,
+                    "variadic": true
+                }]),
             ),
-            flow_node("behavior", behavior, json!({}), None),
-            flow_node("send", "mutsuki.bot.qq.send", json!({}), None),
+            flow_node("echo", "example.bot.echo", json!({}), None),
+            flow_node("echo-send", "mutsuki.bot.qq.send", json!({}), None),
+            command_node("ping-command", "ping", json!([])),
+            flow_node("ping", "example.bot.ping", json!({}), None),
+            flow_node("ping-send", "mutsuki.bot.qq.send", json!({}), None),
         ],
         edges: vec![
-            flow_edge("source-command", "source", "event", "command", "event"),
+            flow_edge("source-echo", "source", "event", "echo-command", "event"),
             flow_edge(
-                "command-behavior",
-                "command",
+                "echo-command-echo",
+                "echo-command",
                 "matched",
-                "behavior",
+                "echo",
                 "command",
             ),
-            flow_edge("behavior-send", "behavior", "message", "send", "input"),
+            flow_edge("echo-send", "echo", "message", "echo-send", "input"),
+            flow_edge("source-ping", "source", "event", "ping-command", "event"),
+            flow_edge(
+                "ping-command-ping",
+                "ping-command",
+                "matched",
+                "ping",
+                "command",
+            ),
+            flow_edge("ping-send", "ping", "message", "ping-send", "input"),
         ],
     }
+}
+
+fn command_node(node_id: &str, command: &str, arguments: serde_json::Value) -> BotFlowNode {
+    flow_node(
+        node_id,
+        BOT_COMMAND_MATCH_NODE_TYPE_ID,
+        json!({
+            "prefixes": ["/"],
+            "path": [command],
+            "aliases": [],
+            "arguments": arguments
+        }),
+        None,
+    )
 }
 
 fn flow_node(

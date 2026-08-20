@@ -145,26 +145,20 @@ fn validate_node_descriptor(
     Ok(())
 }
 
-pub fn validate_flows(
-    flows: &[BotFlowDocument],
-    catalog: &BotNodeCatalog,
-) -> BotFlowValidationResult {
+pub fn validate_flow(flow: &BotFlowDocument, catalog: &BotNodeCatalog) -> BotFlowValidationResult {
     let mut issues = Vec::new();
-    let mut flow_ids = BTreeSet::new();
-    for flow in flows {
-        if flow.flow_id.trim().is_empty() || !flow_ids.insert(flow.flow_id.as_str()) {
-            push_issue(
-                &mut issues,
-                "flow.duplicate_id",
-                "流程 ID 为空或重复",
-                Some(&flow.flow_id),
-                None,
-                None,
-                None,
-            );
-        }
-        validate_flow(flow, catalog, &mut issues);
+    if flow.flow_id.trim().is_empty() {
+        push_issue(
+            &mut issues,
+            "flow.missing_id",
+            "流程 ID 为空",
+            Some(&flow.flow_id),
+            None,
+            None,
+            None,
+        );
     }
+    validate_graph(flow, catalog, &mut issues);
     BotFlowValidationResult {
         valid: issues
             .iter()
@@ -173,7 +167,7 @@ pub fn validate_flows(
     }
 }
 
-fn validate_flow(
+fn validate_graph(
     flow: &BotFlowDocument,
     catalog: &BotNodeCatalog,
     issues: &mut Vec<BotFlowValidationIssue>,
@@ -265,7 +259,7 @@ fn validate_flow(
             );
         }
     }
-    if !has_source {
+    if !flow.nodes.is_empty() && !has_source {
         push_issue(
             issues,
             "flow.source.missing",
@@ -538,7 +532,7 @@ impl BotFlowRegistry {
             catalog: RwLock::new(catalog),
             active: RwLock::new(Arc::new(BotFlowSnapshot {
                 revision: 0,
-                flows: Vec::new(),
+                flow: BotFlowDocument::default(),
             })),
         }
     }
@@ -549,7 +543,7 @@ impl BotFlowRegistry {
         catalog: BotNodeCatalog,
         snapshot: BotFlowSnapshot,
     ) -> Result<Self, BotFlowError> {
-        let validation = validate_flows(&snapshot.flows, &catalog);
+        let validation = validate_flow(&snapshot.flow, &catalog);
         if !validation.valid {
             return Err(BotFlowError::Invalid(validation));
         }
@@ -585,9 +579,9 @@ impl BotFlowRegistry {
     }
 
     #[must_use]
-    pub fn validate(&self, flows: &[BotFlowDocument]) -> BotFlowValidationResult {
-        validate_flows(
-            flows,
+    pub fn validate(&self, flow: &BotFlowDocument) -> BotFlowValidationResult {
+        validate_flow(
+            flow,
             &self.catalog.read().expect("Bot flow catalog lock poisoned"),
         )
     }
@@ -607,7 +601,7 @@ impl BotFlowRegistry {
 
     fn validated_catalog(&self, plan: &RuntimeLoadPlan) -> Result<BotNodeCatalog, BotFlowError> {
         let candidate = BotNodeCatalog::from_load_plan(plan)?;
-        let validation = validate_flows(&self.active().flows, &candidate);
+        let validation = validate_flow(&self.active().flow, &candidate);
         validation
             .valid
             .then_some(candidate)
@@ -670,28 +664,35 @@ impl BotFlowConfigProvider {
         Self { registry }
     }
 
-    pub fn decode(value: &ConfigValue) -> Result<Vec<BotFlowDocument>, ConfigError> {
+    pub fn decode(value: &ConfigValue) -> Result<BotFlowDocument, ConfigError> {
         let json = value.to_json();
-        serde_json::from_value(
-            json.get("flows")
-                .cloned()
-                .unwrap_or_else(|| serde_json::Value::Array(Vec::new())),
-        )
-        .map_err(|error| ConfigError::ApplyRejected {
-            reason: format!("invalid Bot Flow document: {error}"),
-        })
+        if let Some(flow) = json.get("flow").filter(|value| !value.is_null()) {
+            return serde_json::from_value(flow.clone()).map_err(invalid_flow);
+        }
+        if let Some(flows) = json.get("flows") {
+            let flows: Vec<BotFlowDocument> =
+                serde_json::from_value(flows.clone()).map_err(invalid_flow)?;
+            return match flows.len() {
+                0 => Ok(BotFlowDocument::default()),
+                1 => Ok(flows.into_iter().next().expect("one legacy flow")),
+                count => Err(ConfigError::ApplyRejected {
+                    reason: format!("Bot Flow allows exactly one flow document, found {count}"),
+                }),
+            };
+        }
+        Ok(BotFlowDocument::default())
     }
 
-    fn encode(flows: &[BotFlowDocument]) -> Result<ConfigValue, ConfigError> {
-        serde_json::to_value(flows)
-            .map(|flows| ConfigValue::from_json(&serde_json::json!({ "flows": flows })))
+    pub fn encode(flow: &BotFlowDocument) -> Result<ConfigValue, ConfigError> {
+        serde_json::to_value(flow)
+            .map(|flow| ConfigValue::from_json(&serde_json::json!({ "flow": flow })))
             .map_err(|error| ConfigError::ApplyRejected {
                 reason: format!("failed to encode Bot Flow document: {error}"),
             })
     }
 
-    fn validation(&self, flows: &[BotFlowDocument]) -> ValidationResult {
-        let result = self.registry.validate(flows);
+    fn validation(&self, flow: &BotFlowDocument) -> ValidationResult {
+        let result = self.registry.validate(flow);
         ValidationResult::from_issues(
             result
                 .issues
@@ -718,13 +719,19 @@ impl BotFlowConfigProvider {
     }
 }
 
+fn invalid_flow(error: serde_json::Error) -> ConfigError {
+    ConfigError::ApplyRejected {
+        reason: format!("invalid Bot Flow document: {error}"),
+    }
+}
+
 #[async_trait]
 impl ConfigProvider for BotFlowConfigProvider {
     fn descriptor(&self) -> ConfigDescriptor {
         ConfigDescriptor {
             provider_id: ConfigProviderId::new(BOT_FLOW_CONFIG_PROVIDER_ID),
             schema_version: 1,
-            value_version: 1,
+            value_version: 2,
             title: LocalizedText::new("Bot Flow"),
             description: None,
             scopes: vec![ConfigScope::global()],
@@ -741,13 +748,11 @@ impl ConfigProvider for BotFlowConfigProvider {
                 mutability: ConfigMutability::ReadWrite,
                 restart_policy: RestartPolicy::None,
                 children: vec![ConfigNode {
-                    key: ConfigKey::new("flows"),
-                    value_type: ConfigValueType::Array {
-                        item: Box::new(ConfigValueType::Object),
-                    },
-                    title: LocalizedText::new("Flows"),
+                    key: ConfigKey::new("flow"),
+                    value_type: ConfigValueType::Object,
+                    title: LocalizedText::new("Flow"),
                     description: None,
-                    default_value: Some(ConfigValue::Array(Vec::new())),
+                    default_value: None,
                     constraints: ConfigConstraints::default(),
                     presentation: ConfigPresentation::default(),
                     visibility: None,
@@ -762,7 +767,7 @@ impl ConfigProvider for BotFlowConfigProvider {
     }
 
     fn default_value(&self, _context: &ConfigContext) -> Result<ConfigValue, ConfigError> {
-        Self::encode(&[])
+        Self::encode(&BotFlowDocument::default())
     }
 
     async fn validate(
@@ -780,12 +785,12 @@ impl ConfigProvider for BotFlowConfigProvider {
         next_revision: ConfigRevision,
         _context: ConfigContext,
     ) -> Result<PreparedConfigActivation, ConfigError> {
-        let flows = Self::decode(&candidate)?;
-        let validation = self.validation(&flows);
+        let flow = Self::decode(&candidate)?;
+        let validation = self.validation(&flow);
         if !validation.ok {
             return Err(ConfigError::ValidationFailed { result: validation });
         }
-        let persisted = Self::encode(&flows)?;
+        let persisted = Self::encode(&flow)?;
         Ok(PreparedConfigActivation::new(
             persisted.clone(),
             Box::new(FlowActivation {
@@ -793,7 +798,7 @@ impl ConfigProvider for BotFlowConfigProvider {
                 previous: self.registry.active(),
                 candidate: Arc::new(BotFlowSnapshot {
                     revision: next_revision.0,
-                    flows,
+                    flow,
                 }),
                 activated: false,
                 finished: false,
@@ -855,7 +860,6 @@ mod tests {
         BotFlowDocument {
             flow_id: id.into(),
             name: id.into(),
-            enabled: true,
             nodes: vec![BotFlowNode {
                 node_id: "source".into(),
                 node_type_id: "test.source".into(),
@@ -881,13 +885,13 @@ mod tests {
         )
     }
 
-    fn apply(service: Arc<ConfigService>, expected: u64, flows: Vec<BotFlowDocument>) {
+    fn apply(service: Arc<ConfigService>, expected: u64, flow: BotFlowDocument) {
         futures_executor::block_on(async move {
             service
                 .apply(
                     BOT_FLOW_CONFIG_PROVIDER_ID,
                     ConfigApplyRequest {
-                        candidate: BotFlowConfigProvider::encode(&flows).unwrap(),
+                        candidate: BotFlowConfigProvider::encode(&flow).unwrap(),
                         expected_revision: ConfigRevision(expected),
                         dry_run: false,
                     },
@@ -903,14 +907,14 @@ mod tests {
     fn config_revision_swaps_snapshot_without_mutating_inflight_arc() {
         let registry = Arc::new(BotFlowRegistry::new(catalog()));
         let service = service(registry.clone());
-        apply(service.clone(), 0, vec![flow("first")]);
+        apply(service.clone(), 0, flow("first"));
         let inflight = registry.active();
-        apply(service, 1, vec![flow("second")]);
+        apply(service, 1, flow("second"));
 
         assert_eq!(inflight.revision, 1);
-        assert_eq!(inflight.flows[0].flow_id, "first");
+        assert_eq!(inflight.flow.flow_id, "first");
         assert_eq!(registry.active().revision, 2);
-        assert_eq!(registry.active().flows[0].flow_id, "second");
+        assert_eq!(registry.active().flow.flow_id, "second");
     }
 
     #[test]
@@ -926,8 +930,35 @@ mod tests {
             kind: BotFlowEdgeKind::Event,
         });
 
-        let result = registry.validate(&[candidate]);
+        let result = registry.validate(&candidate);
         assert!(!result.valid);
         assert!(result.issues.iter().any(|issue| issue.code == "flow.cycle"));
+    }
+
+    #[test]
+    fn empty_graph_is_valid_and_legacy_single_flow_upgrades() {
+        let registry = BotFlowRegistry::new(catalog());
+        assert!(registry.validate(&BotFlowDocument::default()).valid);
+
+        let upgraded = BotFlowConfigProvider::decode(&ConfigValue::from_json(
+            &serde_json::json!({ "flows": [flow("legacy")] }),
+        ))
+        .unwrap();
+        assert_eq!(upgraded.flow_id, "legacy");
+
+        let empty = BotFlowConfigProvider::decode(&ConfigValue::from_json(
+            &serde_json::json!({ "flows": [] }),
+        ))
+        .unwrap();
+        assert_eq!(empty, BotFlowDocument::default());
+    }
+
+    #[test]
+    fn decode_rejects_multiple_legacy_flows() {
+        let error = BotFlowConfigProvider::decode(&ConfigValue::from_json(&serde_json::json!({
+            "flows": [flow("left"), flow("right")]
+        })))
+        .unwrap_err();
+        assert!(error.to_string().contains("exactly one flow document"));
     }
 }

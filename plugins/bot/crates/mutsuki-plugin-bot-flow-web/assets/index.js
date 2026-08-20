@@ -1,7 +1,10 @@
 import { mountLiliaNodeEditor, samePortType } from "./lilia-node-editor.js";
 
-const DRAFT_KEY = "mutsuki.bot-flow-editor.draft";
 const ERROR_TYPE = { type_id: "mutsuki.bot.flow.error", version: 1 };
+
+function emptyFlow() {
+  return { flow_id: "default", name: "流程", nodes: [], edges: [] };
+}
 
 function esc(value) {
   return String(value ?? "")
@@ -54,7 +57,6 @@ export async function mountBotFlowEditor(el, rpc) {
       <div class="lilia-workspace-region__content lilia-node-editor__pane">
         <div class="toolbar nested">
           <h2 class="lilia-node-editor__pane-title">节点</h2>
-          <button type="button" id="flow-new">新建流程</button>
         </div>
         <div id="flow-catalog" class="lilia-node-editor__catalog"></div>
       </div>
@@ -62,10 +64,9 @@ export async function mountBotFlowEditor(el, rpc) {
     <section class="lilia-workspace-region lilia-node-editor__stage" data-region="main">
       <div class="lilia-workspace-region__content lilia-node-editor__stage-body">
         <div class="lilia-node-editor__toolbar">
-          <select id="flow-select" aria-label="流程"></select>
           <span id="flow-state" class="pill"></span>
           <button type="button" id="flow-validate" class="ghost">检查</button>
-          <button type="button" id="flow-apply" class="primary">应用</button>
+          <button type="button" id="flow-save" class="primary">保存</button>
         </div>
         <div id="flow-issues" class="lilia-node-editor__issues"></div>
         <div id="flow-graph"></div>
@@ -81,12 +82,10 @@ export async function mountBotFlowEditor(el, rpc) {
   const catalogHost = el.querySelector("#flow-catalog");
   const propertyHost = el.querySelector("#flow-properties");
   const issuesHost = el.querySelector("#flow-issues");
-  const flowSelect = el.querySelector("#flow-select");
   const stateHost = el.querySelector("#flow-state");
   const graph = mountLiliaNodeEditor(el.querySelector("#flow-graph"), {
     onSelectNode(nodeId) {
-      const flow = activeFlow();
-      selectedNode = flow?.nodes.find((node) => node.node_id === nodeId) || null;
+      selectedNode = flow.nodes.find((node) => node.node_id === nodeId) || null;
       selectedEdgeId = null;
       graph.setSelection({ nodeId, edgeId: null });
       renderProperties();
@@ -104,10 +103,10 @@ export async function mountBotFlowEditor(el, rpc) {
       renderProperties();
     },
     onMove(nodeId, x, y) {
-      const node = activeFlow()?.nodes.find((item) => item.node_id === nodeId);
+      const node = flow.nodes.find((item) => item.node_id === nodeId);
       if (!node) return;
       node.position = { x, y };
-      dirty();
+      markUnsaved();
     },
     onConnect(edge) {
       connectPorts(edge.from, edge.fromPort, edge.to, edge.toPort, edge.kind);
@@ -121,16 +120,18 @@ export async function mountBotFlowEditor(el, rpc) {
   });
   let catalog = [];
   let snapshot;
-  let flows = [];
+  let flow = emptyFlow();
   let selectedNode = null;
   let selectedEdgeId = null;
 
-  function activeFlow() { return flows.find((flow) => flow.flow_id === flowSelect.value) || flows[0]; }
   function descriptor(node) { return catalog.find((item) => item.node_type_id === node.node_type_id && item.version === node.node_type_version); }
-  function dirty() {
-    localStorage.setItem(DRAFT_KEY, JSON.stringify({ baseRevision: snapshot.revision, flows }));
-    stateHost.textContent = "本地草稿";
+  function markUnsaved() {
+    stateHost.textContent = "未保存";
     stateHost.className = "pill warn";
+  }
+  function markLive() {
+    stateHost.textContent = "已上线";
+    stateHost.className = "pill ok";
   }
 
   function renderCatalog() {
@@ -148,8 +149,6 @@ export async function mountBotFlowEditor(el, rpc) {
   }
 
   function addNode(type, version, position = null) {
-    const flow = activeFlow();
-    if (!flow) return;
     const desc = catalog.find((node) => node.node_type_id === type && node.version === version);
     const node = {
       node_id: newId("node"),
@@ -162,13 +161,12 @@ export async function mountBotFlowEditor(el, rpc) {
     flow.nodes.push(node);
     selectedNode = node;
     selectedEdgeId = null;
-    dirty();
+    markUnsaved();
     render();
   }
 
   function portType(nodeId, portId, direction) {
-    const flow = activeFlow();
-    const node = flow?.nodes.find((item) => item.node_id === nodeId);
+    const node = flow.nodes.find((item) => item.node_id === nodeId);
     return descriptor(node)?.ports.find((port) => port.port_id === portId && port.direction === direction)?.event_type;
   }
 
@@ -185,7 +183,6 @@ export async function mountBotFlowEditor(el, rpc) {
       issuesHost.innerHTML = `<div class="error-banner">这两个端口不能连接。</div>`;
       return;
     }
-    const flow = activeFlow();
     const exists = flow.edges.some((edge) =>
       edge.from_node_id === fromNodeId &&
       edge.from_port_id === fromPortId &&
@@ -201,12 +198,11 @@ export async function mountBotFlowEditor(el, rpc) {
       to_port_id: toPortId,
       kind,
     });
-    dirty();
+    markUnsaved();
     render();
   }
 
-  function graphModel(flow) {
-    if (!flow) return { nodes: [], edges: [], emptyText: "新建一个流程后开始编排。" };
+  function graphModel() {
     return {
       emptyText: flow.nodes.length ? "" : "从左侧拖入节点，再从输出端口拖到兼容的输入端口。",
       nodes: flow.nodes.map((node) => {
@@ -254,20 +250,16 @@ export async function mountBotFlowEditor(el, rpc) {
   }
 
   function renderGraph() {
-    graph.setGraph(graphModel(activeFlow()));
+    graph.setGraph(graphModel());
   }
 
   function render() {
-    flowSelect.innerHTML = flows.map((flow) => `<option value="${esc(flow.flow_id)}">${esc(flow.name)}</option>`).join("");
-    const flow = activeFlow();
-    if (flow) flowSelect.value = flow.flow_id;
     renderGraph();
     renderProperties();
   }
 
   function renderProperties() {
-    const flow = activeFlow();
-    if (selectedEdgeId && flow) {
+    if (selectedEdgeId) {
       const edge = flow.edges.find((item) => item.edge_id === selectedEdgeId);
       if (!edge) {
         selectedEdgeId = null;
@@ -276,7 +268,7 @@ export async function mountBotFlowEditor(el, rpc) {
         propertyHost.querySelector("#edge-delete").onclick = () => {
           flow.edges = flow.edges.filter((item) => item.edge_id !== selectedEdgeId);
           selectedEdgeId = null;
-          dirty();
+          markUnsaved();
           render();
         };
         return;
@@ -294,15 +286,15 @@ export async function mountBotFlowEditor(el, rpc) {
     propertyHost.querySelector("#node-apply").onclick = () => {
       selectedNode.config = readConfigFields(propertyHost, properties);
       if (desc?.role === "source") selectedNode.source = sourceSelector(desc);
-      dirty();
+      markUnsaved();
       render();
     };
     propertyHost.querySelector("#node-delete").onclick = () => {
-      const current = activeFlow();
+      const current = flow;
       current.nodes = current.nodes.filter((node) => node.node_id !== selectedNode.node_id);
       current.edges = current.edges.filter((edge) => edge.from_node_id !== selectedNode.node_id && edge.to_node_id !== selectedNode.node_id);
       selectedNode = null;
-      dirty();
+      markUnsaved();
       render();
     };
     propertyHost.querySelectorAll("[data-list-add]").forEach((button) => {
@@ -317,7 +309,7 @@ export async function mountBotFlowEditor(el, rpc) {
         else if (schema?.items?.type === "object") current.push({ name: value, kind: "string", optional: false, variadic: false });
         else current.push(value);
         selectedNode.config[key] = current;
-        dirty();
+        markUnsaved();
         renderProperties();
       };
     });
@@ -326,7 +318,7 @@ export async function mountBotFlowEditor(el, rpc) {
         const key = button.dataset.listRemove;
         const index = Number(button.dataset.index);
         selectedNode.config[key] = (selectedNode.config[key] || []).filter((_, item) => item !== index);
-        dirty();
+        markUnsaved();
         renderProperties();
       };
     });
@@ -399,14 +391,13 @@ export async function mountBotFlowEditor(el, rpc) {
   }
 
   async function validate() {
-    const result = await rpc.call("bot-flow-editor", "validate", { flows });
+    const result = await rpc.call("bot-flow-editor", "validate", { flow });
     snapshot.validation = result;
     issuesHost.innerHTML = result.issues.length
       ? `<div class="error-banner">${result.issues.map((issue) => `<button type="button" class="ghost" data-issue-node="${esc(issue.node_id || "")}">${esc(issue.message)}</button>`).join("")}</div>`
       : `<div class="success-banner">流程校验通过</div>`;
     issuesHost.querySelectorAll("[data-issue-node]").forEach((button) => button.onclick = () => {
-      const flow = activeFlow();
-      selectedNode = flow?.nodes.find((node) => node.node_id === button.dataset.issueNode) || null;
+      selectedNode = flow.nodes.find((node) => node.node_id === button.dataset.issueNode) || null;
       selectedEdgeId = null;
       render();
     });
@@ -421,45 +412,25 @@ export async function mountBotFlowEditor(el, rpc) {
     ]);
     catalog = Array.isArray(catalogBody) ? catalogBody : catalogBody?.nodes || [];
     snapshot = snapshotBody;
-    const saved = JSON.parse(localStorage.getItem(DRAFT_KEY) || "null");
-    flows = structuredClone(saved?.flows || snapshot.flows || []);
-    if (saved) {
-      stateHost.textContent = saved.baseRevision === snapshot.revision ? "本地草稿" : "本地草稿需要重新加载";
-      stateHost.className = "pill warn";
-    } else {
-      stateHost.textContent = "已发布";
-      stateHost.className = "pill ok";
-    }
+    flow = structuredClone(snapshot.flow || emptyFlow());
+    selectedNode = null;
+    selectedEdgeId = null;
+    markLive();
     renderCatalog();
     render();
   }
 
-  el.querySelector("#flow-new").onclick = () => {
-    const flow = { flow_id: newId("flow"), name: `新流程 ${flows.length + 1}`, enabled: true, nodes: [], edges: [] };
-    flows.push(flow);
-    flowSelect.value = flow.flow_id;
-    selectedNode = null;
-    selectedEdgeId = null;
-    dirty();
-    render();
-  };
-  flowSelect.onchange = () => {
-    selectedNode = null;
-    selectedEdgeId = null;
-    render();
-  };
   el.querySelector("#flow-validate").onclick = () => validate().catch((error) => {
     issuesHost.innerHTML = `<div class="error-banner">${esc(errorText(error))}</div>`;
   });
-  el.querySelector("#flow-apply").onclick = async () => {
+  el.querySelector("#flow-save").onclick = async () => {
     try {
       const result = await validate();
       if (!result.valid) return;
-      await rpc.call("bot-flow-editor", "apply", { expected_revision: snapshot.revision, flows });
-      localStorage.removeItem(DRAFT_KEY);
+      await rpc.call("bot-flow-editor", "apply", { expected_revision: snapshot.revision, flow });
       await refresh();
     } catch (error) {
-      dirty();
+      markUnsaved();
       issuesHost.innerHTML = `<div class="error-banner">${esc(errorText(error))}</div>`;
     }
   };
@@ -467,18 +438,16 @@ export async function mountBotFlowEditor(el, rpc) {
     if (!el.contains(document.activeElement) && !el.contains(event.target)) return;
     if (event.key === "Escape") graph.cancelDraft();
     if ((event.key === "Backspace" || event.key === "Delete") && !["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName)) {
-      const flow = activeFlow();
-      if (!flow) return;
       if (selectedEdgeId) {
         flow.edges = flow.edges.filter((edge) => edge.edge_id !== selectedEdgeId);
         selectedEdgeId = null;
-        dirty();
+        markUnsaved();
         render();
       } else if (selectedNode) {
         flow.nodes = flow.nodes.filter((node) => node.node_id !== selectedNode.node_id);
         flow.edges = flow.edges.filter((edge) => edge.from_node_id !== selectedNode.node_id && edge.to_node_id !== selectedNode.node_id);
         selectedNode = null;
-        dirty();
+        markUnsaved();
         render();
       }
     }

@@ -509,10 +509,9 @@ fn capture_flow_registry(
             catalog,
             BotFlowSnapshot {
                 revision: 1,
-                flows: vec![BotFlowDocument {
+                flow: BotFlowDocument {
                     flow_id: "issue141.capture".into(),
                     name: "capture all QQ events".into(),
-                    enabled: true,
                     nodes: {
                         let mut nodes = capture_source_nodes();
                         nodes.push(BotFlowNode {
@@ -526,7 +525,7 @@ fn capture_flow_registry(
                         nodes
                     },
                     edges: capture_source_edges(),
-                }],
+                },
             },
         )
         .unwrap(),

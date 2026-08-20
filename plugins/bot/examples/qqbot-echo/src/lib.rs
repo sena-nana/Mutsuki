@@ -1,4 +1,4 @@
-use mutsuki_bot_flow::{BotFlowError, BotNodeCatalog, validate_flows};
+use mutsuki_bot_flow::{BotFlowError, BotNodeCatalog, validate_flow};
 use mutsuki_bot_protocol::{
     BOT_EVENT_INGEST_PROTOCOL_ID, BOT_FLOW_BOT_EVENT_TYPE, BotFlowDocument, BotFlowEdge,
     BotFlowEdgeKind, BotFlowNode, BotFlowNodePosition, BotFlowSourceSelector, BotFlowTypeRef,
@@ -12,14 +12,13 @@ use serde_json::{Value, json};
 
 pub use bot_echo::{ECHO_PLUGIN_ID, ECHO_RUNNER_ID, echo_manifest, echo_runner};
 
-/// The example is a graph draft, not plugin-owned routing configuration. Import or recreate this
-/// document in the Bot Flow editor and apply it before QQ events can invoke the nodes.
+/// The example is a graph document, not plugin-owned routing configuration. Import or recreate this
+/// document in the Bot Flow editor and save it before QQ events can invoke the nodes.
 #[must_use]
 pub fn qqbot_echo_flow() -> BotFlowDocument {
     BotFlowDocument {
         flow_id: "example.qq.echo".into(),
         name: "QQ /echo".into(),
-        enabled: true,
         nodes: vec![
             node(
                 "source",
@@ -30,6 +29,7 @@ pub fn qqbot_echo_flow() -> BotFlowDocument {
                     event_type: Some(BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1)),
                 }),
                 40.0,
+                120.0,
             ),
             node(
                 "command",
@@ -43,9 +43,10 @@ pub fn qqbot_echo_flow() -> BotFlowDocument {
                 }),
                 None,
                 300.0,
+                120.0,
             ),
-            node("echo", "example.bot.echo", json!({}), None, 560.0),
-            node("send", "mutsuki.bot.qq.send", json!({}), None, 820.0),
+            node("echo", "example.bot.echo", json!({}), None, 560.0, 120.0),
+            node("send", "mutsuki.bot.qq.send", json!({}), None, 820.0, 120.0),
         ],
         edges: vec![
             edge("source-command", "source", "event", "command", "event"),
@@ -53,6 +54,50 @@ pub fn qqbot_echo_flow() -> BotFlowDocument {
             edge("echo-send", "echo", "message", "send", "input"),
         ],
     }
+}
+
+#[must_use]
+pub fn qqbot_echo_and_ping_flow() -> BotFlowDocument {
+    let mut flow = qqbot_echo_flow();
+    flow.flow_id = "example.qq.commands".into();
+    flow.name = "QQ echo/ping".into();
+    flow.nodes.extend([
+        node(
+            "ping-command",
+            BOT_COMMAND_MATCH_NODE_TYPE_ID,
+            json!({
+                "prefixes": ["/"],
+                "path": ["ping"],
+                "aliases": [],
+                "arguments": [],
+                "case_sensitive": false
+            }),
+            None,
+            300.0,
+            260.0,
+        ),
+        node("ping", "example.bot.ping", json!({}), None, 560.0, 260.0),
+        node(
+            "ping-send",
+            "mutsuki.bot.qq.send",
+            json!({}),
+            None,
+            820.0,
+            260.0,
+        ),
+    ]);
+    flow.edges.extend([
+        edge("source-ping", "source", "event", "ping-command", "event"),
+        edge(
+            "ping-command-ping",
+            "ping-command",
+            "matched",
+            "ping",
+            "command",
+        ),
+        edge("ping-send", "ping", "message", "ping-send", "input"),
+    ]);
+    flow
 }
 
 #[must_use]
@@ -68,13 +113,13 @@ pub fn qqbot_echo_manifests() -> Vec<PluginManifest> {
 pub fn validate_example_flow() -> Result<BotFlowValidationResult, BotFlowError> {
     let manifests = qqbot_echo_manifests();
     let catalog = BotNodeCatalog::from_manifests(&manifests)?;
-    Ok(validate_flows(&[qqbot_echo_flow()], &catalog))
+    Ok(validate_flow(&qqbot_echo_flow(), &catalog))
 }
 
 #[must_use]
 pub fn example_flow_config_json() -> Value {
     json!({
-        "flows": [qqbot_echo_flow()]
+        "flow": qqbot_echo_flow()
     })
 }
 
@@ -84,6 +129,7 @@ fn node(
     config: Value,
     source: Option<BotFlowSourceSelector>,
     x: f64,
+    y: f64,
 ) -> BotFlowNode {
     BotFlowNode {
         node_id: node_id.into(),
@@ -91,7 +137,7 @@ fn node(
         node_type_version: 1,
         config,
         source,
-        position: BotFlowNodePosition { x, y: 120.0 },
+        position: BotFlowNodePosition { x, y },
     }
 }
 
