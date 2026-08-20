@@ -8,11 +8,15 @@ export function edgePath(x1, y1, x2, y2) {
 }
 
 export function samePortType(left, right) {
-  return Boolean(
-    left &&
-      right &&
-      left.type_id === right.type_id &&
-      Number(left.version) === Number(right.version),
+  if (!left || !right) return false;
+  const leftId = left.type_id || left.type_id;
+  const rightId = right.type_id || right.type_id;
+  if (Number(left.version) !== Number(right.version)) return false;
+  if (leftId === rightId) return true;
+  return (
+    rightId === "mutsuki.bot.event" &&
+    typeof leftId === "string" &&
+    leftId.startsWith("mutsuki.bot.event.")
   );
 }
 

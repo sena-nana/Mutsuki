@@ -1335,6 +1335,7 @@ fn qq_sources_are_split_by_received_kind() {
             "成员离开",
             "机器人上线",
             "机器人下线",
+            "平台事件",
         ]
     );
     let message = fragment

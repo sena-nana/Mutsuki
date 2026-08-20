@@ -4,7 +4,10 @@ use std::time::Duration;
 
 use mutsuki_bot_link_parser::{MAX_LINK_CARD_MEDIA_BYTES, ResolvedLinkCard};
 use mutsuki_bot_protocol::{
-    BOT_MESSAGE_SEND_PROTOCOL_ID, BotExtMap, BotMessage, BotTarget, MessageSegment,
+    BOT_MESSAGE_SEND_PROTOCOL_ID, BotEvent, BotExtMap, BotFlowEventEnvelope, BotFlowPayload,
+    BotFlowTypeRef, BotMessage, BotNodeBinding, BotNodeCatalogFragment, BotNodeDescriptor,
+    BotNodeInvocation, BotNodeOutput, BotNodePortDescriptor, BotNodePortDirection, BotNodeResult,
+    BotNodeRole, BotTarget, MessageSegment,
 };
 use mutsuki_runtime_contracts::{
     CompletionBatch, ExecutionClass, ProtocolClass, RunnerContext, RunnerDescriptor, RunnerPurity,
@@ -175,8 +178,13 @@ impl WorkshopRunner {
         }
     }
     fn run_task(&mut self, task: &Task) -> Result<RunnerResult, RuntimeError> {
-        let request: WorkshopResolveRequest = serde_json::from_value(task.payload.clone().into())
-            .map_err(|error| failure(task, error))?;
+        let payload: serde_json::Value = task.payload.clone().into();
+        let invocation = serde_json::from_value::<BotNodeInvocation>(payload.clone()).ok();
+        let request = match &invocation {
+            Some(invocation) => workshop_request_from_invocation(invocation)
+                .map_err(|error| failure(task, error))?,
+            None => serde_json::from_value(payload).map_err(|error| failure(task, error))?,
+        };
         let card = self
             .transport
             .resolve(&request.url)
@@ -200,6 +208,7 @@ impl WorkshopRunner {
         segments.push(MessageSegment::Text {
             text: format!("{}\n{}\n{}", card.title, card.description, card.url),
         });
+        let outbound_binding = request.outbound_binding.clone();
         let message = BotMessage {
             message_id: None,
             target: request.target,
@@ -209,12 +218,15 @@ impl WorkshopRunner {
             time_ms: None,
             ext: BotExtMap::new(),
         };
+        if let Some(invocation) = invocation {
+            return flow_message_result(task, invocation, message);
+        }
         let mut outbound = Task::new(
             format!("{}:notify", task.task_id),
             BOT_MESSAGE_SEND_PROTOCOL_ID,
             serde_json::to_value(message).expect("message serializes"),
         );
-        outbound.target_binding_id = Some(request.outbound_binding.into());
+        outbound.target_binding_id = Some(outbound_binding.into());
         let mut result = RunnerResult::completed(task.task_id.clone());
         result.tasks.push(outbound);
         Ok(result)
@@ -247,6 +259,11 @@ pub fn manifest() -> mutsuki_runtime_contracts::PluginManifest {
             RUNNER_ID,
             "io",
         )
+        .extension(
+            workshop_node_catalog()
+                .into_plugin_extension()
+                .expect("workshop node catalog serializes"),
+        )
         .build()
         .manifest;
     manifest
@@ -263,6 +280,115 @@ fn descriptor() -> RunnerDescriptor {
         .metadata("domain", ScalarValue::String("bilibili_workshop".into()))
         .build()
 }
+
+fn workshop_node_catalog() -> BotNodeCatalogFragment {
+    BotNodeCatalogFragment {
+        nodes: vec![BotNodeDescriptor {
+            node_type_id: "mutsuki.bot.bilibili.workshop.resolve".into(),
+            version: 1,
+            title: "工房链接".into(),
+            category: "链接".into(),
+            role: BotNodeRole::Processor,
+            binding: Some(BotNodeBinding {
+                binding_id: format!("binding:{LINK_RESOLVE}"),
+                protocol_id: LINK_RESOLVE.into(),
+                runner_hint: Some(RUNNER_ID.into()),
+            }),
+            ports: vec![
+                BotNodePortDescriptor {
+                    port_id: "event".into(),
+                    title: "事件".into(),
+                    direction: BotNodePortDirection::Input,
+                    event_type: BotFlowTypeRef::new("mutsuki.bot.event", 1),
+                    required: true,
+                },
+                BotNodePortDescriptor {
+                    port_id: "message".into(),
+                    title: "发送消息".into(),
+                    direction: BotNodePortDirection::Output,
+                    event_type: BotFlowTypeRef::new("mutsuki.bot.message.send", 1),
+                    required: false,
+                },
+            ],
+            config_schema: json!({
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "url": {"type": "string", "title": "工房链接"}
+                }
+            }),
+        }],
+    }
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct WorkshopFlowConfig {
+    url: Option<String>,
+    outbound_binding: Option<String>,
+}
+
+fn workshop_request_from_invocation(
+    invocation: &BotNodeInvocation,
+) -> Result<WorkshopResolveRequest, String> {
+    let config: WorkshopFlowConfig =
+        serde_json::from_value(invocation.config.clone()).map_err(|error| error.to_string())?;
+    let event: BotEvent = serde_json::from_value(invocation.input.payload.value.clone())
+        .map_err(|error| error.to_string())?;
+    let url = config
+        .url
+        .filter(|value| !value.is_empty())
+        .or_else(|| first_http_url(&event))
+        .ok_or_else(|| "workshop url is missing".to_string())?;
+    Ok(WorkshopResolveRequest {
+        url,
+        target: event.target,
+        outbound_binding: config.outbound_binding.unwrap_or_default(),
+    })
+}
+
+fn first_http_url(event: &BotEvent) -> Option<String> {
+    event.message.as_ref().and_then(|message| {
+        message.segments.iter().find_map(|segment| match segment {
+            MessageSegment::Text { text } => text
+                .split_whitespace()
+                .find(|part| part.starts_with("http://") || part.starts_with("https://"))
+                .map(str::to_owned),
+            _ => None,
+        })
+    })
+}
+
+fn flow_message_result(
+    task: &Task,
+    invocation: BotNodeInvocation,
+    message: BotMessage,
+) -> Result<RunnerResult, RuntimeError> {
+    let output = BotNodeOutput {
+        port_id: "message".into(),
+        event: BotFlowEventEnvelope {
+            event_id: invocation.input.event_id.clone(),
+            protocol_id: BOT_MESSAGE_SEND_PROTOCOL_ID.into(),
+            payload: BotFlowPayload {
+                event_type: BotFlowTypeRef::new("mutsuki.bot.message.send", 1),
+                value: serde_json::to_value(message).map_err(|error| failure(task, error))?,
+            },
+            context: invocation.input.context.clone(),
+            trace_id: invocation.input.trace_id.clone(),
+            correlation_id: invocation.input.correlation_id.clone(),
+        },
+    };
+    let mut result = RunnerResult::completed(task.task_id.clone());
+    result.output = Some(
+        serde_json::to_value(BotNodeResult {
+            outputs: vec![output],
+            metadata: Default::default(),
+        })
+        .map_err(|error| failure(task, error))?,
+    );
+    Ok(result)
+}
+
 struct ManifestRunner {
     descriptor: RunnerDescriptor,
 }

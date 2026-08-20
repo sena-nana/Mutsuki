@@ -985,6 +985,11 @@ pub fn bot_scheduled_delivery_manifest() -> PluginManifest {
             BOT_SCHEDULED_DELIVERY_RUNNER_ID,
             "bot-scheduled-delivery",
         )
+        .extension(
+            scheduled_delivery_node_catalog()
+                .into_plugin_extension()
+                .expect("scheduled delivery node catalog serializes"),
+        )
         .build()
         .manifest
 }
@@ -1011,8 +1016,14 @@ async fn scheduled_delivery_result(
     bridge: &ScheduledAgentDeliveryBridge,
     task: &Task,
 ) -> RuntimeResult<RunnerResult> {
-    let request: ScheduledDeliveryRequest = serde_json::from_value(task.payload.to_value())
-        .map_err(|error| runtime_error(task, error))?;
+    let payload = task.payload.to_value();
+    let request: ScheduledDeliveryRequest =
+        if let Ok(invocation) = serde_json::from_value::<BotNodeInvocation>(payload.clone()) {
+            serde_json::from_value(invocation.input.payload.value)
+                .map_err(|error| runtime_error(task, error))?
+        } else {
+            serde_json::from_value(payload).map_err(|error| runtime_error(task, error))?
+        };
     let receipt = bridge
         .deliver(request.result, request.now_unix_ms)
         .await
@@ -1031,6 +1042,31 @@ fn scheduled_delivery_descriptor() -> mutsuki_runtime_contracts::RunnerDescripto
     .accepted_protocol(BOT_SCHEDULED_DELIVERY_PROTOCOL_ID)
     .execution_class(ExecutionClass::Blocking)
     .build()
+}
+
+fn scheduled_delivery_node_catalog() -> BotNodeCatalogFragment {
+    BotNodeCatalogFragment {
+        nodes: vec![BotNodeDescriptor {
+            node_type_id: "mutsuki.bot.delivery.scheduled".into(),
+            version: 1,
+            title: "定时投递".into(),
+            category: "投递".into(),
+            role: BotNodeRole::Sink,
+            binding: Some(BotNodeBinding {
+                binding_id: format!("binding:{BOT_SCHEDULED_DELIVERY_PROTOCOL_ID}"),
+                protocol_id: BOT_SCHEDULED_DELIVERY_PROTOCOL_ID.into(),
+                runner_hint: Some(BOT_SCHEDULED_DELIVERY_RUNNER_ID.into()),
+            }),
+            ports: vec![BotNodePortDescriptor {
+                port_id: "result".into(),
+                title: "定时结果".into(),
+                direction: BotNodePortDirection::Input,
+                event_type: BotFlowTypeRef::new("mutsuki.bot.delivery.scheduled", 1),
+                required: true,
+            }],
+            config_schema: serde_json::json!({"type": "object", "additionalProperties": false}),
+        }],
+    }
 }
 
 fn validate_request(request: &BotActiveDeliveryRequest) -> Result<(), DeliveryError> {

@@ -114,12 +114,13 @@ pub const QQ_NODE_MEMBER_JOINED: &str = "mutsuki.bot.qq.member.joined";
 pub const QQ_NODE_MEMBER_LEFT: &str = "mutsuki.bot.qq.member.left";
 pub const QQ_NODE_BOT_CONNECTED: &str = "mutsuki.bot.qq.bot.connected";
 pub const QQ_NODE_BOT_DISCONNECTED: &str = "mutsuki.bot.qq.bot.disconnected";
+pub const QQ_NODE_PLATFORM: &str = "mutsuki.bot.qq.platform";
 
 fn qqbot_node_catalog(media_enabled: bool) -> BotNodeCatalogFragment {
     use mutsuki_bot_protocol::{
         BOT_FLOW_LIFECYCLE_EVENT_TYPE, BOT_FLOW_MEMBER_EVENT_TYPE,
         BOT_FLOW_MESSAGE_DELETED_EVENT_TYPE, BOT_FLOW_MESSAGE_EVENT_TYPE,
-        BOT_FLOW_REACTION_EVENT_TYPE,
+        BOT_FLOW_PLATFORM_EVENT_TYPE, BOT_FLOW_REACTION_EVENT_TYPE,
     };
     let mut nodes = vec![
         qq_source(
@@ -163,6 +164,7 @@ fn qqbot_node_catalog(media_enabled: bool) -> BotNodeCatalogFragment {
             "机器人下线",
             BOT_FLOW_LIFECYCLE_EVENT_TYPE,
         ),
+        qq_source(QQ_NODE_PLATFORM, "平台事件", BOT_FLOW_PLATFORM_EVENT_TYPE),
     ];
     nodes.push(BotNodeDescriptor {
         node_type_id: "mutsuki.bot.qq.send".into(),
@@ -185,7 +187,7 @@ fn qqbot_node_catalog(media_enabled: bool) -> BotNodeCatalogFragment {
             },
             BotNodePortDescriptor {
                 port_id: "event".into(),
-                title: "消息".into(),
+                title: "消息事件".into(),
                 direction: BotNodePortDirection::Input,
                 event_type: BotFlowTypeRef::new(
                     mutsuki_bot_protocol::BOT_FLOW_MESSAGE_EVENT_TYPE,
@@ -536,7 +538,7 @@ fn incoming_reply_to(invocation: Option<&BotNodeInvocation>) -> Option<String> {
         .and_then(|event| event.message.and_then(|item| item.message_id))
 }
 
-pub(crate) fn flow_envelope(
+pub fn flow_envelope(
     event: mutsuki_bot_protocol::BotEvent,
     trace_id: Option<String>,
     correlation_id: Option<String>,

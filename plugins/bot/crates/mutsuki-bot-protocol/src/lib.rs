@@ -39,6 +39,7 @@ pub const BOT_MEDIA_DOWNLOAD_PROTOCOL_ID: &str = "mutsuki.bot.media/download@1";
 pub const BOT_MEDIA_TRANSCRIBE_PROTOCOL_ID: &str = "mutsuki.bot.media/transcribe@1";
 pub const BOT_MEDIA_SYNTHESIZE_PROTOCOL_ID: &str = "mutsuki.bot.media/synthesize@1";
 pub const BOT_COMMAND_PARSE_PROTOCOL_ID: &str = "mutsuki.bot.command/parse@1";
+pub const BOT_COMMAND_REPLY_PROTOCOL_ID: &str = "mutsuki.bot.command/reply@1";
 pub const BOT_COMMAND_HANDLE_PROTOCOL_ID: &str = "mutsuki.bot.command/handle@1";
 pub const BOT_SESSION_GET_PROTOCOL_ID: &str = "mutsuki.bot.session/get@1";
 pub const BOT_SESSION_SET_PROTOCOL_ID: &str = "mutsuki.bot.session/set@1";

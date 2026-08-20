@@ -16,13 +16,19 @@ use mutsuki_bot_management::{
     QQ_GATEWAY_ERROR_OPERATOR_RECONNECT, QQ_GATEWAY_ERROR_SERVER_RECONNECT,
     QQ_GATEWAY_ERROR_SESSION_EXPIRED, QQ_GATEWAY_ERROR_SESSION_INVALID,
 };
-use mutsuki_bot_protocol::{BotEvent, BotEventKind, BotTarget, BotUser};
+use mutsuki_bot_protocol::{
+    BOT_FLOW_INGRESS_PROTOCOL_ID, BotEvent, BotEventKind, BotTarget, BotUser,
+};
 use mutsuki_plugin_bot_adapter_qqbot::{
     GatewayAction, GatewayFrame, HttpMethod, QQBOT_ADAPTER_PLUGIN_ID, QqAuthManager, QqBotConfig,
     QqGatewayPump, QqOpenApiError, QqOpenApiTransport, ReqwestQqHttpClient, SharedQqCredentials,
-    adapter::{qq_gateway_frame_to_bot_event, qq_group_name_from_info, qq_self_user},
-    qq_group_info_path, session_summary, validate_gateway_url,
+    adapter::{
+        qq_bot_disconnected_event, qq_gateway_frame_to_bot_event, qq_group_name_from_info,
+        qq_self_user,
+    },
+    flow_envelope, qq_group_info_path, session_summary, validate_gateway_url,
 };
+use mutsuki_runtime_contracts::Task;
 
 pub const QQBOT_GATEWAY_SOURCE_ID: &str = "mutsuki.bot.adapter.qqbot.gateway.source";
 
@@ -691,7 +697,33 @@ async fn run_connection(
     };
     let _ = sink.send(Message::Close(None)).await;
     mark_disconnected(health);
+    submit_bot_disconnected_ingress(ctx, config);
     Ok(end)
+}
+
+fn submit_bot_disconnected_ingress(ctx: &HostEventSourceContext, config: &QqBotConfig) {
+    let Ok(envelope) = flow_envelope(qq_bot_disconnected_event(&config.account_id), None, None)
+    else {
+        return;
+    };
+    let Ok(payload) = serde_json::to_value(&envelope) else {
+        return;
+    };
+    let task = Task::new(
+        format!(
+            "mutsuki.bot.flow.ingress:disconnected:{}",
+            config.account_id
+        ),
+        BOT_FLOW_INGRESS_PROTOCOL_ID,
+        payload,
+    );
+    if let Err(error) = ctx.task_submitter.submit_one(task) {
+        ctx.events.log(
+            "warn",
+            &format!("failed to submit QQBot disconnected ingress: {error}"),
+            None,
+        );
+    }
 }
 
 async fn send_auth_action<S>(

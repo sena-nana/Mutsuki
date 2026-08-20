@@ -14,8 +14,22 @@ incoming edges invoke the target separately. Version 1 rejects cycles and does n
 priority, propagation or hooks.
 
 Match nodes are a series of single-purpose filters: conversation, user, role, prefix, keyword,
-mention and rate limit. Each node emits `matched` or `unmatched`; authors compose them with edges
-instead of packing account or protocol identifiers into one form.
+mention, rate limit and QQ event type. Conversation/user/role/rate-limit/QQ-event ports use the
+generic `mutsuki.bot.event` type so member, reaction and lifecycle sources can connect; a typed
+`mutsuki.bot.event.*` output assigns to that generic input. Each node emits `matched` or
+`unmatched`; authors compose them with edges instead of packing account or protocol identifiers
+into one form.
+
+Version 1 is an acyclic DAG of single-event predicates. It does not wait for a later message,
+time out a branch, retry in a loop, or keep session state on the canvas. Interaction sessions
+(`Waiting` / `Completed` / `TimedOut` / `Cancelled`) live in `mutsuki.bot.interaction.match`
+outside the graph; that node only gates the current event. Wait, join and cycle nodes are out of
+scope for V1.
+
+Only runners that publish `mutsuki.bot.flow.nodes@1` appear in the editor. Flow does not scan
+every `RunnerDescriptor`. Mihuashi, Bilibili workshop and scheduled delivery opt in through that
+extension; internal ingest runners such as the QQ gateway stay off the canvas. Std workflow/io/db
+and Agent loop/tool/session use a different orchestration surface.
 
 Processor/Match/Sink execution uses ordinary Task calls through `TaskAwaitRunnerAdapter`. A node is
 invoked only through the binding stored in its catalog descriptor. Failures terminate the current

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use mutsuki_bot_protocol::{
-    BOT_FLOW_MESSAGE_EVENT_TYPE, BotEvent, BotEventKind, BotFlowTypeRef, BotNodeBinding,
+    BOT_FLOW_BOT_EVENT_TYPE, BotEvent, BotEventKind, BotFlowTypeRef, BotNodeBinding,
     BotNodeCatalogFragment, BotNodeDescriptor, BotNodeInvocation, BotNodeOutput,
     BotNodePortDescriptor, BotNodePortDirection, BotNodeResult, BotNodeRole, BotTarget,
     MessageSegment,
@@ -24,6 +24,7 @@ pub const BOT_FLOW_PREFIX_PROTOCOL_ID: &str = "mutsuki.bot.flow.match/prefix@1";
 pub const BOT_FLOW_KEYWORD_PROTOCOL_ID: &str = "mutsuki.bot.flow.match/keyword@1";
 pub const BOT_FLOW_MENTION_PROTOCOL_ID: &str = "mutsuki.bot.flow.match/mention@1";
 pub const BOT_FLOW_RATE_LIMIT_PROTOCOL_ID: &str = "mutsuki.bot.flow.match/rate-limit@1";
+pub const BOT_FLOW_QQ_EVENT_PROTOCOL_ID: &str = "mutsuki.bot.flow.match/qq-event@1";
 
 pub const MATCH_PROTOCOL_IDS: &[&str] = &[
     BOT_FLOW_CONVERSATION_PROTOCOL_ID,
@@ -33,6 +34,7 @@ pub const MATCH_PROTOCOL_IDS: &[&str] = &[
     BOT_FLOW_KEYWORD_PROTOCOL_ID,
     BOT_FLOW_MENTION_PROTOCOL_ID,
     BOT_FLOW_RATE_LIMIT_PROTOCOL_ID,
+    BOT_FLOW_QQ_EVENT_PROTOCOL_ID,
 ];
 
 #[derive(Default, Deserialize)]
@@ -73,6 +75,12 @@ struct RateLimitConfig {
     scope: String,
     max_count: u32,
     period_seconds: u32,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct QqEventConfig {
+    event_types: Vec<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -178,6 +186,13 @@ fn match_event(
             let config: RateLimitConfig = decode_config(config)?;
             runner.consume(event, &config, event.time_ms.max(0).cast_unsigned())?
         }
+        BOT_FLOW_QQ_EVENT_PROTOCOL_ID => {
+            let config: QqEventConfig = decode_config(config)?;
+            qq_event_type(event).is_some_and(|event_type| {
+                !config.event_types.is_empty()
+                    && config.event_types.iter().any(|item| item == &event_type)
+            })
+        }
         other => return Err(other.into()),
     })
 }
@@ -257,6 +272,18 @@ fn conversation_kind(target: &BotTarget) -> &'static str {
         BotTarget::Conversation { .. } => "conversation",
         BotTarget::PlatformSpecific { .. } => "platform_specific",
     }
+}
+
+fn qq_event_type(event: &BotEvent) -> Option<String> {
+    event
+        .ext
+        .get("qqbot.event_type")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .or_else(|| match &event.kind {
+            BotEventKind::PlatformSpecific(name) => Some(name.clone()),
+            _ => None,
+        })
 }
 
 fn actor_role(event: &BotEvent) -> Option<&str> {
@@ -363,6 +390,7 @@ pub fn source_kinds_for_node(node_type_id: &str) -> &'static [&'static str] {
         "mutsuki.bot.qq.member.left" => &["member_left"],
         "mutsuki.bot.qq.bot.connected" => &["bot_connected"],
         "mutsuki.bot.qq.bot.disconnected" => &["bot_disconnected"],
+        "mutsuki.bot.qq.platform" => &["platform_specific"],
         _ => &[],
     }
 }
@@ -399,7 +427,9 @@ pub fn match_node_catalog() -> BotNodeCatalogFragment {
                             "items": enum_items(&[
                                 ("private", "私聊"),
                                 ("group", "群"),
-                                ("channel", "频道")
+                                ("channel", "频道"),
+                                ("conversation", "会话"),
+                                ("platform_specific", "平台会话")
                             ])
                         }
                     }
@@ -530,6 +560,24 @@ pub fn match_node_catalog() -> BotNodeCatalogFragment {
                     }
                 }),
             ),
+            match_node(
+                "mutsuki.bot.match.qq_event",
+                "QQ 事件",
+                BOT_FLOW_QQ_EVENT_PROTOCOL_ID,
+                json!({
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["event_types"],
+                    "properties": {
+                        "event_types": {
+                            "type": "array",
+                            "title": "QQ 事件类型",
+                            "minItems": 1,
+                            "items": {"type": "string", "minLength": 1, "title": "事件类型"}
+                        }
+                    }
+                }),
+            ),
         ],
     }
 }
@@ -554,23 +602,23 @@ fn match_node(
         ports: vec![
             BotNodePortDescriptor {
                 port_id: "event".into(),
-                title: "消息".into(),
+                title: "事件".into(),
                 direction: BotNodePortDirection::Input,
-                event_type: BotFlowTypeRef::new(BOT_FLOW_MESSAGE_EVENT_TYPE, 1),
+                event_type: BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1),
                 required: false,
             },
             BotNodePortDescriptor {
                 port_id: "matched".into(),
                 title: "通过".into(),
                 direction: BotNodePortDirection::Output,
-                event_type: BotFlowTypeRef::new(BOT_FLOW_MESSAGE_EVENT_TYPE, 1),
+                event_type: BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1),
                 required: false,
             },
             BotNodePortDescriptor {
                 port_id: "unmatched".into(),
                 title: "未通过".into(),
                 direction: BotNodePortDirection::Output,
-                event_type: BotFlowTypeRef::new(BOT_FLOW_MESSAGE_EVENT_TYPE, 1),
+                event_type: BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1),
                 required: false,
             },
         ],
@@ -608,7 +656,9 @@ fn runtime_error(
 
 #[cfg(test)]
 mod tests {
-    use mutsuki_bot_protocol::{BotAccountRef, BotMessage, BotPlatform, BotUser};
+    use mutsuki_bot_protocol::{
+        BOT_FLOW_MESSAGE_EVENT_TYPE, BotAccountRef, BotMessage, BotPlatform, BotUser,
+    };
 
     use super::*;
 
@@ -702,6 +752,7 @@ mod tests {
                 "关键词匹配",
                 "提及机器人",
                 "限流",
+                "QQ 事件",
             ]
         );
         assert!(
@@ -724,9 +775,10 @@ mod tests {
             .iter()
             .find(|node| node.node_type_id == "mutsuki.bot.match.prefix")
             .unwrap();
-        assert_eq!(
-            prefix.ports[0].event_type.type_id,
-            BOT_FLOW_MESSAGE_EVENT_TYPE
+        assert_eq!(prefix.ports[0].event_type.type_id, BOT_FLOW_BOT_EVENT_TYPE);
+        assert!(
+            BotFlowTypeRef::new(BOT_FLOW_MESSAGE_EVENT_TYPE, 1)
+                .assigns_to(&BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1))
         );
     }
 
