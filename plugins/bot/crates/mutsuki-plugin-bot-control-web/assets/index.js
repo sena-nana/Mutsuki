@@ -135,7 +135,11 @@ function mountSnapshotPage(host, { events, domains, load, render }) {
   };
 }
 
-function mountPlugins(host, rpc, events) {
+function pluginHomeHash(pluginId) {
+  return `#/plugins/${pluginId}`;
+}
+
+function mountPlugins(host, rpc, events, ctx) {
   return mountSnapshotPage(host, {
     events,
     domains: ["plugins"],
@@ -153,6 +157,16 @@ function mountPlugins(host, rpc, events) {
         const card = document.createElement("section");
         card.className = "card";
         card.innerHTML = `<h2>${escapeHtml(plugin.plugin_id)}</h2><p class="muted">当前部署：${escapeHtml(plugin.active_deployment || "—")}</p>`;
+        if (ctx?.pages?.list?.().some((page) => page.id === plugin.plugin_id)) {
+          const open = document.createElement("button");
+          open.type = "button";
+          open.className = "ghost";
+          open.textContent = "查看插件";
+          open.onclick = () => {
+            location.hash = pluginHomeHash(plugin.plugin_id);
+          };
+          card.appendChild(open);
+        }
         for (const candidate of plugin.candidates || []) {
           const row = document.createElement("div");
           row.className = "tree-item row-item";
@@ -591,7 +605,7 @@ export default {
   id: "control",
   setup(ctx) {
     const pages = [
-      ["control.plugins", "/plugins", "插件", 10, mountPlugins],
+      ["control.plugins", "/plugins", "插件", 10, (element, rpc, events) => mountPlugins(element, rpc, events, ctx)],
       ["control.runners", "/runners", "运行器", 20, mountRunners],
       ["control.events", "/events", "事件源", 30, mountEventSources],
       ["control.topology", "/topology", "拓扑", 40, mountTopology],

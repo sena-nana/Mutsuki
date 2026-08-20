@@ -44,15 +44,12 @@ Default listen is loopback. Non-loopback requires TLS or explicit remote auth to
 
 `@mutsuki/web-shell` renders extension pages from scoped registries:
 
-- `activities`: top/bottom work domains shown in the compact activity bar.
-- `pages`: mountable page components with stable ids and Hash-route paths.
-- `navigation`: links an `activityId` to a `pageId`; paths are never duplicated here.
-- `slots`: named hosts such as `overview.cards` and `config.editor`.
+- `activities`: product baseline is `home`, `plugins` (or `settings`), and `system`. Extensions may register extra first-level activities; duplicate ids are reused.
+- `pages`: mountable components. Optional `pluginId` / `pluginIds` mark plugin-owned extra pages.
+- `navigation`: links an `activityId` to a `pageId`.
+- `slots`: `overview.cards`, `config.editor`, and `plugin.home`. Cards with `pluginId` also mount on that plugin's hub page.
 
-The product WebApplication declares its fixed activity catalog. WebExtensions register only real
-pages backed by their owner RPC, and the Shell removes entries unavailable to the authenticated
-session. Every registration and mounted page must return a disposable lifecycle handle when it
-owns subscriptions, timers, or other effects.
+After extensions load, the Shell fills missing `#/plugins/{pluginId}` hub pages. Extra pages stay off the plugin sidebar and are linked from the hub. Unavailable session entries are removed. Registrations that own effects must return a disposable.
 
 Published events remain in each session's bounded queue and wake that session's WebSocket writer
 immediately. The readiness signal carries no payload or policy: `mutsuki-web-bridge` owns fanout and

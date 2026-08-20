@@ -64,6 +64,10 @@ export interface PageRegistration {
   title: string;
   component: PageComponent;
   requiredCapability?: string;
+  /** Runtime plugin / config provider that owns this extra page. */
+  pluginId?: string;
+  /** Additional owners when one page belongs to multiple plugins. */
+  pluginIds?: string[];
 }
 
 export interface PageComponent {
@@ -93,6 +97,9 @@ export interface SlotRegistration {
   slot: string;
   component: unknown;
   requiredCapability?: string;
+  /** Runtime plugin / config provider that owns this contribution. */
+  pluginId?: string;
+  pluginIds?: string[];
 }
 
 export interface CommandRegistration {
@@ -670,30 +677,56 @@ function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
 
-export function createRegistry<T extends { id: string }>(): Registry<T> & {
+export function pluginIdsOf(item: {
+  pluginId?: string;
+  pluginIds?: string[];
+} | null | undefined): string[] {
+  return [...new Set([item?.pluginId, ...(item?.pluginIds || [])].filter(Boolean) as string[])];
+}
+
+export function createRegistry<T extends { id: string }>(
+  options: { onDuplicate?: "throw" | "retain" } = {},
+): Registry<T> & {
   list(): T[];
   clear(): void;
 } {
-  const items = new Map<string, T>();
+  const onDuplicate = options.onDuplicate ?? "throw";
+  const items = new Map<string, { value: T; refs: number }>();
   return {
     register(item) {
-      if (items.has(item.id)) {
-        throw new Error(`duplicate registration id: ${item.id}`);
+      const existing = items.get(item.id);
+      if (existing) {
+        if (onDuplicate === "throw") {
+          throw new Error(`duplicate registration id: ${item.id}`);
+        }
+        existing.refs += 1;
+        return {
+          dispose() {
+            release(item.id);
+          },
+        };
       }
-      items.set(item.id, item);
+      items.set(item.id, { value: item, refs: 1 });
       return {
         dispose() {
-          items.delete(item.id);
+          release(item.id);
         },
       };
     },
     list() {
-      return [...items.values()];
+      return [...items.values()].map((entry) => entry.value);
     },
     clear() {
       items.clear();
     },
   };
+
+  function release(id: string) {
+    const current = items.get(id);
+    if (!current) return;
+    current.refs -= 1;
+    if (current.refs <= 0) items.delete(id);
+  }
 }
 
 /** Error boundary helper — one extension must not crash the shell. */

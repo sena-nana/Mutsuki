@@ -103,7 +103,8 @@ async fn qq_management_rpc_uses_authenticated_capabilities_confirmation_and_fixe
     assert!(frontend.contains("overview.cards"));
     assert!(frontend.contains("overview-cards"));
     assert!(!frontend.contains(r#"element("div", "stack")"#));
-    assert!(frontend.contains("config.editor"));
+    assert!(frontend.contains("pluginId: QQ_PROVIDER_ID"));
+    assert!(!frontend.contains("config.editor"));
     assert!(!frontend.contains("__mutsukiConfigEditors"));
     assert!(!frontend.contains("签名"));
     assert!(!frontend.contains("健康检查"));

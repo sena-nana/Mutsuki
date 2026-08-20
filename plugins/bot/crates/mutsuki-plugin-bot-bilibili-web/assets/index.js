@@ -517,6 +517,13 @@ export function mountBilibiliPanel(host, rpc, events) {
 export default {
   id: "bilibili",
   setup(ctx) {
+    ctx.activities.register({
+      id: "bot",
+      label: "Bot",
+      icon: "bot",
+      order: 10,
+      position: "top",
+    });
     ctx.navigation.register({
       id: "bilibili.nav",
       activityId: "bot",
@@ -529,6 +536,7 @@ export default {
       id: "bilibili.page",
       path: "/bilibili",
       title: "B站推送",
+      pluginId: "mutsuki.bot.bilibili",
       component: {
         mount(el) {
           const panel = mountBilibiliPanel(el, ctx.rpc, ctx.events);

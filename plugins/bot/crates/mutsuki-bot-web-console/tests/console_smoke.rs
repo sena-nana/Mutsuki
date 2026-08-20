@@ -81,11 +81,16 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
     assert!(shell_js.contains("console-context"));
     assert!(shell_js.contains("console-page-header__actions"));
     assert!(shell_js.contains("is-context-hidden"));
+    assert!(shell_js.contains("finalizePluginActivity"));
     assert!(shell_js.contains("sandbox:"));
     let options: serde_json::Value =
         serde_json::from_str(&http_get_body(&addr, "/console-options.json").await).unwrap();
     let activities = options["activities"].as_array().unwrap();
     assert!(!activities.iter().any(|item| item["id"] == "config"));
+    assert!(!activities.iter().any(|item| item["id"] == "plugins"));
+    assert!(!activities.iter().any(|item| item["id"] == "bot"));
+    assert!(!activities.iter().any(|item| item["id"] == "automation"));
+    assert!(!activities.iter().any(|item| item["id"] == "sandbox"));
     assert!(
         activities
             .iter()
@@ -321,7 +326,14 @@ async fn embedded_console_with_config_shell() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|item| { item["id"] == "config" && item["position"] == "top" })
+            .any(|item| { item["id"] == "plugins" && item["position"] == "top" })
+    );
+    assert!(
+        !parsed["activities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["id"] == "config")
     );
     assert!(
         !parsed["activities"]
@@ -333,6 +345,9 @@ async fn embedded_console_with_config_shell() {
     let config_path = versioned_module_path(&options, "./extensions/config/index.js");
     let config_js = http_get_body(&addr, &format!("/{config_path}")).await;
     assert!(config_js.contains("export function mountConfigPanel"));
+    assert!(config_js.contains("activityId: \"plugins\""));
+    assert!(config_js.contains("该插件提供了"));
+    assert!(config_js.contains("plugin.home"));
 
     host.stop().await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -569,7 +584,8 @@ async fn embedded_console_mounts_qq_management_extension() {
     let qq_js = http_get_body(&addr, &format!("/{qq_path}")).await;
     assert!(qq_js.contains("mountQqAccountCards"));
     assert!(qq_js.contains("overview.cards"));
-    assert!(qq_js.contains("config.editor"));
+    assert!(qq_js.contains("pluginId: QQ_PROVIDER_ID"));
+    assert!(!qq_js.contains("config.editor"));
     assert!(qq_js.contains("请到配置里填写账号"));
     assert!(qq_js.contains("self_user"));
     assert!(qq_js.contains("qq-account-avatar"));
@@ -626,7 +642,7 @@ async fn embedded_console_serves_sandbox_panel() {
     let options = http_get_body(&addr, "/console-options.json").await;
     let parsed: serde_json::Value = serde_json::from_str(&options).unwrap();
     assert!(
-        parsed["activities"]
+        !parsed["activities"]
             .as_array()
             .unwrap()
             .iter()
@@ -636,7 +652,7 @@ async fn embedded_console_serves_sandbox_panel() {
     let js = http_get_body(&addr, &format!("/{path}")).await;
     assert!(js.contains("mountSandboxPanel"));
     assert!(js.contains("activityId: \"sandbox\""));
-    assert!(!js.contains("ctx.activities.register"));
+    assert!(js.contains("ctx.activities.register"));
     assert!(js.contains("添加用户"));
     assert!(js.contains("真实数据"));
     assert!(!js.contains("inject_into_flow"));

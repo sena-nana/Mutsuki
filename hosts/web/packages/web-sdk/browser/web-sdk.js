@@ -1891,27 +1891,46 @@ async function decodeWireMessage(data) {
 function asError(error) {
   return error instanceof Error ? error : new Error(String(error));
 }
-function createRegistry() {
+function pluginIdsOf(item) {
+  return [...new Set([item?.pluginId, ...item?.pluginIds || []].filter(Boolean))];
+}
+function createRegistry(options = {}) {
+  const onDuplicate = options.onDuplicate ?? "throw";
   const items = /* @__PURE__ */ new Map();
   return {
     register(item) {
-      if (items.has(item.id)) {
-        throw new Error(`duplicate registration id: ${item.id}`);
+      const existing = items.get(item.id);
+      if (existing) {
+        if (onDuplicate === "throw") {
+          throw new Error(`duplicate registration id: ${item.id}`);
+        }
+        existing.refs += 1;
+        return {
+          dispose() {
+            release(item.id);
+          }
+        };
       }
-      items.set(item.id, item);
+      items.set(item.id, { value: item, refs: 1 });
       return {
         dispose() {
-          items.delete(item.id);
+          release(item.id);
         }
       };
     },
     list() {
-      return [...items.values()];
+      return [...items.values()].map((entry) => entry.value);
     },
     clear() {
       items.clear();
     }
   };
+  function release(id) {
+    const current = items.get(id);
+    if (!current) return;
+    current.refs -= 1;
+    if (current.refs <= 0) items.delete(id);
+  }
 }
 function withExtensionBoundary(extensionId, run, onError) {
   try {
@@ -1925,5 +1944,6 @@ export {
   WebBridgeClient,
   WebBridgeError,
   createRegistry,
+  pluginIdsOf,
   withExtensionBoundary
 };
