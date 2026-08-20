@@ -2397,6 +2397,12 @@ impl ServiceRuntimeInner {
                 .iter()
                 .map(|record| record.manifest.plugin_id.clone()),
         );
+        plugin_ids.extend(
+            catalog
+                .records
+                .iter()
+                .map(|record| record.manifest.plugin_id.clone()),
+        );
         let plugins = plugin_ids
             .into_iter()
             .map(|plugin_id| {
@@ -5405,6 +5411,32 @@ generation = 7
                 .iter()
                 .any(|plugin| plugin.plugin_id == "mutsuki.dynamic.test")
         );
+    }
+
+    #[tokio::test]
+    async fn plugin_list_includes_loaded_records_missing_from_configured_and_candidates() {
+        let dir = tempdir().expect("temp dir");
+        let inner = test_started_runtime_inner("token", dir.path()).await;
+        {
+            let mut catalog = inner.catalog.lock().expect("catalog mutex");
+            catalog.records.push(PluginRecord {
+                manifest_path: "<builtin>".into(),
+                manifest: minimal_manifest("mutsuki.bot.mihuashi"),
+                runtime: None,
+                resolved_artifact: None,
+            });
+        }
+
+        let plugins: PluginListResponse =
+            control_result!(inner.plugin_list(), ControlResult::PluginList);
+        let loaded = plugins
+            .plugins
+            .iter()
+            .find(|plugin| plugin.plugin_id == "mutsuki.bot.mihuashi")
+            .expect("records-only plugin");
+        assert!(!loaded.configured);
+        assert_eq!(loaded.active_deployment.as_deref(), Some("builtin"));
+        assert!(loaded.candidates.is_empty());
     }
 
     #[test]

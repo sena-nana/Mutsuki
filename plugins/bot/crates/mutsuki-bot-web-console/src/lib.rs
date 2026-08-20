@@ -195,10 +195,19 @@ pub fn build_console_host_with_agent(
         ));
     }
 
+    let include_bilibili = match &bilibili {
+        Some(_) => true,
+        None if config.has_extension("bilibili") => {
+            return Err(mutsuki_web_host::WebHostError::InvalidConfig(
+                "bilibili WebExtension requires its management service".into(),
+            ));
+        }
+        None => false,
+    };
     let asset_dirs = ConsoleAssetDirs::materialize(
         config.has_extension("config"),
         config.has_extension("upgrade"),
-        config.has_extension("bilibili"),
+        include_bilibili,
         config.has_extension("qq"),
         config.has_extension("agent"),
         config.has_extension("bot-flow-editor"),
@@ -246,12 +255,7 @@ pub fn build_console_host_with_agent(
         }
         builder = builder.extension(extension);
     }
-    if config.has_extension("bilibili") {
-        let service = bilibili.ok_or_else(|| {
-            mutsuki_web_host::WebHostError::InvalidConfig(
-                "bilibili WebExtension requires its management service".into(),
-            )
-        })?;
+    if let Some(service) = bilibili {
         builder = builder.extension(
             BilibiliWebExtension::new(service).with_frontend_assets(&asset_dirs.bilibili_assets),
         );

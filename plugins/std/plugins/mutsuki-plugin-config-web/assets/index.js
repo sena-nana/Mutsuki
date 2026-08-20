@@ -662,16 +662,45 @@ function appendPluginPages(parent, ctx, pluginId, homePageId) {
   parent.appendChild(card);
 }
 
-async function loadPluginInfo(rpc, pluginId) {
-  if (!pluginId) return null;
+async function loadPluginList(rpc) {
   try {
     const value = rpc.read
       ? await rpc.read("control", "plugin_list")
       : await rpc.call("control", "plugin_list", {});
-    return (value?.plugins || []).find((item) => item.plugin_id === pluginId) || null;
+    return Array.isArray(value?.plugins) ? value.plugins : [];
   } catch {
-    return null;
+    return [];
   }
+}
+
+async function loadPluginInfo(rpc, pluginId) {
+  if (!pluginId) return null;
+  return (await loadPluginList(rpc)).find((item) => item.plugin_id === pluginId) || null;
+}
+
+function registerPluginHub(ctx, { id, title, group, order, requiredCapability }) {
+  ctx.pages.register({
+    id,
+    path: `/plugins/${id}`,
+    title,
+    pluginId: id,
+    component: {
+      mount(el) {
+        const panel = mountPluginHome(el, ctx, id, id);
+        return { dispose: () => panel?.destroy?.() };
+      },
+    },
+    requiredCapability,
+  });
+  ctx.navigation.register({
+    id: `${id}.nav`,
+    activityId: "plugins",
+    pageId: id,
+    label: title,
+    group,
+    order,
+    requiredCapability,
+  });
 }
 
 /** Embeddable config panel (no outer console shell). Used by the unified overview shell. */
@@ -1037,32 +1066,32 @@ export default {
         return { group, item, schema };
       }),
     ));
+    const covered = new Set();
     providers.forEach((provider, order) => {
       const { group, item, schema } = provider;
       const providerId = item.provider_id;
-      const title = item.label || schema?.title?.default || "配置";
-      ctx.pages.register({
+      registerPluginHub(ctx, {
         id: providerId,
-        path: `/plugins/${providerId}`,
-        title,
-        pluginId: providerId,
-        component: {
-          mount(el) {
-            const panel = mountPluginHome(el, ctx, providerId, providerId);
-            return { dispose: () => panel?.destroy?.() };
-          },
-        },
-        requiredCapability: "config.schema.read",
-      });
-      ctx.navigation.register({
-        id: `${providerId}.nav`,
-        activityId: "plugins",
-        pageId: providerId,
-        label: title,
+        title: item.label || schema?.title?.default || "配置",
         group: group.label || undefined,
         order,
         requiredCapability: "config.schema.read",
       });
+      covered.add(providerId);
     });
+    let order = providers.length;
+    for (const plugin of await loadPluginList(ctx.rpc)) {
+      const pluginId = String(plugin.plugin_id || "");
+      if (!pluginId || covered.has(pluginId) || !(plugin.configured || plugin.active_deployment)) continue;
+      registerPluginHub(ctx, {
+        id: pluginId,
+        title: pluginId,
+        group: "已加载",
+        order,
+        requiredCapability: "runtime.read",
+      });
+      covered.add(pluginId);
+      order += 1;
+    }
   },
 };

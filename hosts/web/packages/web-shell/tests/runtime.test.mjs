@@ -234,3 +234,70 @@ test("finalizePluginActivity adds hub pages for extra plugin-owned pages", () =>
   disposable.dispose();
   assert.equal(state.pages.list().some((page) => page.id === "mutsuki.bot.bilibili"), false);
 });
+
+function configExtensionUrl() {
+  return new URL(
+    "../../../../../plugins/std/plugins/mutsuki-plugin-config-web/assets/index.js",
+    import.meta.url,
+  ).href;
+}
+
+async function loadConfigExtension(rpc) {
+  const state = createShellState();
+  state.activities.register({ id: "plugins", label: "插件", icon: "config" });
+  await loadExtensions(
+    state,
+    [{ id: "config", url: configExtensionUrl() }],
+    () => createExtensionContext(state, rpc, { subscribe() { return { dispose() {} }; } }),
+  );
+  assert.deepEqual(state.failures, []);
+  return state;
+}
+
+function pluginRpc({ navigation, plugins = [], pluginListError } = {}) {
+  return {
+    async call(namespace, method, params = {}) {
+      if (namespace === "config" && method === "navigation.list") return navigation;
+      if (namespace === "config" && method === "schema.get") {
+        return { title: { default: params.provider_id } };
+      }
+      if (namespace === "control" && method === "plugin_list") {
+        if (pluginListError) throw pluginListError;
+        return { plugins };
+      }
+      throw new Error(`unexpected call ${namespace}/${method}`);
+    },
+    read(namespace, method, params) {
+      return this.call(namespace, method, params);
+    },
+  };
+}
+
+test("config extension lists loaded plugins that are not config providers", async () => {
+  const state = await loadConfigExtension(pluginRpc({
+    navigation: [{ label: "接入", items: [{ provider_id: "mutsuki.bot.adapter.qqbot", label: "QQ 登录" }] }],
+    plugins: [
+      { plugin_id: "mutsuki.bot.adapter.qqbot", configured: true, active_deployment: "builtin" },
+      { plugin_id: "mutsuki.bot.mihuashi", configured: true, active_deployment: "builtin" },
+      { plugin_id: "mutsuki.plugin.resource.memory", configured: false, active_deployment: "builtin" },
+      { plugin_id: "mutsuki.catalog.only", configured: false, active_deployment: null },
+    ],
+  }));
+  const nav = Object.fromEntries(state.navigation.list().map((item) => [item.pageId, item]));
+  assert.equal(nav["mutsuki.bot.adapter.qqbot"].label, "QQ 登录");
+  assert.equal(nav["mutsuki.bot.adapter.qqbot"].group, "接入");
+  assert.equal(nav["mutsuki.bot.mihuashi"].group, "已加载");
+  assert.equal(nav["mutsuki.plugin.resource.memory"].group, "已加载");
+  assert.equal(nav["mutsuki.catalog.only"], undefined);
+  validateShellState(state);
+});
+
+test("config extension keeps provider navigation when plugin_list fails", async () => {
+  const state = await loadConfigExtension(pluginRpc({
+    navigation: [{ items: [{ provider_id: "product", label: "工作区" }] }],
+    pluginListError: new Error("control unavailable"),
+  }));
+  assert.ok(state.navigation.list().some((item) => item.pageId === "product" && item.label === "工作区"));
+  assert.equal(state.navigation.list().some((item) => item.group === "已加载"), false);
+  validateShellState(state);
+});
