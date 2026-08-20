@@ -1,4 +1,4 @@
-import { mountLiliaNodeEditor, samePortType } from "./lilia-node-editor.js";
+import { NODE_WIDTH, mountLiliaNodeEditor, samePortType } from "./lilia-node-editor.js";
 
 const ERROR_TYPE = { type_id: "mutsuki.bot.flow.error", version: 1 };
 
@@ -53,14 +53,6 @@ function sourceSelector(desc) {
 
 export async function mountBotFlowEditor(el, rpc) {
   el.innerHTML = `<div class="lilia-node-editor lilia-workspace" data-lilia-surface-mode="solid" data-agent-id="bot-flow-editor">
-    <aside class="lilia-workspace-region lilia-node-editor__palette" data-region="start">
-      <div class="lilia-workspace-region__content lilia-node-editor__pane">
-        <div class="toolbar nested">
-          <h2 class="lilia-node-editor__pane-title">节点</h2>
-        </div>
-        <div id="flow-catalog" class="lilia-node-editor__catalog"></div>
-      </div>
-    </aside>
     <section class="lilia-workspace-region lilia-node-editor__stage" data-region="main">
       <div class="lilia-workspace-region__content lilia-node-editor__stage-body">
         <div class="lilia-node-editor__toolbar">
@@ -79,7 +71,6 @@ export async function mountBotFlowEditor(el, rpc) {
       </div>
     </aside>
   </div>`;
-  const catalogHost = el.querySelector("#flow-catalog");
   const propertyHost = el.querySelector("#flow-properties");
   const issuesHost = el.querySelector("#flow-issues");
   const stateHost = el.querySelector("#flow-state");
@@ -114,15 +105,14 @@ export async function mountBotFlowEditor(el, rpc) {
     onInvalidConnect() {
       issuesHost.innerHTML = `<div class="error-banner">这两个端口不能连接。</div>`;
     },
-    onDropPalette(item, position) {
-      addNode(item.node_type_id, item.version, position);
-    },
+    onContextMenu: openCanvasMenu,
   });
   let catalog = [];
   let snapshot;
   let flow = emptyFlow();
   let selectedNode = null;
   let selectedEdgeId = null;
+  let contextMenu = null;
 
   function descriptor(node) { return catalog.find((item) => item.node_type_id === node.node_type_id && item.version === node.node_type_version); }
   function markUnsaved() {
@@ -134,18 +124,124 @@ export async function mountBotFlowEditor(el, rpc) {
     stateHost.className = "pill ok";
   }
 
-  function renderCatalog() {
+  function deleteSelectedNode() {
+    if (!selectedNode) return;
+    const nodeId = selectedNode.node_id;
+    flow.nodes = flow.nodes.filter((node) => node.node_id !== nodeId);
+    flow.edges = flow.edges.filter((edge) => edge.from_node_id !== nodeId && edge.to_node_id !== nodeId);
+    selectedNode = null;
+    markUnsaved();
+    render();
+  }
+
+  function deleteSelectedEdge() {
+    if (!selectedEdgeId) return;
+    flow.edges = flow.edges.filter((edge) => edge.edge_id !== selectedEdgeId);
+    selectedEdgeId = null;
+    markUnsaved();
+    render();
+  }
+
+  function closeContextMenu() {
+    contextMenu?.remove();
+    contextMenu = null;
+  }
+
+  function leaves(items, group) {
+    return items.flatMap((item) => item.children?.length ? leaves(item.children, item.label) : [{ ...item, group }]);
+  }
+
+  function itemMarkup(item, index) {
+    return `<div class="ctx-menu__entry"><button type="button" class="ctx-menu__item${item.danger ? " ctx-menu__item--danger" : ""}" data-i="${index}"><span class="ctx-menu__label">${esc(item.label)}</span>${item.group ? `<small class="ctx-menu__meta">${esc(item.group)}</small>` : ""}${item.children?.length ? `<span class="ctx-menu__arrow">&gt;</span>` : ""}</button></div>`;
+  }
+
+  function bindRows(host, rows) {
+    const clear = () => {
+      host.querySelector(".ctx-menu__submenu")?.remove();
+      host.querySelector(".ctx-menu__item--submenu-active")?.classList.remove("ctx-menu__item--submenu-active");
+    };
+    host.querySelectorAll("[data-i]").forEach((button) => {
+      const item = rows[Number(button.dataset.i)];
+      if (item.children?.length) {
+        button.onmouseenter = () => {
+          clear();
+          button.classList.add("ctx-menu__item--submenu-active");
+          const sub = document.createElement("div");
+          sub.className = "ctx-menu__submenu";
+          sub.innerHTML = item.children.map((child, index) => itemMarkup(child, index)).join("");
+          sub.querySelectorAll("[data-i]").forEach((childBtn) => {
+            childBtn.onclick = () => {
+              closeContextMenu();
+              item.children[Number(childBtn.dataset.i)].onSelect?.();
+            };
+          });
+          button.parentElement.append(sub);
+        };
+        return;
+      }
+      button.onmouseenter = clear;
+      button.onclick = () => {
+        closeContextMenu();
+        item.onSelect?.();
+      };
+    });
+  }
+
+  function openContextMenu(x, y, items, searchable = false) {
+    closeContextMenu();
+    if (!items.length) return;
+    const menu = document.createElement("div");
+    menu.className = `ctx-menu${searchable ? " ctx-menu--searchable" : ""}`;
+    menu.setAttribute("role", "menu");
+    const paint = (query = "") => {
+      const q = query.trim().toLocaleLowerCase();
+      const rows = q
+        ? leaves(items).filter((item) => [item.label, item.id, item.group, ...(item.keywords || [])].join(" ").toLocaleLowerCase().includes(q))
+        : items;
+      menu.innerHTML = `${searchable ? `<label class="ctx-menu__search"><input type="search" placeholder="搜索" value="${esc(query)}" /></label>` : ""}${q && !rows.length ? `<p class="ctx-menu__empty">没有匹配项</p>` : rows.map(itemMarkup).join("")}`;
+      const input = menu.querySelector("input");
+      if (input) {
+        input.oninput = () => paint(input.value);
+        input.focus();
+        input.setSelectionRange(query.length, query.length);
+      }
+      bindRows(menu, rows);
+    };
+    paint();
+    document.body.append(menu);
+    const rect = menu.getBoundingClientRect();
+    menu.style.left = `${Math.max(8, Math.min(x, innerWidth - rect.width - 8))}px`;
+    menu.style.top = `${Math.max(8, Math.min(y, innerHeight - rect.height - 8))}px`;
+    contextMenu = menu;
+  }
+
+  function openCanvasMenu(payload) {
+    if (payload.kind === "node") {
+      openContextMenu(payload.clientX, payload.clientY, [{ label: "删除", danger: true, onSelect: deleteSelectedNode }]);
+      return;
+    }
+    if (payload.kind === "edge") {
+      openContextMenu(payload.clientX, payload.clientY, [{ label: "删除连线", danger: true, onSelect: deleteSelectedEdge }]);
+      return;
+    }
     const groups = new Map();
     catalog.forEach((node) => {
       const category = node.category || "其他";
       if (!groups.has(category)) groups.set(category, []);
       groups.get(category).push(node);
     });
-    catalogHost.innerHTML = [...groups].map(([category, nodes]) => `<section><h3>${esc(category)}</h3>${nodes.map((node) => `<button type="button" class="ghost lilia-node-editor__type" draggable="true" data-node-type="${esc(node.node_type_id)}" data-version="${node.version}">${esc(node.title)}</button>`).join("")}</section>`).join("");
-    catalogHost.querySelectorAll("[data-node-type]").forEach((button) => {
-      button.onclick = () => addNode(button.dataset.nodeType, Number(button.dataset.version));
-      button.ondragstart = (event) => event.dataTransfer.setData("application/x-mutsuki-node", JSON.stringify({ node_type_id: button.dataset.nodeType, version: Number(button.dataset.version) }));
-    });
+    openContextMenu(payload.clientX, payload.clientY, [...groups].map(([category, nodes]) => ({
+      label: category,
+      children: nodes.map((node) => ({
+        id: node.node_type_id,
+        label: node.title,
+        keywords: [category],
+        onSelect: () => addNode(node.node_type_id, node.version, {
+          x: Math.max(0, payload.world.x - NODE_WIDTH / 2),
+          y: Math.max(0, payload.world.y - 24),
+        }),
+      })),
+    })), true);
   }
 
   function addNode(type, version, position = null) {
@@ -204,7 +300,7 @@ export async function mountBotFlowEditor(el, rpc) {
 
   function graphModel() {
     return {
-      emptyText: flow.nodes.length ? "" : "从左侧拖入节点，再从输出端口拖到兼容的输入端口。",
+      emptyText: flow.nodes.length ? "" : "在空白处右键添加节点，再从输出端口拖到兼容的输入端口。",
       nodes: flow.nodes.map((node) => {
         const desc = descriptor(node);
         const ports = desc?.ports || [];
@@ -265,12 +361,7 @@ export async function mountBotFlowEditor(el, rpc) {
         selectedEdgeId = null;
       } else {
         propertyHost.innerHTML = `<p class="muted">${edge.kind === "error" ? "错误连线" : "事件连线"}</p><div class="toolbar nested"><button type="button" id="edge-delete" class="ghost danger">删除连线</button></div>`;
-        propertyHost.querySelector("#edge-delete").onclick = () => {
-          flow.edges = flow.edges.filter((item) => item.edge_id !== selectedEdgeId);
-          selectedEdgeId = null;
-          markUnsaved();
-          render();
-        };
+        propertyHost.querySelector("#edge-delete").onclick = () => deleteSelectedEdge();
         return;
       }
     }
@@ -289,14 +380,7 @@ export async function mountBotFlowEditor(el, rpc) {
       markUnsaved();
       render();
     };
-    propertyHost.querySelector("#node-delete").onclick = () => {
-      const current = flow;
-      current.nodes = current.nodes.filter((node) => node.node_id !== selectedNode.node_id);
-      current.edges = current.edges.filter((edge) => edge.from_node_id !== selectedNode.node_id && edge.to_node_id !== selectedNode.node_id);
-      selectedNode = null;
-      markUnsaved();
-      render();
-    };
+    propertyHost.querySelector("#node-delete").onclick = () => deleteSelectedNode();
     propertyHost.querySelectorAll("[data-list-add]").forEach((button) => {
       button.onclick = () => {
         const key = button.dataset.listAdd;
@@ -416,7 +500,6 @@ export async function mountBotFlowEditor(el, rpc) {
     selectedNode = null;
     selectedEdgeId = null;
     markLive();
-    renderCatalog();
     render();
   }
 
@@ -435,28 +518,27 @@ export async function mountBotFlowEditor(el, rpc) {
     }
   };
   const onKey = (event) => {
-    if (!el.contains(document.activeElement) && !el.contains(event.target)) return;
-    if (event.key === "Escape") graph.cancelDraft();
+    if (!el.contains(document.activeElement) && !el.contains(event.target) && !event.target.closest?.(".ctx-menu")) return;
+    if (event.key === "Escape") {
+      closeContextMenu();
+      graph.cancelDraft();
+    }
     if ((event.key === "Backspace" || event.key === "Delete") && !["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName)) {
-      if (selectedEdgeId) {
-        flow.edges = flow.edges.filter((edge) => edge.edge_id !== selectedEdgeId);
-        selectedEdgeId = null;
-        markUnsaved();
-        render();
-      } else if (selectedNode) {
-        flow.nodes = flow.nodes.filter((node) => node.node_id !== selectedNode.node_id);
-        flow.edges = flow.edges.filter((edge) => edge.from_node_id !== selectedNode.node_id && edge.to_node_id !== selectedNode.node_id);
-        selectedNode = null;
-        markUnsaved();
-        render();
-      }
+      if (selectedEdgeId) deleteSelectedEdge();
+      else if (selectedNode) deleteSelectedNode();
     }
   };
+  const onMenuPointerDown = (event) => {
+    if (!event.target.closest?.(".ctx-menu")) closeContextMenu();
+  };
   document.addEventListener("keydown", onKey);
+  document.addEventListener("pointerdown", onMenuPointerDown, true);
   await refresh();
   return {
     dispose() {
+      closeContextMenu();
       document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onMenuPointerDown, true);
       graph.dispose();
     },
   };
