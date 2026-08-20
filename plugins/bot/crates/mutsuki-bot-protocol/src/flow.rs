@@ -16,6 +16,7 @@ pub const BOT_FLOW_MESSAGE_DELETED_EVENT_TYPE: &str = "mutsuki.bot.event.message
 pub const BOT_FLOW_REACTION_EVENT_TYPE: &str = "mutsuki.bot.event.reaction";
 pub const BOT_FLOW_MEMBER_EVENT_TYPE: &str = "mutsuki.bot.event.member";
 pub const BOT_FLOW_LIFECYCLE_EVENT_TYPE: &str = "mutsuki.bot.event.lifecycle";
+pub const BOT_FLOW_PLATFORM_EVENT_TYPE: &str = "mutsuki.bot.event.platform";
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct BotFlowTypeRef {
@@ -29,6 +30,16 @@ impl BotFlowTypeRef {
             type_id: type_id.into(),
             version,
         }
+    }
+
+    #[must_use]
+    pub fn assigns_to(&self, target: &Self) -> bool {
+        if self == target {
+            return true;
+        }
+        self.version == target.version
+            && target.type_id == BOT_FLOW_BOT_EVENT_TYPE
+            && self.type_id.starts_with("mutsuki.bot.event.")
     }
 }
 

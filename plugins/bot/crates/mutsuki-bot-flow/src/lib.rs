@@ -330,7 +330,7 @@ fn validate_graph(
             BotFlowEdgeKind::Error => Some(&error_type),
         };
         match (from_type, to_port) {
-            (Some(from_type), Some(to_port)) if from_type == &to_port.event_type => {}
+            (Some(from_type), Some(to_port)) if from_type.assigns_to(&to_port.event_type) => {}
             (None, _) | (_, None) => push_issue(
                 issues,
                 "flow.edge.port_missing",

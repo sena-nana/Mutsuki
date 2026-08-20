@@ -1,5 +1,5 @@
 use mutsuki_bot_protocol::{
-    BotAccountRef, BotEvent, BotEventKind, BotExtMap, BotMessage, BotPlatform, BotUser,
+    BotAccountRef, BotEvent, BotEventKind, BotExtMap, BotMessage, BotPlatform, BotTarget, BotUser,
     MessageSegment,
 };
 use serde_json::{Value, json};
@@ -81,6 +81,31 @@ pub fn qq_gateway_frame_to_bot_event(
         raw: None,
         ext,
     })
+}
+
+#[must_use]
+pub fn qq_bot_disconnected_event(account_id: &str) -> BotEvent {
+    let mut ext = BotExtMap::new();
+    ext.insert(
+        "qqbot.event_type".into(),
+        Value::String("DISCONNECTED".into()),
+    );
+    let now_ms = OffsetDateTime::now_utc().unix_timestamp() * 1_000;
+    BotEvent {
+        event_id: format!("qqbot:disconnected:{account_id}:{now_ms}"),
+        platform: BotPlatform::QqBot,
+        bot: BotAccountRef {
+            account_id: account_id.into(),
+            platform: BotPlatform::QqBot,
+        },
+        kind: BotEventKind::BotDisconnected,
+        time_ms: now_ms,
+        target: BotTarget::platform_specific("qqbot", "session", account_id),
+        actor: None,
+        message: None,
+        raw: None,
+        ext,
+    }
 }
 
 fn qq_event_kind(event_type: &str) -> BotEventKind {
@@ -194,33 +219,45 @@ fn qq_actor_id(author: &Value) -> Option<(String, bool)> {
         .map(|user_id| (user_id.to_owned(), false))
 }
 
+fn encoded_role(value: &Value) -> Option<String> {
+    value
+        .as_str()
+        .map(str::to_ascii_lowercase)
+        .or_else(|| value.as_u64().map(|rank| rank.to_string()))
+}
+
 fn qq_actor_role(data: &Value) -> Option<&'static str> {
-    let roles = data
-        .get("member")
-        .and_then(|member| member.get("roles"))
-        .or_else(|| data.get("roles"))
-        .and_then(Value::as_array)?;
     let mut rank = 0_u8;
-    for role in roles {
-        let Some(role) = role
-            .as_str()
-            .map(str::to_ascii_lowercase)
-            .or_else(|| role.as_u64().map(|value| value.to_string()))
-        else {
-            continue;
-        };
-        rank = rank.max(match role.as_str() {
-            "4" | "owner" => 3,
-            "2" | "5" | "admin" | "administrator" => 2,
-            "1" | "member" => 1,
-            _ => 0,
-        });
+    if let Some(roles) = data
+        .pointer("/member/roles")
+        .or_else(|| data.get("roles"))
+        .and_then(Value::as_array)
+    {
+        for role in roles {
+            if let Some(encoded) = encoded_role(role) {
+                rank = rank.max(role_rank(&encoded));
+            }
+        }
+    }
+    for pointer in ["/author/member_role", "/member_role", "/author/role"] {
+        if let Some(encoded) = data.pointer(pointer).and_then(encoded_role) {
+            rank = rank.max(role_rank(&encoded));
+        }
     }
     match rank {
         3 => Some("owner"),
         2 => Some("administrator"),
         1 => Some("member"),
         _ => None,
+    }
+}
+
+fn role_rank(role: &str) -> u8 {
+    match role {
+        "4" | "owner" => 3,
+        "2" | "5" | "admin" | "administrator" => 2,
+        "1" | "member" => 1,
+        _ => 0,
     }
 }
 

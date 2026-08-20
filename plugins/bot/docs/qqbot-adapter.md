@@ -31,17 +31,21 @@ permissions appear only when a real resource provider is configured. The matrix 
 it is not a cross-platform compatibility promise.
 
 First-class event kinds (and Flow sources) are message create/update/delete, reaction add/remove,
-member join/leave and bot connected. Default Identify is documented `GUILDS`, `GROUP_AND_C2C`,
-`INTERACTION`, `MESSAGE_AUDIT` and `PUBLIC_GUILD_MESSAGES`; undocumented bit 24 is omitted.
-Official events for those intents, and forum/audio names if later subscribed, are ingested.
-Unmapped kinds stay `BotEventKind::PlatformSpecific` with no Flow source:
-`INTERACTION_CREATE`, `GROUP_ADD_ROBOT`/`DEL_ROBOT`, active-message switches, guild/channel
-create-update-delete, message audit, forum, audio and `GUILD_MEMBER_UPDATE`. They are not promoted
-to first-class kinds. `PUT /interactions/{id}` and `BotDisconnected` emission are not provided.
+member join/leave, bot connected/disconnected, plus a catch-all platform source. Default Identify
+is documented `GUILDS`, `GROUP_AND_C2C`, `INTERACTION`, `MESSAGE_AUDIT` and `PUBLIC_GUILD_MESSAGES`;
+undocumented bit 24 is omitted. Official events for those intents, and forum/audio names if later
+subscribed, are ingested. Unmapped kinds stay `BotEventKind::PlatformSpecific` and enter Flow through
+`mutsuki.bot.qq.platform` (kind `platform_specific`). Filter them with `mutsuki.bot.match.qq_event`
+on `qqbot.event_type` (or the platform-specific kind name): `INTERACTION_CREATE`,
+`GROUP_ADD_ROBOT`/`DEL_ROBOT`, active-message switches, guild/channel create-update-delete, message
+audit, forum, audio and `GUILD_MEMBER_UPDATE`. They are not promoted to first-class kinds.
+`PUT /interactions/{id}` is not provided. Gateway session end emits `BotDisconnected` so
+`mutsuki.bot.qq.bot.disconnected` can start a chain.
 
 Inbound gaps: Group/C2C cards use `ark_data` (only `ark` is read); `message_type` 3/101/102/103
 and `msg_elements` are ignored; face/attachment/keyboard/embed stay `PlatformSpecific`;
-`author.member_role` and `message_scene` are not copied. Outbound gaps: no Ark, Embed,
+`message_scene` is not copied. `author.member_role` is mapped into `qqbot.actor_role` (`owner` /
+`administrator` / `member`) together with `member.roles`. Outbound gaps: no Ark, Embed,
 `msg_type=6`, channel send, or `event_id` replies to non-message events.
 
 ## Configuration

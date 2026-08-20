@@ -335,7 +335,13 @@ fn interaction_node_catalog() -> BotNodeCatalogFragment {
                     required: false,
                 },
             ],
-            config_schema: serde_json::json!({"type": "object", "additionalProperties": false}),
+            config_schema: serde_json::json!({
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "state_ref_id": {"type": "string", "title": "状态引用"}
+                }
+            }),
         }],
     }
 }
@@ -433,10 +439,17 @@ async fn interaction_node_result(
 ) -> RuntimeResult<RunnerResult> {
     let event: BotEvent = serde_json::from_value(invocation.input.payload.value.clone())
         .map_err(|error| runtime_error(task, error))?;
+    let expected_state = invocation
+        .config
+        .get("state_ref_id")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty());
     let matched = service
         .match_event(&event, event.time_ms.max(0).cast_unsigned())
         .await
         .map_err(|error| runtime_error(task, error))?;
+    let matched =
+        matched.filter(|item| expected_state.is_none_or(|expected| expected == item.state_ref_id));
     let mut outputs = Vec::new();
     if let Some(matched) = matched {
         let retry_prompt = matched.retry_prompt.clone();
