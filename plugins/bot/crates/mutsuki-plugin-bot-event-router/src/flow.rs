@@ -258,13 +258,16 @@ impl Runner for BotFlowIngressRunner {
     }
 }
 
-fn source_accepts_envelope(source: &BotFlowNode, envelope: &BotFlowEventEnvelope) -> bool {
+pub(crate) fn source_accepts_envelope(
+    source: &BotFlowNode,
+    envelope: &BotFlowEventEnvelope,
+) -> bool {
     let types = source_kinds_for_node(&source.node_type_id);
-    if types.is_empty() {
-        return true;
+    match serde_json::from_value::<BotEvent>(envelope.payload.value.clone()) {
+        Ok(event) if event.is_self_sent_message() => false,
+        Ok(event) => types.is_empty() || event_matches_source_types(&event, types),
+        Err(_) => types.is_empty(),
     }
-    serde_json::from_value::<BotEvent>(envelope.payload.value.clone())
-        .is_ok_and(|event| event_matches_source_types(&event, types))
 }
 
 async fn run_node(
@@ -523,13 +526,81 @@ mod tests {
     use std::sync::Arc;
 
     use mutsuki_bot_protocol::{
-        BotFlowContext, BotFlowEdge, BotFlowEdgeKind, BotFlowEventEnvelope, BotFlowNode,
-        BotFlowNodePosition, BotFlowPayload, BotFlowTypeRef,
+        BOT_SELF_SENT_EXT_KEY, BotAccountRef, BotEvent, BotEventKind, BotFlowContext, BotFlowEdge,
+        BotFlowEdgeKind, BotFlowEventEnvelope, BotFlowNode, BotFlowNodePosition, BotFlowPayload,
+        BotFlowSourceSelector, BotFlowTypeRef, BotPlatform, BotTarget, BotUser,
     };
     use mutsuki_runtime_contracts::{InvocationMode, RunnerConcurrency, Task};
-    use serde_json::json;
+    use serde_json::{Value, json};
 
-    use super::{downstream_task, node_descriptor};
+    use super::{downstream_task, node_descriptor, source_accepts_envelope};
+
+    fn message_envelope(actor_id: &str, self_sent: bool) -> BotFlowEventEnvelope {
+        let mut ext = mutsuki_bot_protocol::BotExtMap::new();
+        if self_sent {
+            ext.insert(BOT_SELF_SENT_EXT_KEY.into(), Value::Bool(true));
+        }
+        let event = BotEvent {
+            event_id: "e1".into(),
+            platform: BotPlatform::QqBot,
+            bot: BotAccountRef {
+                account_id: "qq-main".into(),
+                platform: BotPlatform::QqBot,
+            },
+            kind: BotEventKind::MessageCreated,
+            time_ms: 1,
+            target: BotTarget::Group {
+                group_id: "g1".into(),
+            },
+            actor: Some(BotUser {
+                user_id: actor_id.into(),
+                display_name: Some("n".into()),
+                avatar_url: None,
+            }),
+            message: None,
+            raw: None,
+            ext,
+        };
+        BotFlowEventEnvelope {
+            event_id: "e1".into(),
+            protocol_id: "mutsuki.bot.event/ingest@1".into(),
+            payload: BotFlowPayload {
+                event_type: BotFlowTypeRef::new("mutsuki.bot.event", 1),
+                value: serde_json::to_value(event).unwrap(),
+            },
+            context: BotFlowContext {
+                bot: None,
+                target: None,
+                actor: None,
+                ext: Default::default(),
+            },
+            trace_id: None,
+            correlation_id: None,
+        }
+    }
+
+    #[test]
+    fn ingress_rejects_bot_self_sent_messages() {
+        let source = BotFlowNode {
+            node_id: "qq-message".into(),
+            node_type_id: "mutsuki.bot.qq.message.created".into(),
+            node_type_version: 1,
+            config: json!({}),
+            source: Some(BotFlowSourceSelector {
+                protocol_id: "mutsuki.bot.event/ingest@1".into(),
+                event_type: None,
+            }),
+            position: BotFlowNodePosition::default(),
+        };
+        assert!(source_accepts_envelope(
+            &source,
+            &message_envelope("member-1", false)
+        ));
+        assert!(!source_accepts_envelope(
+            &source,
+            &message_envelope("BOT_OPENID", true)
+        ));
+    }
 
     #[test]
     fn cooperative_node_runner_dispatches_one_stateful_batch_without_blocking_waiters() {

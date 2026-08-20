@@ -179,6 +179,15 @@ pub enum SandboxAction {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reply_to: Option<String>,
     },
+    IngestAsBot {
+        conversation_id: String,
+        #[serde(default)]
+        text: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        segments: Vec<MessageSegment>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reply_to: Option<String>,
+    },
     SendAsBot {
         conversation_id: String,
         #[serde(default)]

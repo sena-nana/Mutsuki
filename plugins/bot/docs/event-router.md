@@ -6,7 +6,8 @@ manifests contribute only `mutsuki.bot.flow.nodes@1` catalogs containing node ty
 configuration schemas and exact `HandlerBinding` targets.
 
 Ingress compares an event with every Source selector on the live graph. QQ Source nodes are split
-by received kind (`收到消息`, `成员加入`, `添加表情`, …). Each Source only starts a chain for that
+by received kind (`收到消息`, `成员加入`, `添加表情`, …). Bot self-sent messages
+(`ext.bot.self_sent`) do not start any Source chain. Each Source only starts a chain for that
 kind and exposes a typed output port so later nodes can require a message, member, reaction, or
 lifecycle payload. Every matched Source chain gets an independent execution identity. Source
 output edges, node output edges and error edges are explicit; multiple edges fan out, and multiple
