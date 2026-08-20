@@ -7,7 +7,6 @@ use mutsuki_bot_conversation::ConversationService;
 use mutsuki_bot_delivery::{bot_reply_delivery_manifest_for, reply_delivery_runner_for};
 use mutsuki_bot_flow::{
     BOT_FLOW_CONFIG_PROVIDER_ID, BotFlowConfigProvider, BotFlowRegistry, BotNodeCatalog,
-    validate_flow,
 };
 use mutsuki_bot_management::{BilibiliCredentialSecretState, BilibiliManagementApi};
 use mutsuki_bot_protocol::ConversationPolicy;
@@ -128,46 +127,29 @@ impl LoadPlanObserver for BotFlowLoadPlanObserver {
     fn validate(&self, plan: &RuntimeLoadPlan) -> Result<(), String> {
         self.registry
             .validate_load_plan(plan)
-            .map_err(|error| error.to_string())?;
-        let key = ConfigDocumentKey::new(BOT_FLOW_CONFIG_PROVIDER_ID, ConfigContext::global());
-        let Some(snapshot) = self
-            .config
-            .repository()
-            .read(&key)
-            .map_err(|error| error.to_string())?
-        else {
-            return Ok(());
-        };
-        let flow =
-            BotFlowConfigProvider::decode(&snapshot.value).map_err(|error| error.to_string())?;
-        let catalog = BotNodeCatalog::from_load_plan(plan).map_err(|error| error.to_string())?;
-        let validation = validate_flow(&flow, &catalog);
-        validation.valid.then_some(()).ok_or_else(|| {
-            format!(
-                "stored Bot Flow is incompatible with LoadPlan: {:?}",
-                validation.issues
-            )
-        })
+            .map_err(|error| error.to_string())
     }
 
     fn activate(&self, plan: &RuntimeLoadPlan) {
         self.registry
             .activate_load_plan(plan)
-            .expect("validated Bot Flow LoadPlan must activate");
+            .expect("validated Bot Flow LoadPlan catalog must activate");
         let key = ConfigDocumentKey::new(BOT_FLOW_CONFIG_PROVIDER_ID, ConfigContext::global());
-        if self
-            .config
-            .repository()
-            .read(&key)
-            .expect("validated ConfigRepository read must remain available")
-            .is_some()
-        {
-            futures_executor::block_on(
-                self.config
-                    .restore(BOT_FLOW_CONFIG_PROVIDER_ID, ConfigContext::global()),
-            )
-            .expect("validated Bot Flow snapshot must restore");
+        if self.config.repository().read(&key).ok().flatten().is_none() {
+            return;
         }
+        let config = self.config.clone();
+        tokio::spawn(async move {
+            if let Err(error) = config
+                .restore(BOT_FLOW_CONFIG_PROVIDER_ID, ConfigContext::global())
+                .await
+            {
+                tracing::error!(
+                    error = %error,
+                    "stored Bot Flow could not be restored after startup; routing stays on an empty graph"
+                );
+            }
+        });
     }
 }
 
@@ -975,10 +957,28 @@ pub fn configured_bot_plugin_catalog_with_agent(
 
 #[cfg(test)]
 mod tests {
+    use mutsuki_config_service::{
+        ConfigCompareAndSetRequest, ConfigContext, ConfigDocumentKey, ConfigRepository,
+        ConfigRevision, ConfigValue, InMemoryConfigRepository,
+    };
     use mutsuki_service_config::{ConfiguredPluginSelection, ServiceConfig};
     use serde_json::json;
 
     use super::*;
+
+    fn seed_stored_flow(repo: &InMemoryConfigRepository, value: ConfigValue) {
+        let mut write = repo
+            .prepare_compare_and_set(ConfigCompareAndSetRequest {
+                key: ConfigDocumentKey::new(BOT_FLOW_CONFIG_PROVIDER_ID, ConfigContext::global()),
+                expected_revision: ConfigRevision::ABSENT,
+                value,
+                schema_version: 1,
+                value_version: 2,
+            })
+            .unwrap();
+        write.commit().unwrap();
+        write.finish().unwrap();
+    }
 
     #[tokio::test]
     async fn configured_qq_plugin_fails_preflight_without_host_secret() {
@@ -1031,6 +1031,64 @@ mod tests {
             .expect(
                 "Command node plugin should accept a graph-only selection without a config table",
             );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stored_incompatible_flow_does_not_block_start() {
+        let repo = InMemoryConfigRepository::default();
+        seed_stored_flow(
+            &repo,
+            ConfigValue::from_json(&json!({
+                "flow": {
+                    "nodes": [{
+                        "node_id": "missing",
+                        "node_type_id": "does.not.exist",
+                        "node_type_version": 1
+                    }]
+                }
+            })),
+        );
+        let config = Arc::new(
+            ConfigService::new(
+                Arc::new(mutsuki_config_service::ConfigProviderRegistry::default()),
+                Arc::new(repo),
+            )
+            .unwrap(),
+        );
+        let root = tempfile::tempdir().unwrap();
+        let mut service = ServiceConfig::default();
+        service.ipc.enabled = false;
+        service.observe.console = false;
+        service.plugins.dynamic_dirs.clear();
+        service.service.home_dir = root.path().into();
+        service.service.data_dir = root.path().join("data");
+        service.service.log_dir = root.path().join("logs");
+        service.service.run_dir = root.path().join("run");
+        std::fs::create_dir_all(&service.service.data_dir).unwrap();
+        std::fs::create_dir_all(&service.service.log_dir).unwrap();
+        std::fs::create_dir_all(&service.service.run_dir).unwrap();
+        service.plugins.configured = vec![ConfiguredPluginSelection {
+            id: BOT_FLOW_ROUTER_PLUGIN_ID.into(),
+            enabled: true,
+            config: Value::Null,
+        }];
+        let mut catalog = ConfiguredPluginCatalog::new();
+        catalog
+            .register(BotFlowRouterConfiguredPlugin::new(config))
+            .unwrap();
+        let runtime = ServiceRuntimeBuilder::new(service)
+            .with_configured_plugin_catalog(catalog)
+            .start()
+            .await
+            .expect("stored Flow must not block start");
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        let snapshot = runtime
+            .host_service::<BotFlowRegistry>(BOT_FLOW_REGISTRY_SERVICE_ID)
+            .unwrap()
+            .active();
+        assert_eq!(snapshot.revision, 0);
+        assert!(snapshot.flow.nodes.is_empty());
+        runtime.shutdown().await;
     }
 
     #[test]
