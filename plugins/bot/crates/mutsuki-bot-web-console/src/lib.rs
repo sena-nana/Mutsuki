@@ -657,7 +657,7 @@ pub(crate) fn materialize_console_shell(
         json!({"id": "home", "label": "概览", "icon": "home", "order": 0, "position": "top"}),
         json!({"id": "bot", "label": "Bot", "icon": "bot", "order": 10, "position": "top"}),
         json!({"id": "automation", "label": "自动化", "icon": "flow", "order": 20, "position": "top"}),
-        json!({"id": "system", "label": "系统", "icon": "system", "order": 30, "position": "top"}),
+        json!({"id": "system", "label": "诊断", "icon": "system", "order": 90, "position": "bottom"}),
     ];
     if include_sandbox {
         activities.insert(
@@ -673,14 +673,15 @@ pub(crate) fn materialize_console_shell(
             "order": 40,
             "position": "top"
         }));
+    } else {
+        activities.push(json!({
+            "id": "settings",
+            "label": "设置",
+            "icon": "settings",
+            "order": 100,
+            "position": "bottom"
+        }));
     }
-    activities.push(json!({
-        "id": "settings",
-        "label": "设置",
-        "icon": "settings",
-        "order": 100,
-        "position": "bottom"
-    }));
     let options = json!({ "activities": activities, "extensions": extensions });
     std::fs::write(
         out_dir.join("console-options.json"),

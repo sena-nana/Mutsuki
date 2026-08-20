@@ -122,7 +122,7 @@ function accountCard(account) {
   heading.append(element("h3", "", title), status);
   const meta = element("div");
   meta.append(heading);
-  if (selfUser.user_id) meta.append(element("p", "muted", `OpenID ${selfUser.user_id}`));
+  if (selfUser.user_id) card.title = `OpenID ${selfUser.user_id}`;
   meta.append(element("p", "muted", `在线时长 ${formatDuration(account.connected_since_unix_ms)}`));
   const head = element("div", "qq-account-head");
   head.append(avatar(title, "qq-account-avatar", selfUser.avatar_url), meta);

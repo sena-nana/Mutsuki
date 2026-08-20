@@ -323,6 +323,13 @@ async fn embedded_console_with_config_shell() {
             .iter()
             .any(|item| { item["id"] == "config" && item["position"] == "top" })
     );
+    assert!(
+        !parsed["activities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["id"] == "settings")
+    );
     let config_path = versioned_module_path(&options, "./extensions/config/index.js");
     let config_js = http_get_body(&addr, &format!("/{config_path}")).await;
     assert!(config_js.contains("export function mountConfigPanel"));

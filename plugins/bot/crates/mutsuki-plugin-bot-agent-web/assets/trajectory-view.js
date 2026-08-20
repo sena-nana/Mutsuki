@@ -163,12 +163,11 @@ export function mountTrajectoryView(host, options = {}) {
         <li><span>状态</span><span>${esc(statusLabel(record.status))}</span></li>
         <li><span>开始</span><span>${esc(formatClock(record.startedAt))}</span></li>
         <li><span>耗时</span><span>${esc(formatDurationMs(record.durationMs))}</span></li>
-        <li><span>事件序号</span><span>${esc((record.sequences || []).join(", ") || "—")}</span></li>
       </ul>
-      ${block("Input", record.input)}
-      ${block("Output", record.output)}
-      ${block("Thinking", record.thinking)}
-      ${block("JSON", jsonBody)}
+      ${block("输入", record.input)}
+      ${block("输出", record.output)}
+      ${block("思考", record.thinking)}
+      ${block("原始事件", jsonBody)}
     `;
   }
 

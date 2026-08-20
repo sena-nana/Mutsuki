@@ -2386,9 +2386,85 @@ button:disabled {
 @media (max-width: 900px) {
   .mutsuki-console .tasks-layout,
   .mutsuki-console .topology-node__lanes,
-  .mutsuki-console .trajectory-body {
+  .mutsuki-console .trajectory-body,
+  .mutsuki-console .agent-sessions {
     grid-template-columns: 1fr;
   }
+}
+
+.mutsuki-console .card h2 {
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.mutsuki-console .metric-value.is-ok { color: var(--ok); }
+.mutsuki-console .metric-value.is-warn { color: var(--warn); }
+.mutsuki-console .metric-value.is-err { color: var(--err); }
+
+.mutsuki-console .stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mutsuki-console .form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.mutsuki-console .agent-sessions {
+  display: grid;
+  grid-template-columns: minmax(200px, 280px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.mutsuki-console .agent-sessions > .card {
+  margin-bottom: 0;
+}
+
+.mutsuki-console .agent-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.mutsuki-console .agent-message {
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+}
+
+.mutsuki-console .agent-message.is-assistant {
+  background: var(--accent-soft, var(--bg-hover));
+}
+
+.mutsuki-console .agent-session-head h3 {
+  margin: 0;
+}
+
+.mutsuki-console,
+.mutsuki-console *,
+.console-login,
+.console-login * {
+  scrollbar-width: thin;
+}
+
+.mutsuki-console ::-webkit-scrollbar,
+.console-login ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.mutsuki-console ::-webkit-scrollbar-thumb,
+.console-login ::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 8px;
 }
 
 /* —— node-editor.css —— */

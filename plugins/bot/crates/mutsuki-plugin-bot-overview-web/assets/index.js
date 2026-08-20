@@ -9,20 +9,20 @@ function formatDuration(ms) {
   return `${seconds} 秒`;
 }
 
-function healthLabel(value) {
-  switch (String(value || "").toLowerCase()) {
+function healthView(health) {
+  switch (String(health?.service || health?.core || "").toLowerCase()) {
     case "ok":
     case "healthy":
-      return "正常";
+      return { label: "正常", tone: "ok" };
     case "degraded":
-      return "降级";
+      return { label: "降级", tone: "warn" };
     case "unhealthy":
     case "failed":
-      return "异常";
+      return { label: "异常", tone: "err" };
     case "stopped":
-      return "已停止";
+      return { label: "已停止", tone: "err" };
     default:
-      return value == null || value === "" ? "—" : String(value);
+      return { label: "—", tone: "" };
   }
 }
 
@@ -36,8 +36,8 @@ function escapeHtml(value) {
 function metricGrid(metrics) {
   return `<div class="metric-grid">${metrics
     .map(
-      ({ label, value }) =>
-        `<div class="metric-card"><div class="metric-label">${escapeHtml(label)}</div><div class="metric-value">${escapeHtml(value)}</div></div>`,
+      ({ label, value, tone }) =>
+        `<div class="metric-card"><div class="metric-label">${escapeHtml(label)}</div><div class="metric-value${tone ? ` is-${escapeHtml(tone)}` : ""}">${escapeHtml(value)}</div></div>`,
     )
     .join("")}</div>`;
 }
@@ -46,8 +46,8 @@ function mountOverview(host, ctx) {
   const { rpc, events } = ctx;
   host.className = "page-body overview-dashboard";
   host.innerHTML = `
-    <div data-overview-body><div class="muted">加载中…</div></div>
     <div class="overview-cards" data-overview-cards></div>
+    <div data-overview-body><div class="muted">加载中…</div></div>
   `;
   const body = host.querySelector("[data-overview-body]");
   const cardsHost = host.querySelector("[data-overview-cards]");
@@ -74,16 +74,11 @@ function mountOverview(host, ctx) {
   const render = () => {
     if (!snapshot || disposed) return;
     const data = snapshot;
-    const health = data.health || {};
-    const counts = data.counts || {};
+    const health = healthView(data.health);
     const uptime = Number(data.uptime_ms || 0) + Math.max(0, Date.now() - snapshotAt);
     body.innerHTML = `${metricGrid([
       { label: "运行时间", value: formatDuration(uptime) },
-      { label: "服务状态", value: healthLabel(health.service) },
-      { label: "消息处理", value: healthLabel(health.core) },
-      { label: "插件", value: String(counts.plugins ?? 0) },
-      { label: "运行器", value: String(counts.runners ?? 0) },
-      { label: "事件源", value: String(counts.event_sources ?? 0) },
+      { label: "运行状态", value: health.label, tone: health.tone },
     ])}`;
   };
 

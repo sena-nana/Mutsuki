@@ -172,6 +172,12 @@ export async function mountBotFlowEditor(el, rpc) {
     return descriptor(node)?.ports.find((port) => port.port_id === portId && port.direction === direction)?.event_type;
   }
 
+  function portTitle(flow, nodeId, portId, direction) {
+    if (portId === "error") return "错误";
+    const node = flow?.nodes.find((item) => item.node_id === nodeId);
+    return descriptor(node)?.ports.find((port) => port.port_id === portId && port.direction === direction)?.title || "";
+  }
+
   function connectPorts(fromNodeId, fromPortId, toNodeId, toPortId, kind = "event") {
     const sourceType = kind === "error" ? ERROR_TYPE : portType(fromNodeId, fromPortId, "output");
     const targetType = portType(toNodeId, toPortId, "input");
@@ -240,7 +246,9 @@ export async function mountBotFlowEditor(el, rpc) {
         toPort: edge.to_port_id,
         kind: edge.kind,
         selected: selectedEdgeId === edge.edge_id,
-        label: `${edge.from_port_id} → ${edge.to_port_id}${edge.kind === "error" ? "（错误）" : ""}`,
+        label: edge.kind === "error"
+          ? "错误"
+          : [portTitle(flow, edge.from_node_id, edge.from_port_id, "output"), portTitle(flow, edge.to_node_id, edge.to_port_id, "input")].filter(Boolean).join(" → "),
       })),
     };
   }

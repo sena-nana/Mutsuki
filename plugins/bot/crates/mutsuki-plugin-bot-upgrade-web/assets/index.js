@@ -3,9 +3,9 @@ function message(error) {
 }
 
 async function mountUpgradePage(host, rpc) {
-  host.innerHTML = `<div class="toolbar"><input type="search" placeholder="筛选模块" /><button type="button">检查更新</button></div><div class="upgrade-results"></div>`;
+  host.innerHTML = `<div class="toolbar row-item"><input type="search" class="ui-input" placeholder="筛选模块" /><button type="button" class="ghost" data-check>检查更新</button></div><div class="upgrade-results"></div>`;
   const input = host.querySelector("input");
-  const button = host.querySelector("button");
+  const button = host.querySelector("[data-check]");
   const results = host.querySelector(".upgrade-results");
 
   async function refresh() {
@@ -29,13 +29,14 @@ async function mountUpgradePage(host, rpc) {
         detail.textContent = `${item.current_revision || "—"} → ${item.remote_revision || "—"}`;
         const plan = document.createElement("button");
         plan.type = "button";
+        plan.className = "ghost";
         plan.textContent = "生成升级计划";
         plan.onclick = async () => {
           plan.disabled = true;
           try {
             const value = await rpc.read("upgrade", "plan", { module_id: item.id });
             const output = document.createElement("pre");
-            output.className = "mono";
+            output.className = "log-block";
             output.textContent = value.cli_command || JSON.stringify(value.plan, null, 2);
             card.append(output);
           } catch (error) {

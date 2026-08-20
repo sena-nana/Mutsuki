@@ -17,6 +17,28 @@ function formatError(error) {
     : message || "操作失败，请稍后重试";
 }
 
+function runtimeStateLabel(value) {
+  switch (String(value || "").toLowerCase()) {
+    case "running":
+    case "healthy":
+    case "ok":
+      return "运行中";
+    case "starting":
+      return "启动中";
+    case "stopping":
+      return "停止中";
+    case "stopped":
+      return "已停止";
+    case "failed":
+    case "unhealthy":
+      return "异常";
+    case "degraded":
+      return "降级";
+    default:
+      return value == null || value === "" ? "—" : String(value);
+  }
+}
+
 function confirmAction(message) {
   return globalThis.confirm?.(message) !== false;
 }
@@ -189,17 +211,17 @@ function mountRunners(host, rpc, events) {
     render(body, runners, controls) {
       body.replaceChildren();
       if (!runners?.length) {
-        body.innerHTML = empty("暂无 Runner");
+        body.innerHTML = empty("暂无运行器");
         return;
       }
       for (const runner of runners) {
         const row = document.createElement("div");
         row.className = "tree-item row-item";
-        row.innerHTML = `<div><strong>${escapeHtml(runner.runner_id)}</strong><div class="muted">${escapeHtml(runner.plugin_id)} · ${escapeHtml(runner.state)} · pid=${escapeHtml(runner.pid ?? "—")} · restarts=${escapeHtml(runner.restarts ?? 0)}</div></div><div class="row-actions"><button type="button" class="ghost" data-action="restart">重启</button><button type="button" class="ghost danger" data-action="stop">停止</button></div>`;
+        row.innerHTML = `<div><strong>${escapeHtml(runner.runner_id)}</strong><div class="muted">${escapeHtml(runner.plugin_id)} · ${escapeHtml(runtimeStateLabel(runner.state))} · 进程 ${escapeHtml(runner.pid ?? "—")} · 重启 ${escapeHtml(runner.restarts ?? 0)}</div></div><div class="row-actions"><button type="button" class="ghost" data-action="restart">重启</button><button type="button" class="ghost danger" data-action="stop">停止</button></div>`;
         row.querySelectorAll("[data-action]").forEach((button) => {
           button.onclick = async () => {
             const action = button.dataset.action;
-            if (!confirmAction(`确认${action === "restart" ? "重启" : "停止"} Runner ${runner.runner_id}？`)) return;
+            if (!confirmAction(`确认${action === "restart" ? "重启" : "停止"}运行器 ${runner.runner_id}？`)) return;
             try {
               await rpc.write("control", action === "restart" ? "runner_restart" : "runner_stop", { id: runner.runner_id });
               await controls.refresh();
@@ -222,15 +244,15 @@ function mountEventSources(host, rpc, events) {
     render(body, sources, controls) {
       body.replaceChildren();
       if (!sources?.length) {
-        body.innerHTML = empty("暂无 EventSource");
+        body.innerHTML = empty("暂无事件源");
         return;
       }
       for (const source of sources) {
         const row = document.createElement("div");
         row.className = "tree-item row-item";
-        row.innerHTML = `<div><strong>${escapeHtml(source.source_id)}</strong><div class="muted">${escapeHtml(source.plugin_id)} · ${escapeHtml(source.state)}/${escapeHtml(source.health)} · reconnects=${escapeHtml(source.reconnects ?? 0)}</div>${source.last_error ? `<div class="err-text">${escapeHtml(source.last_error)}</div>` : ""}</div><button type="button" class="ghost">重启</button>`;
+        row.innerHTML = `<div><strong>${escapeHtml(source.source_id)}</strong><div class="muted">${escapeHtml(source.plugin_id)} · ${escapeHtml(runtimeStateLabel(source.state))}/${escapeHtml(runtimeStateLabel(source.health))} · 重连 ${escapeHtml(source.reconnects ?? 0)}</div>${source.last_error ? `<div class="err-text">${escapeHtml(source.last_error)}</div>` : ""}</div><button type="button" class="ghost">重启</button>`;
         row.querySelector("button").onclick = async () => {
-          if (!confirmAction(`确认重启 EventSource ${source.source_id}？`)) return;
+          if (!confirmAction(`确认重启事件源 ${source.source_id}？`)) return;
           try {
             await rpc.write("control", "event_source_restart", { id: source.source_id });
             await controls.refresh();
@@ -268,7 +290,7 @@ function mountTopology(host, rpc, events) {
       body.innerHTML = nodes.size
         ? `<div class="topology-graph">${[...nodes]
             .map(
-              ([id, item]) => `<section class="topology-node card"><h2>${escapeHtml(id)}</h2><div class="topology-node__lanes"><div class="topology-lane"><h3>运行器</h3>${item.runners.map((runner) => `<div class="topology-chip"><strong>${escapeHtml(runner.runner_id)}</strong><span class="muted">${escapeHtml(runner.state)}</span></div>`).join("") || empty("无")}</div><div class="topology-lane"><h3>事件源</h3>${item.sources.map((source) => `<div class="topology-chip"><strong>${escapeHtml(source.source_id)}</strong><span class="muted">${escapeHtml(source.health || source.state)}</span></div>`).join("") || empty("无")}</div></div></section>`,
+              ([id, item]) => `<section class="topology-node card"><h2>${escapeHtml(id)}</h2><div class="topology-node__lanes"><div class="topology-lane"><h3>运行器</h3>${item.runners.map((runner) => `<div class="topology-chip"><strong>${escapeHtml(runner.runner_id)}</strong><span class="muted">${escapeHtml(runtimeStateLabel(runner.state))}</span></div>`).join("") || empty("无")}</div><div class="topology-lane"><h3>事件源</h3>${item.sources.map((source) => `<div class="topology-chip"><strong>${escapeHtml(source.source_id)}</strong><span class="muted">${escapeHtml(runtimeStateLabel(source.health || source.state))}</span></div>`).join("") || empty("无")}</div></div></section>`,
             )
             .join("")}</div>`
         : empty("暂无拓扑数据");
@@ -276,43 +298,35 @@ function mountTopology(host, rpc, events) {
   });
 }
 
-function mountLifecycle(host, rpc, events) {
-  return mountSnapshotPage(host, {
-    events,
-    domains: ["plugins", "runners", "event_sources", "tasks"],
-    load: async () => {
-      const [status, health] = await Promise.all([
-        rpc.read("control", "service_status"),
-        rpc.read("control", "health"),
-      ]);
-      return { status, health };
-    },
-    render(body, value, controls) {
-      body.innerHTML = `
-        <section class="card"><h2>服务状态</h2><ul class="kv"><li><span>运行时间</span><span>${escapeHtml(value.status?.uptime_ms ?? "—")} ms</span></li><li><span>消息处理</span><span>${escapeHtml(value.health?.core || "—")}</span></li></ul></section>
-        <section class="card"><h2>排空任务</h2><p class="muted">停止接受新任务，并等待进行中的任务完成。</p><button type="button" class="ghost" data-drain>开始排空</button></section>
-        <section class="card"><h2>关闭服务</h2><p class="muted">保存状态后关闭服务。</p><button type="button" class="ghost danger" data-shutdown>关闭服务</button></section>
-      `;
-      body.querySelector("[data-drain]").onclick = async () => {
-        if (!confirmDestructive("排空任务", "DRAIN")) return;
-        try {
-          await rpc.write("control", "core_begin_drain");
-          await controls.refresh();
-        } catch (error) {
-          controls.setStatus(formatError(error), true);
-        }
-      };
-      body.querySelector("[data-shutdown]").onclick = async () => {
-        if (!confirmDestructive("关闭服务", "SHUTDOWN")) return;
-        try {
-          await rpc.write("control", "service_shutdown");
-          controls.setStatus("关闭信号已发送");
-        } catch (error) {
-          controls.setStatus(formatError(error), true);
-        }
-      };
-    },
-  });
+function mountLifecycle(host, rpc) {
+  host.innerHTML = `
+    <div class="toolbar row-item"><span class="muted" data-state></span></div>
+    <section class="card"><h2>排空任务</h2><p class="muted">停止接受新任务，并等待进行中的任务完成。</p><button type="button" class="ghost" data-drain>开始排空</button></section>
+    <section class="card"><h2>关闭服务</h2><p class="muted">保存状态后关闭服务。</p><button type="button" class="ghost danger" data-shutdown>关闭服务</button></section>
+  `;
+  const status = host.querySelector("[data-state]");
+  const setStatus = (message, isError = false) => {
+    status.className = isError ? "err-text" : "muted";
+    status.textContent = message;
+  };
+  host.querySelector("[data-drain]").onclick = async () => {
+    if (!confirmDestructive("排空任务", "排空")) return;
+    try {
+      await rpc.write("control", "core_begin_drain");
+      setStatus("已开始排空");
+    } catch (error) {
+      setStatus(formatError(error), true);
+    }
+  };
+  host.querySelector("[data-shutdown]").onclick = async () => {
+    if (!confirmDestructive("关闭服务", "关闭")) return;
+    try {
+      await rpc.write("control", "service_shutdown");
+      setStatus("关闭信号已发送");
+    } catch (error) {
+      setStatus(formatError(error), true);
+    }
+  };
 }
 
 function mountLogs(host, rpc, events) {
@@ -336,19 +350,11 @@ function mountLogs(host, rpc, events) {
   });
 }
 
-const DEFAULT_TASK_BATCH_JSON = `{
-  "batch": {
-    "batch_id": "console-debug",
-    "tasks": [{ "task_id": "debug-task-1", "protocol_id": "control.input", "input": { "value": 1 } }]
-  }
-}`;
-
 function mountTasks(host, rpc, events) {
   host.innerHTML = `
     <div class="toolbar row-item"><button type="button" class="ghost" data-refresh>刷新</button><span class="muted" data-state></span></div>
     <div class="tasks-layout"><section class="card"><h2>任务表</h2><div data-table>加载中…</div></section><section class="card"><h2>任务详情</h2><div data-detail class="muted">选择任务</div></section></div>
-    <section class="card"><h2>事件时间线</h2><p class="muted">按任务聚焦当前窗口中的 RuntimeEvent。无时间戳时按序号投影。</p><div data-trajectory class="trajectory"></div></section>
-    <details class="card advanced-fold"><summary>高级 / 调试 · submit_batch</summary><textarea data-submit-json class="log-block" rows="8">${escapeHtml(DEFAULT_TASK_BATCH_JSON)}</textarea><div class="toolbar nested"><button type="button" class="ghost" data-submit>提交 batch</button></div><div data-submit-output class="muted"></div></details>
+    <section class="card"><h2>事件时间线</h2><p class="muted">按任务聚焦当前窗口中的运行事件。无时间戳时按序号投影。</p><div data-trajectory class="trajectory"></div></section>
   `;
   const tableHost = host.querySelector("[data-table]");
   const detailHost = host.querySelector("[data-detail]");
@@ -501,7 +507,7 @@ function mountTasks(host, rpc, events) {
         renderTasks(tasks);
       };
     });
-    detailHost.innerHTML = `<ul class="kv"><li><span>task_id</span><span class="mono">${escapeHtml(selected.task_id)}</span></li><li><span>protocol</span><span>${escapeHtml(selected.protocol_id)}</span></li><li><span>status</span><span>${escapeHtml(selected.status)}</span></li><li><span>runner</span><span>${escapeHtml(selected.owner_runner || selected.runner_hint || "—")}</span></li><li><span>correlation</span><span>${escapeHtml(selected.correlation_id || "—")}</span></li><li><span>trace</span><span>${escapeHtml(selected.trace_id || "—")}</span></li></ul><button type="button" class="ghost" data-cancel>取消任务</button>`;
+    detailHost.innerHTML = `<ul class="kv"><li><span>任务</span><span class="mono">${escapeHtml(selected.task_id)}</span></li><li><span>协议</span><span>${escapeHtml(selected.protocol_id)}</span></li><li><span>状态</span><span>${escapeHtml(selected.status)}</span></li><li><span>运行器</span><span>${escapeHtml(selected.owner_runner || selected.runner_hint || "—")}</span></li></ul><button type="button" class="ghost" data-cancel>取消任务</button>`;
     detailHost.querySelector("[data-cancel]").onclick = async () => {
       if (!confirmAction(`确认取消任务 ${selected.task_id}？`)) return;
       try {
@@ -566,16 +572,6 @@ function mountTasks(host, rpc, events) {
     opened = true;
   });
   host.querySelector("[data-refresh]").onclick = () => void refresh();
-  host.querySelector("[data-submit]").onclick = async () => {
-    const output = host.querySelector("[data-submit-output]");
-    try {
-      const result = await rpc.write("control", "task_submit_batch", JSON.parse(host.querySelector("[data-submit-json]").value));
-      output.innerHTML = `<pre class="log-block">${escapeHtml(JSON.stringify(result, null, 2))}</pre>`;
-      await refresh();
-    } catch (error) {
-      output.textContent = formatError(error);
-    }
-  };
   document.addEventListener("visibilitychange", visibility);
   void refresh();
   return {
