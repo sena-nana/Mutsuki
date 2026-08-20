@@ -1,46 +1,63 @@
 {
-  "base_published_revision": 0,
-  "flows": [
-    {
-      "flow_id": "example.qq.echo",
-      "name": "QQ Echo",
-      "enabled": true,
-      "nodes": [
-        {
-          "node_id": "source",
-          "node_type_id": "mutsuki.bot.qq.message.created",
-          "node_type_version": 1,
-          "config": {},
-          "source": {
-            "protocol_id": "mutsuki.bot.event/ingest@1",
-            "event_type": { "type_id": "mutsuki.bot.event", "version": 1 }
-          },
-          "position": { "x": 40, "y": 100 }
+  "flow": {
+    "flow_id": "example.qq.commands",
+    "name": "QQ echo/ping",
+    "nodes": [
+      {
+        "node_id": "source",
+        "node_type_id": "mutsuki.bot.qq.message.created",
+        "node_type_version": 1,
+        "config": {},
+        "source": {
+          "protocol_id": "mutsuki.bot.event/ingest@1",
+          "event_type": { "type_id": "mutsuki.bot.event", "version": 1 }
         },
-        {
-          "node_id": "command",
-          "node_type_id": "mutsuki.bot.command.match",
-          "node_type_version": 1,
-          "config": {
-            "prefixes": ["/", "!"],
-            "path": ["echo"],
-            "aliases": [],
-            "arguments": [],
-            "case_sensitive": false
-          },
-          "position": { "x": 320, "y": 100 }
-        }
-      ],
-      "edges": [
-        {
-          "edge_id": "source-command",
-          "from_node_id": "source",
-          "from_port_id": "event",
-          "to_node_id": "command",
-          "to_port_id": "event",
-          "kind": "event"
-        }
-      ]
-    }
-  ]
+        "position": { "x": 40, "y": 160 }
+      },
+      {
+        "node_id": "echo-command",
+        "node_type_id": "mutsuki.bot.command.match",
+        "node_type_version": 1,
+        "config": {
+          "prefixes": ["/", "!"],
+          "path": ["echo"],
+          "aliases": [],
+          "arguments": [],
+          "case_sensitive": false
+        },
+        "position": { "x": 320, "y": 80 }
+      },
+      {
+        "node_id": "ping-command",
+        "node_type_id": "mutsuki.bot.command.match",
+        "node_type_version": 1,
+        "config": {
+          "prefixes": ["/", "!"],
+          "path": ["ping"],
+          "aliases": [],
+          "arguments": [],
+          "case_sensitive": false
+        },
+        "position": { "x": 320, "y": 240 }
+      }
+    ],
+    "edges": [
+      {
+        "edge_id": "source-echo",
+        "from_node_id": "source",
+        "from_port_id": "event",
+        "to_node_id": "echo-command",
+        "to_port_id": "event",
+        "kind": "event"
+      },
+      {
+        "edge_id": "source-ping",
+        "from_node_id": "source",
+        "from_port_id": "event",
+        "to_node_id": "ping-command",
+        "to_port_id": "event",
+        "kind": "event"
+      }
+    ]
+  }
 }

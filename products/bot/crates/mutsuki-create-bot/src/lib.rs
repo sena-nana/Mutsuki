@@ -134,8 +134,8 @@ The first run creates `Cargo.lock`; commit that lockfile and use `cargo run --lo
 
 On the first run, set and confirm the Console passphrase, open `http://127.0.0.1:8787`, then use
 the same passphrase to sign in. Save QQ login, the model and reply policy under **配置**. Watch
-connections and sessions under **Bot**. Publish the message flow under **流程编排**. The minimal
-reply flow is:
+connections and sessions under **Bot**. Save the message flow under **流程编排**; saving puts it
+online. The minimal reply flow is:
 
 ```text
 QQ 事件 -> 提交 Agent -> 可靠回复投递

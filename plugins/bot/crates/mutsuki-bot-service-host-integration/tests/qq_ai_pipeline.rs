@@ -298,7 +298,7 @@ async fn start_runtime(
         flow_config
             .create_if_absent(
                 BOT_FLOW_CONFIG_PROVIDER_ID,
-                ConfigValue::from_json(&json!({ "flows": [agent_flow()] })),
+                ConfigValue::from_json(&json!({ "flow": agent_flow() })),
                 ConfigContext::global(),
             )
             .await
@@ -705,7 +705,6 @@ fn agent_flow() -> BotFlowDocument {
     BotFlowDocument {
         flow_id: "qq-agent".into(),
         name: "QQ Agent".into(),
-        enabled: true,
         nodes: vec![
             flow_node(
                 "source",

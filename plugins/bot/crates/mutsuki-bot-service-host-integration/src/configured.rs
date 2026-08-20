@@ -7,7 +7,7 @@ use mutsuki_bot_conversation::ConversationService;
 use mutsuki_bot_delivery::{bot_reply_delivery_manifest_for, reply_delivery_runner_for};
 use mutsuki_bot_flow::{
     BOT_FLOW_CONFIG_PROVIDER_ID, BotFlowConfigProvider, BotFlowRegistry, BotNodeCatalog,
-    validate_flows,
+    validate_flow,
 };
 use mutsuki_bot_management::{BilibiliCredentialSecretState, BilibiliManagementApi};
 use mutsuki_bot_protocol::ConversationPolicy;
@@ -138,10 +138,10 @@ impl LoadPlanObserver for BotFlowLoadPlanObserver {
         else {
             return Ok(());
         };
-        let flows =
+        let flow =
             BotFlowConfigProvider::decode(&snapshot.value).map_err(|error| error.to_string())?;
         let catalog = BotNodeCatalog::from_load_plan(plan).map_err(|error| error.to_string())?;
-        let validation = validate_flows(&flows, &catalog);
+        let validation = validate_flow(&flow, &catalog);
         validation.valid.then_some(()).ok_or_else(|| {
             format!(
                 "stored Bot Flow is incompatible with LoadPlan: {:?}",

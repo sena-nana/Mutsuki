@@ -232,20 +232,11 @@ fn example_flow_registry() -> std::sync::Arc<BotFlowRegistry> {
             catalog,
             BotFlowSnapshot {
                 revision: 1,
-                flows: vec![qqbot_echo::qqbot_echo_flow(), qqbot_ping_flow()],
+                flow: qqbot_echo::qqbot_echo_and_ping_flow(),
             },
         )
         .unwrap(),
     )
-}
-
-fn qqbot_ping_flow() -> mutsuki_bot_protocol::BotFlowDocument {
-    let mut flow = qqbot_echo::qqbot_echo_flow();
-    flow.flow_id = "example.qq.ping".into();
-    flow.name = "QQ /ping".into();
-    flow.nodes[1].config["path"] = json!(["ping"]);
-    flow.nodes[2].node_type_id = "example.bot.ping".into();
-    flow
 }
 
 fn configured_qq(secret_key: &str, overrides: Value) -> ConfiguredPluginSelection {
