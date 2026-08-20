@@ -43,6 +43,6 @@ configuration revision atomically changes new ingress only; an in-flight task ke
 
 Save is revision-fenced: the editor submits one CAS after validation against the current LoadPlan
 catalog, and the applied document is immediately live. `ConfigRepository` owns durable storage and
-`BotFlowConfigProvider` owns activation/rollback. Cold boot and plugin reload run the same catalog
-validation through a domain-neutral ServiceHost LoadPlan hook. A missing node, port or binding
-prevents activation and leaves the previous graph active. An empty graph is valid and stops routing.
+`BotFlowConfigProvider` owns activation/rollback. LoadPlan only admits the node catalog; stored
+graphs restore after Host start and never block boot. An incompatible graph stays empty and stops
+routing. Editor save still validates synchronously. An empty graph is valid.

@@ -115,10 +115,7 @@ async fn published_flow_routes_agent_reply_once_and_recovers_after_restart() {
     runtime.shutdown().await;
 
     let runtime = start_runtime(&fixture, false, Duration::from_millis(250), None).await;
-    let registry = runtime
-        .host_service::<BotFlowRegistry>(BOT_FLOW_REGISTRY_SERVICE_ID)
-        .unwrap();
-    assert_eq!(registry.active().revision, 1);
+    wait_for_flow_revision(&runtime, 1).await;
     submit_event(&runtime, "event-2", "wake after restart").await;
     wait_for(&fixture.submits, 2).await;
     wait_for(&fixture.sends, 2).await;
@@ -715,37 +712,11 @@ fn agent_flow() -> BotFlowDocument {
                     event_type: Some(BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1)),
                 }),
             ),
-            flow_node(
-                "conversation",
-                "mutsuki.bot.match.conversation",
-                json!({ "kinds": ["private"] }),
-                None,
-            ),
-            flow_node(
-                "keyword",
-                "mutsuki.bot.match.keyword",
-                json!({ "keywords": ["wake"], "mode": "any" }),
-                None,
-            ),
             flow_node("agent", BOT_AGENT_NODE_SUBMIT, json!({}), None),
             flow_node("delivery", "mutsuki.bot.delivery.reply", json!({}), None),
         ],
         edges: vec![
-            flow_edge(
-                "source-conversation",
-                "source",
-                "event",
-                "conversation",
-                "event",
-            ),
-            flow_edge(
-                "conversation-keyword",
-                "conversation",
-                "matched",
-                "keyword",
-                "event",
-            ),
-            flow_edge("keyword-agent", "keyword", "matched", "agent", "input"),
+            flow_edge("source-agent", "source", "event", "agent", "input"),
             flow_edge("agent-delivery", "agent", "reply", "delivery", "reply"),
         ],
     }
@@ -1211,6 +1182,25 @@ async fn wait_for(counter: &AtomicUsize, expected: usize) {
     })
     .await
     .expect("counter reaches expected value");
+}
+
+async fn wait_for_flow_revision(runtime: &ServiceRuntime, revision: u64) {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if runtime
+                .host_service::<BotFlowRegistry>(BOT_FLOW_REGISTRY_SERVICE_ID)
+                .unwrap()
+                .active()
+                .revision
+                == revision
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("flow revision restores after start");
 }
 
 async fn wait_for_flow_tasks(runtime: &ServiceRuntime) {

@@ -587,25 +587,24 @@ impl BotFlowRegistry {
     }
 
     pub fn validate_load_plan(&self, plan: &RuntimeLoadPlan) -> Result<(), BotFlowError> {
-        self.validated_catalog(plan).map(drop)
+        BotNodeCatalog::from_load_plan(plan).map(drop)
     }
 
     pub fn activate_load_plan(&self, plan: &RuntimeLoadPlan) -> Result<(), BotFlowError> {
-        let candidate = self.validated_catalog(plan)?;
+        let candidate = BotNodeCatalog::from_load_plan(plan)?;
+        let validation = validate_flow(&self.active().flow, &candidate);
         *self
             .catalog
             .write()
             .expect("Bot flow catalog lock poisoned") = candidate;
+        if !validation.valid {
+            *self.active.write().expect("Bot flow active lock poisoned") =
+                Arc::new(BotFlowSnapshot {
+                    revision: 0,
+                    flow: BotFlowDocument::default(),
+                });
+        }
         Ok(())
-    }
-
-    fn validated_catalog(&self, plan: &RuntimeLoadPlan) -> Result<BotNodeCatalog, BotFlowError> {
-        let candidate = BotNodeCatalog::from_load_plan(plan)?;
-        let validation = validate_flow(&self.active().flow, &candidate);
-        validation
-            .valid
-            .then_some(candidate)
-            .ok_or(BotFlowError::Invalid(validation))
     }
 }
 
@@ -960,5 +959,36 @@ mod tests {
         })))
         .unwrap_err();
         assert!(error.to_string().contains("exactly one flow document"));
+    }
+
+    #[test]
+    fn load_plan_activation_clears_incompatible_active_flow() {
+        let registry = BotFlowRegistry::with_snapshot(
+            catalog(),
+            BotFlowSnapshot {
+                revision: 4,
+                flow: flow("live"),
+            },
+        )
+        .unwrap();
+        let plan = RuntimeLoadPlan {
+            lock_version: 1,
+            core_api_version: "1".into(),
+            profile_id: "test".into(),
+            profile_hash: "hash".into(),
+            registry_generation: 1,
+            plugins: Vec::new(),
+            load_order: Vec::new(),
+            runner_bindings: BTreeMap::new(),
+            plugin_deployments: BTreeMap::new(),
+            observability: Default::default(),
+            capability_graph: Default::default(),
+            contract_surfaces: Vec::new(),
+        };
+        registry.validate_load_plan(&plan).unwrap();
+        registry.activate_load_plan(&plan).unwrap();
+        assert!(registry.catalog().is_empty());
+        assert_eq!(registry.active().revision, 0);
+        assert_eq!(registry.active().flow, BotFlowDocument::default());
     }
 }
