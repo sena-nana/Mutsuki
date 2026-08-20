@@ -147,65 +147,28 @@ export async function mountBotFlowEditor(el, rpc) {
     contextMenu = null;
   }
 
-  function leaves(items, group) {
-    return items.flatMap((item) => item.children?.length ? leaves(item.children, item.label) : [{ ...item, group }]);
-  }
-
-  function itemMarkup(item, index) {
-    return `<div class="ctx-menu__entry"><button type="button" class="ctx-menu__item${item.danger ? " ctx-menu__item--danger" : ""}" data-i="${index}"><span class="ctx-menu__label">${esc(item.label)}</span>${item.group ? `<small class="ctx-menu__meta">${esc(item.group)}</small>` : ""}${item.children?.length ? `<span class="ctx-menu__arrow">&gt;</span>` : ""}</button></div>`;
-  }
-
-  function bindRows(host, rows) {
-    const clear = () => {
-      host.querySelector(".ctx-menu__submenu")?.remove();
-      host.querySelector(".ctx-menu__item--submenu-active")?.classList.remove("ctx-menu__item--submenu-active");
-    };
-    host.querySelectorAll("[data-i]").forEach((button) => {
-      const item = rows[Number(button.dataset.i)];
-      if (item.children?.length) {
-        button.onmouseenter = () => {
-          clear();
-          button.classList.add("ctx-menu__item--submenu-active");
-          const sub = document.createElement("div");
-          sub.className = "ctx-menu__submenu";
-          sub.innerHTML = item.children.map((child, index) => itemMarkup(child, index)).join("");
-          sub.querySelectorAll("[data-i]").forEach((childBtn) => {
-            childBtn.onclick = () => {
-              closeContextMenu();
-              item.children[Number(childBtn.dataset.i)].onSelect?.();
-            };
-          });
-          button.parentElement.append(sub);
-        };
-        return;
-      }
-      button.onmouseenter = clear;
-      button.onclick = () => {
-        closeContextMenu();
-        item.onSelect?.();
-      };
-    });
-  }
-
   function openContextMenu(x, y, items, searchable = false) {
     closeContextMenu();
     if (!items.length) return;
     const menu = document.createElement("div");
     menu.className = `ctx-menu${searchable ? " ctx-menu--searchable" : ""}`;
-    menu.setAttribute("role", "menu");
+    let rows = items;
     const paint = (query = "") => {
       const q = query.trim().toLocaleLowerCase();
-      const rows = q
-        ? leaves(items).filter((item) => [item.label, item.id, item.group, ...(item.keywords || [])].join(" ").toLocaleLowerCase().includes(q))
-        : items;
-      menu.innerHTML = `${searchable ? `<label class="ctx-menu__search"><input type="search" placeholder="搜索" value="${esc(query)}" /></label>` : ""}${q && !rows.length ? `<p class="ctx-menu__empty">没有匹配项</p>` : rows.map(itemMarkup).join("")}`;
+      rows = items.filter((item) => !q || [item.label, item.id, item.group].join(" ").toLocaleLowerCase().includes(q));
+      menu.innerHTML = `${searchable ? `<input class="ctx-menu__search" type="search" placeholder="搜索" value="${esc(query)}" />` : ""}${rows.map((item, index) => `<button type="button" class="ctx-menu__item${item.danger ? " ctx-menu__item--danger" : ""}" data-i="${index}">${esc(item.label)}${item.group ? `<small>${esc(item.group)}</small>` : ""}</button>`).join("") || `<p class="ctx-menu__empty">没有匹配项</p>`}`;
       const input = menu.querySelector("input");
       if (input) {
         input.oninput = () => paint(input.value);
         input.focus();
         input.setSelectionRange(query.length, query.length);
       }
-      bindRows(menu, rows);
+    };
+    menu.onclick = (event) => {
+      const button = event.target.closest("[data-i]");
+      if (!button) return;
+      closeContextMenu();
+      rows[Number(button.dataset.i)]?.onSelect?.();
     };
     paint();
     document.body.append(menu);
@@ -224,23 +187,15 @@ export async function mountBotFlowEditor(el, rpc) {
       openContextMenu(payload.clientX, payload.clientY, [{ label: "删除连线", danger: true, onSelect: deleteSelectedEdge }]);
       return;
     }
-    const groups = new Map();
-    catalog.forEach((node) => {
-      const category = node.category || "其他";
-      if (!groups.has(category)) groups.set(category, []);
-      groups.get(category).push(node);
-    });
-    openContextMenu(payload.clientX, payload.clientY, [...groups].map(([category, nodes]) => ({
-      label: category,
-      children: nodes.map((node) => ({
-        id: node.node_type_id,
-        label: node.title,
-        keywords: [category],
-        onSelect: () => addNode(node.node_type_id, node.version, {
-          x: Math.max(0, payload.world.x - NODE_WIDTH / 2),
-          y: Math.max(0, payload.world.y - 24),
-        }),
-      })),
+    const position = {
+      x: Math.max(0, payload.world.x - NODE_WIDTH / 2),
+      y: Math.max(0, payload.world.y - 24),
+    };
+    openContextMenu(payload.clientX, payload.clientY, catalog.map((node) => ({
+      id: node.node_type_id,
+      label: node.title,
+      group: node.category || "其他",
+      onSelect: () => addNode(node.node_type_id, node.version, position),
     })), true);
   }
 
