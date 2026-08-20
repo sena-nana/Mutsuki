@@ -30,10 +30,13 @@ async function authenticate(authToken) {
   try {
     const options = await loadConsoleOptions();
     shell.configureActivities(options.activities);
-    shell.configureWebUiSettings(theme);
+    const hasConfig = (options.activities || []).some((item) => item.id === "config");
+    shell.configureWebUiSettings(theme, hasConfig ? "config" : "settings");
     await shell.load(options.extensions);
-    if (location.hash === "#/settings/config.page") {
+    if (hasConfig && location.hash === "#/settings/config.page") {
       history.replaceState({}, "", "#/config/config.page");
+    } else if (hasConfig && location.hash === "#/settings/webui.settings") {
+      history.replaceState({}, "", "#/config/webui.settings");
     }
     activeShell = shell;
     app.replaceChildren();

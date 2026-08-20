@@ -42,16 +42,42 @@ function safeHttpUrl(value) {
   return "";
 }
 
+const NOTIFY_LABELS = { live: "直播", dynamic: "动态", video: "视频" };
+const NOTIFY_VALUES = { 直播: "live", 动态: "dynamic", 视频: "video" };
+
+function formatNotifications(values) {
+  return (values || [])
+    .map((item) => NOTIFY_LABELS[String(item).toLowerCase()] || String(item))
+    .join("、");
+}
+
+function parseNotifications(text) {
+  return String(text || "")
+    .split(/[,，、\s]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => NOTIFY_VALUES[item] || item.toLowerCase());
+}
+
 function kv(label, value) {
-  const row = document.createElement("div");
-  row.className = "kv-row";
-  row.innerHTML = `<span class="muted">${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong>`;
+  const row = document.createElement("li");
+  row.innerHTML = `<span>${escapeHtml(label)}</span><span>${escapeHtml(value)}</span>`;
   return row;
+}
+
+function kvList(entries) {
+  const list = document.createElement("ul");
+  list.className = "kv";
+  for (const [label, value] of entries) {
+    if (value == null || value === "") continue;
+    list.appendChild(kv(label, String(value)));
+  }
+  return list;
 }
 
 function section(title) {
   const el = document.createElement("section");
-  el.className = "panel";
+  el.className = "card";
   const h = document.createElement("h2");
   h.textContent = title;
   el.appendChild(h);
@@ -124,11 +150,13 @@ export function mountBilibiliPanel(host, rpc, events) {
 
   async function refreshStatus() {
     status = await rpc.read("bilibili", "status");
-    statusBox.querySelectorAll(".kv-row, .actions, .hint").forEach((n) => n.remove());
+    statusBox.querySelectorAll(".kv, .actions, .hint").forEach((n) => n.remove());
     statusBox.append(
-      kv("状态", status.credential_loaded ? "已登录" : "未登录"),
-      kv("管理", status.available ? "可用" : "不可用"),
-      kv("订阅", String(status.subscription_count ?? 0)),
+      kvList([
+        ["状态", status.credential_loaded ? "已登录" : "未登录"],
+        ["管理", status.available ? "可用" : "不可用"],
+        ["订阅", String(status.subscription_count ?? 0)],
+      ]),
     );
     if (status.reason) {
       const hint = document.createElement("p");
@@ -179,21 +207,18 @@ export function mountBilibiliPanel(host, rpc, events) {
     const list = document.createElement("div");
     list.className = "sub-list stack";
     for (const item of items) {
-      const card = document.createElement("div");
-      card.className = "panel nested";
+      const card = document.createElement("article");
+      card.className = "card card--outlined";
+      const heading = document.createElement("h3");
+      heading.textContent = `${formatTarget(item.target)} · UID ${item.uid}`;
       card.append(
-        kv("ID", item.subscription_id),
-        kv("UID", String(item.uid)),
-        kv("目标", formatTarget(item.target)),
-        kv(
-          "通知",
-          (item.notifications || [])
-            .map((n) => String(n).toLowerCase())
-            .join(", "),
-        ),
-        kv("绑定", item.outbound_binding),
-        kv("暂停", item.paused ? "是" : "否"),
-        kv("所有者", item.owner_user_id || "—"),
+        heading,
+        kvList([
+          ["通知", formatNotifications(item.notifications)],
+          ["绑定", item.outbound_binding],
+          ["暂停", item.paused ? "是" : "否"],
+          item.owner_user_id ? ["所有者", item.owner_user_id] : null,
+        ].filter(Boolean)),
       );
       const actions = document.createElement("div");
       actions.className = "actions";
@@ -221,7 +246,7 @@ export function mountBilibiliPanel(host, rpc, events) {
           let preview = listBox.querySelector(".preview");
           if (!preview) {
             preview = document.createElement("div");
-            preview.className = "preview panel nested";
+            preview.className = "preview card card--outlined";
             listBox.appendChild(preview);
           }
           preview.replaceChildren();
@@ -251,7 +276,7 @@ export function mountBilibiliPanel(host, rpc, events) {
       const delBtn = button("删除");
       delBtn.disabled = !status.available;
       delBtn.onclick = async () => {
-        if (!window.confirm(`确认删除订阅 ${item.subscription_id}？`)) return;
+        if (!window.confirm(`确认删除订阅 ${formatTarget(item.target)}？`)) return;
         try {
           await rpc.write("bilibili", "subscriptions.unsubscribe", {
             subscription_id: item.subscription_id,
@@ -325,7 +350,7 @@ export function mountBilibiliPanel(host, rpc, events) {
     const uidInput = textInput("B 站 UID");
     const bindingInput = textInput("绑定名");
     const groupInput = textInput("群号");
-    const notifyInput = textInput("live,dynamic,video", "live,dynamic,video");
+    const notifyInput = textInput("直播,动态,视频", "直播,动态,视频");
     form.append(
       field("订阅名称", idInput),
       field("B 站 UID", uidInput),
@@ -337,10 +362,7 @@ export function mountBilibiliPanel(host, rpc, events) {
     submit.onclick = async (event) => {
       event.preventDefault();
       try {
-        const notifications = notifyInput.value
-          .split(",")
-          .map((v) => v.trim())
-          .filter(Boolean);
+        const notifications = parseNotifications(notifyInput.value);
         await rpc.write("bilibili", "subscriptions.subscribe", {
           subscription_id: idInput.value.trim(),
           uid: Number(uidInput.value),

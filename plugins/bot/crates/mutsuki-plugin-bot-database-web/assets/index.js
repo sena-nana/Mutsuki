@@ -1,5 +1,5 @@
 const STYLE = `
-.database-layout { display: grid; grid-template-columns: 240px minmax(0,1fr); gap: 12px; min-height: 560px; }
+.database-layout { display: grid; grid-template-columns: 240px minmax(0,1fr); gap: 12px; min-height: 0; flex: 1; }
 .database-col { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .database-tables { overflow: auto; flex: 1; display: flex; flex-direction: column; gap: 6px; }
 .database-item { border: 1px solid var(--border, transparent); border-radius: 10px; padding: 10px 12px; background: var(--bg-elev, transparent); text-align: left; cursor: pointer; }
@@ -97,7 +97,7 @@ function mountDatabase(host, rpc) {
         </section>
         <section class="card card--outlined database-col">
           <h2>${escapeHtml(state.selected || "数据库")}</h2>
-          <p class="muted">${escapeHtml(["sqlite", snapshot.journal_mode, formatSize(snapshot.size_bytes), snapshot.path].filter(Boolean).join(" · "))}</p>
+          <p class="muted">${escapeHtml(formatSize(snapshot.size_bytes))}</p>
           ${
             !state.selected
               ? `<p class="muted">在左侧选择要访问的数据表</p>`

@@ -233,7 +233,7 @@ export class WebShellRuntime implements Disposable {
       activityId,
       pageId: "webui.settings",
       label: "外观",
-      order: 10,
+      order: 1000,
     });
   }
 
@@ -497,7 +497,11 @@ export function mountWebShell(
     const labels: Record<BridgeConnectionState, string> = {
       idle: "未连接", connecting: "连接中", open: "已连接", reconnecting: "重新连接中", closed: "已断开",
     };
-    connectionLabel.textContent = runtime.session?.safe_mode ? `${labels[value]} · 安全模式` : labels[value];
+    const safeMode = !!runtime.session?.safe_mode;
+    const quiet = value === "open" && !safeMode;
+    connectionLabel.hidden = quiet;
+    connectionDot.hidden = quiet;
+    connectionLabel.textContent = safeMode ? `${labels[value]} · 安全模式` : labels[value];
     connectionDot.dataset.state = value;
   });
   void renderRoute();

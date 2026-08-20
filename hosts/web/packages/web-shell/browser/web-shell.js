@@ -170,7 +170,7 @@ var WebShellRuntime = class {
       activityId,
       pageId: "webui.settings",
       label: "\u5916\u89C2",
-      order: 10
+      order: 1e3
     });
   }
   async load(urls) {
@@ -408,7 +408,11 @@ function mountWebShell(root, runtime, options = {}) {
       reconnecting: "\u91CD\u65B0\u8FDE\u63A5\u4E2D",
       closed: "\u5DF2\u65AD\u5F00"
     };
-    connectionLabel.textContent = runtime.session?.safe_mode ? `${labels[value]} \xB7 \u5B89\u5168\u6A21\u5F0F` : labels[value];
+    const safeMode = !!runtime.session?.safe_mode;
+    const quiet = value === "open" && !safeMode;
+    connectionLabel.hidden = quiet;
+    connectionDot.hidden = quiet;
+    connectionLabel.textContent = safeMode ? `${labels[value]} \xB7 \u5B89\u5168\u6A21\u5F0F` : labels[value];
     connectionDot.dataset.state = value;
   });
   void renderRoute();

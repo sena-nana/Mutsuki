@@ -19,6 +19,20 @@ function configEditorForProvider(slots, providerId) {
   return undefined;
 }
 
+function formatValidationIssues(result) {
+  const issues = result?.issues;
+  if (!Array.isArray(issues) || !issues.length) return "验证未通过";
+  return issues
+    .map((issue) => {
+      const path = Array.isArray(issue.path) ? issue.path.join(".") : String(issue.path || "");
+      const raw = issue.message;
+      const message =
+        raw && typeof raw === "object" ? raw.zh_cn || raw.default || "" : String(raw || issue.code || "");
+      return path && message ? `${path}：${message}` : message || path || "验证未通过";
+    })
+    .join("\n");
+}
+
 function deepEqual(a, b) {
   return JSON.stringify(a) === JSON.stringify(b);
 }
@@ -428,7 +442,7 @@ function buildNodeInput(node, draft, key, onChange, ancestorEnabled = true) {
       const keyInput = document.createElement("input");
       keyInput.className = "ui-input";
       keyInput.value = mapKey;
-      keyInput.placeholder = "key";
+      keyInput.placeholder = "键名";
       keyInput.disabled = readOnly;
       const valueNode = {
         key: mapKey,
@@ -719,7 +733,7 @@ export function mountConfigPanel(host, rpc, events, fixedProviderId = null, slot
           candidate: draftToCandidate(state.draft, state.schema),
           context,
         });
-        state.message = result.ok ? "验证通过" : JSON.stringify(result.issues || result);
+        state.message = result.ok ? "验证通过" : formatValidationIssues(result);
         renderMessage();
       };
       const applyBtn = document.createElement("button");
@@ -885,7 +899,7 @@ export default {
       render({ value, setValue, host }) {
         const input = document.createElement("textarea");
         input.rows = 2;
-        input.placeholder = "cron expression";
+        input.placeholder = "Cron 表达式";
         input.value = value ?? "";
         input.addEventListener("change", () => setValue(input.value));
         host.appendChild(input);
