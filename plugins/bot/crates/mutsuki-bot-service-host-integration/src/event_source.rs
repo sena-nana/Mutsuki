@@ -17,7 +17,7 @@ use mutsuki_bot_management::{
     QQ_GATEWAY_ERROR_SESSION_EXPIRED, QQ_GATEWAY_ERROR_SESSION_INVALID,
 };
 use mutsuki_bot_protocol::{
-    BOT_FLOW_INGRESS_PROTOCOL_ID, BotEvent, BotEventKind, BotTarget, BotUser,
+    BOT_FLOW_INGRESS_PROTOCOL_ID, BotEvent, BotEventKind, BotTarget, BotUser, apply_bot_self_sent,
 };
 use mutsuki_plugin_bot_adapter_qqbot::{
     GatewayAction, GatewayFrame, HttpMethod, QQBOT_ADAPTER_PLUGIN_ID, QqAuthManager, QqBotConfig,
@@ -655,17 +655,29 @@ async fn run_connection(
                         }
                         if let Some(task) = task {
                             let correlation_id = task.correlation_id.clone();
-                            if let Err(error) = ctx.task_submitter.submit_one(task) {
+                            let self_id = health
+                                .inner
+                                .lock()
+                                .expect("QQBot health mutex")
+                                .self_user
+                                .as_ref()
+                                .map(|user| user.user_id.clone());
+                            let mut mapped = qq_gateway_frame_to_bot_event(
+                                &config.account_id,
+                                &config.app_id,
+                                frame.clone(),
+                            )
+                            .ok();
+                            let skip_ingress = mapped.as_mut().is_some_and(|event| {
+                                apply_bot_self_sent(event, self_id.as_deref())
+                            });
+                            if !skip_ingress
+                                && let Err(error) = ctx.task_submitter.submit_one(task)
+                            {
                                 pump.forget_dispatch(&frame);
                                 return Err(recoverable_failure(error));
                             }
-                            if let Ok(event) =
-                                qq_gateway_frame_to_bot_event(
-                                    &config.account_id,
-                                    &config.app_id,
-                                    frame.clone(),
-                                )
-                            {
+                            if let Some(event) = mapped {
                                 if event.kind == BotEventKind::BotConnected
                                     && let Some(actor) = event.actor.clone()
                                 {

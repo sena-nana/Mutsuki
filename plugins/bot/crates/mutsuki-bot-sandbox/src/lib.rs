@@ -241,6 +241,82 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn simulate_bot_identity_records_bubble_without_flow_ingest() {
+        let service = SandboxService::with_account("qq-main");
+        let runtime = runtime();
+        service.set_runtime(runtime.clone());
+        service.observe_event(BotEvent {
+            event_id: "ready".into(),
+            platform: BotPlatform::QqBot,
+            bot: BotAccountRef {
+                account_id: "qq-main".into(),
+                platform: BotPlatform::QqBot,
+            },
+            kind: BotEventKind::BotConnected,
+            time_ms: now_ms(),
+            target: BotTarget::Group {
+                group_id: "group-1".into(),
+            },
+            actor: Some(BotUser {
+                user_id: "BOT_OPENID".into(),
+                display_name: Some("mutsuki".into()),
+                avatar_url: None,
+            }),
+            message: None,
+            raw: None,
+            ext: BotExtMap::new(),
+        });
+        let snapshot = service.snapshot("").await.unwrap();
+        let group_id = group(&snapshot).conversation_id.clone();
+        write(
+            &service,
+            snapshot.revision,
+            "op-bot-speak",
+            SandboxAction::IngestAsBot {
+                conversation_id: group_id.clone(),
+                text: "后台气泡".into(),
+                segments: vec![],
+                reply_to: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(runtime.ingest.lock().expect("ingest").is_empty());
+        let bot_message = service
+            .messages(&group_id)
+            .await
+            .unwrap()
+            .into_iter()
+            .rev()
+            .find(|item| item.role == SandboxSpeakerRole::Bot)
+            .unwrap();
+        assert_eq!(bot_message.sender_id, "BOT_OPENID");
+        assert_eq!(bot_message.text, "后台气泡");
+
+        let after = service.snapshot("").await.unwrap();
+        write(
+            &service,
+            after.revision,
+            "op-mention-bot",
+            SandboxAction::IngestAsUser {
+                conversation_id: group_id,
+                user_id: sandbox_user_id("Alice"),
+                text: "hello @mutsuki".into(),
+                segments: vec![],
+                reply_to: None,
+            },
+        )
+        .await
+        .unwrap();
+        let ingested = runtime.ingest.lock().expect("ingest");
+        assert_eq!(ingested.len(), 1);
+        assert_eq!(
+            ingested[0].ext.get("qqbot.mentioned_bot"),
+            Some(&serde_json::Value::Bool(true))
+        );
+    }
+
+    #[tokio::test]
     async fn add_user_creates_private_chat_and_member_event() {
         let service = SandboxService::with_account("qq-main");
         let runtime = runtime();
@@ -445,6 +521,7 @@ mod tests {
             runtime.deliver.lock().expect("deliver").as_slice(),
             [("后台回复".into(), Some("qq-msg-1".into()))]
         );
+        assert!(runtime.ingest.lock().expect("ingest").is_empty());
 
         let error = write(
             &service,

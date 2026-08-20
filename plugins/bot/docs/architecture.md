@@ -59,6 +59,8 @@ Sandbox console (virtual user)
   -> sandbox console (bot bubble)
 ```
 
+Messages the bot itself sends are projected as bot bubbles and never start Flow Source chains.
+
 ## Crate Responsibilities
 
 - `mutsuki-bot-protocol`: pure Bot data contracts.
@@ -77,7 +79,8 @@ Sandbox console (virtual user)
 - `mutsuki-bot-sandbox`: QQ conversation sandbox with durable history in `BotStateDb`.
   Simulate mode is a Koishi-style closed loop (virtual users always enter `mutsuki.bot.flow/ingress@1`,
   outbound `message/send` for `sandbox:` conversations is intercepted back into the
-  console). Simulate roster OpenID/nickname can be edited, and observed live members
+  console). Simulate roster includes a non-editable bot identity; speaking as the bot
+  only appends a bubble and does not enter Flow. Roster OpenID/nickname can be edited, and observed live members
   can be imported into simulate together with their avatar URL. Simulate compose
   can send mentions, local media (file picker or clipboard paste),
   custom stickers and official faces into Flow. Compose puts image, file, sticker,

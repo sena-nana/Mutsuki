@@ -305,19 +305,11 @@ impl SandboxService {
             if let Some(reply_to) = reply_to.as_deref() {
                 require_message(stored, reply_to)?;
             }
-            let roster = stored.users.values().cloned().collect::<Vec<_>>();
-            let mut segments = compose_segments(&text, segments, &roster)?;
-            require_sandbox_refs(&inner, &segments)?;
-            if let Some(reply_to) = reply_to.as_deref() {
-                segments.insert(
-                    0,
-                    MessageSegment::Quote {
-                        message_id: reply_to.to_owned(),
-                    },
-                );
-            }
+            let segments =
+                compose_simulate_message(&inner, stored, &text, segments, reply_to.as_deref())?;
             let conversation = stored.view.conversation.clone();
             let account_id = inner.account_id.clone();
+            let bot_id = bot_speaker(&inner).0;
             let message = {
                 let Inner {
                     simulate,
@@ -339,7 +331,7 @@ impl SandboxService {
                     None,
                 )
             };
-            let event = sandbox_event(
+            let mut event = sandbox_event(
                 &account_id,
                 &conversation,
                 &user,
@@ -347,11 +339,76 @@ impl SandboxService {
                 Some(&message),
                 message.time_ms,
             )?;
+            if event.message.as_ref().is_some_and(|item| {
+                item.segments.iter().any(|segment| {
+                    matches!(segment, MessageSegment::MentionUser { user_id } if *user_id == bot_id)
+                })
+            }) {
+                event
+                    .ext
+                    .insert("qqbot.mentioned_bot".into(), Value::Bool(true));
+            }
             let (revision, mode) = finish(&mut inner);
             (event, revision, mode, message)
         };
         self.persist()?;
         runtime.ingest(event).await?;
+        self.publish(revision, mode);
+        Ok(write_ok(
+            revision,
+            serde_json::to_value(message)
+                .map_err(|error| SandboxError::new("encode_failed", error.to_string()))?,
+        ))
+    }
+
+    async fn ingest_as_bot(
+        &self,
+        expected_revision: u64,
+        conversation_id: String,
+        text: String,
+        segments: Vec<MessageSegment>,
+        reply_to: Option<String>,
+    ) -> Result<SandboxWriteResult, SandboxError> {
+        let (revision, mode, message) = {
+            let mut inner = self.lock_inner();
+            require_revision(&inner, expected_revision)?;
+            require_simulate(&inner, "真实模式不能伪造机器人发言")?;
+            let stored = inner
+                .simulate
+                .conversations
+                .get(&conversation_id)
+                .ok_or_else(|| conversation_missing(&conversation_id))?;
+            if let Some(reply_to) = reply_to.as_deref() {
+                require_message(stored, reply_to)?;
+            }
+            let segments =
+                compose_simulate_message(&inner, stored, &text, segments, reply_to.as_deref())?;
+            let (sender_id, sender_name) = bot_speaker(&inner);
+            let message = {
+                let Inner {
+                    simulate,
+                    media,
+                    faces,
+                    ..
+                } = &mut *inner;
+                let stored = conversation_mut(simulate, &conversation_id)?;
+                append_message(
+                    stored,
+                    media,
+                    faces,
+                    &sender_id,
+                    &sender_name,
+                    SandboxSpeakerRole::Bot,
+                    segments,
+                    reply_to,
+                    None,
+                    None,
+                )
+            };
+            let (revision, mode) = finish(&mut inner);
+            (revision, mode, message)
+        };
+        self.persist()?;
         self.publish(revision, mode);
         Ok(write_ok(
             revision,
@@ -822,6 +879,21 @@ impl SandboxApi for SandboxService {
                 )
                 .await
             }
+            SandboxAction::IngestAsBot {
+                conversation_id,
+                text,
+                segments,
+                reply_to,
+            } => {
+                self.ingest_as_bot(
+                    request.expected_revision,
+                    conversation_id,
+                    text,
+                    segments,
+                    reply_to,
+                )
+                .await
+            }
             SandboxAction::SendAsBot {
                 conversation_id,
                 text,
@@ -1227,7 +1299,7 @@ fn seed_simulate(store: &mut Store, account_id: &str) {
             "系统",
             SandboxSpeakerRole::System,
             vec![MessageSegment::text(
-                "这是虚拟 QQ 会话。以群成员身份发言会进入 Bot 流程，机器人回复会回到这里。",
+                "这是虚拟 QQ 会话。以群成员身份发言会进入 Bot 流程；以机器人身份发送的消息只出现在会话中，不会触发流程。",
             )],
             None,
             None,
@@ -1306,6 +1378,27 @@ fn require_text(text: &str) -> Result<String, SandboxError> {
         return Err(SandboxError::new("invalid_argument", "消息不能为空"));
     }
     Ok(text.to_owned())
+}
+
+fn compose_simulate_message(
+    inner: &Inner,
+    stored: &StoredConversation,
+    text: &str,
+    segments: Vec<MessageSegment>,
+    reply_to: Option<&str>,
+) -> Result<Vec<MessageSegment>, SandboxError> {
+    let roster = mention_roster(inner, stored);
+    let mut segments = compose_segments(text, segments, &roster)?;
+    require_sandbox_refs(inner, &segments)?;
+    if let Some(reply_to) = reply_to {
+        segments.insert(
+            0,
+            MessageSegment::Quote {
+                message_id: reply_to.to_owned(),
+            },
+        );
+    }
+    Ok(segments)
 }
 
 fn compose_segments(
@@ -1797,6 +1890,21 @@ fn bot_speaker(inner: &Inner) -> (String, String) {
         ),
         None => ("bot".into(), "机器人".into()),
     }
+}
+
+fn mention_roster(inner: &Inner, stored: &StoredConversation) -> Vec<SandboxUserView> {
+    let mut users = stored.users.values().cloned().collect::<Vec<_>>();
+    let (user_id, display_name) = bot_speaker(inner);
+    if !users.iter().any(|user| user.user_id == user_id) {
+        users.push(SandboxUserView {
+            user_id,
+            display_name,
+            avatar_url: inner.bot.as_ref().and_then(|bot| bot.avatar_url.clone()),
+            last_seen_unix_ms: 0,
+            message_count: 0,
+        });
+    }
+    users
 }
 
 fn append_message(

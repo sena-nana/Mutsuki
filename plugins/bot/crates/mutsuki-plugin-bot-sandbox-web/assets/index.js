@@ -284,6 +284,20 @@ function botProfile(snapshot) {
   return snapshot?.bot || { user_id: "bot", display_name: "机器人" };
 }
 
+function memberRoster(conversation, snapshot, simulate) {
+  const users = [...(conversation?.users || [])];
+  if (!simulate) return users;
+  const bot = botProfile(snapshot);
+  if (!users.some((user) => user.user_id === bot.user_id)) {
+    users.unshift({
+      user_id: bot.user_id,
+      display_name: bot.display_name || "机器人",
+      avatar_url: bot.avatar_url,
+    });
+  }
+  return users;
+}
+
 function groupConsecutiveMessages(messages) {
   const groups = [];
   for (const message of messages || []) {
@@ -658,7 +672,7 @@ export function mountSandboxPanel(host, rpc, events) {
       picker.replaceChildren();
       if (!match) { picker.hidden = true; return; }
       const query = match[1].toLowerCase();
-      const hits = [{ user_id: "__all__", display_name: "全体成员" }, ...(conversation.users || [])]
+      const hits = [{ user_id: "__all__", display_name: "全体成员" }, ...memberRoster(conversation, state.snapshot, mode() === "simulate")]
         .filter((user) => (user.display_name || "").toLowerCase().includes(query) || user.user_id.toLowerCase().includes(query));
       hits.forEach((user) => {
         picker.append(menuButton(`@${user.display_name || user.user_id}`, () => {
@@ -692,10 +706,11 @@ export function mountSandboxPanel(host, rpc, events) {
         } else {
           const speaker = state.speakerId || conversation.users?.[0]?.user_id;
           if (!speaker) { showStatus("请先添加用户"); return; }
+          const asBot = speaker === botProfile(state.snapshot).user_id;
           await write({
-            action: "ingest_as_user",
+            action: asBot ? "ingest_as_bot" : "ingest_as_user",
             conversation_id: conversation.conversation_id,
-            user_id: speaker,
+            ...(asBot ? {} : { user_id: speaker }),
             text: payload.text,
             segments: payload.segments,
             reply_to: state.quote?.message_id || null,
@@ -1092,34 +1107,38 @@ export function mountSandboxPanel(host, rpc, events) {
     }
     pane.append(head);
     const list = element("div", "sandbox-member-list");
-    const roster = conversation?.users || [];
+    const roster = memberRoster(conversation, state.snapshot, mode() === "simulate");
     if (conversation && !roster.length) list.append(element("p", "muted sandbox-empty", "暂无成员"));
     roster.forEach((user) => {
       const item = element("div", "sandbox-member");
       item.setAttribute("role", "button");
       item.tabIndex = 0;
+      const isBot = user.user_id === botProfile(state.snapshot).user_id;
       if (mode() === "simulate" && user.user_id === state.speakerId) item.classList.add("is-active");
       const meta = element("div", "");
       meta.append(element("span", "sandbox-member-name", user.display_name || user.user_id));
-      item.oncontextmenu = (event) => openMemberMenu(event, user);
+      if (isBot) meta.append(element("p", "muted sandbox-session-preview", "机器人"));
+      if (!isBot) item.oncontextmenu = (event) => openMemberMenu(event, user);
       if (mode() === "simulate") {
-        const actions = element("div", "sandbox-member-actions");
-        const edit = button("编辑");
-        edit.onclick = (event) => { event.stopPropagation(); openDialog(user.user_id); };
-        const remove = button("移除");
-        remove.onclick = async (event) => {
-          event.stopPropagation();
-          try {
-            await write({ action: "remove_user", user_id: user.user_id });
-            if (state.speakerId === user.user_id) state.speakerId = "";
-            if (state.dialog === user.user_id) closeDialog();
-            await refresh();
-          } catch (error) {
-            reportError(error);
-          }
-        };
-        actions.append(edit, remove);
-        meta.append(actions);
+        if (!isBot) {
+          const actions = element("div", "sandbox-member-actions");
+          const edit = button("编辑");
+          edit.onclick = (event) => { event.stopPropagation(); openDialog(user.user_id); };
+          const remove = button("移除");
+          remove.onclick = async (event) => {
+            event.stopPropagation();
+            try {
+              await write({ action: "remove_user", user_id: user.user_id });
+              if (state.speakerId === user.user_id) state.speakerId = "";
+              if (state.dialog === user.user_id) closeDialog();
+              await refresh();
+            } catch (error) {
+              reportError(error);
+            }
+          };
+          actions.append(edit, remove);
+          meta.append(actions);
+        }
         item.onclick = () => { state.speakerId = user.user_id; render(); };
         item.onkeydown = (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); state.speakerId = user.user_id; render(); } };
       }
@@ -1147,7 +1166,7 @@ export function mountSandboxPanel(host, rpc, events) {
     try {
       state.messages = await rpc.read("sandbox", "messages", { conversation_id: state.selectedId }) || [];
       const conversation = current();
-      if (mode() === "simulate" && conversation?.users?.length && !conversation.users.some((user) => user.user_id === state.speakerId)) {
+      if (mode() === "simulate" && conversation?.users?.length && !conversation.users.some((user) => user.user_id === state.speakerId) && state.speakerId !== botProfile(state.snapshot).user_id) {
         state.speakerId = conversation.users[0].user_id;
       }
       render();
