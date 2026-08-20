@@ -2485,12 +2485,10 @@ button:disabled {
 }
 
 .lilia-node-editor {
-  --lilia-node-editor-palette: 232px;
   --lilia-node-editor-inspector: 300px;
   --lilia-region-overflow: hidden;
   display: grid;
-  grid-template-columns:
-    var(--lilia-node-editor-palette) minmax(0, 1fr) var(--lilia-node-editor-inspector);
+  grid-template-columns: minmax(0, 1fr) var(--lilia-node-editor-inspector);
   width: 100%;
   height: 100%;
   min-width: 0;
@@ -2499,23 +2497,14 @@ button:disabled {
   background: var(--lilia-surface-fill-base, var(--bg));
 }
 
-.lilia-node-editor__palette,
 .lilia-node-editor__inspector,
 .lilia-node-editor__stage {
   min-width: 0;
   min-height: 0;
 }
 
-.lilia-node-editor__palette,
 .lilia-node-editor__inspector {
   background: var(--lilia-surface-fill-raised, var(--bg-elev));
-}
-
-.lilia-node-editor__palette {
-  border-inline-end: 1px solid var(--border-soft);
-}
-
-.lilia-node-editor__inspector {
   border-inline-start: 1px solid var(--border-soft);
 }
 
@@ -2535,36 +2524,6 @@ button:disabled {
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-}
-
-.lilia-node-editor__catalog {
-  display: flex;
-  min-height: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: 14px;
-  overflow: auto;
-}
-
-.lilia-node-editor__catalog section {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.lilia-node-editor__catalog h3 {
-  margin: 0;
-  color: var(--text-faint);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.lilia-node-editor__type {
-  justify-content: flex-start;
-  width: 100%;
-  text-align: start;
 }
 
 .lilia-node-editor__stage-body {
@@ -2824,6 +2783,119 @@ button:disabled {
   font-size: 12px;
 }
 
+.ctx-menu,
+.ctx-menu__submenu {
+  min-width: 180px;
+  max-width: min(320px, calc(100vw - 8px));
+  padding: 4px;
+  background: var(--bg-elev);
+  color: var(--text);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-menu);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ctx-menu {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 1100;
+  user-select: none;
+}
+
+.ctx-menu--searchable {
+  min-width: 220px;
+}
+
+.ctx-menu__search {
+  display: flex;
+  align-items: center;
+  min-height: 30px;
+  margin-bottom: 2px;
+  padding: 0 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+}
+
+.ctx-menu__search input {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  outline: none;
+  font-size: 12px;
+}
+
+.ctx-menu__entry {
+  position: relative;
+}
+
+.ctx-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.ctx-menu__item:hover,
+.ctx-menu__item--submenu-active {
+  background: var(--lilia-state-layer-hover);
+}
+
+.ctx-menu__item--danger {
+  color: var(--err);
+}
+
+.ctx-menu__item--danger:hover {
+  background: var(--err-soft);
+}
+
+.ctx-menu__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ctx-menu__meta,
+.ctx-menu__empty,
+.ctx-menu__arrow {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.ctx-menu__empty {
+  margin: 0;
+  padding: 10px 8px;
+  text-align: center;
+}
+
+.ctx-menu__submenu {
+  position: absolute;
+  left: calc(100% - 1px);
+  top: -4px;
+  z-index: 1;
+  max-height: min(360px, calc(100vh - 8px));
+  overflow: auto;
+}
+
 .success-banner {
   margin-bottom: 16px;
   padding: 12px 14px;
@@ -2835,7 +2907,6 @@ button:disabled {
 
 @media (max-width: 1100px) {
   .lilia-node-editor {
-    --lilia-node-editor-palette: 196px;
     --lilia-node-editor-inspector: 240px;
   }
 }
@@ -2843,19 +2914,11 @@ button:disabled {
 @media (max-width: 860px) {
   .lilia-node-editor {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(420px, 1fr) auto;
+    grid-template-rows: minmax(420px, 1fr) auto;
   }
 
-  .lilia-node-editor__palette,
   .lilia-node-editor__inspector {
     border: 0;
-    border-block-end: 1px solid var(--border-soft);
-    max-height: 220px;
-  }
-
-  .lilia-node-editor__inspector {
-    border-block-end: 0;
     border-block-start: 1px solid var(--border-soft);
-    max-height: none;
   }
 }

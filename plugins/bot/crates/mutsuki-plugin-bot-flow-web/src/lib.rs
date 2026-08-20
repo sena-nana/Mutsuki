@@ -319,6 +319,11 @@ mod tests {
         assert!(!include_str!("../assets/index.js").contains("已发布"));
         assert!(include_str!("../assets/index.js").contains("保存"));
         assert!(include_str!("../assets/index.js").contains("已上线"));
+        assert!(include_str!("../assets/lilia-node-editor.js").contains("contextmenu"));
+        assert!(include_str!("../assets/index.js").contains("ctx-menu"));
+        assert!(include_str!("../assets/index.js").contains("在空白处右键添加节点"));
+        assert!(!include_str!("../assets/index.js").contains("flow-catalog"));
+        assert!(!include_str!("../assets/index.js").contains("从左侧拖入"));
     }
 
     #[test]

@@ -39,6 +39,7 @@ fn console_css_declares_two_column_workspace() {
     assert!(css.contains(".lilia-node-editor"));
     assert!(css.contains(".lilia-node-editor__viewport"));
     assert!(css.contains(".lilia-node-editor__wire"));
+    assert!(css.contains(".ctx-menu"));
     assert!(css.contains(".console-page-header__actions"));
     assert!(css.contains(".mutsuki-console .overview-cards"));
     assert!(css.contains(".is-context-hidden"));
@@ -713,12 +714,13 @@ async fn embedded_console_serves_lilia_flow_node_editor() {
     let flow_path = versioned_module_path(&options, "./extensions/bot-flow/index.js");
     let flow_js = http_get_body(&addr, &format!("/{flow_path}")).await;
     assert!(flow_js.contains("lilia-node-editor"));
-    assert!(flow_js.contains("mountLiliaNodeEditor"));
+    assert!(flow_js.contains("ctx-menu"));
     let editor_js = http_get_body(&addr, "/extensions/bot-flow/lilia-node-editor.js").await;
     assert!(editor_js.contains("export function mountLiliaNodeEditor"));
+    assert!(editor_js.contains("contextmenu"));
     let css = http_get_body(&addr, "/mutsuki-ui.css").await;
     assert!(css.contains(".lilia-node-editor__viewport"));
-    assert!(css.contains(".lilia-node-editor__wire"));
+    assert!(css.contains(".ctx-menu"));
     assert!(!dirs.bot_flow_assets.as_os_str().is_empty());
     host.stop().await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;

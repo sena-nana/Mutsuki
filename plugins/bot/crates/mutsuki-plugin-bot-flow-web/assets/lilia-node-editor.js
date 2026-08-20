@@ -125,6 +125,7 @@ export function mountLiliaNodeEditor(host, handlers = {}) {
       path.style.pointerEvents = "stroke";
       path.addEventListener("pointerdown", (event) => {
         event.stopPropagation();
+        if (event.button !== 0) return;
         handlers.onSelectEdge?.(path.dataset.edge);
       });
     });
@@ -149,6 +150,7 @@ export function mountLiliaNodeEditor(host, handlers = {}) {
       card.addEventListener("pointerdown", (event) => {
         if (event.target.closest("[data-port]")) return;
         event.stopPropagation();
+        if (event.button !== 0) return;
         const node = nodeById(card.dataset.node);
         if (!node) return;
         handlers.onSelectNode?.(node.id);
@@ -168,6 +170,7 @@ export function mountLiliaNodeEditor(host, handlers = {}) {
     nodesHost.querySelectorAll("[data-port]").forEach((button) => {
       button.addEventListener("pointerdown", (event) => {
         event.stopPropagation();
+        if (event.button !== 0) return;
         const node = nodeById(button.closest("[data-node]").dataset.node);
         const direction = button.dataset.direction;
         const portId = button.dataset.port;
@@ -315,6 +318,21 @@ export function mountLiliaNodeEditor(host, handlers = {}) {
       handlers.onSelectBackground?.();
     }
   });
+  host.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    cancelDraft();
+    const node = event.target.closest("[data-node]");
+    const edge = event.target.closest("[data-edge]");
+    if (node) handlers.onSelectNode?.(node.dataset.node);
+    else if (edge) handlers.onSelectEdge?.(edge.dataset.edge);
+    handlers.onContextMenu?.({
+      kind: node ? "node" : edge ? "edge" : "background",
+      id: node?.dataset.node || edge?.dataset.edge || null,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      world: worldPoint(event),
+    });
+  });
   host.addEventListener("pointermove", onPointerMove);
   host.addEventListener("pointerup", onPointerUp);
   host.addEventListener("pointercancel", onPointerUp);
@@ -329,16 +347,6 @@ export function mountLiliaNodeEditor(host, handlers = {}) {
     view.scale = next;
     updateGrid();
   }, { passive: false });
-  host.addEventListener("dragover", (event) => event.preventDefault());
-  host.addEventListener("drop", (event) => {
-    event.preventDefault();
-    const encoded = event.dataTransfer?.getData("application/x-mutsuki-node");
-    if (!encoded) return;
-    const item = JSON.parse(encoded);
-    const point = worldPoint(event);
-    handlers.onDropPalette?.(item, { x: Math.max(0, point.x - NODE_WIDTH / 2), y: Math.max(0, point.y - 24) });
-  });
-
   const resize = new ResizeObserver(() => scheduleWires());
   resize.observe(host);
 
