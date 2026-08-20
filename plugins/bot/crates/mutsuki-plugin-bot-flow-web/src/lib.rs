@@ -311,6 +311,7 @@ mod tests {
         assert!(root.path().join("manifest.json").is_file());
         assert!(include_str!("../assets/index.js").contains("lilia-node-editor"));
         assert!(include_str!("../assets/lilia-node-editor.js").contains("mountLiliaNodeEditor"));
+        assert!(include_str!("../assets/lilia-node-editor.js").contains("left:0;top:0"));
         assert!(!include_str!("../assets/index.js").contains("节点 ID"));
         assert!(!include_str!("../assets/index.js").contains("输入事件协议"));
         assert!(!include_str!("../assets/index.js").contains("新建流程"));
