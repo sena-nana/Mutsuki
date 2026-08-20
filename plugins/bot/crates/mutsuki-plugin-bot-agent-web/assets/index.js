@@ -225,14 +225,23 @@ export async function mountAgentConnectionsPanel(el, rpc) {
 export default {
   id: "bot-agent",
   setup(ctx) {
+    ctx.activities.register({
+      id: "bot",
+      label: "Bot",
+      icon: "bot",
+      order: 10,
+      position: "top",
+    });
     ctx.pages.register({
       id: "bot-agent.page", path: "/agent", title: "会话",
+      pluginIds: ["mutsuki.agent.runtime.local", "mutsuki.plugin.bot.agent"],
       component: { mount: (el) => mountAgentConnectionsPanel(el, ctx.rpc) },
       requiredCapability: "runtime.read",
     });
     ctx.slots.register({
       id: "bot-agent.overview.cards",
       slot: "overview.cards",
+      pluginIds: ["mutsuki.agent.runtime.local", "mutsuki.plugin.bot.agent"],
       requiredCapability: "runtime.read",
       component: {
         mount(el) {
@@ -240,19 +249,6 @@ export default {
         },
       },
     });
-    for (const providerId of ["mutsuki.agent.runtime.local", "mutsuki.plugin.bot.agent"]) {
-      ctx.slots.register({
-        id: `bot-agent.config.editor.${providerId}`,
-        slot: "config.editor",
-        component: {
-          providerId,
-          activityId: "bot",
-          pageId: "bot-agent.page",
-          label: "查看会话",
-          mode: "supplement",
-        },
-      });
-    }
     ctx.navigation.register({
       id: "bot-agent.nav", activityId: "bot", pageId: "bot-agent.page", label: "会话", order: 30,
       requiredCapability: "runtime.read",

@@ -655,20 +655,12 @@ pub(crate) fn materialize_console_shell(
     }
     let mut activities = vec![
         json!({"id": "home", "label": "概览", "icon": "home", "order": 0, "position": "top"}),
-        json!({"id": "bot", "label": "Bot", "icon": "bot", "order": 10, "position": "top"}),
-        json!({"id": "automation", "label": "自动化", "icon": "flow", "order": 20, "position": "top"}),
         json!({"id": "system", "label": "诊断", "icon": "system", "order": 90, "position": "bottom"}),
     ];
-    if include_sandbox {
-        activities.insert(
-            2,
-            json!({"id": "sandbox", "label": "沙盒", "icon": "sandbox", "order": 12, "position": "top"}),
-        );
-    }
     if include_config {
         activities.push(json!({
-            "id": "config",
-            "label": "配置",
+            "id": "plugins",
+            "label": "插件",
             "icon": "config",
             "order": 40,
             "position": "top"

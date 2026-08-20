@@ -2,7 +2,8 @@
 import {
   WebBridgeClient,
   DisposableScope,
-  createRegistry
+  createRegistry,
+  pluginIdsOf
 } from "./web-sdk.js";
 
 // ../ui/dist/theme.js
@@ -70,7 +71,7 @@ function createShellState() {
     extensions: [],
     failures: [],
     capabilities: /* @__PURE__ */ new Set(),
-    activities: createRegistry(),
+    activities: createRegistry({ onDuplicate: "retain" }),
     pages: createRegistry(),
     navigation: createRegistry(),
     slots: createRegistry(),
@@ -180,6 +181,9 @@ var WebShellRuntime = class {
       () => createExtensionContext(this.state, this.bridge, this.bridge)
     );
     this.extensionDisposables.push(...loaded);
+    const finalized = finalizePluginActivity(this.state);
+    if (finalized) this.extensionDisposables.push(finalized);
+    validateShellState(this.state);
   }
   dispose() {
     for (const disposable of this.extensionDisposables.splice(0).reverse()) {
@@ -202,12 +206,75 @@ function createExtensionContext(state, rpc, events) {
     events
   };
 }
+var PLUGIN_ACTIVITY_ID = "plugins";
+var PLUGIN_HOME_SLOT = "plugin.home";
+function finalizePluginActivity(state) {
+  if (!state.activities.list().some((item) => item.id === PLUGIN_ACTIVITY_ID)) return null;
+  const home = state.slots.list().find((item) => item.slot === PLUGIN_HOME_SLOT);
+  const factory = home?.component;
+  if (typeof factory?.mount !== "function") return null;
+  const pages = new Map(state.pages.list().map((page) => [page.id, page]));
+  const covered = /* @__PURE__ */ new Set();
+  for (const nav of state.navigation.list()) {
+    if (nav.activityId !== PLUGIN_ACTIVITY_ID) continue;
+    for (const pluginId of pluginIdsOf(pages.get(nav.pageId))) covered.add(pluginId);
+  }
+  const discovered = /* @__PURE__ */ new Map();
+  const remember = (pluginId, label, requiredCapability) => {
+    if (!covered.has(pluginId) && !discovered.has(pluginId)) {
+      discovered.set(pluginId, { label, requiredCapability });
+    }
+  };
+  for (const page of state.pages.list()) {
+    for (const pluginId of pluginIdsOf(page)) {
+      remember(pluginId, page.title || pluginId, page.requiredCapability);
+    }
+  }
+  for (const slot of state.slots.list()) {
+    if (slot.slot === PLUGIN_HOME_SLOT) continue;
+    for (const pluginId of pluginIdsOf(slot)) {
+      remember(pluginId, pluginId, slot.requiredCapability);
+    }
+  }
+  const scope = new DisposableScope();
+  let order = 1e3;
+  for (const [pluginId, meta] of discovered) {
+    const path = `/plugins/${pluginId}`;
+    if (pages.has(pluginId) || [...pages.values()].some((page2) => page2.path === path)) continue;
+    const page = {
+      id: pluginId,
+      path,
+      title: meta.label,
+      pluginId,
+      requiredCapability: meta.requiredCapability,
+      component: {
+        mount(element) {
+          return factory.mount?.(element, { pluginId });
+        }
+      }
+    };
+    scope.own(state.pages.register(page));
+    scope.own(
+      state.navigation.register({
+        id: `${pluginId}.nav`,
+        activityId: PLUGIN_ACTIVITY_ID,
+        pageId: pluginId,
+        label: meta.label,
+        order,
+        requiredCapability: meta.requiredCapability
+      })
+    );
+    order += 1;
+    pages.set(pluginId, page);
+  }
+  return scope;
+}
 function validateShellState(state) {
   const activities = new Set(state.activities.list().map((item) => item.id));
   const pages = new Map(state.pages.list().map((item) => [item.id, item]));
   const paths = /* @__PURE__ */ new Set();
   for (const page of pages.values()) {
-    if (!/^\/[a-z0-9][a-z0-9-/]*$/i.test(page.path)) {
+    if (!/^\/[a-z0-9][a-z0-9._/-]*$/i.test(page.path)) {
       throw new Error(`invalid page path: ${page.path}`);
     }
     if (paths.has(page.path)) throw new Error(`duplicate page path: ${page.path}`);
@@ -484,12 +551,15 @@ var SHARED_IMPORT_MAP = {
   "@mutsuki/ui": "/shared/ui.js"
 };
 export {
+  PLUGIN_ACTIVITY_ID,
+  PLUGIN_HOME_SLOT,
   SHARED_IMPORT_MAP,
   WebShellRuntime,
   createExtensionContext,
   createShellState,
   createWebShellRuntime,
   createWebUiThemeController,
+  finalizePluginActivity,
   groupNavigationItems,
   loadExtensions,
   mountWebShell,

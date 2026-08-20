@@ -496,8 +496,16 @@ export async function mountBotFlowEditor(el, rpc) {
 export default {
   id: "bot-flow-editor",
   setup(ctx) {
+    ctx.activities.register({
+      id: "automation",
+      label: "自动化",
+      icon: "flow",
+      order: 20,
+      position: "top",
+    });
     ctx.pages.register({
       id: "bot-flow.page", path: "/flows", title: "流程编排",
+      pluginId: "mutsuki.bot.router.flow",
       component: { mount: (el) => mountBotFlowEditor(el, ctx.rpc) },
       requiredCapability: "bot.flow.read",
     });

@@ -201,23 +201,13 @@ export default {
     ctx.slots.register({
       id: "qq-bot.overview.cards",
       slot: "overview.cards",
+      pluginId: QQ_PROVIDER_ID,
       requiredCapability: "bot.read",
       component: {
         mount(el) {
           const panel = mountQqAccountCards(el, ctx.rpc, ctx.events);
           return { dispose: () => panel.destroy() };
         },
-      },
-    });
-    ctx.slots.register({
-      id: "qq-bot.config.editor",
-      slot: "config.editor",
-      component: {
-        providerId: QQ_PROVIDER_ID,
-        activityId: "home",
-        pageId: "overview.page",
-        label: "查看连接状态",
-        mode: "supplement",
       },
     });
   },

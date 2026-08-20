@@ -2,6 +2,7 @@ import {
   WebBridgeClient,
   DisposableScope,
   createRegistry,
+  pluginIdsOf,
   type ActivityRegistration,
   type BridgeConnectionState,
   type BridgeHelloAck,
@@ -10,6 +11,7 @@ import {
   type NavigationRegistration,
   type PageRegistration,
   type Registry,
+  type SlotRegistration,
   type WebBridgeClientOptions,
   type WebExtension,
 } from "@mutsuki/web-sdk";
@@ -93,7 +95,7 @@ export interface ShellState {
   activities: ReturnType<typeof createRegistry<ActivityRegistration>>;
   pages: ReturnType<typeof createRegistry<PageRegistration>>;
   navigation: ReturnType<typeof createRegistry<NavigationRegistration>>;
-  slots: ReturnType<typeof createRegistry<{ id: string; slot: string; component: unknown }>>;
+  slots: ReturnType<typeof createRegistry<SlotRegistration>>;
   commands: ReturnType<
     typeof createRegistry<{ id: string; title: string; run: () => void | Promise<void> }>
   >;
@@ -104,7 +106,7 @@ export function createShellState(): ShellState {
     extensions: [],
     failures: [],
     capabilities: new Set(),
-    activities: createRegistry(),
+    activities: createRegistry({ onDuplicate: "retain" }),
     pages: createRegistry(),
     navigation: createRegistry(),
     slots: createRegistry(),
@@ -242,6 +244,9 @@ export class WebShellRuntime implements Disposable {
       createExtensionContext(this.state, this.bridge, this.bridge),
     );
     this.extensionDisposables.push(...loaded);
+    const finalized = finalizePluginActivity(this.state);
+    if (finalized) this.extensionDisposables.push(finalized);
+    validateShellState(this.state);
   }
 
   dispose(): void {
@@ -272,12 +277,88 @@ export function createExtensionContext(
   };
 }
 
+export const PLUGIN_ACTIVITY_ID = "plugins";
+export const PLUGIN_HOME_SLOT = "plugin.home";
+
+type PluginHomeFactory = {
+  mount?(
+    element: HTMLElement,
+    options?: { pluginId: string },
+  ): void | Disposable | Promise<void | Disposable>;
+};
+
+/** Fill `#/plugins/{pluginId}` for owners that only registered extra pages or cards. */
+export function finalizePluginActivity(state: ShellState): Disposable | null {
+  if (!state.activities.list().some((item) => item.id === PLUGIN_ACTIVITY_ID)) return null;
+  const home = state.slots.list().find((item) => item.slot === PLUGIN_HOME_SLOT);
+  const factory = home?.component as PluginHomeFactory | undefined;
+  if (typeof factory?.mount !== "function") return null;
+
+  const pages = new Map(state.pages.list().map((page) => [page.id, page]));
+  const covered = new Set<string>();
+  for (const nav of state.navigation.list()) {
+    if (nav.activityId !== PLUGIN_ACTIVITY_ID) continue;
+    for (const pluginId of pluginIdsOf(pages.get(nav.pageId))) covered.add(pluginId);
+  }
+
+  const discovered = new Map<string, { label: string; requiredCapability?: string }>();
+  const remember = (pluginId: string, label: string, requiredCapability?: string) => {
+    if (!covered.has(pluginId) && !discovered.has(pluginId)) {
+      discovered.set(pluginId, { label, requiredCapability });
+    }
+  };
+  for (const page of state.pages.list()) {
+    for (const pluginId of pluginIdsOf(page)) {
+      remember(pluginId, page.title || pluginId, page.requiredCapability);
+    }
+  }
+  for (const slot of state.slots.list()) {
+    if (slot.slot === PLUGIN_HOME_SLOT) continue;
+    for (const pluginId of pluginIdsOf(slot)) {
+      remember(pluginId, pluginId, slot.requiredCapability);
+    }
+  }
+
+  const scope = new DisposableScope();
+  let order = 1000;
+  for (const [pluginId, meta] of discovered) {
+    const path = `/plugins/${pluginId}`;
+    if (pages.has(pluginId) || [...pages.values()].some((page) => page.path === path)) continue;
+    const page: PageRegistration = {
+      id: pluginId,
+      path,
+      title: meta.label,
+      pluginId,
+      requiredCapability: meta.requiredCapability,
+      component: {
+        mount(element) {
+          return factory.mount?.(element, { pluginId });
+        },
+      },
+    };
+    scope.own(state.pages.register(page));
+    scope.own(
+      state.navigation.register({
+        id: `${pluginId}.nav`,
+        activityId: PLUGIN_ACTIVITY_ID,
+        pageId: pluginId,
+        label: meta.label,
+        order,
+        requiredCapability: meta.requiredCapability,
+      }),
+    );
+    order += 1;
+    pages.set(pluginId, page);
+  }
+  return scope;
+}
+
 export function validateShellState(state: ShellState): void {
   const activities = new Set(state.activities.list().map((item) => item.id));
   const pages = new Map(state.pages.list().map((item) => [item.id, item]));
   const paths = new Set<string>();
   for (const page of pages.values()) {
-    if (!/^\/[a-z0-9][a-z0-9-/]*$/i.test(page.path)) {
+    if (!/^\/[a-z0-9][a-z0-9._/-]*$/i.test(page.path)) {
       throw new Error(`invalid page path: ${page.path}`);
     }
     if (paths.has(page.path)) throw new Error(`duplicate page path: ${page.path}`);

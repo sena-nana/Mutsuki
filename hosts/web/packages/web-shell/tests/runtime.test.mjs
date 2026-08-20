@@ -5,6 +5,7 @@ import {
   createExtensionContext,
   createShellState,
   createWebUiThemeController,
+  finalizePluginActivity,
   groupNavigationItems,
   loadExtensions,
   validateShellState,
@@ -181,4 +182,55 @@ test("slot contributions remain available after all extensions load", async () =
   );
   delete globalThis.__mutsukiSlotHost;
   delete globalThis.__mutsukiSlotGuest;
+});
+
+test("activity registration retains the first descriptor and is refcounted", () => {
+  const state = createShellState();
+  const first = state.activities.register({ id: "bot", label: "Bot", icon: "bot" });
+  const second = state.activities.register({ id: "bot", label: "Other", icon: "x" });
+  assert.equal(state.activities.list().length, 1);
+  assert.equal(state.activities.list()[0].label, "Bot");
+  second.dispose();
+  assert.equal(state.activities.list().length, 1);
+  first.dispose();
+  assert.equal(state.activities.list().length, 0);
+});
+
+test("finalizePluginActivity adds hub pages for extra plugin-owned pages", () => {
+  const state = createShellState();
+  state.activities.register({ id: "plugins", label: "插件", icon: "config" });
+  state.activities.register({ id: "bot", label: "Bot", icon: "bot" });
+  state.slots.register({
+    id: "plugin.home",
+    slot: "plugin.home",
+    component: {
+      mount() {
+        return { dispose() {} };
+      },
+    },
+  });
+  state.pages.register({
+    id: "bilibili.page",
+    path: "/bilibili",
+    title: "B站推送",
+    pluginId: "mutsuki.bot.bilibili",
+    component: { mount() {} },
+  });
+  state.navigation.register({
+    id: "bilibili.nav",
+    activityId: "bot",
+    pageId: "bilibili.page",
+    label: "B站推送",
+  });
+
+  const disposable = finalizePluginActivity(state);
+  assert.ok(state.pages.list().some((page) => page.id === "mutsuki.bot.bilibili"));
+  assert.ok(
+    state.navigation.list().some(
+      (item) => item.activityId === "plugins" && item.pageId === "mutsuki.bot.bilibili",
+    ),
+  );
+  validateShellState(state);
+  disposable.dispose();
+  assert.equal(state.pages.list().some((page) => page.id === "mutsuki.bot.bilibili"), false);
 });

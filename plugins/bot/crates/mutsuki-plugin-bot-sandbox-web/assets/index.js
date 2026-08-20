@@ -1211,8 +1211,16 @@ export function mountSandboxPanel(host, rpc, events) {
 export default {
   id: "sandbox",
   setup(ctx) {
+    ctx.activities.register({
+      id: "sandbox",
+      label: "沙盒",
+      icon: "sandbox",
+      order: 12,
+      position: "top",
+    });
     ctx.pages.register({
       id: "sandbox.page", path: "/sandbox", title: "沙盒",
+      pluginId: "mutsuki.bot.sandbox",
       component: { mount(el) { const panel = mountSandboxPanel(el, ctx.rpc, ctx.events); return { dispose: () => panel.destroy() }; } },
       requiredCapability: "bot.read",
     });

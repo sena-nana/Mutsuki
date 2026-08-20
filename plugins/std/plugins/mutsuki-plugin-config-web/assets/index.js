@@ -597,8 +597,87 @@ function appendEditorCard(parent, editor) {
   parent.appendChild(actions);
 }
 
+function pluginIdsOf(item) {
+  return [...new Set([item?.pluginId, ...(item?.pluginIds || [])].filter(Boolean).map(String))];
+}
+
+function extraPagesForPlugin(ctx, pluginId, homePageId) {
+  if (!ctx?.pages?.list) return [];
+  const navByPage = new Map((ctx.navigation?.list?.() || []).map((item) => [item.pageId, item]));
+  return (ctx.pages.list() || [])
+    .filter((page) => pluginIdsOf(page).includes(pluginId) && page.id !== homePageId)
+    .map((page) => ({ page, nav: navByPage.get(page.id) }));
+}
+
+function appendPluginInfo(parent, plugin) {
+  if (!plugin) return;
+  const card = document.createElement("section");
+  card.className = "card";
+  const heading = document.createElement("h2");
+  heading.textContent = plugin.plugin_id || "";
+  const meta = document.createElement("p");
+  meta.className = "muted";
+  const version = (plugin.candidates || []).find((item) => item.deployment === plugin.active_deployment)?.version
+    || plugin.candidates?.[0]?.version
+    || "—";
+  meta.textContent = `当前部署：${plugin.active_deployment || "—"} · ${version}`;
+  card.append(heading, meta);
+  parent.appendChild(card);
+}
+
+function mountPluginCards(parent, ctx, pluginId) {
+  const panels = [];
+  if (!ctx?.slots?.list) return panels;
+  for (const item of ctx.slots.list().filter((entry) => entry.slot === "overview.cards" && pluginIdsOf(entry).includes(pluginId))) {
+    const node = document.createElement("div");
+    node.className = "overview-cards";
+    parent.appendChild(node);
+    const mounted = item.component?.mount?.(node);
+    if (mounted) panels.push(mounted);
+  }
+  return panels;
+}
+
+function appendPluginPages(parent, ctx, pluginId, homePageId) {
+  const pages = extraPagesForPlugin(ctx, pluginId, homePageId);
+  if (!pages.length) return;
+  const card = document.createElement("section");
+  card.className = "card";
+  const heading = document.createElement("h2");
+  heading.textContent = `该插件提供了 ${pages.length} 个页面`;
+  card.appendChild(heading);
+  const actions = document.createElement("div");
+  actions.className = "actions";
+  for (const { page, nav } of pages) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "ghost";
+    button.textContent = nav?.label || page.title;
+    button.onclick = () => {
+      location.hash = nav?.activityId ? `#/${nav.activityId}/${page.id}` : `#/${page.id}`;
+    };
+    actions.appendChild(button);
+  }
+  card.appendChild(actions);
+  parent.appendChild(card);
+}
+
+async function loadPluginInfo(rpc, pluginId) {
+  if (!pluginId) return null;
+  try {
+    const value = rpc.read
+      ? await rpc.read("control", "plugin_list")
+      : await rpc.call("control", "plugin_list", {});
+    return (value?.plugins || []).find((item) => item.plugin_id === pluginId) || null;
+  } catch {
+    return null;
+  }
+}
+
 /** Embeddable config panel (no outer console shell). Used by the unified overview shell. */
-export function mountConfigPanel(host, rpc, events, fixedProviderId = null, slots = null) {
+export function mountConfigPanel(host, rpc, events, fixedProviderId = null, slots = null, ctx = null, pluginId = null) {
+  const ownerPluginId = pluginId || fixedProviderId;
+  const homePageId = ownerPluginId || "";
   const state = {
     providers: [],
     selected: null,
@@ -609,25 +688,41 @@ export function mountConfigPanel(host, rpc, events, fixedProviderId = null, slot
     conflict: null,
     applyInFlight: false,
     pendingRevision: null,
+    pluginInfo: null,
   };
+  let cardPanels = [];
 
   const root = document.createElement("div");
   root.className = "config-panel settings-page";
   host.innerHTML = "";
   host.appendChild(root);
 
+  const disposeCards = () => {
+    for (const panel of cardPanels) {
+      panel.dispose?.() ?? panel.destroy?.();
+    }
+    cardPanels = [];
+  };
+
   async function refreshProviders() {
     if (fixedProviderId) {
-      const schema = await rpc.call("config", "schema.get", { provider_id: fixedProviderId });
-      const provider = {
-        id: fixedProviderId,
-        title: schema?.title?.default || "配置",
-        description: schema?.description?.default || "",
-        schema,
-      };
-      state.providers = [provider];
-      await openProvider(provider);
-      return;
+      try {
+        const schema = await rpc.call("config", "schema.get", { provider_id: fixedProviderId });
+        const provider = {
+          id: fixedProviderId,
+          title: schema?.title?.default || "配置",
+          description: schema?.description?.default || "",
+          schema,
+        };
+        state.providers = [provider];
+        await openProvider(provider);
+        return;
+      } catch {
+        state.selected = fixedProviderId;
+        state.schema = null;
+        render();
+        return;
+      }
     }
     const list = await rpc.call("config", "providers.list", {});
     const ids = normalizeProviders(list);
@@ -659,6 +754,7 @@ export function mountConfigPanel(host, rpc, events, fixedProviderId = null, slot
   }
 
   function render() {
+    disposeCards();
     root.innerHTML = "";
     if (!state.selected) {
       const card = document.createElement("section");
@@ -681,6 +777,12 @@ export function mountConfigPanel(host, rpc, events, fixedProviderId = null, slot
       return;
     }
 
+    if (ctx && ownerPluginId) {
+      appendPluginInfo(root, state.pluginInfo);
+      cardPanels = mountPluginCards(root, ctx, ownerPluginId);
+      appendPluginPages(root, ctx, ownerPluginId, homePageId);
+    }
+
     if (state.conflict) {
       const banner = document.createElement("div");
       banner.className = "conflict";
@@ -697,8 +799,8 @@ export function mountConfigPanel(host, rpc, events, fixedProviderId = null, slot
     }
 
     const editor = configEditorForProvider(slots, state.selected);
-    if (editor) appendEditorCard(root, editor);
-    const replaceForm = editor?.mode === "replace";
+    if (editor && (editor.mode === "replace" || !ctx)) appendEditorCard(root, editor);
+    const replaceForm = editor?.mode === "replace" || !state.schema;
 
     if (!replaceForm) {
       const formHost = document.createElement("div");
@@ -823,12 +925,25 @@ export function mountConfigPanel(host, rpc, events, fixedProviderId = null, slot
       }
     }, "config.schema.read");
 
-  refreshProviders().catch(() => {
+  const boot = async () => {
+    if (ctx && ownerPluginId) {
+      state.pluginInfo = await loadPluginInfo(rpc, ownerPluginId);
+    }
+    await refreshProviders();
+  };
+  boot().catch(() => {
     state.message = "配置加载失败，请稍后重试";
     render();
   });
-  root.destroy = () => revisionSubscription?.dispose();
+  root.destroy = () => {
+    disposeCards();
+    revisionSubscription?.dispose();
+  };
   return root;
+}
+
+export function mountPluginHome(host, ctx, pluginId, providerId = pluginId) {
+  return mountConfigPanel(host, ctx.rpc, ctx.events, providerId, ctx.slots, ctx, pluginId);
 }
 
 function createConsoleApp(rpc) {
@@ -879,12 +994,6 @@ export function mountConfigConsole(el, rpc) {
   el.appendChild(createConsoleApp(rpc));
 }
 
-function encodeProviderRoute(providerId) {
-  return [...new TextEncoder().encode(providerId)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
-
 export default {
   id: "config",
   async setup(ctx) {
@@ -905,6 +1014,17 @@ export default {
         host.appendChild(input);
       },
     });
+    ctx.slots.register({
+      id: "plugin.home",
+      slot: "plugin.home",
+      component: {
+        mount(el, options = {}) {
+          const pluginId = options.pluginId;
+          const panel = mountPluginHome(el, ctx, pluginId, pluginId);
+          return { dispose: () => panel?.destroy?.() };
+        },
+      },
+    });
     const groups = await ctx.rpc.call("config", "navigation.list", {});
     const entries = (groups || []).flatMap((group) =>
       (group.items || []).map((item) => ({ group, item })),
@@ -921,25 +1041,23 @@ export default {
       const { group, item, schema } = provider;
       const providerId = item.provider_id;
       const title = item.label || schema?.title?.default || "配置";
-      const routeId = encodeProviderRoute(providerId);
-      const pageId = order === 0 ? "config.page" : `config.provider.${routeId}`;
-      const path = order === 0 ? "/config" : `/config/${routeId}`;
       ctx.pages.register({
-        id: pageId,
-        path,
+        id: providerId,
+        path: `/plugins/${providerId}`,
         title,
+        pluginId: providerId,
         component: {
           mount(el) {
-            const panel = mountConfigPanel(el, ctx.rpc, ctx.events, providerId, ctx.slots);
+            const panel = mountPluginHome(el, ctx, providerId, providerId);
             return { dispose: () => panel?.destroy?.() };
           },
         },
         requiredCapability: "config.schema.read",
       });
       ctx.navigation.register({
-        id: `${pageId}.nav`,
-        activityId: "config",
-        pageId,
+        id: `${providerId}.nav`,
+        activityId: "plugins",
+        pageId: providerId,
         label: title,
         group: group.label || undefined,
         order,
