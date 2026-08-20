@@ -1,5 +1,5 @@
 export const NODE_WIDTH = 220;
-export const NODE_HEADER = 66;
+export const NODE_HEADER = 71;
 export const PORT_ROW = 28;
 
 export function edgePath(x1, y1, x2, y2) {
@@ -22,10 +22,10 @@ export function portAnchor(node, port, index) {
   return { x, y };
 }
 
-export function clientToWorld(bounds, view, clientX, clientY) {
+export function clientToWorld(worldRect, view, clientX, clientY) {
   return {
-    x: (clientX - bounds.left - view.x) / view.scale,
-    y: (clientY - bounds.top - view.y) / view.scale,
+    x: (clientX - worldRect.left) / view.scale,
+    y: (clientY - worldRect.top) / view.scale,
   };
 }
 
@@ -63,9 +63,22 @@ export function mountLiliaNodeEditor(host, handlers = {}) {
   let draft = null;
   let drag = null;
   let pan = null;
+  let wireFrame = 0;
+
+  function worldRect() {
+    return world.getBoundingClientRect();
+  }
 
   function worldPoint(event) {
-    return clientToWorld(host.getBoundingClientRect(), view, event.clientX, event.clientY);
+    return clientToWorld(worldRect(), view, event.clientX, event.clientY);
+  }
+
+  function scheduleWires() {
+    if (wireFrame) return;
+    wireFrame = requestAnimationFrame(() => {
+      wireFrame = 0;
+      renderWires();
+    });
   }
 
   function nodeById(nodeId) {
@@ -85,11 +98,7 @@ export function mountLiliaNodeEditor(host, handlers = {}) {
     const dot = button?.querySelector(".lilia-node-editor__port-dot") || button;
     if (!dot) return null;
     const rect = dot.getBoundingClientRect();
-    const bounds = host.getBoundingClientRect();
-    return {
-      x: (rect.left + rect.width / 2 - bounds.left - view.x) / view.scale,
-      y: (rect.top + rect.height / 2 - bounds.top - view.y) / view.scale,
-    };
+    return clientToWorld(worldRect(), view, rect.left + rect.width / 2, rect.top + rect.height / 2);
   }
 
   function wireGeometry(edge) {
@@ -127,7 +136,7 @@ export function mountLiliaNodeEditor(host, handlers = {}) {
     nodesHost.innerHTML = graph.nodes.map((node) => {
       const inputPorts = node.inputs.map((port, index) => portMarkup(node, port, "input", index)).join("");
       const outputPorts = node.outputs.map((port, index) => portMarkup(node, port, "output", index)).join("");
-      return `<article class="lilia-node-editor__node${node.selected ? " is-selected" : ""}${node.invalid ? " is-invalid" : ""}" data-node="${esc(node.id)}" style="transform:translate(${node.x}px,${node.y}px)">
+      return `<article class="lilia-node-editor__node${node.selected ? " is-selected" : ""}${node.invalid ? " is-invalid" : ""}" data-node="${esc(node.id)}" style="left:0;top:0;transform:translate(${node.x}px,${node.y}px)">
         <h3 class="lilia-node-editor__node-title">${esc(node.title)}</h3>
         <p class="lilia-node-editor__node-meta">${esc(node.subtitle || "")}</p>
         <div class="lilia-node-editor__ports">
@@ -314,8 +323,9 @@ export function mountLiliaNodeEditor(host, handlers = {}) {
     event.preventDefault();
     const point = worldPoint(event);
     const next = Math.min(1.8, Math.max(0.55, view.scale * (event.deltaY < 0 ? 1.08 : 0.92)));
-    view.x = event.clientX - host.getBoundingClientRect().left - point.x * next;
-    view.y = event.clientY - host.getBoundingClientRect().top - point.y * next;
+    const bounds = worldRect();
+    view.x += event.clientX - bounds.left - point.x * next;
+    view.y += event.clientY - bounds.top - point.y * next;
     view.scale = next;
     updateGrid();
   }, { passive: false });
@@ -329,6 +339,9 @@ export function mountLiliaNodeEditor(host, handlers = {}) {
     handlers.onDropPalette?.(item, { x: Math.max(0, point.x - NODE_WIDTH / 2), y: Math.max(0, point.y - 24) });
   });
 
+  const resize = new ResizeObserver(() => scheduleWires());
+  resize.observe(host);
+
   updateGrid();
   return {
     setGraph(next) {
@@ -339,6 +352,7 @@ export function mountLiliaNodeEditor(host, handlers = {}) {
       };
       renderNodes();
       renderWires();
+      scheduleWires();
     },
     setSelection({ nodeId = null, edgeId = null } = {}) {
       for (const node of graph.nodes) node.selected = node.id === nodeId;
@@ -349,10 +363,12 @@ export function mountLiliaNodeEditor(host, handlers = {}) {
       renderWires();
     },
     clientToWorld(clientX, clientY) {
-      return clientToWorld(host.getBoundingClientRect(), view, clientX, clientY);
+      return clientToWorld(worldRect(), view, clientX, clientY);
     },
     cancelDraft,
     dispose() {
+      resize.disconnect();
+      if (wireFrame) cancelAnimationFrame(wireFrame);
       host.replaceChildren();
     },
   };

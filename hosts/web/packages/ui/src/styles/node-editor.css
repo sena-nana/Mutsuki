@@ -166,6 +166,13 @@
   transform-origin: 0 0;
 }
 
+.lilia-node-editor__nodes {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
 .lilia-node-editor__wires {
   position: absolute;
   top: 0;
@@ -211,17 +218,21 @@
 
 .lilia-node-editor__node {
   position: absolute;
+  top: 0;
+  left: 0;
   z-index: 1;
   display: flex;
   width: 220px;
   flex-direction: column;
   gap: 8px;
   padding: 10px 12px 12px;
+  overflow: visible;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--lilia-surface-fill-raised, var(--bg-elev));
   box-shadow: var(--shadow);
   cursor: grab;
+  pointer-events: auto;
   user-select: none;
 }
 
@@ -239,22 +250,30 @@
 .lilia-node-editor__node-title {
   margin: 0;
   overflow: hidden;
+  height: 18px;
   font-size: 13px;
   font-weight: 600;
+  line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .lilia-node-editor__node-meta {
   margin: 0;
+  overflow: hidden;
+  height: 16px;
   color: var(--text-muted);
   font-size: 11px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .lilia-node-editor__ports {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px 12px;
+  gap: 6px 12px;
+  margin-inline: -13px;
 }
 
 .lilia-node-editor__port-col {
@@ -271,16 +290,22 @@
   position: relative;
   display: inline-flex;
   max-width: 100%;
+  min-height: 22px;
+  height: 22px;
   align-items: center;
   gap: 6px;
-  height: 22px;
-  padding: 0 2px;
+  margin: 0;
+  padding: 0;
   border: 0;
   background: transparent;
   color: var(--text);
   font-size: 11px;
   line-height: 1;
   cursor: crosshair;
+}
+
+.lilia-node-editor__port:hover {
+  background: transparent;
 }
 
 .lilia-node-editor__port-col--output .lilia-node-editor__port {
@@ -294,6 +319,14 @@
   border: 2px solid var(--accent);
   border-radius: 50%;
   background: var(--lilia-surface-fill-raised, var(--bg-elev));
+}
+
+.lilia-node-editor__port-col--input .lilia-node-editor__port-dot {
+  margin-inline-start: -5px;
+}
+
+.lilia-node-editor__port-col--output .lilia-node-editor__port-dot {
+  margin-inline-end: -5px;
 }
 
 .lilia-node-editor__port.error .lilia-node-editor__port-dot {
