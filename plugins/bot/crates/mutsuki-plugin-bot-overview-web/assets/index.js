@@ -136,7 +136,8 @@ function mountOverview(host, ctx) {
   document.addEventListener("visibilitychange", visibility);
   uptimeTimer = setInterval(render, 1_000);
   for (const item of ctx.slots.list().filter((entry) => entry.slot === "overview.cards")) {
-    const node = document.createElement("div");
+    const node = document.createElement("article");
+    node.className = "card card--outlined";
     cardsHost.append(node);
     const mounted = item.component?.mount?.(node);
     if (mounted) cardPanels.push(mounted);

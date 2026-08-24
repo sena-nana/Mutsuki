@@ -1,7 +1,8 @@
 const QQ_PROVIDER_ID = "mutsuki.bot.adapter.qqbot";
 
 const STYLE = `
-.qq-account-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.qq-account + .qq-account { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border, #d0d7de); }
+.qq-account-head { display: flex; align-items: center; gap: 12px; }
 .qq-account-avatar { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; font-size: 18px; font-weight: 650; color: var(--accent-text, #fff); background: var(--accent, #7aa2ff); flex: none; overflow: hidden; object-fit: cover; object-position: center; }
 img.qq-account-avatar { display: block; padding: 0; }
 .qq-account-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -109,8 +110,8 @@ function avatar(name, className, avatarUrl) {
   return img;
 }
 
-function accountCard(account) {
-  const card = element("article", "card card--outlined");
+function accountRow(account) {
+  const row = element("div", "qq-account");
   const selfUser = account.self_user || {};
   const title = selfUser.display_name || account.account_id || "QQ 账号";
   const status = element(
@@ -122,30 +123,28 @@ function accountCard(account) {
   heading.append(element("h3", "", title), status);
   const meta = element("div");
   meta.append(heading);
-  if (selfUser.user_id) card.title = `OpenID ${selfUser.user_id}`;
+  if (selfUser.user_id) row.title = `OpenID ${selfUser.user_id}`;
   meta.append(element("p", "muted", `在线时长 ${formatDuration(account.connected_since_unix_ms)}`));
   const head = element("div", "qq-account-head");
   head.append(avatar(title, "qq-account-avatar", selfUser.avatar_url), meta);
-  card.append(head);
-  if (account.last_error) card.append(element("p", "error-banner", account.last_error));
-  return card;
+  row.append(head);
+  if (account.last_error) row.append(element("p", "error-banner", account.last_error));
+  return row;
 }
 
 export function mountQqAccountCards(host, rpc, events) {
   ensureStyle();
-  const root = element("div", "overview-cards");
-  host.replaceChildren(root);
   let disposed = false;
   let pollTimer = null;
   let inFlight = null;
 
   function render(snapshot, ownerUnavailable) {
-    root.replaceChildren();
+    host.replaceChildren();
     if (ownerUnavailable) {
-      root.append(element("p", "muted", "尚未登录 QQ，请到配置里填写账号。"));
+      host.append(element("p", "muted", "尚未登录 QQ，请到配置里填写账号。"));
       return;
     }
-    (snapshot?.accounts || []).forEach((account) => root.append(accountCard(account)));
+    (snapshot?.accounts || []).forEach((account) => host.append(accountRow(account)));
   }
 
   function schedule() {
@@ -163,7 +162,7 @@ export function mountQqAccountCards(host, rpc, events) {
       .catch((error) => {
         if (disposed) return;
         if (isOwnerUnavailable(error)) render({ accounts: [] }, true);
-        else root.replaceChildren(element("p", "error-banner", errorMessage(error)));
+        else host.replaceChildren(element("p", "error-banner", errorMessage(error)));
       })
       .finally(() => {
         inFlight = null;

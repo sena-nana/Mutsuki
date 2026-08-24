@@ -628,10 +628,15 @@ function appendPluginInfo(parent, plugin) {
 function mountPluginCards(parent, ctx, pluginId) {
   const panels = [];
   if (!ctx?.slots?.list) return panels;
-  for (const item of ctx.slots.list().filter((entry) => entry.slot === "overview.cards" && pluginIdsOf(entry).includes(pluginId))) {
-    const node = document.createElement("div");
-    node.className = "overview-cards";
-    parent.appendChild(node);
+  const items = ctx.slots.list().filter((entry) => entry.slot === "overview.cards" && pluginIdsOf(entry).includes(pluginId));
+  if (!items.length) return panels;
+  const host = document.createElement("div");
+  host.className = "overview-cards";
+  parent.appendChild(host);
+  for (const item of items) {
+    const node = document.createElement("article");
+    node.className = "card card--outlined";
+    host.appendChild(node);
     const mounted = item.component?.mount?.(node);
     if (mounted) panels.push(mounted);
   }

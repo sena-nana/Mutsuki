@@ -101,7 +101,7 @@ async fn qq_management_rpc_uses_authenticated_capabilities_confirmation_and_fixe
     assert!(frontend.contains("在线时长"));
     assert!(frontend.contains("mountQqAccountCards"));
     assert!(frontend.contains("overview.cards"));
-    assert!(frontend.contains("overview-cards"));
+    assert!(!frontend.contains("overview-cards"));
     assert!(!frontend.contains(r#"element("div", "stack")"#));
     assert!(frontend.contains("pluginId: QQ_PROVIDER_ID"));
     assert!(!frontend.contains("config.editor"));
