@@ -34,9 +34,6 @@ function errorText(error) {
 }
 
 export function mountAgentConnectionCards(host, rpc) {
-  const root = document.createElement("article");
-  root.className = "card card--outlined";
-  host.replaceChildren(root);
   let disposed = false;
 
   async function refresh() {
@@ -48,10 +45,10 @@ export function mountAgentConnectionCards(host, rpc) {
       const rows = items.length
         ? items.map((item) => `<div class="tree-item row-item"><div><strong>${item.connection_id === "local" ? "本机模型" : esc(item.connection_id)}</strong></div><div class="row-actions"><span class="pill ${item.state === "healthy" ? "ok" : "warn"}">${item.state === "healthy" ? "运行中" : "不可用"}</span></div></div>`).join("")
         : `<div class="muted">尚未启用，请到配置里填写模型。</div>`;
-      root.innerHTML = `<div class="toolbar nested"><h2>模型</h2><button type="button" class="ghost" data-test>测试模型</button><span class="muted" data-test-result></span></div>${rows}`;
-      root.querySelector("[data-test]").onclick = async (event) => {
+      host.innerHTML = `<div class="toolbar nested"><h2>模型</h2><button type="button" class="ghost" data-test>测试模型</button><span class="muted" data-test-result></span></div>${rows}`;
+      host.querySelector("[data-test]").onclick = async (event) => {
         const button = event.currentTarget;
-        const result = root.querySelector("[data-test-result]");
+        const result = host.querySelector("[data-test-result]");
         button.disabled = true;
         result.textContent = "正在测试…";
         try {
@@ -64,7 +61,7 @@ export function mountAgentConnectionCards(host, rpc) {
         }
       };
     } catch (error) {
-      root.innerHTML = `<p class="muted">${esc(errorText(error))}</p>`;
+      host.innerHTML = `<p class="muted">${esc(errorText(error))}</p>`;
     }
   }
 
