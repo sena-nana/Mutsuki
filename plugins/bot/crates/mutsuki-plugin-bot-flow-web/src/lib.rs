@@ -190,11 +190,14 @@ pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::E
     std::fs::create_dir_all(out_dir)?;
     let js = include_str!("../assets/index.js");
     let editor = include_str!("../assets/lilia-node-editor.js");
+    let menu = include_str!("../assets/lilia-context-menu.js");
     std::fs::write(out_dir.join("index.js"), js)?;
     std::fs::write(out_dir.join("lilia-node-editor.js"), editor)?;
+    std::fs::write(out_dir.join("lilia-context-menu.js"), menu)?;
     let assets = [
         ("index.js", js.as_bytes()),
         ("lilia-node-editor.js", editor.as_bytes()),
+        ("lilia-context-menu.js", menu.as_bytes()),
     ]
     .into_iter()
     .map(|(path, bytes)| AssetEntry {
@@ -308,8 +311,12 @@ mod tests {
         materialize_frontend_assets(root.path()).unwrap();
         assert!(root.path().join("index.js").is_file());
         assert!(root.path().join("lilia-node-editor.js").is_file());
+        assert!(root.path().join("lilia-context-menu.js").is_file());
         assert!(root.path().join("manifest.json").is_file());
         assert!(include_str!("../assets/index.js").contains("lilia-node-editor"));
+        assert!(include_str!("../assets/index.js").contains("lilia-context-menu"));
+        assert!(include_str!("../assets/lilia-context-menu.js").contains("openContextMenuAt"));
+        assert!(include_str!("../assets/lilia-context-menu.js").contains("ctx-menu__submenu"));
         assert!(include_str!("../assets/lilia-node-editor.js").contains("mountLiliaNodeEditor"));
         assert!(include_str!("../assets/lilia-node-editor.js").contains("left:0;top:0"));
         assert!(!include_str!("../assets/index.js").contains("节点 ID"));
