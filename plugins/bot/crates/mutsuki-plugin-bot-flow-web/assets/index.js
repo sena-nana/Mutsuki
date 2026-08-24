@@ -1,6 +1,10 @@
 import { NODE_WIDTH, mountLiliaNodeEditor, samePortType } from "./lilia-node-editor.js";
+import { openContextMenuAt, closeContextMenu } from "./lilia-context-menu.js";
 
 const ERROR_TYPE = { type_id: "mutsuki.bot.flow.error", version: 1 };
+
+const ROLE_LABELS = { source: "来源", match: "匹配", processor: "处理", sink: "输出" };
+const ROLE_ORDER = ["source", "match", "processor", "sink"];
 
 function emptyFlow() {
   return { flow_id: "default", name: "流程", nodes: [], edges: [] };
@@ -112,7 +116,6 @@ export async function mountBotFlowEditor(el, rpc) {
   let flow = emptyFlow();
   let selectedNode = null;
   let selectedEdgeId = null;
-  let contextMenu = null;
 
   function descriptor(node) { return catalog.find((item) => item.node_type_id === node.node_type_id && item.version === node.node_type_version); }
   function markUnsaved() {
@@ -142,61 +145,51 @@ export async function mountBotFlowEditor(el, rpc) {
     render();
   }
 
-  function closeContextMenu() {
-    contextMenu?.remove();
-    contextMenu = null;
-  }
-
-  function openContextMenu(x, y, items, searchable = false) {
-    closeContextMenu();
-    if (!items.length) return;
-    const menu = document.createElement("div");
-    menu.className = `ctx-menu${searchable ? " ctx-menu--searchable" : ""}`;
-    let rows = items;
-    const paint = (query = "") => {
-      const q = query.trim().toLocaleLowerCase();
-      rows = items.filter((item) => !q || [item.label, item.id, item.group].join(" ").toLocaleLowerCase().includes(q));
-      menu.innerHTML = `${searchable ? `<input class="ctx-menu__search" type="search" placeholder="搜索" value="${esc(query)}" />` : ""}${rows.map((item, index) => `<button type="button" class="ctx-menu__item${item.danger ? " ctx-menu__item--danger" : ""}" data-i="${index}">${esc(item.label)}${item.group ? `<small>${esc(item.group)}</small>` : ""}</button>`).join("") || `<p class="ctx-menu__empty">没有匹配项</p>`}`;
-      const input = menu.querySelector("input");
-      if (input) {
-        input.oninput = () => paint(input.value);
-        input.focus();
-        input.setSelectionRange(query.length, query.length);
-      }
-    };
-    menu.onclick = (event) => {
-      const button = event.target.closest("[data-i]");
-      if (!button) return;
-      closeContextMenu();
-      rows[Number(button.dataset.i)]?.onSelect?.();
-    };
-    paint();
-    document.body.append(menu);
-    const rect = menu.getBoundingClientRect();
-    menu.style.left = `${Math.max(8, Math.min(x, innerWidth - rect.width - 8))}px`;
-    menu.style.top = `${Math.max(8, Math.min(y, innerHeight - rect.height - 8))}px`;
-    contextMenu = menu;
-  }
-
   function openCanvasMenu(payload) {
     if (payload.kind === "node") {
-      openContextMenu(payload.clientX, payload.clientY, [{ label: "删除", danger: true, onSelect: deleteSelectedNode }]);
+      openContextMenuAt(payload.clientX, payload.clientY, [{ label: "删除", danger: true, onSelect: deleteSelectedNode }]);
       return;
     }
     if (payload.kind === "edge") {
-      openContextMenu(payload.clientX, payload.clientY, [{ label: "删除连线", danger: true, onSelect: deleteSelectedEdge }]);
+      openContextMenuAt(payload.clientX, payload.clientY, [{ label: "删除连线", danger: true, onSelect: deleteSelectedEdge }]);
       return;
     }
     const position = {
       x: Math.max(0, payload.world.x - NODE_WIDTH / 2),
       y: Math.max(0, payload.world.y - 24),
     };
-    openContextMenu(payload.clientX, payload.clientY, catalog.map((node) => ({
-      id: node.node_type_id,
-      label: node.title,
-      group: node.category || "其他",
-      onSelect: () => addNode(node.node_type_id, node.version, position),
-    })), true);
+    openContextMenuAt(payload.clientX, payload.clientY, buildNodeMenu(position), { searchable: true });
+  }
+
+  function buildNodeMenu(position) {
+    const byRole = new Map();
+    for (const role of ROLE_ORDER) byRole.set(role, new Map());
+    catalog.forEach((node) => {
+      const groups = byRole.get(node.role);
+      if (!groups) return;
+      const category = node.category || "其他";
+      if (!groups.has(category)) groups.set(category, []);
+      groups.get(category).push(node);
+    });
+    return ROLE_ORDER
+      .map((role) => {
+        const groups = byRole.get(role);
+        const children = [];
+        for (const [category, nodes] of groups) {
+          if (!nodes.length) continue;
+          children.push({ header: true, label: category });
+          for (const node of nodes) {
+            children.push({
+              id: node.node_type_id,
+              label: node.title,
+              keywords: [node.node_type_id, node.category, ROLE_LABELS[role]],
+              onSelect: () => addNode(node.node_type_id, node.version, position),
+            });
+          }
+        }
+        return children.length ? { label: ROLE_LABELS[role], children } : null;
+      })
+      .filter(Boolean);
   }
 
   function addNode(type, version, position = null) {
