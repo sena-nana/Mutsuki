@@ -15,17 +15,31 @@ incoming edges invoke the target separately. Version 1 rejects cycles and does n
 priority, propagation or hooks.
 
 Match nodes are a series of single-purpose filters: conversation, user, role, prefix, keyword,
-mention, rate limit and QQ event type. Conversation/user/role/rate-limit/QQ-event ports use the
+mention, empty mention, probability, rate limit and QQ event type. Conversation/user/role/rate-limit/QQ-event ports use the
 generic `mutsuki.bot.event` type so member, reaction and lifecycle sources can connect; a typed
 `mutsuki.bot.event.*` output assigns to that generic input. Each node emits `matched` or
 `unmatched`; authors compose them with edges instead of packing account or protocol identifiers
 into one form.
 
-Version 1 is an acyclic DAG of single-event predicates. It does not wait for a later message,
-time out a branch, retry in a loop, or keep session state on the canvas. Interaction sessions
-(`Waiting` / `Completed` / `TimedOut` / `Cancelled`) live in `mutsuki.bot.interaction.match`
-outside the graph; that node only gates the current event. Wait, join and cycle nodes are out of
-scope for V1.
+Version 1 is an acyclic DAG of single-event predicates. It does not wait, join, cycle, or keep
+session state on the canvas. `mutsuki.bot.interaction.create` Creates a waiter as a sync
+side-effect through `mutsuki.bot.interaction/handle@1`; `mutsuki.bot.interaction.match` only gates
+the current event. The next ingress rematches.
+
+The first-party QQ AI example (`qq.ai.orchestrated`) sequences source → persona-command →
+empty-mention → mention. Mention is not wired from source in parallel with the command matcher.
+Source also fans out to `record-icl-listen` so every ingress is recorded (QQ group events are
+almost always AT, so listen on mention unmatched never runs). Empty-mention matched Creates a
+60s waiter; a bare @ does not submit Agent. Empty-mention unmatched rematches on interaction;
+`interaction.matched` joins the same record-icl → attach-icl submit chain. Timeout or no waiter
+does not enter Agent. Probability and prefix stay in the catalog; the example graph omits them.
+
+Submit uses mention/interaction matched → record-icl → attach-icl → identifiers →
+attach-bound-persona → bind-profile → agent → quote → mention-reply → segment →
+`mutsuki.bot.qq.reply.forward_fold` → delivery. Presentation/delivery failures take error edges
+to `command.reply` then `qq.send`. Conversation-context, reply and persona runners are registered
+by the Agent configured plugin against the shared state-db store, not as independent catalog
+factories.
 
 Only runners that publish `mutsuki.bot.flow.nodes@1` appear in the editor. Flow does not scan
 every `RunnerDescriptor`. Mihuashi, Bilibili workshop and scheduled delivery opt in through that

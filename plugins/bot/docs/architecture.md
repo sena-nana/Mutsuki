@@ -17,21 +17,24 @@ Bot Agent replies take a durable route rather than calling the send protocol dir
 
 ```text
 Bot Agent final turn
-  -> mutsuki.bot.delivery/reply@1
-  -> before the Agent node returns, atomically reserve reply bundle + ordered Pending part receipts
+  -> Flow Agent node emits mutsuki.bot.delivery/reply@1 request on the reply port and
+     Reserves a Pending bundle (same reply_id)
+  -> quote / mention / segment / QQ forward-fold may change parts
+  -> Flow delivery node Submit clears occupancy-only, replaces unsent parts, then sends
   -> CAS claim one part
   -> mutsuki.bot.message/send@1
   -> persist attempt + platform receipt
 ```
 
-Stable reply and part ids make replay an inspection of the existing bundle. The Flow delivery
-node sends an already reserved bundle; if the Host exits between the Agent and delivery nodes, the
-recovery source can claim those Pending parts without replaying the Agent. A transient failure
-only schedules the unconfirmed part; already succeeded parts remain terminal. Cancellation or a
-Runtime timeout after the send boundary becomes `ReconcileRequired`, because automatic resend
-could duplicate an externally accepted message. `BotReplyDeliveryRecoveryEventSource` asks the
-same delivery plugin to resume due parts after ServiceHost startup, so recovery does not invoke the
-Agent turn, media synthesis, or tools again.
+Direct `mutsuki.bot.agent/submit@1` (outside a Flow node) still `Submit`s delivery itself. The
+Flow Agent node Reserves occupancy-only parts so `ResumeDue` will not send an unpresented draft.
+Delivery `Submit` clears occupancy, replaces unsent parts, then sends. Stable reply and part ids
+make replay an inspection of the existing bundle. After Submit,
+`BotReplyDeliveryRecoveryEventSource` claims due parts without replaying the Agent. A crash
+between Agent and delivery still has reserved receipts, but those drafts stay unsent until
+Submit. A transient failure only schedules the unconfirmed part; already succeeded parts remain
+terminal. Cancellation or a Runtime timeout after the send boundary becomes `ReconcileRequired`,
+because automatic resend could duplicate an externally accepted message.
 
 Core still sees only tasks, runner descriptors, results, events, resource refs, and effect requests. It does not know Bot, QQBot, commands, sessions, or permissions.
 
@@ -69,6 +72,9 @@ Messages the bot itself sends are projected as bot bubbles and never start Flow 
 - `mutsuki-plugin-bot-event-router`: revision-pinned DAG execution and graph-owned match nodes.
 - `mutsuki-plugin-bot-command`: graph-configured command Match node.
 - `mutsuki-plugin-bot-agent`: Agent turn/session bridge and durable reply request producer.
+- `mutsuki-plugin-bot-conversation-context`: record/attach group ICL and session identifiers.
+- `mutsuki-plugin-bot-persona`: persona command and attach-bound-persona processors.
+- `mutsuki-plugin-bot-reply`: quote/mention/segment presentation; QQ forward-fold stays in Adapter.
 - `mutsuki-bot-delivery`: attempt, receipt, retry, CAS claim and reply-part delivery behavior.
 - `mutsuki-bot-state-db`: durable session, delivery, interaction and sandbox history
   repository; historical Flow tables are neither read nor destructively removed.

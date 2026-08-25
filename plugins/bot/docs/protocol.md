@@ -7,11 +7,34 @@ Standard Bot protocols:
 - `mutsuki.bot.event/ingest@1`
 - `mutsuki.bot.flow/ingress@1`
 - `mutsuki.bot.flow.node/execute@1`
+- `mutsuki.bot.flow.match/empty-mention@1`
+- `mutsuki.bot.flow.match/interaction@1`
+- `mutsuki.bot.flow.interaction/create@1`
+- `mutsuki.bot.flow.match/probability@1`
+- `mutsuki.bot.agent/bind-profile@1`
+- `mutsuki.bot.agent/persona@1`
+- `mutsuki.bot.agent/attach-bound-persona@1`
+- `mutsuki.bot.conversation/record-icl@1`
+- `mutsuki.bot.conversation/attach-icl@1`
+- `mutsuki.bot.conversation/attach-identifiers@1`
+- `mutsuki.bot.reply/quote@1`
+- `mutsuki.bot.reply/mention@1`
+- `mutsuki.bot.reply/segment@1`
 - `mutsuki.bot.message/send@1`
 - `mutsuki.bot.message/recall@1`
 - `mutsuki.bot.media/upload@1`
 - `mutsuki.bot.command/parse@1`
 - `mutsuki.bot.delivery/reply@1`
+
+These conversation, persona and reply protocols are independent node bindings, not
+`BotAgentConfig` fields. `mutsuki.bot.agent/bind-profile@1` writes `bot.agent.runtime_profile_id`;
+Agent loop plugins (compression, RAG, MCP, WebSearch) stay on `AgentRuntimeProfile`. Group ICL is
+attached as `bot.conversation.icl` and consumed when the Agent node builds the user message.
+Interaction create/match are sync nodes; waiter state lives in
+`mutsuki.bot.interaction/handle@1`. V1 does not park the DAG. Graph wiring is in `event-router.md`.
+
+`mutsuki.bot.qq.reply/forward-fold@1` is owned by the QQ Adapter: catalog node,
+HandlerBinding, and OpenAPI runner. It is not a domain-neutral reply protocol.
 
 `mutsuki.bot.message/send@1` carries a `BotMessage` whose `segments` are the plugin-composed
 outbound types. Plugins do not declare sendable kinds through `PluginProvides`; the Adapter
@@ -24,11 +47,12 @@ is custom markdown content. QQ keyboard and template markdown stay `PlatformSpec
 `BotNodeResult` preserve typed ports plus Bot/trace/correlation context across graph execution.
 
 `mutsuki.bot.delivery/reply@1` owns durable Bot reply delivery. `Reserve` persists one stable reply
-id plus its ordered message parts without sending, and `Submit` sends a new or already reserved
-bundle; `Inspect`, `RetryPart` and
-`CancelPart` operate on persisted receipts, while `ResumeDue` claims due parts for restart
-recovery. Each part is an ordinary `mutsuki.bot.message/send@1` task at the side-effect boundary.
-Agent turn/session completion is source provenance, not evidence that every part was delivered.
+id plus its ordered message parts without sending. Agent Flow occupancy sets `occupancy_only` so
+`ResumeDue` will not send those drafts. `Submit` clears occupancy, replaces unsent parts, and
+sends; `Inspect`, `RetryPart` and `CancelPart` operate on persisted receipts, while `ResumeDue`
+claims due sendable parts for restart recovery. Each part is an ordinary
+`mutsuki.bot.message/send@1` task at the side-effect boundary. Agent turn/session completion is
+source provenance, not evidence that every part was delivered.
 
 QQBot-specific protocols:
 
