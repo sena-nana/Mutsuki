@@ -33,20 +33,7 @@ pub fn qq_gateway_frame_to_bot_event(
     }
     ext.insert(
         "qqbot.mentioned_bot".into(),
-        Value::Bool(
-            event_type == "GROUP_AT_MESSAGE_CREATE"
-                || data
-                    .get("mentions")
-                    .and_then(Value::as_array)
-                    .is_some_and(|mentions| {
-                        mentions.iter().any(|mention| {
-                            mention
-                                .get("is_you")
-                                .and_then(Value::as_bool)
-                                .unwrap_or(false)
-                        })
-                    }),
-        ),
+        Value::Bool(qq_mentioned_bot(account_id, event_type, data)),
     );
     if let Some(role) = qq_actor_role(data) {
         ext.insert("qqbot.actor_role".into(), Value::String(role.into()));
@@ -490,6 +477,63 @@ fn platform_payload(kind: &str, payload: Value) -> MessageSegment {
         kind: kind.into(),
         payload,
     }
+}
+
+/// True when this payload @-mentions the current bot, not `@all` / `MentionAll`.
+///
+/// Official `GROUP_AT_MESSAGE_CREATE` is delivered only when the user @-mentions
+/// the bot (`GROUP_AND_C2C` AT mode). QQ strips that mention from `content` and
+/// omits the bot from `mentions`, so the event type is the @-bot signal. Full
+/// group traffic uses the mapped `GROUP_MESSAGE_CREATE` path instead; there
+/// `@all` and other users are not treated as mentioning this bot.
+fn qq_mentioned_bot(account_id: &str, event_type: &str, data: &Value) -> bool {
+    if event_type == "GROUP_AT_MESSAGE_CREATE" {
+        return true;
+    }
+    mentions_include_this_bot(account_id, data) || content_mentions_this_bot(account_id, data)
+}
+
+fn mentions_include_this_bot(account_id: &str, data: &Value) -> bool {
+    data.get("mentions")
+        .and_then(Value::as_array)
+        .is_some_and(|mentions| {
+            mentions
+                .iter()
+                .any(|mention| mention_targets_this_bot(account_id, mention))
+        })
+}
+
+fn mention_targets_this_bot(account_id: &str, mention: &Value) -> bool {
+    if mention
+        .get("is_you")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    if account_id.is_empty() {
+        return false;
+    }
+    ["id", "user_id", "user_openid"]
+        .iter()
+        .any(|key| mention.get(*key).and_then(Value::as_str) == Some(account_id))
+}
+
+fn content_mentions_this_bot(account_id: &str, data: &Value) -> bool {
+    if account_id.is_empty() {
+        return false;
+    }
+    let raw = data
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let decoded = html_escape::decode_html_entities(raw);
+    content_segments(&decoded).iter().any(|segment| {
+        matches!(
+            segment,
+            MessageSegment::MentionUser { user_id } if user_id == account_id
+        )
+    })
 }
 
 fn message_content(event_type: &str, data: &Value) -> String {
