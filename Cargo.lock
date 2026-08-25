@@ -4596,6 +4596,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "mutsuki-plugin-bot-conversation-context"
+version = "0.1.0"
+dependencies = [
+ "mutsuki-bot-protocol",
+ "mutsuki-runtime-contracts",
+ "mutsuki-runtime-core",
+ "mutsuki-runtime-sdk",
+ "parking_lot",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "mutsuki-plugin-bot-database-web"
 version = "0.1.0"
 dependencies = [
@@ -4705,6 +4718,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "mutsuki-plugin-bot-persona"
+version = "0.1.0"
+dependencies = [
+ "mutsuki-bot-protocol",
+ "mutsuki-runtime-contracts",
+ "mutsuki-runtime-core",
+ "mutsuki-runtime-sdk",
+ "parking_lot",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "mutsuki-plugin-bot-qq-web"
 version = "0.1.0"
 dependencies = [
@@ -4721,6 +4747,19 @@ dependencies = [
  "tokio",
  "tokio-tungstenite 0.30.0",
  "uuid",
+]
+
+[[package]]
+name = "mutsuki-plugin-bot-reply"
+version = "0.1.0"
+dependencies = [
+ "mutsuki-bot-protocol",
+ "mutsuki-runtime-contracts",
+ "mutsuki-runtime-core",
+ "mutsuki-runtime-sdk",
+ "regex",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
