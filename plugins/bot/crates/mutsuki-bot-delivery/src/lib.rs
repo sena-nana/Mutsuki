@@ -535,12 +535,21 @@ impl ReplyDeliveryService {
         request: &BotReplyDeliveryRequest,
         now_unix_ms: u64,
     ) -> Result<BotReplyDeliveryReceipt, DeliveryError> {
-        self.reserve(request).await?;
+        let mut request = request.clone();
+        request.occupancy_only = false;
+        self.reserve(&request).await?;
         for part in &request.parts {
-            let work = reply_part_request(request, part);
+            let work = reply_part_request(&request, part);
             let current = self.attempts.repository.receipt(&work.delivery_id).await?;
             match current.status {
                 DeliveryStatus::Pending => {
+                    if work
+                        .policy
+                        .not_before_unix_ms
+                        .is_some_and(|deadline| deadline > now_unix_ms)
+                    {
+                        continue;
+                    }
                     let receipt = self.attempt(ctx, &work, now_unix_ms, 1).await?;
                     if blocks_following_reply_part(receipt.status) {
                         break;
@@ -552,7 +561,7 @@ impl ReplyDeliveryService {
                 _ => {}
             }
         }
-        self.receipt_for(request).await
+        self.receipt_for(&request).await
     }
 
     async fn inspect(&self, reply_id: &str) -> Result<BotReplyDeliveryReceipt, DeliveryError> {
@@ -830,7 +839,13 @@ pub fn reply_part_request(
         idempotency_key: part.part_id.clone(),
         conversation: reply.conversation.clone(),
         content: part.content.clone(),
-        policy: reply.policy.clone(),
+        policy: {
+            let mut policy = reply.policy.clone();
+            if let Some(not_before_unix_ms) = part.not_before_unix_ms {
+                policy.not_before_unix_ms = Some(not_before_unix_ms);
+            }
+            policy
+        },
         dry_run: false,
         source_execution_id: Some(reply.source_turn_id.clone()),
     }

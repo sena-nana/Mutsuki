@@ -3,10 +3,11 @@ use std::sync::Arc;
 
 use mutsuki_bot_protocol::{
     BOT_COMMAND_HANDLE_PROTOCOL_ID, BOT_COMMAND_PARSE_PROTOCOL_ID, BOT_COMMAND_REPLY_PROTOCOL_ID,
-    BOT_MESSAGE_SEND_PROTOCOL_ID, BotCommandDescriptor, BotCommandEvent, BotEvent,
-    BotFlowEventEnvelope, BotFlowPayload, BotFlowTypeRef, BotMessage, BotNodeBinding,
-    BotNodeCatalogFragment, BotNodeDescriptor, BotNodeInvocation, BotNodeOutput,
-    BotNodePortDescriptor, BotNodePortDirection, BotNodeResult, BotNodeRole,
+    BOT_EXT_REPLY_SOURCE_MESSAGE_ID, BOT_FLOW_ERROR_TYPE, BOT_MESSAGE_SEND_PROTOCOL_ID,
+    BotCommandDescriptor, BotCommandEvent, BotEvent, BotFlowErrorEvent, BotFlowEventEnvelope,
+    BotFlowPayload, BotFlowTypeRef, BotMessage, BotNodeBinding, BotNodeCatalogFragment,
+    BotNodeDescriptor, BotNodeInvocation, BotNodeOutput, BotNodePortDescriptor,
+    BotNodePortDirection, BotNodeResult, BotNodeRole, BotReplyDeliveryRequest, BotTarget,
 };
 use mutsuki_runtime_contracts::{
     ArtifactType, CompletionBatch, ERR_RUNTIME_HOST_FAILED, ExecutionClass, InvocationMode,
@@ -176,7 +177,14 @@ fn command_node_catalog() -> BotNodeCatalogFragment {
                         title: "命令事件".into(),
                         direction: BotNodePortDirection::Input,
                         event_type: BotFlowTypeRef::new(BOT_COMMAND_EVENT_TYPE_ID, 1),
-                        required: true,
+                        required: false,
+                    },
+                    BotNodePortDescriptor {
+                        port_id: "error".into(),
+                        title: "流程错误".into(),
+                        direction: BotNodePortDirection::Input,
+                        event_type: BotFlowTypeRef::new(BOT_FLOW_ERROR_TYPE, 1),
+                        required: false,
                     },
                     BotNodePortDescriptor {
                         port_id: "message".into(),
@@ -255,6 +263,11 @@ fn command_reply_result(
 ) -> Result<RunnerResult, RuntimeError> {
     let config: CommandReplyConfig = serde_json::from_value(invocation.config.clone())
         .map_err(|error| failure("mutsuki.bot.command.reply.config", error))?;
+    if invocation.input_port_id == "error"
+        || invocation.input.payload.event_type.type_id == BOT_FLOW_ERROR_TYPE
+    {
+        return error_notice_result(task, invocation, &config);
+    }
     let command: BotCommandEvent =
         serde_json::from_value(invocation.input.payload.value.clone())
             .map_err(|error| failure("mutsuki.bot.command.reply.event", error))?;
@@ -288,6 +301,90 @@ fn command_reply_result(
         ),
         "mutsuki.bot.command.reply.result",
     )
+}
+
+const DEFAULT_FLOW_ERROR_NOTICE: &str = "刚才没能发出回复，请稍后再试。";
+
+fn error_notice_result(
+    task: &mutsuki_runtime_contracts::Task,
+    invocation: &BotNodeInvocation,
+    config: &CommandReplyConfig,
+) -> Result<RunnerResult, RuntimeError> {
+    let error: BotFlowErrorEvent =
+        serde_json::from_value(invocation.input.payload.value.clone())
+            .map_err(|error| failure("mutsuki.bot.command.reply.error", error))?;
+    let target = error_notice_target(invocation, &error).ok_or_else(|| {
+        failure(
+            "mutsuki.bot.command.reply.error.target",
+            "flow error is missing a send target",
+        )
+    })?;
+    let text = config
+        .text
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEFAULT_FLOW_ERROR_NOTICE);
+    let mut message = BotMessage::text(target, text);
+    if config.reply.unwrap_or(true) {
+        message.reply_to = error_notice_reply_to(invocation, &error);
+    }
+    completed_node(
+        task,
+        mapped_output(
+            invocation,
+            "message",
+            BOT_MESSAGE_SEND_PROTOCOL_ID,
+            BOT_MESSAGE_SEND_EVENT_TYPE,
+            serde_json::to_value(message)
+                .map_err(|error| failure("mutsuki.bot.command.reply.output", error))?,
+        ),
+        "mutsuki.bot.command.reply.result",
+    )
+}
+
+fn error_notice_target(
+    invocation: &BotNodeInvocation,
+    error: &BotFlowErrorEvent,
+) -> Option<BotTarget> {
+    invocation
+        .input
+        .context
+        .target
+        .clone()
+        .or_else(|| error.input.context.target.clone())
+        .or_else(|| {
+            serde_json::from_value::<BotEvent>(error.input.payload.value.clone())
+                .ok()
+                .map(|event| event.target)
+        })
+        .or_else(|| {
+            serde_json::from_value::<BotReplyDeliveryRequest>(error.input.payload.value.clone())
+                .ok()
+                .and_then(|request| request.conversation.target())
+        })
+}
+
+fn error_notice_reply_to(
+    invocation: &BotNodeInvocation,
+    error: &BotFlowErrorEvent,
+) -> Option<String> {
+    context_message_id(&invocation.input)
+        .or_else(|| context_message_id(&error.input))
+        .or_else(|| {
+            serde_json::from_value::<BotEvent>(error.input.payload.value.clone())
+                .ok()
+                .and_then(|event| event.message.and_then(|message| message.message_id))
+        })
+}
+
+fn context_message_id(envelope: &BotFlowEventEnvelope) -> Option<String> {
+    envelope
+        .context
+        .ext
+        .get(BOT_EXT_REPLY_SOURCE_MESSAGE_ID)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
 }
 
 fn mapped_output(
@@ -548,10 +645,11 @@ mod tests {
     use super::*;
     use mutsuki_bot_protocol::{
         BotAccountRef, BotCommandArgumentDescriptor, BotCommandArgumentKind,
-        BotCommandArgumentValue, BotEventKind, BotFlowContext, BotMessage, BotPlatform, BotTarget,
+        BotCommandArgumentValue, BotEventKind, BotFlowContext, BotFlowErrorEvent, BotMessage,
+        BotPlatform, BotTarget,
     };
     use mutsuki_runtime_contracts::{
-        BatchEntry, BatchPayload, DispatchLane, Task, TaskPayload, WorkResourcePlan,
+        BatchEntry, BatchPayload, DispatchLane, Task, TaskPayload, WorkBatch, WorkResourcePlan,
     };
 
     #[test]
@@ -634,6 +732,88 @@ mod tests {
         let message: BotMessage =
             serde_json::from_value(output.outputs[0].event.payload.value.clone()).unwrap();
         assert_eq!(message.plain_text(), "pong");
+    }
+
+    #[test]
+    fn command_reply_error_port_emits_configured_notice() {
+        let mut task = command_task(
+            "reply-error",
+            "event",
+            "/echo",
+            json!({"text": "呈现失败", "reply": true}),
+        );
+        task.protocol_id = BOT_COMMAND_REPLY_PROTOCOL_ID.into();
+        task.payload = TaskPayload::from_local(BotNodeInvocation {
+            flow_id: "flow".into(),
+            graph_revision: 1,
+            execution_id: "execution".into(),
+            node_id: "present-fail".into(),
+            input_port_id: "error".into(),
+            config: json!({"text": "呈现失败", "reply": true}),
+            input: BotFlowEventEnvelope {
+                event_id: "event:error:segment".into(),
+                protocol_id: "mutsuki.bot.flow/error@1".into(),
+                payload: BotFlowPayload {
+                    event_type: BotFlowTypeRef::new(BOT_FLOW_ERROR_TYPE, 1),
+                    value: serde_json::to_value(BotFlowErrorEvent {
+                        failed_node_id: "segment".into(),
+                        error: RuntimeError::new("test.fail", "test", "segment"),
+                        input: BotFlowEventEnvelope {
+                            event_id: "event".into(),
+                            protocol_id: BOT_MESSAGE_SEND_PROTOCOL_ID.into(),
+                            payload: BotFlowPayload {
+                                event_type: BotFlowTypeRef::new("mutsuki.bot.delivery.reply", 1),
+                                value: json!({}),
+                            },
+                            context: BotFlowContext {
+                                bot: None,
+                                target: Some(BotTarget::Group {
+                                    group_id: "g1".into(),
+                                }),
+                                actor: None,
+                                ext: Default::default(),
+                            },
+                            trace_id: None,
+                            correlation_id: None,
+                        },
+                    })
+                    .unwrap(),
+                },
+                context: BotFlowContext {
+                    bot: None,
+                    target: Some(BotTarget::Group {
+                        group_id: "g1".into(),
+                    }),
+                    actor: None,
+                    ext: Default::default(),
+                },
+                trace_id: None,
+                correlation_id: None,
+            },
+        });
+        let mut runner = BotCommandNodeRunner::new(1);
+        let completion = runner
+            .run_batch(test_context(11, 1), batch(vec![task]))
+            .unwrap();
+        let output: BotNodeResult = serde_json::from_value(
+            completion.results[0]
+                .result
+                .as_ref()
+                .unwrap()
+                .output
+                .clone()
+                .unwrap(),
+        )
+        .unwrap();
+        let message: BotMessage =
+            serde_json::from_value(output.outputs[0].event.payload.value.clone()).unwrap();
+        assert_eq!(message.plain_text(), "呈现失败");
+        assert_eq!(
+            message.target,
+            BotTarget::Group {
+                group_id: "g1".into()
+            }
+        );
     }
 
     #[test]

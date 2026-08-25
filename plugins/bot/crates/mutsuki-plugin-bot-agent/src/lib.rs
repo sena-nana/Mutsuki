@@ -27,18 +27,22 @@ use mutsuki_bot_conversation::{
     session_binding_key,
 };
 use mutsuki_bot_protocol::{
-    AgentSessionBinding, BOT_AGENT_CANCEL_PROTOCOL_ID, BOT_AGENT_FORK_PROTOCOL_ID,
-    BOT_AGENT_REGENERATE_PROTOCOL_ID, BOT_AGENT_RESET_PROTOCOL_ID, BOT_AGENT_STATUS_PROTOCOL_ID,
-    BOT_AGENT_SUBMIT_PROTOCOL_ID, BOT_FLOW_MESSAGE_EVENT_TYPE, BOT_MEDIA_SYNTHESIZE_PROTOCOL_ID,
+    AgentSessionBinding, BOT_AGENT_BIND_PROFILE_PROTOCOL_ID, BOT_AGENT_CANCEL_PROTOCOL_ID,
+    BOT_AGENT_FORK_PROTOCOL_ID, BOT_AGENT_REGENERATE_PROTOCOL_ID, BOT_AGENT_RESET_PROTOCOL_ID,
+    BOT_AGENT_STATUS_PROTOCOL_ID, BOT_AGENT_SUBMIT_PROTOCOL_ID, BOT_EXT_AGENT_PROFILE_ID,
+    BOT_EXT_CONVERSATION_ICL, BOT_EXT_CONVERSATION_IDENTIFIERS, BOT_EXT_PERSONA_PROMPT,
+    BOT_EXT_REPLY_SOURCE_MESSAGE_ID, BOT_EXT_REPLY_SOURCE_USER_ID, BOT_FLOW_BOT_EVENT_TYPE,
+    BOT_FLOW_DELIVERY_REPLY_TYPE, BOT_MEDIA_SYNTHESIZE_PROTOCOL_ID,
     BOT_MEDIA_TRANSCRIBE_PROTOCOL_ID, BOT_REPLY_DELIVERY_PROTOCOL_ID, BotAgentBridgeRequest,
-    BotCommandEvent, BotDeliveryContent, BotEvent, BotFlowEventEnvelope, BotFlowPayload,
-    BotFlowTypeRef, BotMediaKind, BotMediaSynthesizeRequest, BotMediaSynthesizeResult,
-    BotMediaTranscribeRequest, BotMediaTranscribeResult, BotMessage, BotNodeBinding,
-    BotNodeCatalogFragment, BotNodeDescriptor, BotNodeInvocation, BotNodeOutput,
+    BotCommandEvent, BotDeliveryContent, BotEvent, BotFlowContext, BotFlowEventEnvelope,
+    BotFlowPayload, BotFlowTypeRef, BotMediaKind, BotMediaSynthesizeRequest,
+    BotMediaSynthesizeResult, BotMediaTranscribeRequest, BotMediaTranscribeResult, BotMessage,
+    BotNodeBinding, BotNodeCatalogFragment, BotNodeDescriptor, BotNodeInvocation, BotNodeOutput,
     BotNodePortDescriptor, BotNodePortDirection, BotNodeResult, BotNodeRole,
     BotReplyDeliveryCommand, BotReplyDeliveryPart, BotReplyDeliveryReceipt,
-    BotReplyDeliveryRequest, BotSpeechReplyPolicy, BotTarget, DeliveryPolicy, MessageSegment,
-    QqStreamingStrategy, ResolvedConversationPolicy,
+    BotReplyDeliveryRequest, BotSpeechReplyPolicy, BotTarget, ConversationIclEntry,
+    ConversationIdentifiers, DeliveryPolicy, MessageSegment, QqStreamingStrategy,
+    ResolvedConversationPolicy, format_icl_summary,
 };
 use mutsuki_runtime_contracts::{
     ExecutionClass, InvocationMode, PluginManifest, RunnerBatchCapability, RunnerConcurrency,
@@ -64,13 +68,13 @@ pub use config::{
 
 pub const BOT_AGENT_BRIDGE_PLUGIN_ID: &str = "mutsuki.plugin.bot.agent";
 pub const BOT_AGENT_BRIDGE_RUNNER_ID: &str = "mutsuki.bot.agent.bridge";
-pub const BOT_AGENT_DELIVERY_EVENT_TYPE: &str = "mutsuki.bot.delivery.reply";
 pub const BOT_AGENT_NODE_SUBMIT: &str = "mutsuki.bot.agent.submit";
 pub const BOT_AGENT_NODE_CANCEL: &str = "mutsuki.bot.agent.cancel";
 pub const BOT_AGENT_NODE_RESET: &str = "mutsuki.bot.agent.reset";
 pub const BOT_AGENT_NODE_FORK: &str = "mutsuki.bot.agent.fork";
 pub const BOT_AGENT_NODE_STATUS: &str = "mutsuki.bot.agent.status";
 pub const BOT_AGENT_NODE_REGENERATE: &str = "mutsuki.bot.agent.regenerate";
+pub const BOT_AGENT_NODE_BIND_PROFILE: &str = "mutsuki.bot.agent.bind_profile";
 
 #[must_use]
 pub fn bot_agent_bridge_manifest() -> PluginManifest {
@@ -83,6 +87,7 @@ pub fn bot_agent_bridge_manifest() -> PluginManifest {
         (BOT_AGENT_FORK_PROTOCOL_ID, "bot-agent-fork"),
         (BOT_AGENT_STATUS_PROTOCOL_ID, "bot-agent-status"),
         (BOT_AGENT_REGENERATE_PROTOCOL_ID, "bot-agent-regenerate"),
+        (BOT_AGENT_BIND_PROFILE_PROTOCOL_ID, "bot-agent-bind-profile"),
     ] {
         builder = builder.protocol_handler(
             ProtocolDescriptorBuilder::new(protocol_id)
@@ -119,7 +124,7 @@ fn agent_node_catalog() -> BotNodeCatalogFragment {
             BOT_AGENT_NODE_SUBMIT,
             "提交 Agent",
             BOT_AGENT_SUBMIT_PROTOCOL_ID,
-            BOT_FLOW_MESSAGE_EVENT_TYPE,
+            BOT_FLOW_BOT_EVENT_TYPE,
         ),
         (
             BOT_AGENT_NODE_CANCEL,
@@ -152,10 +157,10 @@ fn agent_node_catalog() -> BotNodeCatalogFragment {
             "mutsuki.bot.command.event",
         ),
     ];
-    BotNodeCatalogFragment {
-        nodes: definitions
-            .into_iter()
-            .map(|(node_type_id, title, protocol_id, input_type)| BotNodeDescriptor {
+    let mut nodes = definitions
+        .into_iter()
+        .map(
+            |(node_type_id, title, protocol_id, input_type)| BotNodeDescriptor {
                 node_type_id: node_type_id.into(),
                 version: 1,
                 title: title.into(),
@@ -178,14 +183,51 @@ fn agent_node_catalog() -> BotNodeCatalogFragment {
                         port_id: "reply".into(),
                         title: "回复".into(),
                         direction: BotNodePortDirection::Output,
-                        event_type: BotFlowTypeRef::new(BOT_AGENT_DELIVERY_EVENT_TYPE, 1),
+                        event_type: BotFlowTypeRef::new(BOT_FLOW_DELIVERY_REPLY_TYPE, 1),
                         required: false,
                     },
                 ],
                 config_schema: serde_json::json!({"type": "object", "additionalProperties": false}),
-            })
-            .collect(),
-    }
+            },
+        )
+        .collect::<Vec<_>>();
+    nodes.push(BotNodeDescriptor {
+        node_type_id: BOT_AGENT_NODE_BIND_PROFILE.into(),
+        version: 1,
+        title: "绑定人格".into(),
+        category: "Agent".into(),
+        role: BotNodeRole::Processor,
+        binding: Some(BotNodeBinding {
+            binding_id: format!("binding:{BOT_AGENT_BIND_PROFILE_PROTOCOL_ID}"),
+            protocol_id: BOT_AGENT_BIND_PROFILE_PROTOCOL_ID.into(),
+            runner_hint: Some(BOT_AGENT_BRIDGE_RUNNER_ID.into()),
+        }),
+        ports: vec![
+            BotNodePortDescriptor {
+                port_id: "input".into(),
+                title: "事件".into(),
+                direction: BotNodePortDirection::Input,
+                event_type: BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1),
+                required: true,
+            },
+            BotNodePortDescriptor {
+                port_id: "output".into(),
+                title: "事件".into(),
+                direction: BotNodePortDirection::Output,
+                event_type: BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1),
+                required: false,
+            },
+        ],
+        config_schema: serde_json::json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "profile_id": {"type": "string", "minLength": 1, "title": "Agent 配置文件"},
+                "override": {"type": "boolean", "default": false, "title": "覆盖已有人格"}
+            }
+        }),
+    });
+    BotNodeCatalogFragment { nodes }
 }
 
 #[must_use]
@@ -242,6 +284,7 @@ fn agent_bridge_descriptor() -> mutsuki_runtime_contracts::RunnerDescriptor {
         .accepted_protocol(BOT_AGENT_FORK_PROTOCOL_ID)
         .accepted_protocol(BOT_AGENT_STATUS_PROTOCOL_ID)
         .accepted_protocol(BOT_AGENT_REGENERATE_PROTOCOL_ID)
+        .accepted_protocol(BOT_AGENT_BIND_PROFILE_PROTOCOL_ID)
         .requires_protocol(BOT_REPLY_DELIVERY_PROTOCOL_ID)
         .requires_protocol(BOT_MEDIA_TRANSCRIBE_PROTOCOL_ID)
         .requires_protocol(BOT_MEDIA_SYNTHESIZE_PROTOCOL_ID)
@@ -338,6 +381,9 @@ async fn run_bridge_node_task(
     delivery_policy: DeliveryPolicy,
     invocation: BotNodeInvocation,
 ) -> RuntimeResult<RunnerResult> {
+    if task.protocol_id == BOT_AGENT_BIND_PROFILE_PROTOCOL_ID {
+        return bind_profile_node(&task, invocation);
+    }
     let request = flow_bridge_request(&task, &invocation)?;
     let execution = execute_bridge_request(&ctx, &task, &bridge, request).await?;
     if execution.existing_reply.is_some() {
@@ -364,13 +410,14 @@ async fn run_bridge_node_task(
         }
         Vec::new()
     } else {
-        let request = reply_delivery_request(
+        let mut request = reply_delivery_request(
             &execution.result,
             &execution.source_event,
             outgoing,
             delivery_policy,
         )
         .map_err(|error| bridge_failure(&task, "delivery.binding", error))?;
+        request.occupancy_only = true;
         reserve_reply_delivery(&ctx, &task, &request).await?;
         vec![BotNodeOutput {
             port_id: "reply".into(),
@@ -378,11 +425,14 @@ async fn run_bridge_node_task(
                 event_id: request.reply_id.clone(),
                 protocol_id: BOT_REPLY_DELIVERY_PROTOCOL_ID.into(),
                 payload: BotFlowPayload {
-                    event_type: BotFlowTypeRef::new(BOT_AGENT_DELIVERY_EVENT_TYPE, 1),
-                    value: serde_json::to_value(request)
+                    event_type: BotFlowTypeRef::new(BOT_FLOW_DELIVERY_REPLY_TYPE, 1),
+                    value: serde_json::to_value(&request)
                         .map_err(|error| bridge_failure(&task, "delivery.encode", error))?,
                 },
-                context: invocation.input.context.clone(),
+                context: overlay_reply_source_context(
+                    invocation.input.context.clone(),
+                    &execution.source_event,
+                ),
                 trace_id: invocation.input.trace_id.clone(),
                 correlation_id: invocation.input.correlation_id.clone(),
             },
@@ -406,6 +456,50 @@ async fn run_bridge_node_task(
     completed.output = Some(
         serde_json::to_value(BotNodeResult { outputs, metadata })
             .map_err(|error| bridge_failure(&task, "node.output", error))?,
+    );
+    Ok(completed)
+}
+
+fn bind_profile_node(task: &Task, invocation: BotNodeInvocation) -> RuntimeResult<RunnerResult> {
+    let mut event: BotEvent = serde_json::from_value(invocation.input.payload.value.clone())
+        .map_err(|error| bridge_failure(task, "node.event", error))?;
+    let override_existing = invocation
+        .config
+        .get("override")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let has_existing_profile = event
+        .ext
+        .get(BOT_EXT_AGENT_PROFILE_ID)
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    if let Some(profile_id) = invocation
+        .config
+        .get("profile_id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        && (!has_existing_profile || override_existing)
+    {
+        event.ext.insert(
+            BOT_EXT_AGENT_PROFILE_ID.into(),
+            serde_json::Value::String(profile_id.to_owned()),
+        );
+    }
+    let mut output = invocation.input.clone();
+    output.payload.value =
+        serde_json::to_value(&event).map_err(|error| bridge_failure(task, "node.encode", error))?;
+    let mut completed = RunnerResult::completed(task.task_id.clone());
+    completed.output = Some(
+        serde_json::to_value(BotNodeResult {
+            outputs: vec![BotNodeOutput {
+                port_id: "output".into(),
+                event: output,
+            }],
+            metadata: Default::default(),
+        })
+        .map_err(|error| bridge_failure(task, "node.output", error))?,
     );
     Ok(completed)
 }
@@ -682,6 +776,26 @@ async fn reserve_reply_delivery(
     decode_reply_delivery_outcome(task, outcome)
 }
 
+fn overlay_reply_source_context(mut context: BotFlowContext, event: &BotEvent) -> BotFlowContext {
+    if let Some(message_id) = event
+        .message
+        .as_ref()
+        .and_then(|message| message.message_id.clone())
+    {
+        context.ext.insert(
+            BOT_EXT_REPLY_SOURCE_MESSAGE_ID.into(),
+            serde_json::Value::String(message_id),
+        );
+    }
+    if let Some(user_id) = event.actor.as_ref().map(|actor| actor.user_id.clone()) {
+        context.ext.insert(
+            BOT_EXT_REPLY_SOURCE_USER_ID.into(),
+            serde_json::Value::String(user_id),
+        );
+    }
+    context
+}
+
 fn decode_reply_delivery_outcome(
     task: &Task,
     outcome: RuntimeResult<impl Into<TaskOutcome>>,
@@ -729,6 +843,7 @@ fn reply_delivery_request(
                 summary: None,
                 reply_to: message.reply_to,
             },
+            not_before_unix_ms: None,
         })
         .collect();
     let actor_id = event.actor.as_ref().map(|actor| actor.user_id.as_str());
@@ -746,6 +861,7 @@ fn reply_delivery_request(
         source_event_id: event.event_id.clone(),
         source_turn_id: turn_id,
         source_binding_key: Some(source_binding_key),
+        occupancy_only: false,
     })
 }
 
@@ -1430,6 +1546,15 @@ impl BotAgentBridge {
             return Err(BotAgentError::AgentDisabled);
         }
         let mut resolved = self.resolve(event).await?;
+        if let Some(profile_id) = event
+            .ext
+            .get(BOT_EXT_AGENT_PROFILE_ID)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            resolved.policy.agent_runtime_profile_id = Some(profile_id.to_owned());
+        }
         if resolved.policy.agent_runtime_profile_id.is_none()
             && !config.default_profile_id.trim().is_empty()
         {
@@ -1622,7 +1747,7 @@ fn event_message(
         }
     }
     let mut agent_message = AgentMessage::user(message.plain_text()).with_parts(parts);
-    agent_message.metadata = Some(serde_json::json!({
+    let mut metadata = serde_json::json!({
         "source": "qq",
         "account_id": &event.bot.account_id,
         "event_id": &event.event_id,
@@ -1630,7 +1755,44 @@ fn event_message(
         "reply_to": message.reply_to.as_deref(),
         "trace_id": trace.and_then(|trace| trace.trace_id.as_deref()),
         "correlation_id": trace.and_then(|trace| trace.correlation_id.as_deref()),
-    }));
+    });
+    if let Some(icl) = event.ext.get(BOT_EXT_CONVERSATION_ICL) {
+        metadata["icl"] = icl.clone();
+        if let Ok(entries) = serde_json::from_value::<Vec<ConversationIclEntry>>(icl.clone()) {
+            let summary = format_icl_summary(&entries);
+            if !summary.is_empty() {
+                agent_message
+                    .parts
+                    .insert(0, AgentContentPart::Text { text: summary });
+            }
+        }
+    }
+    if let Some(identifiers) = event.ext.get(BOT_EXT_CONVERSATION_IDENTIFIERS) {
+        metadata["identifiers"] = identifiers.clone();
+        if let Ok(identifiers) =
+            serde_json::from_value::<ConversationIdentifiers>(identifiers.clone())
+            && let Some(text) = identifiers.prompt_text()
+        {
+            agent_message
+                .parts
+                .insert(0, AgentContentPart::Text { text });
+        }
+    }
+    if let Some(prompt) = event
+        .ext
+        .get(BOT_EXT_PERSONA_PROMPT)
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+    {
+        metadata["persona_prompt"] = serde_json::Value::String(prompt.to_owned());
+        agent_message.parts.insert(
+            0,
+            AgentContentPart::Text {
+                text: prompt.to_owned(),
+            },
+        );
+    }
+    agent_message.metadata = Some(metadata);
     Ok(agent_message)
 }
 
@@ -2172,6 +2334,119 @@ mod tests {
     }
 
     #[test]
+    fn event_ext_profile_overlays_resolved_policy_ahead_of_config_default() {
+        let repository = Arc::new(Repository::default());
+        let mut policy = policy();
+        policy.agent_runtime_profile_id = None;
+        let config = BotAgentConfigHandle::new(BotAgentConfig {
+            enabled: true,
+            connection_id: "injected".into(),
+            default_profile_id: "configured-profile".into(),
+            ..BotAgentConfig::default()
+        })
+        .unwrap();
+        let started_profiles = Arc::new(Mutex::new(Vec::new()));
+        let bridge = BotAgentBridge::new_with_config(
+            ConversationService::new(repository, policy),
+            Box::new(FakeAgentClient {
+                started_profiles: started_profiles.clone(),
+                ..FakeAgentClient::default()
+            }),
+            config,
+        );
+        let mut source = event(
+            "ext-profile",
+            BotTarget::User {
+                user_id: "actor".into(),
+            },
+        );
+        source.ext.insert(
+            BOT_EXT_AGENT_PROFILE_ID.into(),
+            serde_json::Value::String("persona-profile".into()),
+        );
+
+        let result = block_on(bridge.submit_event(&source)).unwrap();
+        assert_eq!(
+            result.resolved.policy.agent_runtime_profile_id.as_deref(),
+            Some("persona-profile")
+        );
+        assert_eq!(
+            started_profiles.lock().unwrap().as_slice(),
+            ["persona-profile"]
+        );
+    }
+
+    #[test]
+    fn bind_profile_fills_missing_ext_and_does_not_overwrite_persona() {
+        let source = event(
+            "bind-profile",
+            BotTarget::User {
+                user_id: "actor".into(),
+            },
+        );
+        let filled =
+            bind_profile_event(&source, serde_json::json!({"profile_id": "config-profile"}));
+        assert_eq!(
+            filled.ext[BOT_EXT_AGENT_PROFILE_ID],
+            serde_json::Value::String("config-profile".into())
+        );
+
+        let mut with_persona = source.clone();
+        with_persona.ext.insert(
+            BOT_EXT_AGENT_PROFILE_ID.into(),
+            serde_json::Value::String("persona-profile".into()),
+        );
+        let preserved = bind_profile_event(
+            &with_persona,
+            serde_json::json!({"profile_id": "config-profile"}),
+        );
+        assert_eq!(
+            preserved.ext[BOT_EXT_AGENT_PROFILE_ID],
+            serde_json::Value::String("persona-profile".into())
+        );
+
+        let overridden = bind_profile_event(
+            &with_persona,
+            serde_json::json!({"profile_id": "config-profile", "override": true}),
+        );
+        assert_eq!(
+            overridden.ext[BOT_EXT_AGENT_PROFILE_ID],
+            serde_json::Value::String("config-profile".into())
+        );
+
+        let empty_config = bind_profile_event(&source, serde_json::json!({}));
+        assert!(!empty_config.ext.contains_key(BOT_EXT_AGENT_PROFILE_ID));
+    }
+
+    #[test]
+    fn submit_reply_envelope_carries_source_message_and_user_without_reserving() {
+        let mut source = event(
+            "reply-source",
+            BotTarget::User {
+                user_id: "actor".into(),
+            },
+        );
+        source.message.as_mut().unwrap().message_id = Some("mid-1".into());
+        let context = overlay_reply_source_context(
+            BotFlowContext {
+                bot: None,
+                target: None,
+                actor: None,
+                ext: Default::default(),
+            },
+            &source,
+        );
+        assert_eq!(
+            context.ext[BOT_EXT_REPLY_SOURCE_MESSAGE_ID],
+            serde_json::Value::String("mid-1".into())
+        );
+        assert_eq!(
+            context.ext[BOT_EXT_REPLY_SOURCE_USER_ID],
+            serde_json::Value::String("actor".into())
+        );
+    }
+
+    #[test]
     fn globally_disabled_bridge_rejects_before_creating_a_session() {
         let repository = Arc::new(Repository::default());
         let config = BotAgentConfigHandle::new(BotAgentConfig {
@@ -2492,6 +2767,41 @@ mod tests {
             event_message(&event, None),
             Err(BotAgentError::MediaResourceUnvalidated)
         ));
+    }
+
+    fn bind_profile_event(source: &BotEvent, config: serde_json::Value) -> BotEvent {
+        let task = Task::new(
+            "bind-profile",
+            BOT_AGENT_BIND_PROFILE_PROTOCOL_ID,
+            serde_json::json!({}),
+        );
+        let invocation = BotNodeInvocation {
+            flow_id: "flow".into(),
+            graph_revision: 1,
+            execution_id: "ex".into(),
+            node_id: "bind".into(),
+            input_port_id: "input".into(),
+            config,
+            input: BotFlowEventEnvelope {
+                event_id: source.event_id.clone(),
+                protocol_id: BOT_FLOW_BOT_EVENT_TYPE.into(),
+                payload: BotFlowPayload {
+                    event_type: BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1),
+                    value: serde_json::to_value(source).unwrap(),
+                },
+                context: BotFlowContext {
+                    bot: None,
+                    target: None,
+                    actor: None,
+                    ext: Default::default(),
+                },
+                trace_id: None,
+                correlation_id: None,
+            },
+        };
+        let result = bind_profile_node(&task, invocation).unwrap();
+        let node: BotNodeResult = serde_json::from_value(result.output.unwrap()).unwrap();
+        serde_json::from_value(node.outputs[0].event.payload.value.clone()).unwrap()
     }
 
     fn event(id: &str, target: BotTarget) -> BotEvent {
