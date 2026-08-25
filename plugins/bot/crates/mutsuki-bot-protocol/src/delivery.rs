@@ -104,6 +104,8 @@ pub struct BotDeliveryReceipt {
 pub struct BotReplyDeliveryPart {
     pub part_id: String,
     pub content: BotDeliveryContent,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_before_unix_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -118,6 +120,10 @@ pub struct BotReplyDeliveryRequest {
     /// Durable Agent event owner completed atomically with reply reservation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_binding_key: Option<String>,
+    /// Occupies `reply_id` without making parts ResumeDue/sendable. Delivery
+    /// `Submit` clears this before send so only a finalized bundle is recovered.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub occupancy_only: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

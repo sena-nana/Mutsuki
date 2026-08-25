@@ -17,6 +17,7 @@ pub const BOT_FLOW_REACTION_EVENT_TYPE: &str = "mutsuki.bot.event.reaction";
 pub const BOT_FLOW_MEMBER_EVENT_TYPE: &str = "mutsuki.bot.event.member";
 pub const BOT_FLOW_LIFECYCLE_EVENT_TYPE: &str = "mutsuki.bot.event.lifecycle";
 pub const BOT_FLOW_PLATFORM_EVENT_TYPE: &str = "mutsuki.bot.event.platform";
+pub const BOT_FLOW_DELIVERY_REPLY_TYPE: &str = "mutsuki.bot.delivery.reply";
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct BotFlowTypeRef {
