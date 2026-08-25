@@ -3,13 +3,13 @@ use std::collections::BTreeMap;
 use mutsuki_bot_protocol::{
     BOT_EVENT_INGEST_PROTOCOL_ID, BOT_FLOW_BOT_EVENT_TYPE, BOT_FLOW_INGRESS_PROTOCOL_ID,
     BOT_MEDIA_UPLOAD_PROTOCOL_ID, BOT_MESSAGE_RECALL_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID,
-    BotEvent, BotFlowContext, BotFlowEventEnvelope, BotFlowPayload, BotFlowTypeRef,
-    BotMediaUploadRequest, BotMessage, BotMessageRecallRequest, BotNodeBinding,
-    BotNodeCatalogFragment, BotNodeDescriptor, BotNodeInvocation, BotNodePortDescriptor,
-    BotNodePortDirection, BotNodeResult, BotNodeRole, MessageSegment,
-    QQBOT_ACCOUNT_GET_PROTOCOL_ID, QQBOT_CAPABILITY_GET_PROTOCOL_ID,
-    QQBOT_GATEWAY_STATUS_PROTOCOL_ID, QQBOT_RAW_CALL_PROTOCOL_ID, QqBotAccountGetRequest,
-    QqBotCapabilityGetRequest, QqBotGatewayStatusRequest,
+    BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID, BotEvent, BotFlowContext, BotFlowEventEnvelope,
+    BotFlowPayload, BotFlowTypeRef, BotMediaUploadRequest, BotMessage, BotMessageRecallRequest,
+    BotNodeBinding, BotNodeCatalogFragment, BotNodeDescriptor, BotNodeInvocation, BotNodeOutput,
+    BotNodePortDescriptor, BotNodePortDirection, BotNodeResult, BotNodeRole,
+    BotReplyDeliveryRequest, MessageSegment, QQBOT_ACCOUNT_GET_PROTOCOL_ID,
+    QQBOT_CAPABILITY_GET_PROTOCOL_ID, QQBOT_GATEWAY_STATUS_PROTOCOL_ID, QQBOT_RAW_CALL_PROTOCOL_ID,
+    QqBotAccountGetRequest, QqBotCapabilityGetRequest, QqBotGatewayStatusRequest,
 };
 use mutsuki_runtime_contracts::{
     CompletionBatch, ERR_RUNTIME_HOST_FAILED, ExecutionClass, InvocationMode, OrderingRequirement,
@@ -68,6 +68,15 @@ pub fn qqbot_adapter_manifest(plugin_generation: u64, media_enabled: bool) -> Pl
             ),
             QQBOT_OPENAPI_RUNNER_ID,
             "qqbot-message-recall",
+        )
+        .protocol_handler(
+            ProtocolDescriptorBuilder::new(BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID)
+                .input_schema(json!({"type": "object"}))
+                .output_schema(json!({"type": "object", "required": ["outputs", "metadata"]}))
+                .error_schema(json!({"type": "object", "required": ["code", "source", "route"]}))
+                .build(),
+            QQBOT_OPENAPI_RUNNER_ID,
+            "qqbot-reply-forward-fold",
         );
     if media_enabled {
         builder = builder.protocol_handler(
@@ -227,6 +236,47 @@ fn qqbot_node_catalog(media_enabled: bool) -> BotNodeCatalogFragment {
             "mutsuki.bot.media.upload",
         ));
     }
+    nodes.push(BotNodeDescriptor {
+        node_type_id: "mutsuki.bot.qq.reply.forward_fold".into(),
+        version: 1,
+        title: "长回复转发折叠".into(),
+        category: "QQ".into(),
+        role: BotNodeRole::Processor,
+        binding: Some(BotNodeBinding {
+            binding_id: format!("binding:{}", BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID),
+            protocol_id: BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID.into(),
+            runner_hint: Some(QQBOT_OPENAPI_RUNNER_ID.into()),
+        }),
+        ports: vec![
+            BotNodePortDescriptor {
+                port_id: "reply".into(),
+                title: "回复".into(),
+                direction: BotNodePortDirection::Input,
+                event_type: BotFlowTypeRef::new(
+                    mutsuki_bot_protocol::BOT_FLOW_DELIVERY_REPLY_TYPE,
+                    1,
+                ),
+                required: true,
+            },
+            BotNodePortDescriptor {
+                port_id: "reply".into(),
+                title: "回复".into(),
+                direction: BotNodePortDirection::Output,
+                event_type: BotFlowTypeRef::new(
+                    mutsuki_bot_protocol::BOT_FLOW_DELIVERY_REPLY_TYPE,
+                    1,
+                ),
+                required: false,
+            },
+        ],
+        config_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "threshold": {"type": "integer", "minimum": 1, "default": 1500, "title": "折叠字数"}
+            }
+        }),
+    });
     BotNodeCatalogFragment { nodes }
 }
 
@@ -404,6 +454,9 @@ impl Runner for QqOpenApiRunner {
     ) -> RuntimeResult<CompletionBatch> {
         let account_id = self.service.account_id().to_owned();
         map_work_batch_entries(&batch, |task| {
+            if task.protocol_id.as_str() == BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID {
+                return complete_forward_fold(task);
+            }
             let (payload, invocation) = node_payload(task)?;
             let response = match task.protocol_id.as_str() {
                 BOT_MESSAGE_SEND_PROTOCOL_ID => {
@@ -492,6 +545,69 @@ fn node_payload(task: &Task) -> Result<(Value, Option<BotNodeInvocation>), Runti
         Ok(invocation) => Ok((invocation.input.payload.value.clone(), Some(invocation))),
         Err(_) => Ok((value, None)),
     }
+}
+
+fn complete_forward_fold(task: &Task) -> Result<RunnerResult, RuntimeError> {
+    let invocation = task
+        .payload
+        .decode_shared::<BotNodeInvocation>()
+        .map_err(|error| failure("mutsuki.bot.qq.reply.forward-fold.decode", error))?;
+    let mut request: BotReplyDeliveryRequest =
+        serde_json::from_value(invocation.input.payload.value.clone())
+            .map_err(|error| failure("mutsuki.bot.qq.reply.forward-fold.payload", error))?;
+    apply_forward_fold(&invocation.config, &mut request)
+        .map_err(|error| failure("mutsuki.bot.qq.reply.forward-fold.apply", error))?;
+    let mut event = invocation.input.clone();
+    event.payload.value = serde_json::to_value(&request)
+        .map_err(|error| failure("mutsuki.bot.qq.reply.forward-fold.encode", error))?;
+    let mut result = RunnerResult::completed(task.task_id.clone());
+    result.output = Some(
+        serde_json::to_value(BotNodeResult {
+            outputs: vec![BotNodeOutput {
+                port_id: "reply".into(),
+                event,
+            }],
+            metadata: BTreeMap::new(),
+        })
+        .map_err(|error| failure("mutsuki.bot.qq.reply.forward-fold.result", error))?,
+    );
+    Ok(result)
+}
+
+pub fn apply_forward_fold(
+    config: &Value,
+    request: &mut BotReplyDeliveryRequest,
+) -> Result<(), String> {
+    let threshold = config
+        .get("threshold")
+        .and_then(Value::as_u64)
+        .unwrap_or(1500) as usize;
+    let text = request
+        .parts
+        .iter()
+        .flat_map(|part| part.content.segments.iter())
+        .filter_map(|segment| match segment {
+            MessageSegment::Text { text } | MessageSegment::Markdown { content: text } => {
+                Some(text.as_str())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("");
+    if text.chars().count() < threshold {
+        return Ok(());
+    }
+    let first = request.parts.first().cloned();
+    if let Some(mut part) = first {
+        part.content.summary = Some(text.chars().take(80).collect());
+        part.content.segments = vec![MessageSegment::platform_specific(
+            "qqbot",
+            "forward",
+            json!({ "text": text }),
+        )];
+        request.parts = vec![part];
+    }
+    Ok(())
 }
 
 fn message_from_node_payload(
@@ -597,6 +713,7 @@ pub fn openapi_descriptor(plugin_generation: u64, media_enabled: bool) -> Runner
     let mut accepted_protocol_ids = vec![
         BOT_MESSAGE_SEND_PROTOCOL_ID.into(),
         BOT_MESSAGE_RECALL_PROTOCOL_ID.into(),
+        BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID.into(),
         QQBOT_ACCOUNT_GET_PROTOCOL_ID.into(),
         QQBOT_GATEWAY_STATUS_PROTOCOL_ID.into(),
         QQBOT_CAPABILITY_GET_PROTOCOL_ID.into(),

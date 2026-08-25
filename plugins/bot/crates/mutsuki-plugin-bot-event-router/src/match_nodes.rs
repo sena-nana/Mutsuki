@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 
 use mutsuki_bot_protocol::{
-    BOT_FLOW_BOT_EVENT_TYPE, BotEvent, BotEventKind, BotFlowTypeRef, BotNodeBinding,
-    BotNodeCatalogFragment, BotNodeDescriptor, BotNodeInvocation, BotNodeOutput,
-    BotNodePortDescriptor, BotNodePortDirection, BotNodeResult, BotNodeRole, BotTarget,
-    MessageSegment,
+    BOT_FLOW_BOT_EVENT_TYPE, BOT_FLOW_EMPTY_MENTION_PROTOCOL_ID, BOT_FLOW_PROBABILITY_PROTOCOL_ID,
+    BotEvent, BotEventKind, BotFlowTypeRef, BotNodeBinding, BotNodeCatalogFragment,
+    BotNodeDescriptor, BotNodeInvocation, BotNodeOutput, BotNodePortDescriptor,
+    BotNodePortDirection, BotNodeResult, BotNodeRole, BotTarget, MessageSegment,
 };
 use mutsuki_runtime_contracts::{
     CompletionBatch, ExecutionClass, RunnerDescriptor, RunnerResult, Task, WorkBatch,
@@ -35,6 +35,8 @@ pub const MATCH_PROTOCOL_IDS: &[&str] = &[
     BOT_FLOW_MENTION_PROTOCOL_ID,
     BOT_FLOW_RATE_LIMIT_PROTOCOL_ID,
     BOT_FLOW_QQ_EVENT_PROTOCOL_ID,
+    BOT_FLOW_EMPTY_MENTION_PROTOCOL_ID,
+    BOT_FLOW_PROBABILITY_PROTOCOL_ID,
 ];
 
 #[derive(Default, Deserialize)]
@@ -81,6 +83,16 @@ struct RateLimitConfig {
 #[serde(default, deny_unknown_fields)]
 struct QqEventConfig {
     event_types: Vec<String>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct ProbabilityConfig {
+    p: f64,
+    #[serde(default)]
+    users: Vec<String>,
+    #[serde(default)]
+    conversations: Vec<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -193,6 +205,11 @@ fn match_event(
                     && config.event_types.iter().any(|item| item == &event_type)
             })
         }
+        BOT_FLOW_EMPTY_MENTION_PROTOCOL_ID => empty_mention(event),
+        BOT_FLOW_PROBABILITY_PROTOCOL_ID => {
+            let config: ProbabilityConfig = decode_config(config)?;
+            probability_matches(event, &config)
+        }
         other => return Err(other.into()),
     })
 }
@@ -216,13 +233,13 @@ impl BotFlowMatchRunner {
                 .actor
                 .as_ref()
                 .map(|actor| format!("user:{}", actor.user_id)),
-            "conversation" => Some(format!("conversation:{}", conversation_key(&event.target))),
+            "conversation" => Some(format!("conversation:{}", event.target.conversation_key())),
             "user_and_conversation" | "actor_and_conversation" => {
                 event.actor.as_ref().map(|actor| {
                     format!(
                         "user:{}|conversation:{}",
                         actor.user_id,
-                        conversation_key(&event.target)
+                        event.target.conversation_key()
                     )
                 })
             }
@@ -304,12 +321,57 @@ fn mentioned_bot(event: &BotEvent) -> bool {
         return true;
     }
     event.message.as_ref().is_some_and(|message| {
-        message.segments.iter().any(|segment| match segment {
-            MessageSegment::MentionUser { user_id } => user_id == &event.bot.account_id,
-            MessageSegment::MentionAll => true,
-            _ => false,
+        message.segments.iter().any(|segment| {
+            matches!(
+                segment,
+                MessageSegment::MentionUser { user_id } if user_id == &event.bot.account_id
+            )
         })
     })
+}
+
+fn empty_mention(event: &BotEvent) -> bool {
+    mentioned_bot(event)
+        && message_text(event).is_some_and(|text| text.chars().all(char::is_whitespace))
+}
+
+fn probability_matches(event: &BotEvent, config: &ProbabilityConfig) -> bool {
+    if !(0.0..=1.0).contains(&config.p) {
+        return false;
+    }
+    if !config.users.is_empty() {
+        let Some(actor) = event.actor.as_ref() else {
+            return false;
+        };
+        if !config.users.iter().any(|user| user == &actor.user_id) {
+            return false;
+        }
+    }
+    if !config.conversations.is_empty()
+        && !config
+            .conversations
+            .iter()
+            .any(|value| value == &event.target.conversation_key())
+    {
+        return false;
+    }
+    if config.p >= 1.0 {
+        return true;
+    }
+    if config.p <= 0.0 {
+        return false;
+    }
+    let sample = deterministic_unit_sample(&event.event_id);
+    sample < config.p
+}
+
+fn deterministic_unit_sample(event_id: &str) -> f64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in event_id.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100_0000_01b3);
+    }
+    (hash % 10_000) as f64 / 10_000.0
 }
 
 fn message_text(event: &BotEvent) -> Option<String> {
@@ -361,21 +423,6 @@ fn keyword_matches(event: &BotEvent, config: &KeywordConfig) -> bool {
         hits == keywords.len()
     } else {
         hits > 0
-    }
-}
-
-fn conversation_key(target: &BotTarget) -> String {
-    match target {
-        BotTarget::User { user_id } => format!("user:{user_id}"),
-        BotTarget::Group { group_id } => format!("group:{group_id}"),
-        BotTarget::GuildChannel {
-            guild_id,
-            channel_id,
-        } => format!("channel:{guild_id}:{channel_id}"),
-        BotTarget::Conversation { conversation_id } => format!("conversation:{conversation_id}"),
-        BotTarget::PlatformSpecific { platform, kind, id } => {
-            format!("platform:{platform}:{kind}:{id}")
-        }
     }
 }
 
@@ -578,6 +625,41 @@ pub fn match_node_catalog() -> BotNodeCatalogFragment {
                     }
                 }),
             ),
+            match_node(
+                "mutsuki.bot.match.empty_mention",
+                "空提及",
+                BOT_FLOW_EMPTY_MENTION_PROTOCOL_ID,
+                json!({"type": "object", "additionalProperties": false}),
+            ),
+            match_node(
+                "mutsuki.bot.match.probability",
+                "概率匹配",
+                BOT_FLOW_PROBABILITY_PROTOCOL_ID,
+                json!({
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["p"],
+                    "properties": {
+                        "p": {
+                            "type": "number",
+                            "title": "触发概率",
+                            "minimum": 0,
+                            "maximum": 1,
+                            "default": 0.1
+                        },
+                        "users": {
+                            "type": "array",
+                            "title": "用户白名单",
+                            "items": {"type": "string", "minLength": 1}
+                        },
+                        "conversations": {
+                            "type": "array",
+                            "title": "会话白名单",
+                            "items": {"type": "string", "minLength": 1}
+                        }
+                    }
+                }),
+            ),
         ],
     }
 }
@@ -701,6 +783,35 @@ mod tests {
         assert!(!mentioned_bot(&event("hello")));
     }
 
+    fn event_with_segments(segments: Vec<MessageSegment>) -> BotEvent {
+        let mut event = event("");
+        if let Some(message) = event.message.as_mut() {
+            message.segments = segments;
+        }
+        event
+    }
+
+    #[test]
+    fn mention_all_is_not_mentioned_bot() {
+        let only_all = event_with_segments(vec![MessageSegment::MentionAll]);
+        assert!(!mentioned_bot(&only_all));
+        assert!(!empty_mention(&only_all));
+    }
+
+    #[test]
+    fn mention_user_matching_bot_is_mentioned_bot() {
+        let self_mention = event_with_segments(vec![MessageSegment::MentionUser {
+            user_id: "bot".into(),
+        }]);
+        assert!(mentioned_bot(&self_mention));
+        assert!(empty_mention(&self_mention));
+        let other = event_with_segments(vec![MessageSegment::MentionUser {
+            user_id: "other".into(),
+        }]);
+        assert!(!mentioned_bot(&other));
+        assert!(!empty_mention(&other));
+    }
+
     #[test]
     fn prefix_and_keyword_nodes_use_message_text() {
         let event = event("/echo hello");
@@ -755,6 +866,8 @@ mod tests {
                 "mutsuki.bot.match.mention",
                 "mutsuki.bot.match.rate_limit",
                 "mutsuki.bot.match.qq_event",
+                "mutsuki.bot.match.empty_mention",
+                "mutsuki.bot.match.probability",
             ]
         );
         let user = catalog
@@ -790,5 +903,44 @@ mod tests {
             source_kinds_for_node("mutsuki.bot.qq.message.created"),
             &["message_created"]
         );
+    }
+
+    #[test]
+    fn empty_mention_requires_mention_without_text() {
+        let mut only_mention = event("");
+        only_mention
+            .ext
+            .insert("qqbot.mentioned_bot".into(), json!(true));
+        assert!(empty_mention(&only_mention));
+        let mut with_text = event("hello");
+        with_text
+            .ext
+            .insert("qqbot.mentioned_bot".into(), json!(true));
+        assert!(!empty_mention(&with_text));
+    }
+
+    #[test]
+    fn probability_node_is_deterministic_for_event_id() {
+        let event = event("hello");
+        let always = ProbabilityConfig {
+            p: 1.0,
+            users: Vec::new(),
+            conversations: Vec::new(),
+        };
+        let never = ProbabilityConfig {
+            p: 0.0,
+            users: Vec::new(),
+            conversations: Vec::new(),
+        };
+        assert!(probability_matches(&event, &always));
+        assert!(!probability_matches(&event, &never));
+        let sample = ProbabilityConfig {
+            p: 0.5,
+            users: Vec::new(),
+            conversations: Vec::new(),
+        };
+        let first = probability_matches(&event, &sample);
+        let second = probability_matches(&event, &sample);
+        assert_eq!(first, second);
     }
 }

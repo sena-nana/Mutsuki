@@ -2,11 +2,15 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use mutsuki_bot_protocol::{
-    BOT_FLOW_BOT_EVENT_TYPE, BOT_MEDIA_UPLOAD_PROTOCOL_ID, BOT_MESSAGE_RECALL_PROTOCOL_ID,
-    BOT_MESSAGE_SEND_PROTOCOL_ID, BotConversationKind, BotEvent, BotEventKind,
-    BotFlowEventEnvelope, BotMediaKind, BotMessage, BotMessageRecallRequest, BotTarget, BotUser,
-    MessageSegment, QQBOT_ACCOUNT_GET_PROTOCOL_ID, QQBOT_GATEWAY_STATUS_PROTOCOL_ID,
-    QQBOT_OPENAPI_PERMANENT_ERROR, QQBOT_OPENAPI_RATE_LIMITED_ERROR, QQBOT_RAW_CALL_PROTOCOL_ID,
+    BOT_FLOW_BOT_EVENT_TYPE, BOT_FLOW_DELIVERY_REPLY_TYPE, BOT_MEDIA_UPLOAD_PROTOCOL_ID,
+    BOT_MESSAGE_RECALL_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID,
+    BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID, BotConversationKind, BotDeliveryContent, BotEvent,
+    BotEventKind, BotFlowContext, BotFlowEventEnvelope, BotFlowPayload, BotFlowTypeRef,
+    BotMediaKind, BotMessage, BotMessageRecallRequest, BotNodeInvocation, BotNodeResult,
+    BotReplyDeliveryPart, BotReplyDeliveryRequest, BotTarget, BotUser, DeliveryPolicy,
+    MessageSegment, QQ_CONVERSATION_REF_VERSION, QQBOT_ACCOUNT_GET_PROTOCOL_ID,
+    QQBOT_GATEWAY_STATUS_PROTOCOL_ID, QQBOT_OPENAPI_PERMANENT_ERROR,
+    QQBOT_OPENAPI_RATE_LIMITED_ERROR, QQBOT_RAW_CALL_PROTOCOL_ID, QqConversationRef,
     QqMessageSegmentKind, QqPermissionRequirement,
 };
 use mutsuki_runtime_contracts::{
@@ -24,8 +28,8 @@ use crate::api::{
 use crate::config::{DEFAULT_QQBOT_INTENTS, QqBotConfig};
 use crate::gateway::{GatewayAction, QqGatewayPump};
 use crate::tasks::{
-    QQBOT_GATEWAY_FRAME_PROTOCOL_ID, QqGatewayMapRunner, QqOpenApiRunner, openapi_descriptor,
-    qqbot_adapter_manifest,
+    QQBOT_GATEWAY_FRAME_PROTOCOL_ID, QQBOT_OPENAPI_RUNNER_ID, QqGatewayMapRunner, QqOpenApiRunner,
+    apply_forward_fold, openapi_descriptor, qqbot_adapter_manifest,
 };
 use crate::{
     QqBotClients, QqHttpClient, QqHttpRequest, QqHttpResponse, QqIdSource, StaticQqCredentials,
@@ -546,6 +550,102 @@ fn gateway_runner_maps_lifecycle_seconds_and_reaction_identity_fields() {
         BotTarget::Group {
             group_id: "GROUP_OPENID".into()
         }
+    );
+}
+
+fn map_gateway_event(event_type: &str, data: Value) -> BotEvent {
+    let mut runner = QqGatewayMapRunner::new(1, "main");
+    let task = Task::new(
+        "frame",
+        QQBOT_GATEWAY_FRAME_PROTOCOL_ID,
+        json!({
+            "op": 0,
+            "s": 1,
+            "t": event_type,
+            "id": "event",
+            "d": data,
+        }),
+    );
+    decode_ingress_event(&run_one(&mut runner, task).unwrap().tasks[0])
+}
+
+#[test]
+fn mentioned_bot_requires_this_bot_not_mention_all() {
+    let mention_all = map_gateway_event(
+        "GROUP_MESSAGE_CREATE",
+        json!({
+            "id": "all-message",
+            "group_openid": "GROUP_OPENID",
+            "content": "@all",
+            "author": {"member_openid": "MEMBER_OPENID"}
+        }),
+    );
+    assert_eq!(mention_all.ext["qqbot.mentioned_bot"], Value::Bool(false));
+    assert!(
+        mention_all
+            .message
+            .as_ref()
+            .unwrap()
+            .segments
+            .iter()
+            .any(|segment| matches!(segment, MessageSegment::MentionAll))
+    );
+
+    let group_at = map_gateway_event(
+        "GROUP_AT_MESSAGE_CREATE",
+        json!({
+            "id": "at-message",
+            "group_openid": "GROUP_OPENID",
+            "content": "hello",
+            "author": {"member_openid": "MEMBER_OPENID"}
+        }),
+    );
+    assert_eq!(group_at.ext["qqbot.mentioned_bot"], Value::Bool(true));
+
+    let mention_self = map_gateway_event(
+        "GROUP_MESSAGE_CREATE",
+        json!({
+            "id": "self-message",
+            "group_openid": "GROUP_OPENID",
+            "content": "<@main> hello",
+            "author": {"member_openid": "MEMBER_OPENID"}
+        }),
+    );
+    assert_eq!(mention_self.ext["qqbot.mentioned_bot"], Value::Bool(true));
+
+    let mention_is_you = map_gateway_event(
+        "GROUP_MESSAGE_CREATE",
+        json!({
+            "id": "is-you-message",
+            "group_openid": "GROUP_OPENID",
+            "content": "hello",
+            "mentions": [{"id": "BOT_OPENID", "is_you": true}],
+            "author": {"member_openid": "MEMBER_OPENID"}
+        }),
+    );
+    assert_eq!(mention_is_you.ext["qqbot.mentioned_bot"], Value::Bool(true));
+
+    let plain_group = map_gateway_event(
+        "GROUP_MESSAGE_CREATE",
+        json!({
+            "id": "plain-message",
+            "group_openid": "GROUP_OPENID",
+            "content": "hello",
+            "author": {"member_openid": "MEMBER_OPENID"}
+        }),
+    );
+    assert_eq!(plain_group.ext["qqbot.mentioned_bot"], Value::Bool(false));
+    assert!(
+        !plain_group
+            .message
+            .as_ref()
+            .unwrap()
+            .segments
+            .iter()
+            .any(|segment| matches!(
+                segment,
+                MessageSegment::MentionUser { .. } | MessageSegment::MentionAll
+            ))
     );
 }
 
@@ -1353,6 +1453,172 @@ fn qq_sources_are_split_by_received_kind() {
             .iter()
             .any(|node| node.node_type_id == "mutsuki.bot.qq.source")
     );
+}
+
+#[test]
+fn qq_forward_fold_binds_openapi_runner() {
+    use mutsuki_bot_protocol::{BOT_FLOW_NODE_EXTENSION_ID, BotNodeCatalogFragment};
+
+    let descriptor = openapi_descriptor(1, false);
+    assert!(
+        descriptor
+            .accepted_protocol_ids
+            .contains(&BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID.into())
+    );
+
+    let manifest = qqbot_adapter_manifest(1, false);
+    assert!(
+        manifest
+            .provides
+            .protocols
+            .iter()
+            .any(|protocol| protocol.protocol_id == BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID)
+    );
+    let binding = manifest
+        .provides
+        .handler_bindings
+        .iter()
+        .find(|binding| binding.protocol_id == BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID)
+        .expect("forward-fold handler binding");
+    assert_eq!(
+        binding.target_runner_hint.as_deref(),
+        Some(QQBOT_OPENAPI_RUNNER_ID)
+    );
+
+    let fragment = manifest
+        .provides
+        .extensions
+        .iter()
+        .find(|extension| extension.extension_id == BOT_FLOW_NODE_EXTENSION_ID)
+        .and_then(|extension| {
+            BotNodeCatalogFragment::from_plugin_extension(extension)
+                .ok()
+                .flatten()
+        })
+        .expect("QQ node catalog");
+    let node = fragment
+        .nodes
+        .iter()
+        .find(|node| node.node_type_id == "mutsuki.bot.qq.reply.forward_fold")
+        .expect("forward-fold catalog node");
+    let catalog_binding = node.binding.as_ref().expect("catalog binding");
+    assert_eq!(
+        catalog_binding.protocol_id,
+        BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID
+    );
+    assert_eq!(
+        catalog_binding.runner_hint.as_deref(),
+        Some(QQBOT_OPENAPI_RUNNER_ID)
+    );
+}
+
+#[test]
+fn apply_forward_fold_collapses_long_text_to_qq_forward() {
+    let mut request = reply_request(&"字".repeat(20));
+    apply_forward_fold(&json!({"threshold": 10}), &mut request).unwrap();
+    assert_eq!(request.parts.len(), 1);
+    assert_eq!(
+        request.parts[0].content.segments[0],
+        MessageSegment::platform_specific("qqbot", "forward", json!({ "text": "字".repeat(20) }))
+    );
+    assert_eq!(
+        request.parts[0].content.summary.as_deref(),
+        Some("字".repeat(20).as_str())
+    );
+}
+
+#[test]
+fn apply_forward_fold_leaves_short_text_unchanged() {
+    let mut request = reply_request("short");
+    apply_forward_fold(&json!({"threshold": 10}), &mut request).unwrap();
+    assert_eq!(
+        request.parts[0].content.segments,
+        vec![MessageSegment::text("short")]
+    );
+}
+
+#[test]
+fn openapi_runner_applies_forward_fold_without_http() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut runner =
+        openapi_runner_with_shared(requests.clone(), vec![], Box::new(NoopIdSource::new(1)));
+    let request = reply_request(&"长".repeat(12));
+    let invocation = BotNodeInvocation {
+        flow_id: "flow".into(),
+        graph_revision: 1,
+        execution_id: "ex".into(),
+        node_id: "n".into(),
+        input_port_id: "reply".into(),
+        config: json!({"threshold": 8}),
+        input: BotFlowEventEnvelope {
+            event_id: "e1".into(),
+            protocol_id: "mutsuki.bot.delivery/reply@1".into(),
+            payload: BotFlowPayload {
+                event_type: BotFlowTypeRef::new(BOT_FLOW_DELIVERY_REPLY_TYPE, 1),
+                value: serde_json::to_value(&request).unwrap(),
+            },
+            context: BotFlowContext {
+                bot: None,
+                target: None,
+                actor: None,
+                ext: BTreeMap::new(),
+            },
+            trace_id: None,
+            correlation_id: None,
+        },
+    };
+    let task = Task::new(
+        "fold-task",
+        BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID,
+        serde_json::to_value(&invocation).unwrap(),
+    );
+    let result = run_one(&mut runner, task).unwrap();
+    assert!(requests.lock().unwrap().is_empty());
+    let node: BotNodeResult = serde_json::from_value(result.output.unwrap()).unwrap();
+    let folded: BotReplyDeliveryRequest =
+        serde_json::from_value(node.outputs[0].event.payload.value.clone()).unwrap();
+    assert!(matches!(
+        folded.parts[0].content.segments[0],
+        MessageSegment::PlatformSpecific { ref platform, ref kind, .. }
+            if platform == "qqbot" && kind == "forward"
+    ));
+}
+
+fn reply_request(text: &str) -> BotReplyDeliveryRequest {
+    BotReplyDeliveryRequest {
+        reply_id: "r1".into(),
+        idempotency_key: "r1".into(),
+        conversation: QqConversationRef {
+            version: QQ_CONVERSATION_REF_VERSION,
+            account_id: "bot".into(),
+            kind: BotConversationKind::Group,
+            user_id: None,
+            group_id: Some("g1".into()),
+            guild_id: None,
+            channel_id: None,
+            thread_id: None,
+        },
+        parts: vec![BotReplyDeliveryPart {
+            part_id: "p1".into(),
+            content: BotDeliveryContent {
+                segments: vec![MessageSegment::text(text)],
+                summary: None,
+                reply_to: None,
+            },
+            not_before_unix_ms: None,
+        }],
+        policy: DeliveryPolicy {
+            max_attempts: 1,
+            initial_backoff_ms: 1,
+            max_backoff_ms: 1,
+            not_before_unix_ms: None,
+            expires_at_unix_ms: None,
+        },
+        source_event_id: "e1".into(),
+        source_turn_id: "t1".into(),
+        source_binding_key: None,
+        occupancy_only: false,
+    }
 }
 
 #[test]
