@@ -1,0 +1,196 @@
+{
+  "flow": {
+    "flow_id": "qq.ai.orchestrated",
+    "name": "QQ AI 可编排对话",
+    "nodes": [
+      {
+        "node_id": "source",
+        "node_type_id": "mutsuki.bot.qq.message.created",
+        "node_type_version": 1,
+        "config": {},
+        "source": {
+          "protocol_id": "mutsuki.bot.event/ingest@1",
+          "event_type": { "type_id": "mutsuki.bot.event", "version": 1 }
+        },
+        "position": { "x": 40, "y": 240 }
+      },
+      {
+        "node_id": "persona-command",
+        "node_type_id": "mutsuki.bot.command.match",
+        "node_type_version": 1,
+        "config": {
+          "prefixes": ["/"],
+          "path": ["persona"],
+          "aliases": [],
+          "arguments": [
+            { "name": "id", "kind": "string", "optional": true, "variadic": false }
+          ],
+          "case_sensitive": false
+        },
+        "position": { "x": 280, "y": 40 }
+      },
+      {
+        "node_id": "persona",
+        "node_type_id": "mutsuki.bot.agent.persona",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 560, "y": 40 }
+      },
+      {
+        "node_id": "qq-send",
+        "node_type_id": "mutsuki.bot.qq.send",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 840, "y": 40 }
+      },
+      {
+        "node_id": "empty-mention",
+        "node_type_id": "mutsuki.bot.match.empty_mention",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 280, "y": 320 }
+      },
+      {
+        "node_id": "interaction-create",
+        "node_type_id": "mutsuki.bot.interaction.create",
+        "node_type_version": 1,
+        "config": { "timeout_ms": 60000 },
+        "position": { "x": 560, "y": 240 }
+      },
+      {
+        "node_id": "interaction",
+        "node_type_id": "mutsuki.bot.interaction.match",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 560, "y": 320 }
+      },
+      {
+        "node_id": "mention",
+        "node_type_id": "mutsuki.bot.match.mention",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 280, "y": 440 }
+      },
+      {
+        "node_id": "record-icl",
+        "node_type_id": "mutsuki.bot.conversation.record_icl",
+        "node_type_version": 1,
+        "config": { "max_count": 20 },
+        "position": { "x": 560, "y": 440 }
+      },
+      {
+        "node_id": "record-icl-listen",
+        "node_type_id": "mutsuki.bot.conversation.record_icl",
+        "node_type_version": 1,
+        "config": { "max_count": 20 },
+        "position": { "x": 560, "y": 560 }
+      },
+      {
+        "node_id": "attach-icl",
+        "node_type_id": "mutsuki.bot.conversation.attach_icl",
+        "node_type_version": 1,
+        "config": { "max_count": 20 },
+        "position": { "x": 800, "y": 440 }
+      },
+      {
+        "node_id": "identifiers",
+        "node_type_id": "mutsuki.bot.conversation.attach_identifiers",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 1040, "y": 440 }
+      },
+      {
+        "node_id": "attach-bound-persona",
+        "node_type_id": "mutsuki.bot.agent.attach_bound_persona",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 1280, "y": 440 }
+      },
+      {
+        "node_id": "bind-profile",
+        "node_type_id": "mutsuki.bot.agent.bind_profile",
+        "node_type_version": 1,
+        "config": { "profile_id": "qq-assistant" },
+        "position": { "x": 1520, "y": 440 }
+      },
+      {
+        "node_id": "agent",
+        "node_type_id": "mutsuki.bot.agent.submit",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 1760, "y": 440 }
+      },
+      {
+        "node_id": "quote",
+        "node_type_id": "mutsuki.bot.reply.quote",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 2000, "y": 360 }
+      },
+      {
+        "node_id": "mention-reply",
+        "node_type_id": "mutsuki.bot.reply.mention",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 2240, "y": 360 }
+      },
+      {
+        "node_id": "segment",
+        "node_type_id": "mutsuki.bot.reply.segment",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 2480, "y": 360 }
+      },
+      {
+        "node_id": "forward-fold",
+        "node_type_id": "mutsuki.bot.qq.reply.forward_fold",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 2720, "y": 360 }
+      },
+      {
+        "node_id": "delivery",
+        "node_type_id": "mutsuki.bot.delivery.reply",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 2960, "y": 360 }
+      },
+      {
+        "node_id": "present-fail",
+        "node_type_id": "mutsuki.bot.command.reply",
+        "node_type_version": 1,
+        "config": { "text": "刚才没能发出回复，请稍后再试。", "reply": true },
+        "position": { "x": 2480, "y": 560 }
+      }
+    ],
+    "edges": [
+      { "edge_id": "source-persona-cmd", "from_node_id": "source", "from_port_id": "event", "to_node_id": "persona-command", "to_port_id": "event", "kind": "event" },
+      { "edge_id": "source-listen", "from_node_id": "source", "from_port_id": "event", "to_node_id": "record-icl-listen", "to_port_id": "input", "kind": "event" },
+      { "edge_id": "persona-cmd-handler", "from_node_id": "persona-command", "from_port_id": "matched", "to_node_id": "persona", "to_port_id": "command", "kind": "event" },
+      { "edge_id": "persona-message-send", "from_node_id": "persona", "from_port_id": "message", "to_node_id": "qq-send", "to_port_id": "input", "kind": "event" },
+      { "edge_id": "cmd-unmatched-empty", "from_node_id": "persona-command", "from_port_id": "unmatched", "to_node_id": "empty-mention", "to_port_id": "event", "kind": "event" },
+      { "edge_id": "empty-matched-create", "from_node_id": "empty-mention", "from_port_id": "matched", "to_node_id": "interaction-create", "to_port_id": "event", "kind": "event" },
+      { "edge_id": "empty-unmatched-interaction", "from_node_id": "empty-mention", "from_port_id": "unmatched", "to_node_id": "interaction", "to_port_id": "event", "kind": "event" },
+      { "edge_id": "interaction-unmatched-mention", "from_node_id": "interaction", "from_port_id": "unmatched", "to_node_id": "mention", "to_port_id": "event", "kind": "event" },
+      { "edge_id": "interaction-record", "from_node_id": "interaction", "from_port_id": "matched", "to_node_id": "record-icl", "to_port_id": "input", "kind": "event" },
+      { "edge_id": "mention-record", "from_node_id": "mention", "from_port_id": "matched", "to_node_id": "record-icl", "to_port_id": "input", "kind": "event" },
+      { "edge_id": "record-attach", "from_node_id": "record-icl", "from_port_id": "output", "to_node_id": "attach-icl", "to_port_id": "input", "kind": "event" },
+      { "edge_id": "icl-ids", "from_node_id": "attach-icl", "from_port_id": "output", "to_node_id": "identifiers", "to_port_id": "input", "kind": "event" },
+      { "edge_id": "ids-persona", "from_node_id": "identifiers", "from_port_id": "output", "to_node_id": "attach-bound-persona", "to_port_id": "input", "kind": "event" },
+      { "edge_id": "persona-profile", "from_node_id": "attach-bound-persona", "from_port_id": "output", "to_node_id": "bind-profile", "to_port_id": "input", "kind": "event" },
+      { "edge_id": "profile-agent", "from_node_id": "bind-profile", "from_port_id": "output", "to_node_id": "agent", "to_port_id": "input", "kind": "event" },
+      { "edge_id": "agent-quote", "from_node_id": "agent", "from_port_id": "reply", "to_node_id": "quote", "to_port_id": "reply", "kind": "event" },
+      { "edge_id": "quote-mention", "from_node_id": "quote", "from_port_id": "reply", "to_node_id": "mention-reply", "to_port_id": "reply", "kind": "event" },
+      { "edge_id": "mention-segment", "from_node_id": "mention-reply", "from_port_id": "reply", "to_node_id": "segment", "to_port_id": "reply", "kind": "event" },
+      { "edge_id": "segment-fold", "from_node_id": "segment", "from_port_id": "reply", "to_node_id": "forward-fold", "to_port_id": "reply", "kind": "event" },
+      { "edge_id": "fold-delivery", "from_node_id": "forward-fold", "from_port_id": "reply", "to_node_id": "delivery", "to_port_id": "reply", "kind": "event" },
+      { "edge_id": "agent-fail", "from_node_id": "agent", "from_port_id": "error", "to_node_id": "present-fail", "to_port_id": "error", "kind": "error" },
+      { "edge_id": "quote-fail", "from_node_id": "quote", "from_port_id": "error", "to_node_id": "present-fail", "to_port_id": "error", "kind": "error" },
+      { "edge_id": "mention-reply-fail", "from_node_id": "mention-reply", "from_port_id": "error", "to_node_id": "present-fail", "to_port_id": "error", "kind": "error" },
+      { "edge_id": "segment-fail", "from_node_id": "segment", "from_port_id": "error", "to_node_id": "present-fail", "to_port_id": "error", "kind": "error" },
+      { "edge_id": "fold-fail", "from_node_id": "forward-fold", "from_port_id": "error", "to_node_id": "present-fail", "to_port_id": "error", "kind": "error" },
+      { "edge_id": "delivery-fail", "from_node_id": "delivery", "from_port_id": "error", "to_node_id": "present-fail", "to_port_id": "error", "kind": "error" },
+      { "edge_id": "present-fail-send", "from_node_id": "present-fail", "from_port_id": "message", "to_node_id": "qq-send", "to_port_id": "input", "kind": "event" }
+    ]
+  }
+}

@@ -31,6 +31,7 @@ mod configured;
 mod console_bridge;
 mod delivery_recovery;
 mod event_source;
+mod orchestrated_flow;
 mod sandbox_intercept;
 
 pub use ai_bundle::QqAiBotPluginBundle;
@@ -50,4 +51,7 @@ pub use delivery_recovery::{
 pub use event_source::{
     QQBOT_GATEWAY_SOURCE_ID, QqGatewayControlHandle, QqGatewayEventSource, QqGatewayHealthHandle,
     QqGatewayHealthSnapshot, QqInboundObserveHandle,
+};
+pub use orchestrated_flow::{
+    QQ_AI_PRESENTATION_FAILURE_TEXT, qq_ai_orchestrated_flow, qq_ai_orchestrated_flow_with_source,
 };

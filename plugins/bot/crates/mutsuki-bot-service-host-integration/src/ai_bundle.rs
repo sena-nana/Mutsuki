@@ -10,8 +10,8 @@ use mutsuki_bot_delivery::{
     delivery_runner, reply_delivery_runner, scheduled_delivery_runner,
 };
 use mutsuki_bot_interaction::{
-    InteractionConditionMatcher, InteractionRepository, InteractionService,
-    bot_interaction_manifest, interaction_runner,
+    InteractionConditionMatcher, InteractionCreateRunner, InteractionMatchRunner,
+    InteractionRepository, InteractionService, bot_interaction_manifest, interaction_runner,
 };
 use mutsuki_bot_protocol::{ConversationPolicy, DeliveryPolicy, QqStreamingStrategy};
 use mutsuki_plugin_bot_agent::{
@@ -20,7 +20,12 @@ use mutsuki_plugin_bot_agent::{
     agent_bridge_runner_with_delivery_policy, bot_agent_bridge_manifest,
 };
 use mutsuki_plugin_bot_command::{BotCommandNodeRunner, bot_command_manifest};
+use mutsuki_plugin_bot_conversation_context::{
+    ConversationContextRunner, ConversationContextStore, bot_conversation_context_manifest,
+};
 use mutsuki_plugin_bot_media::{bot_media_bridge_manifest, media_bridge_runner};
+use mutsuki_plugin_bot_persona::{PersonaRunner, PersonaStore, bot_persona_manifest};
+use mutsuki_plugin_bot_reply::{BotReplyRunner, bot_reply_manifest};
 use mutsuki_runtime_sdk::{LoadedPlugin, RuntimeBootstrapperService};
 use mutsuki_service_runtime::ServiceRuntimeBuilder;
 
@@ -47,6 +52,8 @@ pub struct QqAiBotPluginBundle {
     )>,
     reply_delivery_policy: DeliveryPolicy,
     reply_delivery_recovery_interval: Duration,
+    conversation_context: Arc<dyn ConversationContextStore>,
+    persona_store: Arc<dyn PersonaStore>,
 }
 
 impl QqAiBotPluginBundle {
@@ -61,6 +68,8 @@ impl QqAiBotPluginBundle {
         delivery_gateway: Arc<dyn QqDeliveryGateway>,
         delivery_policy: Arc<dyn DeliveryPolicyResolver>,
         interaction_matcher: Arc<dyn InteractionConditionMatcher>,
+        conversation_context: Arc<dyn ConversationContextStore>,
+        persona_store: Arc<dyn PersonaStore>,
     ) -> Self {
         let mut agent_config = BotAgentConfig::default();
         agent_config.enabled = true;
@@ -86,6 +95,8 @@ impl QqAiBotPluginBundle {
                 expires_at_unix_ms: None,
             },
             reply_delivery_recovery_interval: Duration::from_millis(250),
+            conversation_context,
+            persona_store,
         }
     }
 
@@ -155,6 +166,8 @@ impl QqAiBotPluginBundle {
         });
         let interaction = InteractionService::new(self.interactions, self.interaction_matcher);
         let media = self.media;
+        let conversation_context = self.conversation_context;
+        let persona_store = self.persona_store;
         let mut agent_manifest = bot_agent_bridge_manifest();
         agent_manifest
             .provides
@@ -197,7 +210,27 @@ impl QqAiBotPluginBundle {
                 reply_delivery_recovery_interval,
             )))
             .register_builtin_plugin(bot_interaction_manifest())
+            .register_builtin_plugin(bot_conversation_context_manifest())
+            .register_builtin_plugin(bot_reply_manifest())
+            .register_builtin_plugin(bot_persona_manifest())
             .register_builtin_runner(move || Box::new(BotCommandNodeRunner::new(1)))
+            .register_builtin_runner({
+                let store = conversation_context.clone();
+                move || Box::new(ConversationContextRunner::new(store.clone()))
+            })
+            .register_builtin_runner(|| Box::new(BotReplyRunner::default()))
+            .register_builtin_runner({
+                let store = persona_store.clone();
+                move || Box::new(PersonaRunner::new(store.clone()))
+            })
+            .register_builtin_runner({
+                let interaction = interaction.clone();
+                move || Box::new(InteractionMatchRunner::new(interaction.clone()))
+            })
+            .register_builtin_runner({
+                let interaction = interaction.clone();
+                move || Box::new(InteractionCreateRunner::new(interaction.clone()))
+            })
             .register_runtime_client_runner(move |client| {
                 agent_bridge_runner_with_delivery_policy(
                     client,
