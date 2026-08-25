@@ -3853,8 +3853,6 @@ dependencies = [
 name = "mutsuki-bot-interaction"
 version = "0.1.0"
 dependencies = [
- "async-trait",
- "futures",
  "mutsuki-bot-conversation",
  "mutsuki-bot-protocol",
  "mutsuki-runtime-contracts",
