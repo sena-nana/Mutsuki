@@ -12,3 +12,6 @@ serde.workspace = true
 serde_json.workspace = true
 tauri.workspace = true
 time.workspace = true
+
+[lints]
+workspace = true

@@ -373,6 +373,30 @@ task：将其恢复为 Ready，清空 claimed runner / executor / lease id，让
 claim。旧 executor 随后返回的结果必须以结构化 `task.claim_conflict` 失败，且不得
 修改 task 状态、StateStore、EventLog 或派生新 task。
 
+### 4.1 投递语义与 Runner 幂等义务
+
+**Core 对 Runner 的投递语义是 at-least-once，不是 exactly-once。** 上面的 lease 回收
+规则直接决定了这一点：lease 过期后 task 会被重新 claim，而 Core 无法判断旧 executor
+是已经死掉、还是仍在执行、还是刚刚完成但结果尚未回到 Core。因此同一个 `task_id` 的
+同一份 payload 可能被投递给 Runner 多次。
+
+Core 侧的 fencing 只保证**状态提交**恰好一次：迟到 completion 会以
+`task.claim_conflict` 被拒绝，不会写入 StateStore / EventLog，也不会派生新 task。
+它不保证、也无法保证 Runner **已经执行过的副作用**只发生一次。
+
+由此产生的义务分配：
+
+- Runner 作者必须让 `run_batch` 对同一 `task_id` 幂等。判重键用 `task_id`，不要用
+  `lease_id` 或 `attempt_generation`——它们每次重试都会变，正是需要被折叠的维度。
+- 有外部副作用的 Runner（发消息、写第三方系统、扣费）必须自带幂等键或去重窗口；
+  Effectful runner 尤其如此，因为 polluted invocation 在 reload 时不会被 cancel。
+- 需要严格一次的业务语义必须在 Runner 或其下游持久层实现，不能假设 Core 提供。
+- 反过来，Runner 不必担心重复的 completion 会污染 Core 状态：重复提交是安全的
+  no-op，Runner 不需要自己判断"这次结果还该不该交"。
+
+Host 在 Core 之上加进程边界（sidecar、Python Runner、ABI 插件）时不改变该语义：
+进程崩溃与超时同样表现为 lease 过期后的重投递。
+
 `RunnerStatus::Continue` 只表示当前 step 未完成，不续租、不长期占用 executor。若
 runner 未在本 tick 内提交 terminal / waiting / blocked 状态，lease 到期后由 Core
 回收为 Ready 后重试。`Continue` 不得携带 deltas/events/tasks/effects/values/resources；
@@ -709,6 +733,19 @@ Core 热重载必须使用新 registry / plugin generation，不原地替换 run
   runner hint 和 required surfaces；stream/subscription/timer 注册入口必须检查目标
   surface。
 
+registry generation 是 runner 实例的归属标识，不只是一个版本号。每个 registry 在 freeze
+时记录自己的 generation，`TaskLease.registry_generation` 记录该 dispatch 是从哪个
+registry 借出的实例。由此得到两条硬规则：
+
+- **completion 按 lease generation 路由**。一个 dispatch 可能比替换它的 reload 活得更久；
+  它的 completion 必须回到借出实例的那个 registry，而不是当时恰好 active 的 registry。
+  否则 descriptor 会解析错（新 generation 可能已不再声明该 runner，报
+  `runner.not_found`），且 draining registry 会因为永远等不到这次归还而无法 dispose。
+- **旧 generation 实例只 dispose，不回流 active pool**。归还实例时必须校验
+  generation 与 runner id 归属；不属于该 registry 的实例必须被退回给调用方并
+  dispose，不能停在 active dispatch pool 里，否则下一次 claim 会把任务派给
+  LoadPlan 已经退休的插件 generation。
+
 `HandlerBinding` 是查询索引，不是 Core 内置分发规则。已经由插件编排过的输入不因新增
 binding 自动重新 fan-out；补跑必须显式生成 migration/backfill task。
 
@@ -757,7 +794,29 @@ binding 自动重新 fan-out；补跑必须显式生成 migration/backfill task�
 - RuntimeDomain 之间不传递 TaskRecord、TaskLease、continuation、可变 StateStore 或
   ResourceManager 内部对象。Gateway 只在目标域创建普通 Task。
 
-## 11. Crate 对应
+## 11. Python mirror 边界
+
+错误码是闭集：Runner 收到不认识的 code 就无法做出正确的恢复决策。因此
+`crates/mutsuki-runtime-contracts/src/error.rs` 的每个 `ERR_*` 常量都必须在
+`kits/python-runner/src/mutsuki_runner_kit/contracts/errors.py` 有同名同值的镜像，
+由 `kits/python-runner/tests/test_contracts_error_codes.py` 直接解析 Rust 源做门禁。
+错误码只能以常量形式声明，不得在发出点写裸字符串字面量，否则镜像检查看不到它。
+
+以下三个 contracts 模块**明确不镜像到 Python**：
+
+| 模块 | 不镜像的理由 |
+|---|---|
+| `domain.rs` | RuntimeDomain 是 Host 一致性域与跨域 gateway 的事实，Runner 只在单个域内执行 |
+| `portability.rs` | portable envelope 与 checkpoint 由 Core/分布式 sidecar 生成和校验 |
+| `execution_policy.rs` | variant 选择、质量策略与执行画像属于 Core 调度，Runner 不参与决策 |
+
+判据是 Runner Link wire 面：这三个模块的类型不出现在
+`crates/mutsuki-runtime-wire/schema/runtime-wire-v1.json` 的任何 operation 中，Python
+Runner 永远不会收发它们。镜像它们等于在 Python 侧复制一份 Core 调度事实，违反
+`kits/python-runner/AGENTS.md` 的「不实现第二套 Core」。若将来某个类型进入 wire 面，
+必须同时补镜像并在本节移出。
+
+## 12. Crate 对应
 
 - `crates/mutsuki-runtime-contracts`：本文件协议对象。
 - `crates/mutsuki-runtime-core`：CoreRuntime、TaskPool、RunnerRegistry、ResourceManager。

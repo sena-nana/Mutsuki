@@ -1,3 +1,24 @@
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::assigning_clones,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::default_trait_access,
+    clippy::format_push_string,
+    clippy::map_unwrap_or,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate,
+    clippy::needless_continue,
+    clippy::needless_pass_by_value,
+    clippy::return_self_not_must_use,
+    clippy::too_many_lines,
+    clippy::trivially_copy_pass_by_ref,
+    clippy::unnecessary_wraps
+)]
+
 pub mod adapter;
 pub mod api;
 pub mod config;

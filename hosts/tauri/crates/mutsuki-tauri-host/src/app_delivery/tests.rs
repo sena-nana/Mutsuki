@@ -52,6 +52,27 @@ fn memory_service(
     )
 }
 
+/// Blocks until a freshly opened endpoint answers a probe.
+///
+/// `AppCapabilityEndpoint::open` returns once the lease is written, but the listener binds on its
+/// own thread. Every local-link test needs that listener up before it can distinguish "not
+/// listening" from the state it actually wants to assert, and a fixed delay either flakes on a
+/// loaded machine or pads the suite on an idle one.
+async fn wait_for_endpoint(lease_dir: &PathBuf, target: &AppId) {
+    let transport = LinkLocalAppTransport::new(lease_dir);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if transport.try_connect(target).await.is_ok() {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "endpoint for {target:?} never started listening"
+        );
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+}
+
 fn link_service(
     lease_dir: &PathBuf,
 ) -> AppDeliveryService<ProcessAppActivator, LinkLocalAppTransport> {
@@ -307,7 +328,7 @@ async fn local_link_roundtrip_delivers_typed_receipt() {
         request_id: envelope.request_id,
         remote_task_id: Some("task-local-1".into()),
     });
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    wait_for_endpoint(&lease_dir, &target).await;
 
     let receipt = link_service(&lease_dir)
         .request_app(
@@ -337,7 +358,7 @@ async fn local_link_roundtrip_delivers_typed_receipt() {
 async fn local_link_waits_for_delayed_handler_registration() {
     let (lease_dir, target) = unique_local_fixture("delay");
     let endpoint = AppCapabilityEndpoint::open(target.clone(), "code-delay", &lease_dir).unwrap();
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    wait_for_endpoint(&lease_dir, &target).await;
 
     let transport = LinkLocalAppTransport::new(&lease_dir);
     let session = transport
@@ -383,7 +404,7 @@ async fn local_link_waits_for_delayed_handler_registration() {
 async fn local_link_unregistered_capability_is_not_ready_before_timeout() {
     let (lease_dir, target) = unique_local_fixture("unreg");
     let _endpoint = AppCapabilityEndpoint::open(target.clone(), "code-unreg", &lease_dir).unwrap();
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    wait_for_endpoint(&lease_dir, &target).await;
 
     let transport = LinkLocalAppTransport::new(&lease_dir);
     let session = transport.try_connect(&target).await.expect("listening");
@@ -561,7 +582,8 @@ async fn spawn_legacy_endpoint(target: AppId, lease_dir: PathBuf) {
             let _ = connection.close_write();
         }
     });
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    // The lease and the bound listener both exist before the accept loop is spawned, so a caller
+    // that connects right away lands in the backlog rather than on a closed address.
 }
 
 #[tokio::test]
@@ -597,7 +619,7 @@ async fn receipt_and_operation_history_stay_within_configured_bounds() {
         },
     );
 
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    wait_for_endpoint(&lease_dir, &target).await;
     for index in 0..512 {
         let request_id = format!("req-bound-{index}");
         let receipt = service
@@ -697,7 +719,7 @@ async fn accepted_rejected_completed_and_failed_receipts_share_one_budget() {
     });
 
     let service = link_service(&lease_dir);
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    wait_for_endpoint(&lease_dir, &target).await;
 
     let kinds = [
         ("demo.accept", "a"),

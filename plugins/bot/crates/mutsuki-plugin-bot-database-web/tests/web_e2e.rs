@@ -1,11 +1,11 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use mutsuki_bot_state_db::BotStateDbRepository;
 use mutsuki_plugin_bot_database_web::{
     DatabaseWebExtension, PLUGIN_ID, materialize_frontend_assets,
 };
+use mutsuki_web_extension::{WebExtension, content_hash};
 use mutsuki_web_host::{MinimalWebApplication, MutsukiWebHost, WebHost};
 use mutsuki_web_protocol::{
     DeploymentMode, RpcRequest, WEB_PROTOCOL_VERSION, WebApplicationDescriptor, WebShellAssets,
@@ -22,8 +22,18 @@ async fn database_rpc_reads_live_bot_state_and_rejects_unknown_tables() {
     let assets_dir = tempfile::tempdir().unwrap();
     let shell_dir = tempfile::tempdir().unwrap();
     let assets = materialize_frontend_assets(assets_dir.path()).unwrap();
-    let frontend = std::fs::read_to_string(assets.join("index.js")).unwrap();
-    assert!(frontend.contains("在左侧选择要访问的数据表"));
+    let extension = DatabaseWebExtension::new(Some(repository)).with_frontend_assets(&assets);
+    let descriptor = extension.descriptor();
+    assert_eq!(descriptor.entry, "index.js");
+    let bytes = std::fs::read(assets.join("index.js")).unwrap();
+    assert_eq!(
+        descriptor
+            .assets
+            .iter()
+            .find(|asset| asset.path == "index.js")
+            .map(|asset| asset.content_hash.as_str()),
+        Some(content_hash(&bytes).as_str())
+    );
     std::fs::write(
         shell_dir.path().join("index.html"),
         "<!doctype html><main></main>",
@@ -47,7 +57,7 @@ async fn database_rpc_reads_live_bot_state_and_rejects_unknown_tables() {
         .listen("127.0.0.1:0")
         .mode(DeploymentMode::Embedded)
         .shell_dir(shell_dir.path())
-        .extension(DatabaseWebExtension::new(Some(repository)).with_frontend_assets(&assets))
+        .extension(extension)
         .auth_token("local-dev")
         .build()
         .unwrap();
@@ -83,7 +93,6 @@ async fn database_rpc_reads_live_bot_state_and_rejects_unknown_tables() {
     );
 
     host.stop().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(20)).await;
 }
 
 async fn rpc(address: &str, method: &str, params: Value) -> Result<Value, String> {

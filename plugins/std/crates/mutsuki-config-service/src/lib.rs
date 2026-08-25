@@ -2,6 +2,22 @@
 //!
 //! Repositories own durable documents. Providers own validation and reversible
 //! domain activation. `ConfigService` is the only component that orders both.
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::assigning_clones,
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::doc_markdown,
+    clippy::match_same_arms,
+    clippy::missing_errors_doc,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value,
+    clippy::semicolon_if_nothing_returned,
+    clippy::too_many_lines,
+    clippy::unused_async
+)]
 
 mod lifecycle;
 mod memory;

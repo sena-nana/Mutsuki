@@ -1,11 +1,14 @@
 //! Single-controller remote execution MVP. Consensus, durable registries,
 //! checkpoint migration, and trust policy belong to later phases.
-
 #![forbid(unsafe_code)]
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
 #![allow(
     clippy::missing_errors_doc,
     clippy::missing_panics_doc,
     clippy::must_use_candidate,
+    clippy::redundant_closure_for_method_calls,
     clippy::too_many_arguments,
     clippy::too_many_lines
 )]

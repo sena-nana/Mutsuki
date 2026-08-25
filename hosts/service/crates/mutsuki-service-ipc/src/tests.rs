@@ -223,12 +223,32 @@ async fn drain_rejects_new_requests() {
         .await
         .unwrap()
         .unwrap();
+    ControlSession::connect((&config).into())
+        .await
+        .expect("the server accepts sessions before it drains");
+
     server.begin_drain();
-    tokio::time::sleep(Duration::from_millis(20)).await;
-    let result = ControlSession::connect((&config).into()).await;
-    if let Ok(session) = result {
-        let _ = session.request(ControlCommand::HealthCheck).await;
-        let _ = session.close().await;
+    // Drain is observed by the accept loop, so the reject becomes visible a moment after the call
+    // returns. Polling for it asserts the outcome instead of guessing how long that moment is.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let rejected = match ControlSession::connect((&config).into()).await {
+            Err(_) => true,
+            // Losing the race with the accept loop is allowed; being served is not.
+            Ok(session) => {
+                let served = session.request(ControlCommand::HealthCheck).await.is_ok();
+                let _ = session.close().await;
+                !served
+            }
+        };
+        if rejected {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "a draining server kept serving new sessions"
+        );
+        tokio::task::yield_now().await;
     }
     server.shutdown().await;
 }

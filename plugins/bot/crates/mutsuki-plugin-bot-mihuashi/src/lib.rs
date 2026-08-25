@@ -1,3 +1,12 @@
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::default_trait_access,
+    clippy::missing_panics_doc,
+    clippy::needless_pass_by_value
+)]
+
 use std::sync::Arc;
 
 use mutsuki_bot_link_parser::MAX_LINK_CARD_MEDIA_BYTES;

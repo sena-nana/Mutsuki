@@ -1,4 +1,8 @@
 //! Single image render backend (Takumi): compose / card / QR → PNG `ResourceRef`.
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(clippy::doc_markdown, clippy::map_unwrap_or)]
 
 use std::collections::HashMap;
 use std::io::Cursor;

@@ -10,3 +10,6 @@ mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-core.workspace = true
 mutsuki-runtime-sdk.workspace = true
 serde_json.workspace = true
+
+[lints]
+workspace = true

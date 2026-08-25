@@ -1,3 +1,17 @@
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::default_trait_access,
+    clippy::elidable_lifetime_names,
+    clippy::if_not_else,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::needless_pass_by_value,
+    clippy::redundant_closure_for_method_calls
+)]
+
 use std::collections::BTreeSet;
 
 use mutsuki_agent_contracts::{AgentAffinity, AgentTaskPlacement};

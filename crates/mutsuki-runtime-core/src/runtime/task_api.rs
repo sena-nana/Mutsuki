@@ -270,7 +270,7 @@ impl CoreRuntime {
             .any(|task_await| task_await.cancel_policy != CancelPolicy::Cascade)
         {
             return Err(crate::runtime_failure(
-                "task.cancel_policy_unsupported",
+                mutsuki_runtime_contracts::ERR_TASK_CANCEL_POLICY_UNSUPPORTED,
                 "runtime.task",
                 format!("task.cancel.{task_id}"),
             ));

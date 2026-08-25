@@ -285,6 +285,57 @@ pub(super) struct StaticRunner {
     result: Box<dyn Fn(&Task) -> RunnerResult + Send>,
 }
 
+/// Completes every entry and records its lifecycle calls, so a test can observe which registry
+/// generation an instance was ultimately returned to and disposed by.
+pub(super) struct CompletingRunner {
+    descriptor: RunnerDescriptor,
+    calls: Arc<Mutex<Vec<String>>>,
+}
+
+impl CompletingRunner {
+    pub(super) fn new(descriptor: RunnerDescriptor, calls: Arc<Mutex<Vec<String>>>) -> Self {
+        Self { descriptor, calls }
+    }
+}
+
+impl Runner for CompletingRunner {
+    fn descriptor(&self) -> &RunnerDescriptor {
+        &self.descriptor
+    }
+
+    fn run_batch(
+        &mut self,
+        _ctx: RunnerContext,
+        batch: WorkBatch,
+    ) -> RuntimeResult<CompletionBatch> {
+        let runner_id = self.descriptor.runner_id.to_string();
+        let calls = self.calls.clone();
+        scalar_batch_result(&batch, |task| {
+            calls
+                .lock()
+                .expect("calls mutex poisoned")
+                .push(format!("run:{runner_id}:{}", task.task_id));
+            Ok(RunnerResult::completed(task.task_id.clone()))
+        })
+    }
+
+    fn cancel(&mut self, invocation_id: &str) -> RuntimeResult<()> {
+        self.calls
+            .lock()
+            .expect("calls mutex poisoned")
+            .push(format!("cancel:{invocation_id}"));
+        Ok(())
+    }
+
+    fn dispose(&mut self) -> RuntimeResult<()> {
+        self.calls
+            .lock()
+            .expect("calls mutex poisoned")
+            .push(format!("dispose:{}", self.descriptor.runner_id));
+        Ok(())
+    }
+}
+
 pub(super) struct ContinuingRunner {
     descriptor: RunnerDescriptor,
     calls: Arc<Mutex<Vec<String>>>,

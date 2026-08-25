@@ -7,3 +7,6 @@ edition = "2024"
 mutsuki-agent-contracts = { path = "../../crates/mutsuki-agent-contracts" }
 mutsuki-agent-sdk = { path = "../../crates/mutsuki-agent-sdk" }
 serde = { version = "1.0", features = ["derive"] }
+
+[lints]
+workspace = true

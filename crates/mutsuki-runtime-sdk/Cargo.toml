@@ -12,3 +12,6 @@ mutsuki-runtime-wire.workspace = true
 mutsuki-runtime-sdk-macros = { path = "../mutsuki-runtime-sdk-macros" }
 serde.workspace = true
 serde_json.workspace = true
+
+[lints]
+workspace = true

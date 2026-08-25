@@ -217,7 +217,13 @@ mutsuki-std-plugins = { path = "plugins/std/crates/mutsuki-std-plugins" }
 mutsuki-std-service-host-integration = { path = "plugins/std/crates/mutsuki-std-service-host-integration" }
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+# `deny` rather than `forbid` so the few FFI and process-boundary crates can carry a
+# narrow, greppable `allow(unsafe_code)` with a SAFETY argument. `forbid` cannot be
+# overridden at all, which would force those crates to opt out of the workspace lint
+# table entirely and take the whole clippy policy with them.
+# `check_workspace.py` enforces both the membership of that exception list and the
+# requirement that every workspace member inherits this table.
+unsafe_code = "deny"
 
 [workspace.lints.clippy]
 all = "warn"

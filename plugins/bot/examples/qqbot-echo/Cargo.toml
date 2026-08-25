@@ -14,3 +14,6 @@ mutsuki-plugin-bot-event-router.workspace = true
 mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-host.workspace = true
 serde_json.workspace = true
+
+[lints]
+workspace = true

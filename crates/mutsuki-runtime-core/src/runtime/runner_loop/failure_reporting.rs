@@ -52,6 +52,58 @@ pub(super) fn reclaim_expired_task_leases(runtime: &mut CoreRuntime) {
     }
 }
 
+/// Reclaims resource leases whose holder never released them, mirroring the task-lease sweep.
+///
+/// Without this a crashed or timed-out borrower parks an exclusive lease on a resource cell
+/// forever: task-lease expiry frees the task for a retry, but the retry then blocks on the
+/// resource its own dead attempt still holds.
+pub(super) fn reclaim_expired_resource_leases(runtime: &mut CoreRuntime) {
+    let reclaimed = runtime
+        .resources
+        .reclaim_expired_resource_leases(runtime.current_step);
+    for lease in &reclaimed {
+        let mut attrs = BTreeMap::new();
+        attrs.insert(
+            "lease_id".into(),
+            ScalarValue::String(lease.lease_id.to_string()),
+        );
+        attrs.insert(
+            "cell_id".into(),
+            ScalarValue::String(lease.cell_id.to_string()),
+        );
+        attrs.insert(
+            "borrower_task_id".into(),
+            ScalarValue::String(lease.borrower_task_id.to_string()),
+        );
+        attrs.insert(
+            "borrower_executor_id".into(),
+            ScalarValue::String(lease.borrower_executor_id.to_string()),
+        );
+        attrs.insert("mode".into(), ScalarValue::String(lease.mode.clone()));
+        attrs.insert(
+            "generation".into(),
+            ScalarValue::Int(lease.generation as i64),
+        );
+        if let Some(expires_at_step) = lease.expires_at_step {
+            attrs.insert(
+                "expires_at_step".into(),
+                ScalarValue::Int(expires_at_step as i64),
+            );
+        }
+        attrs.insert(
+            "current_step".into(),
+            ScalarValue::Int(runtime.current_step as i64),
+        );
+        runtime.events.record(
+            RuntimeEventKind::Resource,
+            "resource.lease.expired",
+            Some(lease.cell_id.to_string()),
+            attrs,
+            None,
+        );
+    }
+}
+
 pub(super) fn fail_runner_dispatch(
     runtime: &mut CoreRuntime,
     task_lease: &mutsuki_runtime_contracts::TaskLease,

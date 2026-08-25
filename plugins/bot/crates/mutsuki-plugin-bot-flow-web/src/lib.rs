@@ -2,7 +2,14 @@
 //!
 //! The editor adapts Bot catalog/validation to `ConfigService`; it owns no
 //! server-side draft or storage implementation.
-
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::doc_markdown,
+    clippy::missing_errors_doc,
+    clippy::needless_pass_by_value
+)]
 #![forbid(unsafe_code)]
 
 use std::path::{Path, PathBuf};
@@ -15,6 +22,7 @@ use mutsuki_config_service::{
 };
 use mutsuki_web_extension::{
     ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, content_hash,
+    load_bundled_manifest,
 };
 use mutsuki_web_protocol::{
     AssetEntry, EXTENSION_MANIFEST_VERSION, ExtensionManifest, WEB_PROTOCOL_VERSION,
@@ -63,7 +71,7 @@ impl WebExtension for BotFlowEditorWebExtension {
     fn frontend_assets(&self) -> Option<WebFrontendAssets> {
         let root = self.assets_root.as_ref()?;
         Some(WebFrontendAssets {
-            manifest: load_manifest(root).ok()?,
+            manifest: load_bundled_manifest(root, manifest).ok()?,
             root_dir: root.clone(),
         })
     }
@@ -167,23 +175,6 @@ fn manifest(assets: Vec<AssetEntry>) -> ExtensionManifest {
         assets,
         protocol_version: WEB_PROTOCOL_VERSION.into(),
     }
-}
-
-fn load_manifest(root: &Path) -> Result<ExtensionManifest, ExtensionError> {
-    let path = root.join("manifest.json");
-    if path.exists() {
-        return serde_json::from_slice(
-            &std::fs::read(path).map_err(|error| ExtensionError::Manifest(error.to_string()))?,
-        )
-        .map_err(|error| ExtensionError::Manifest(error.to_string()));
-    }
-    let bytes = std::fs::read(root.join("index.js"))
-        .map_err(|error| ExtensionError::Manifest(error.to_string()))?;
-    Ok(manifest(vec![AssetEntry {
-        path: "index.js".into(),
-        content_hash: content_hash(&bytes),
-        bytes: bytes.len() as u64,
-    }]))
 }
 
 pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::Error> {
@@ -305,32 +296,37 @@ mod tests {
         assert_eq!(flow.active().revision, 1);
     }
 
+    /// The manifest is what the Host serves and what the client integrity-checks, so it — not the
+    /// bundle's rendered copy — is what this test can hold. The editor is a second module rather
+    /// than a chunk of `index.js`, and the manifest has to declare it or the shell cannot load it.
     #[test]
-    fn assets_include_lilia_node_editor() {
+    fn materialized_manifest_declares_every_shipped_asset() {
         let root = tempfile::tempdir().unwrap();
         materialize_frontend_assets(root.path()).unwrap();
-        assert!(root.path().join("index.js").is_file());
-        assert!(root.path().join("lilia-node-editor.js").is_file());
-        assert!(root.path().join("lilia-context-menu.js").is_file());
-        assert!(root.path().join("manifest.json").is_file());
-        assert!(include_str!("../assets/index.js").contains("lilia-node-editor"));
-        assert!(include_str!("../assets/index.js").contains("lilia-context-menu"));
+        let extension = editor().0.with_frontend_assets(root.path());
+        let descriptor = extension.descriptor();
+
+        assert_eq!(descriptor.entry, "index.js");
+        let declared: Vec<&str> = descriptor
+            .assets
+            .iter()
+            .map(|asset| asset.path.as_str())
+            .collect();
+        assert_eq!(
+            declared,
+            ["index.js", "lilia-node-editor.js", "lilia-context-menu.js"]
+        );
+        for asset in &descriptor.assets {
+            let bytes = std::fs::read(root.path().join(&asset.path)).unwrap();
+            assert_eq!(asset.bytes, bytes.len() as u64);
+            assert_eq!(asset.content_hash, content_hash(&bytes));
+        }
+
+        // The entry must reach each module through its declared path, not by inlining it.
+        assert!(include_str!("../assets/index.js").contains("lilia-node-editor.js"));
+        assert!(include_str!("../assets/index.js").contains("lilia-context-menu.js"));
         assert!(include_str!("../assets/lilia-context-menu.js").contains("openContextMenuAt"));
-        assert!(include_str!("../assets/lilia-context-menu.js").contains("ctx-menu__submenu"));
         assert!(include_str!("../assets/lilia-node-editor.js").contains("mountLiliaNodeEditor"));
-        assert!(include_str!("../assets/lilia-node-editor.js").contains("left:0;top:0"));
-        assert!(!include_str!("../assets/index.js").contains("节点 ID"));
-        assert!(!include_str!("../assets/index.js").contains("输入事件协议"));
-        assert!(!include_str!("../assets/index.js").contains("新建流程"));
-        assert!(!include_str!("../assets/index.js").contains("DRAFT_KEY"));
-        assert!(!include_str!("../assets/index.js").contains("已发布"));
-        assert!(include_str!("../assets/index.js").contains("保存"));
-        assert!(include_str!("../assets/index.js").contains("已上线"));
-        assert!(include_str!("../assets/lilia-node-editor.js").contains("contextmenu"));
-        assert!(include_str!("../assets/index.js").contains("ctx-menu"));
-        assert!(include_str!("../assets/index.js").contains("在空白处右键添加节点"));
-        assert!(!include_str!("../assets/index.js").contains("flow-catalog"));
-        assert!(!include_str!("../assets/index.js").contains("从左侧拖入"));
     }
 
     #[test]

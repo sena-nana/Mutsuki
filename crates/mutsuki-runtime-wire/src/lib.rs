@@ -3,6 +3,19 @@
 //! Runtime DTOs remain owned by `mutsuki-runtime-contracts`. This crate is the
 //! single source for closed operation identifiers, request/response pairing,
 //! compatibility negotiation, and transport-independent framing.
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::format_collect,
+    clippy::match_same_arms,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value,
+    clippy::too_many_lines
+)]
 
 mod binary;
 mod operations;

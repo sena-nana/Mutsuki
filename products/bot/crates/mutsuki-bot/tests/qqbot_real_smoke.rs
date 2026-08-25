@@ -1,3 +1,14 @@
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::manual_let_else,
+    clippy::map_unwrap_or,
+    clippy::match_wild_err_arm,
+    clippy::redundant_closure_for_method_calls,
+    clippy::single_match_else
+)]
+
 #[path = "support/process.rs"]
 mod process;
 

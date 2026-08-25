@@ -1,3 +1,13 @@
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::default_trait_access,
+    clippy::needless_pass_by_value,
+    clippy::too_many_lines,
+    clippy::unnecessary_literal_bound
+)]
+
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

@@ -1,4 +1,8 @@
 //! CLI / automation fixture — same Schema + ConfigService path as Web (no WebHost).
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(clippy::doc_markdown, clippy::too_many_lines)]
 
 use std::sync::{Arc, Mutex};
 

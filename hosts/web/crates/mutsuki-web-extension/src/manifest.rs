@@ -2,11 +2,16 @@ use std::fs;
 use std::path::Path;
 
 use mutsuki_web_protocol::{
-    EXTENSION_MANIFEST_VERSION, ExtensionManifest, ProtocolError, WEB_PROTOCOL_VERSION,
+    AssetEntry, EXTENSION_MANIFEST_VERSION, ExtensionManifest, ProtocolError, WEB_PROTOCOL_VERSION,
     WEB_PROTOCOL_VERSION_MAJOR,
 };
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+
+use crate::ExtensionError;
+
+/// Entry asset every bundled extension ships.
+pub const BUNDLED_ENTRY_ASSET: &str = "index.js";
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ManifestError {
@@ -36,6 +41,33 @@ pub fn load_manifest(root_dir: &Path) -> Result<ExtensionManifest, ManifestError
         serde_json::from_slice(&bytes).map_err(|err| ManifestError::Parse(err.to_string()))?;
     validate_manifest(&manifest, root_dir)?;
     Ok(manifest)
+}
+
+/// Resolves the manifest for an extension's materialized asset directory.
+///
+/// Extensions that ship more than the entry file write a `manifest.json` alongside their assets;
+/// single-file extensions do not, so their manifest is derived here from the entry's own bytes.
+/// `derive` supplies the extension's identity, capabilities and permissions, which only the
+/// extension itself knows.
+pub fn load_bundled_manifest(
+    root_dir: &Path,
+    derive: impl FnOnce(Vec<AssetEntry>) -> ExtensionManifest,
+) -> Result<ExtensionManifest, ExtensionError> {
+    let declared = root_dir.join("manifest.json");
+    if declared.exists() {
+        let bytes = fs::read(&declared).map_err(manifest_error)?;
+        return serde_json::from_slice(&bytes).map_err(manifest_error);
+    }
+    let bytes = fs::read(root_dir.join(BUNDLED_ENTRY_ASSET)).map_err(manifest_error)?;
+    Ok(derive(vec![AssetEntry {
+        path: BUNDLED_ENTRY_ASSET.into(),
+        content_hash: content_hash(&bytes),
+        bytes: bytes.len() as u64,
+    }]))
+}
+
+fn manifest_error(error: impl std::fmt::Display) -> ExtensionError {
+    ExtensionError::Manifest(error.to_string())
 }
 
 /// Validate manifest version, protocol compatibility, entry and content hashes.
@@ -144,6 +176,48 @@ mod tests {
             ManifestError::Protocol(ProtocolError::UnsupportedManifestVersion(99))
         ));
         let _ = EXTENSION_MANIFEST_VERSION;
+    }
+
+    #[test]
+    fn bundled_manifest_prefers_the_declared_file_over_the_derived_entry() {
+        let dir = tempdir().unwrap();
+        let entry = b"export default { id: 'derived' }";
+        std::fs::write(dir.path().join(BUNDLED_ENTRY_ASSET), entry).unwrap();
+        let derive = |assets: Vec<AssetEntry>| ExtensionManifest {
+            manifest_version: EXTENSION_MANIFEST_VERSION,
+            id: "example".into(),
+            version: "0.1.0".into(),
+            entry: BUNDLED_ENTRY_ASSET.into(),
+            capabilities: vec![],
+            permissions: vec![],
+            assets,
+            protocol_version: WEB_PROTOCOL_VERSION.into(),
+        };
+
+        let derived = load_bundled_manifest(dir.path(), derive).unwrap();
+        assert_eq!(derived.assets.len(), 1);
+        assert_eq!(derived.assets[0].path, BUNDLED_ENTRY_ASSET);
+        assert_eq!(derived.assets[0].content_hash, content_hash(entry));
+        assert_eq!(derived.assets[0].bytes, entry.len() as u64);
+
+        let mut declared = derive(Vec::new());
+        declared.version = "9.9.9".into();
+        std::fs::write(
+            dir.path().join("manifest.json"),
+            serde_json::to_vec(&declared).unwrap(),
+        )
+        .unwrap();
+        let loaded = load_bundled_manifest(dir.path(), derive).unwrap();
+        assert_eq!(loaded.version, "9.9.9");
+        assert!(loaded.assets.is_empty());
+    }
+
+    #[test]
+    fn bundled_manifest_reports_a_missing_entry_asset() {
+        let dir = tempdir().unwrap();
+        let error = load_bundled_manifest(dir.path(), |_| unreachable!("entry is absent"))
+            .expect_err("no entry asset");
+        assert!(matches!(error, ExtensionError::Manifest(_)));
     }
 
     #[test]

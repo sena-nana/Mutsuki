@@ -6,6 +6,16 @@
 //! [`server_config_from_pem`] / [`client_config_from_ca_pem`]) remain available
 //! as library APIs for tests and non-product callers; they are not started from
 //! product Host configuration.
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::default_trait_access,
+    clippy::doc_markdown,
+    clippy::missing_errors_doc,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value
+)]
 
 mod client;
 mod protocol;

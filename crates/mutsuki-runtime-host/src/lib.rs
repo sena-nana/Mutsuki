@@ -1,3 +1,43 @@
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::assigning_clones,
+    clippy::cast_lossless,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    clippy::default_trait_access,
+    clippy::doc_markdown,
+    clippy::float_cmp,
+    clippy::ignore_without_reason,
+    clippy::ignored_unit_patterns,
+    clippy::inline_always,
+    clippy::manual_assert,
+    clippy::manual_assert_eq,
+    clippy::manual_let_else,
+    clippy::map_unwrap_or,
+    clippy::match_wild_err_arm,
+    clippy::missing_errors_doc,
+    clippy::missing_fields_in_debug,
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate,
+    clippy::needless_borrows_for_generic_args,
+    clippy::needless_pass_by_value,
+    clippy::redundant_closure_for_method_calls,
+    clippy::return_self_not_must_use,
+    clippy::semicolon_if_nothing_returned,
+    clippy::similar_names,
+    clippy::single_match_else,
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    clippy::uninlined_format_args,
+    clippy::unnecessary_wraps,
+    clippy::unnested_or_patterns,
+    clippy::useless_conversion,
+    clippy::wildcard_imports
+)]
+
 mod abi_plugin;
 mod abi_transport;
 mod actor;

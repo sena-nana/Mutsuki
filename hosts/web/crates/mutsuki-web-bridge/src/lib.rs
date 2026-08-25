@@ -1,6 +1,17 @@
 //! Management RPC / Event bridge.
 //!
 //! Frontends never receive raw auth tokens, Host IPC endpoints, or plugin process handles.
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::map_unwrap_or,
+    clippy::missing_errors_doc,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value,
+    clippy::return_self_not_must_use
+)]
 
 mod metrics;
 mod session;
@@ -462,6 +473,35 @@ mod tests {
     use mutsuki_web_extension::ExtensionRegistry;
     use mutsuki_web_protocol::{DEFAULT_BUDGETS, EventSubscription};
     use std::time::Duration;
+
+    /// A policy with no accepted tokens must authenticate nobody. Treating the empty list as
+    /// "accept anything" would hand that policy's capabilities to any caller who sends a token.
+    #[test]
+    fn empty_accepted_token_list_authenticates_nobody() {
+        let policy = AuthPolicy::Local {
+            accepted_tokens: vec![],
+            default_capabilities: vec!["runtime.write".into()],
+            allow_unauthenticated: false,
+        };
+        assert!(policy.authenticate(Some("anything")).is_err());
+        assert!(policy.authenticate(Some("")).is_err());
+        assert!(policy.authenticate(None).is_err());
+
+        let remote = AuthPolicy::remote(vec![], true);
+        assert!(remote.authenticate(Some("anything")).is_err());
+    }
+
+    /// `open_local` is the only policy that may answer an anonymous caller, and only with the
+    /// read-only set. A token it never issued must not upgrade that caller.
+    #[test]
+    fn open_local_grants_read_only_anonymously_and_rejects_unknown_tokens() {
+        let policy = AuthPolicy::open_local();
+        let grant = policy
+            .authenticate(None)
+            .expect("anonymous read-only grant");
+        assert_eq!(grant.capabilities, vec!["host.read", "recovery.read"]);
+        assert!(policy.authenticate(Some("guessed-token")).is_err());
+    }
 
     #[test]
     fn capability_is_enforced_server_side() {

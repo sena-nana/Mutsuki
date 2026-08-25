@@ -40,3 +40,6 @@ tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect"] }
 uuid = { version = "1", features = ["v4"] }
+
+[lints]
+workspace = true

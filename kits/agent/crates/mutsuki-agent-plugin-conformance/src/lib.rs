@@ -1,3 +1,14 @@
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::missing_errors_doc,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value,
+    clippy::unnecessary_literal_bound,
+    clippy::unused_self
+)]
+
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use mutsuki_agent_contracts::{

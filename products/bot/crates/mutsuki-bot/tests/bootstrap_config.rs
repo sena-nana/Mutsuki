@@ -1,3 +1,8 @@
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(clippy::manual_let_else)]
+
 use mutsuki_bot::{
     CONSOLE_AUTH_TOKEN_KEY, PRODUCT_CONFIG_PROVIDER_ID, load_single_instance_product_for_test,
 };

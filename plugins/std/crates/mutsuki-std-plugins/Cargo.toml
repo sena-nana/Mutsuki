@@ -10,3 +10,6 @@ mutsuki-plugin-io-http-client = { path = "../../plugins/mutsuki-plugin-io-http-c
 mutsuki-plugin-image-render.workspace = true
 mutsuki-plugin-resource-memory = { path = "../../plugins/mutsuki-plugin-resource-memory" }
 mutsuki-runtime-contracts.workspace = true
+
+[lints]
+workspace = true

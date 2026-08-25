@@ -3993,6 +3993,7 @@ dependencies = [
  "mutsuki-bot-delivery",
  "mutsuki-bot-flow",
  "mutsuki-bot-interaction",
+ "mutsuki-bot-management",
  "mutsuki-bot-protocol",
  "mutsuki-bot-sandbox",
  "rusqlite",
@@ -5190,6 +5191,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.19",
  "toml 1.1.4+spec-1.1.0",
+ "uuid",
 ]
 
 [[package]]
@@ -5297,6 +5299,7 @@ dependencies = [
  "mutsuki-service-config",
  "mutsuki-service-plugin-loader",
  "serde",
+ "tempfile",
  "thiserror 2.0.19",
  "tokio",
  "tracing",

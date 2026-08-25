@@ -29,6 +29,9 @@ sha2.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "mutsuki-std-benchmarks"
 path = "src/main.rs"

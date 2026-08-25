@@ -3,6 +3,15 @@
 //! Recovery is intentionally small: connection/start status, extension failures,
 //! disable/crash isolation, cache clear, safe mode, and structured errors.
 //! It must not grow into a full plugin management console.
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::default_trait_access,
+    clippy::missing_errors_doc,
+    clippy::must_use_candidate,
+    clippy::needless_raw_string_hashes
+)]
 
 use std::path::{Path, PathBuf};
 

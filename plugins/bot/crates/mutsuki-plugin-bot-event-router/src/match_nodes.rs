@@ -737,39 +737,37 @@ mod tests {
     #[test]
     fn catalog_is_a_business_match_series() {
         let catalog = match_node_catalog();
-        let titles = catalog
+        // The node type ids are what a stored flow references, so the series is pinned by id.
+        // Titles are console copy and are free to change without breaking a saved flow.
+        let node_type_ids = catalog
             .nodes
             .iter()
-            .map(|node| node.title.as_str())
+            .map(|node| node.node_type_id.as_str())
             .collect::<Vec<_>>();
         assert_eq!(
-            titles,
+            node_type_ids,
             [
-                "会话类型",
-                "用户匹配",
-                "角色匹配",
-                "前缀匹配",
-                "关键词匹配",
-                "提及机器人",
-                "限流",
-                "QQ 事件",
+                "mutsuki.bot.match.conversation",
+                "mutsuki.bot.match.user",
+                "mutsuki.bot.match.role",
+                "mutsuki.bot.match.prefix",
+                "mutsuki.bot.match.keyword",
+                "mutsuki.bot.match.mention",
+                "mutsuki.bot.match.rate_limit",
+                "mutsuki.bot.match.qq_event",
             ]
-        );
-        assert!(
-            !catalog
-                .nodes
-                .iter()
-                .any(|node| node.node_type_id == "mutsuki.bot.match.event")
         );
         let user = catalog
             .nodes
             .iter()
             .find(|node| node.node_type_id == "mutsuki.bot.match.user")
             .unwrap();
-        let schema = user.config_schema.to_string();
-        assert!(schema.contains("用户"));
-        assert!(!schema.contains("account_id"));
-        assert!(!schema.contains("actor_ids"));
+        // The config a flow stores is keyed by these field names; the low-level identifiers the
+        // node used to expose must stay out of the operator-facing surface.
+        let properties = user.config_schema["properties"].as_object().unwrap();
+        assert_eq!(properties.keys().collect::<Vec<_>>(), ["users"]);
+        assert!(!properties.contains_key("account_id"));
+        assert!(!properties.contains_key("actor_ids"));
         let prefix = catalog
             .nodes
             .iter()

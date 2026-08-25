@@ -1,3 +1,13 @@
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+// This file is on the workspace `unsafe_code` exception list.
+// Benchmarks and allocation-budget tests measure allocator traffic, which requires
+// implementing `GlobalAlloc`; that trait is `unsafe` by definition. Every operation is
+// delegated unchanged to `System` and only the atomic counters are added.
+#![allow(unsafe_code)]
+#![allow(clippy::map_unwrap_or, clippy::needless_pass_by_value)]
+
 use std::{
     alloc::{GlobalAlloc, Layout, System},
     collections::BTreeMap,
@@ -15,6 +25,9 @@ struct CountingAllocator;
 static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
 static ALLOCATED_BYTES: AtomicU64 = AtomicU64::new(0);
 
+// SAFETY: every method forwards its arguments unchanged to the `System` allocator, so the
+// layout and pointer contract of `GlobalAlloc` is upheld by `System` itself. The only
+// additions are relaxed atomic counters, which touch no allocator state.
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let pointer = unsafe { System.alloc(layout) };

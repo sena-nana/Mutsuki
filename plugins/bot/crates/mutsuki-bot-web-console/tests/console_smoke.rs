@@ -1,9 +1,13 @@
 //! Embedded console assembly smoke (control + overview over fixture control plane).
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(clippy::too_many_lines)]
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
+use mutsuki_bot_sandbox::{SandboxApi, SandboxService};
 use mutsuki_bot_state_db::BotStateDbRepository;
 use mutsuki_bot_web_console::{
     BotAgentConsoleServices, SecretKeyResolver, SecretMonitor, WebConsoleConfig, WebConsolePaths,
@@ -174,7 +178,6 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
     }
 
     host.stop().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
 }
 
 #[tokio::test]
@@ -214,10 +217,20 @@ async fn embedded_console_reads_overview_and_control() {
     let health = ws_rpc(&addr, "control", "health").await.unwrap();
     assert_eq!(health["service"], "ok");
 
+    // No repository is bound in this assembly, so the database page has nothing to show. The RPC
+    // says so by returning null, and reading rows fails rather than inventing an empty table.
     let database = ws_rpc(&addr, "database", "snapshot").await.unwrap();
     assert!(database.is_null());
-    let database_js = http_get_body(&addr, "/extensions/database/index.js").await;
-    assert!(database_js.contains("在左侧选择要访问的数据表"));
+    assert!(
+        ws_rpc_params(
+            &addr,
+            "database",
+            "rows",
+            json!({"table": "bot_management_meta"})
+        )
+        .await
+        .is_err()
+    );
 
     let logs = ws_rpc_params(&addr, "control", "log_tail", json!({"lines": 5}))
         .await
@@ -225,7 +238,6 @@ async fn embedded_console_reads_overview_and_control() {
     assert!(logs["entries"].is_array());
 
     host.stop().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
 }
 
 #[tokio::test]
@@ -278,7 +290,6 @@ async fn embedded_console_reads_live_bot_state_database() {
     .unwrap();
     assert_eq!(page["rows"].as_array().unwrap().len(), 1);
     host.stop().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
 }
 
 #[tokio::test]
@@ -347,11 +358,9 @@ async fn embedded_console_with_config_shell() {
     let config_js = http_get_body(&addr, &format!("/{config_path}")).await;
     assert!(config_js.contains("export function mountConfigPanel"));
     assert!(config_js.contains("activityId: \"plugins\""));
-    assert!(config_js.contains("该插件提供了"));
     assert!(config_js.contains("plugin.home"));
 
     host.stop().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
 }
 
 #[tokio::test]
@@ -399,7 +408,6 @@ async fn embedded_console_demo_config_provider_is_usable() {
     assert_eq!(navigation[0]["items"][0]["provider_id"], "product");
     assert!(navigation[0]["items"][0]["label"].is_null());
     host.stop().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
 }
 
 #[tokio::test]
@@ -440,7 +448,6 @@ async fn embedded_console_starts_upgrade_extension_when_release_set_configured()
     host.start().await.unwrap();
     assert!(host.listen_addr().is_some());
     host.stop().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
 }
 
 struct MapSecretResolver {
@@ -492,7 +499,6 @@ async fn embedded_console_secret_status_is_read_only() {
     assert_eq!(secrets[0]["state"], "present");
     assert_eq!(secrets[1]["state"], "absent");
     host.stop().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
 }
 
 #[tokio::test]
@@ -583,18 +589,12 @@ async fn embedded_console_mounts_qq_management_extension() {
     let options = http_get_body(&addr, "/console-options.json").await;
     let qq_path = versioned_module_path(&options, "./extensions/qq-bot/index.js");
     let qq_js = http_get_body(&addr, &format!("/{qq_path}")).await;
+    // The console owns which extension point the QQ module attaches to; its rendered copy belongs
+    // to the plugin and is asserted against the plugin's own manifest.
     assert!(qq_js.contains("mountQqAccountCards"));
     assert!(qq_js.contains("overview.cards"));
     assert!(qq_js.contains("pluginId: QQ_PROVIDER_ID"));
-    assert!(!qq_js.contains("config.editor"));
-    assert!(qq_js.contains("请到配置里填写账号"));
-    assert!(qq_js.contains("self_user"));
-    assert!(qq_js.contains("qq-account-avatar"));
-    assert!(qq_js.contains("在线时长"));
     assert!(!qq_js.contains("qq-bot.page"));
-    assert!(!qq_js.contains("主动投递"));
-    assert!(!qq_js.contains("搜索账号"));
-    assert!(!qq_js.contains("保存登录配置"));
     let snap = ws_rpc_params(&addr, "qq-bot", "snapshot", json!({}))
         .await
         .unwrap();
@@ -602,7 +602,6 @@ async fn embedded_console_mounts_qq_management_extension() {
     assert_eq!(snap["accounts"][0]["credential_status"], "configured");
     assert!(!dirs.qq_assets.as_os_str().is_empty());
     host.stop().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
 }
 
 #[tokio::test]
@@ -617,7 +616,7 @@ async fn embedded_console_serves_sandbox_panel() {
     let secrets = WebConsoleSecrets {
         auth_token: "local-dev".into(),
     };
-    let (mut host, dirs) = build_console_host(
+    let (mut host, dirs) = build_console_host_with_agent(
         &config,
         &secrets,
         Arc::new(FixtureControlHandler::default()),
@@ -627,6 +626,9 @@ async fn embedded_console_serves_sandbox_panel() {
         &WebConsolePaths::default(),
         None,
         None,
+        Some(Arc::new(SandboxService::new()) as Arc<dyn SandboxApi>),
+        None,
+        BotAgentConsoleServices::default(),
     )
     .unwrap();
     host.start().await.unwrap();
@@ -654,9 +656,6 @@ async fn embedded_console_serves_sandbox_panel() {
     assert!(js.contains("mountSandboxPanel"));
     assert!(js.contains("activityId: \"sandbox\""));
     assert!(js.contains("ctx.activities.register"));
-    assert!(js.contains("添加用户"));
-    assert!(js.contains("真实数据"));
-    assert!(!js.contains("inject_into_flow"));
     let snap = ws_rpc_params(&addr, "sandbox", "snapshot", json!({}))
         .await
         .unwrap();
@@ -664,7 +663,6 @@ async fn embedded_console_serves_sandbox_panel() {
     assert!(!snap["conversations"].as_array().unwrap().is_empty());
     assert!(!dirs.sandbox_assets.as_os_str().is_empty());
     host.stop().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
 }
 
 #[tokio::test]
@@ -723,7 +721,6 @@ async fn embedded_console_serves_lilia_flow_node_editor() {
     assert!(css.contains(".ctx-menu"));
     assert!(!dirs.bot_flow_assets.as_os_str().is_empty());
     host.stop().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
 }
 
 #[test]
@@ -752,6 +749,35 @@ fn embedded_console_rejects_explicit_bilibili_extension_without_service() {
         error
             .to_string()
             .contains("bilibili WebExtension requires its management service")
+    );
+}
+
+#[test]
+fn embedded_console_rejects_explicit_sandbox_extension_without_service() {
+    let error = build_console_host(
+        &WebConsoleConfig {
+            enabled: true,
+            listen: "127.0.0.1:0".into(),
+            extensions: vec!["sandbox".into()],
+            ..Default::default()
+        },
+        &WebConsoleSecrets {
+            auth_token: "local-dev".into(),
+        },
+        Arc::new(FixtureControlHandler::default()),
+        "local-dev",
+        None,
+        None,
+        &WebConsolePaths::default(),
+        None,
+        None,
+    )
+    .err()
+    .expect("missing management service");
+    assert!(
+        error
+            .to_string()
+            .contains("sandbox WebExtension requires its management service")
     );
 }
 

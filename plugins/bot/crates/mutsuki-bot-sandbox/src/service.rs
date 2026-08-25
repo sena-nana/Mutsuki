@@ -35,6 +35,18 @@ const MAX_MEDIA_BYTES: usize = SANDBOX_MAX_MEDIA_BYTES;
 const MAX_STICKER_BYTES: usize = SANDBOX_MAX_STICKER_BYTES;
 const PASSIVE_REPLY_WINDOW_MS: u64 = 5 * 60 * 1_000;
 
+/// Rejection codes for the QQ passive-reply rules.
+///
+/// Real mode mirrors the platform: a bot may only answer a recent user message. The four ways a
+/// send can violate that lead to four different corrections by the operator, so they are separate
+/// codes rather than one `invalid_argument` that a caller can only tell apart by reading prose.
+pub const PROACTIVE_SEND_DENIED: &str = "sandbox.proactive_send_denied";
+pub const REPLY_TARGET_NOT_FOUND: &str = "sandbox.reply_target_not_found";
+pub const REPLY_TARGET_NOT_USER: &str = "sandbox.reply_target_not_user";
+pub const REPLY_WINDOW_EXPIRED: &str = "sandbox.reply_window_expired";
+/// Real mode also refuses segments the platform has no wire form for.
+pub const UNSUPPORTED_SEGMENT: &str = "sandbox.unsupported_segment";
+
 pub struct SandboxChangeSubscription {
     receiver: broadcast::Receiver<SandboxChangeEvent>,
 }
@@ -713,7 +725,7 @@ impl SandboxService {
                 None if stored.view.active_message => None,
                 None => {
                     return Err(SandboxError::new(
-                        "invalid_argument",
+                        PROACTIVE_SEND_DENIED,
                         "当前会话没有主动消息权限，请先悬停用户消息并点击回复",
                     ));
                 }
@@ -1483,7 +1495,7 @@ fn expand_live_segment(
     }
     match &segment {
         MessageSegment::PlatformSpecific { kind, .. } if kind == "face" => Err(SandboxError::new(
-            "invalid_argument",
+            UNSUPPORTED_SEGMENT,
             "真实模式不能发送 QQ 表情，请改用图片表情包",
         )),
         _ => Ok(segment),
@@ -1666,17 +1678,17 @@ fn require_live_reply_target(
         .find(|item| item.message_id == reply_to)
         .ok_or_else(|| {
             SandboxError::new(
-                "invalid_argument",
+                REPLY_TARGET_NOT_FOUND,
                 format!("引用的消息 `{reply_to}` 不存在"),
             )
         })?;
     if message.role != SandboxSpeakerRole::User {
-        return Err(SandboxError::new("invalid_argument", "只能回复用户消息"));
+        return Err(SandboxError::new(REPLY_TARGET_NOT_USER, "只能回复用户消息"));
     }
     let message_time = u64::try_from(message.time_ms.max(0)).unwrap_or(0);
     if now_unix_ms.saturating_sub(message_time) > PASSIVE_REPLY_WINDOW_MS {
         return Err(SandboxError::new(
-            "invalid_argument",
+            REPLY_WINDOW_EXPIRED,
             "引用的消息已超过 5 分钟，无法被动回复；请先在会话里 @ 机器人",
         ));
     }

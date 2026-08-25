@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "bot-runtime-domain-bench"
 path = "src/bin/bot_runtime_domain_bench.rs"

@@ -1,4 +1,18 @@
 //! Control IPC performance harness for ServiceHost Issue #16.
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+// This file is on the workspace `unsafe_code` exception list.
+// Benchmarks and allocation-budget tests measure allocator traffic, which requires
+// implementing `GlobalAlloc`; that trait is `unsafe` by definition. Every operation is
+// delegated unchanged to `System` and only the atomic counters are added.
+#![allow(unsafe_code)]
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::doc_markdown,
+    clippy::map_unwrap_or
+)]
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::PathBuf;
@@ -34,6 +48,9 @@ impl TrackingAllocator {
     }
 }
 
+// SAFETY: every method forwards its arguments unchanged to the `System` allocator, so the
+// layout and pointer contract of `GlobalAlloc` is upheld by `System` itself. The only
+// additions are relaxed atomic counters, which touch no allocator state.
 unsafe impl GlobalAlloc for TrackingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let ptr = unsafe { System.alloc(layout) };

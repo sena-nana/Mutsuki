@@ -1,4 +1,8 @@
 //! Explicit ServiceHost assembly for host-neutral standard plugins.
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(clippy::doc_markdown)]
 
 use mutsuki_plugin_image_render::{ImageRenderConfig, ImageRenderRunner};
 use mutsuki_plugin_io_browser_chromium::{BrowserSnapshotRunner, ChromiumConfig};

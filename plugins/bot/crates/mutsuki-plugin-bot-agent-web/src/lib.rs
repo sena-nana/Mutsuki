@@ -1,5 +1,15 @@
 //! Authenticated Web Console bridge for owner-managed Agent connections.
-
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::default_constructed_unit_structs,
+    clippy::map_unwrap_or,
+    clippy::missing_errors_doc,
+    clippy::needless_pass_by_value,
+    clippy::too_many_lines
+)]
 #![forbid(unsafe_code)]
 
 use std::path::{Path, PathBuf};
@@ -12,6 +22,7 @@ use mutsuki_agent_contracts::{
 };
 use mutsuki_web_extension::{
     ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, content_hash,
+    load_bundled_manifest,
 };
 use mutsuki_web_protocol::{
     AssetEntry, EXTENSION_MANIFEST_VERSION, ExtensionManifest, WEB_PROTOCOL_VERSION,
@@ -86,7 +97,7 @@ impl WebExtension for BotAgentWebExtension {
     fn frontend_assets(&self) -> Option<WebFrontendAssets> {
         let root = self.assets_root.as_ref()?;
         Some(WebFrontendAssets {
-            manifest: load_manifest(root).ok()?,
+            manifest: load_bundled_manifest(root, manifest).ok()?,
             root_dir: root.clone(),
         })
     }
@@ -517,23 +528,6 @@ fn manifest(assets: Vec<AssetEntry>) -> ExtensionManifest {
         assets,
         protocol_version: WEB_PROTOCOL_VERSION.into(),
     }
-}
-
-fn load_manifest(root: &Path) -> Result<ExtensionManifest, ExtensionError> {
-    let path = root.join("manifest.json");
-    if path.exists() {
-        return serde_json::from_slice(
-            &std::fs::read(path).map_err(|error| ExtensionError::Manifest(error.to_string()))?,
-        )
-        .map_err(|error| ExtensionError::Manifest(error.to_string()));
-    }
-    let bytes = std::fs::read(root.join("index.js"))
-        .map_err(|error| ExtensionError::Manifest(error.to_string()))?;
-    Ok(manifest(vec![AssetEntry {
-        path: "index.js".into(),
-        content_hash: content_hash(&bytes),
-        bytes: bytes.len() as u64,
-    }]))
 }
 
 /// Writes the shared trajectory projector/view used by Agent and Tasks pages.

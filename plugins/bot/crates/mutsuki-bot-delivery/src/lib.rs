@@ -1,3 +1,15 @@
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::default_trait_access,
+    clippy::doc_markdown,
+    clippy::map_unwrap_or,
+    clippy::missing_panics_doc,
+    clippy::needless_pass_by_value,
+    clippy::redundant_closure_for_method_calls
+)]
+
 use async_trait::async_trait;
 use mutsuki_agent_contracts::{ScheduleExecutionStatus, ScheduledRunResult};
 use mutsuki_bot_protocol::{

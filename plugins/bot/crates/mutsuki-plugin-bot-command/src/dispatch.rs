@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use mutsuki_bot_protocol::{
     BOT_COMMAND_HANDLE_PROTOCOL_ID, BOT_COMMAND_PARSE_PROTOCOL_ID, BOT_COMMAND_REPLY_PROTOCOL_ID,
@@ -330,13 +331,47 @@ fn completed_node(
 
 pub struct BotCommandNodeRunner {
     descriptor: RunnerDescriptor,
+    parsers: CommandParserCache,
 }
 
 impl BotCommandNodeRunner {
     pub fn new(plugin_generation: u64) -> Self {
         Self {
             descriptor: command_node_descriptor(plugin_generation),
+            parsers: CommandParserCache::default(),
         }
+    }
+}
+
+/// Reuses parsers across tasks that carry the same node config.
+///
+/// A match node's config is fixed by the flow, but every message arrives as its own task carrying
+/// a full copy of it. Rebuilding the parser per message re-runs descriptor validation and clones
+/// every prefix, alias and argument descriptor for a result that is identical each time.
+#[derive(Default)]
+struct CommandParserCache {
+    /// Keyed by the config's serialized form, which is an exact identity: unlike a hash it needs
+    /// no second comparison to rule out a collision.
+    entries: BTreeMap<String, Arc<CommandParser>>,
+}
+
+impl CommandParserCache {
+    /// Bounded so a flow that rewrites node configs cannot grow the cache without limit.
+    const CAPACITY: usize = 64;
+
+    fn parser(&mut self, config: &Value) -> Result<Arc<CommandParser>, String> {
+        let key = config.to_string();
+        if let Some(parser) = self.entries.get(&key) {
+            return Ok(parser.clone());
+        }
+        let decoded: BotCommandMatchConfig =
+            serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
+        let parser = Arc::new(decoded.parser()?);
+        if self.entries.len() >= Self::CAPACITY {
+            self.entries.clear();
+        }
+        self.entries.insert(key, parser.clone());
+        Ok(parser)
     }
 }
 
@@ -350,6 +385,7 @@ impl Runner for BotCommandNodeRunner {
         _ctx: RunnerContext,
         batch: WorkBatch,
     ) -> RuntimeResult<CompletionBatch> {
+        let parsers = &mut self.parsers;
         map_work_batch_entries(&batch, |task| {
             let invocation = task
                 .payload
@@ -358,11 +394,8 @@ impl Runner for BotCommandNodeRunner {
             if task.protocol_id.as_str() == BOT_COMMAND_REPLY_PROTOCOL_ID {
                 return command_reply_result(task, &invocation);
             }
-            let config: BotCommandMatchConfig =
-                serde_json::from_value(invocation.config.clone())
-                    .map_err(|error| failure("mutsuki.bot.command.node.config", error))?;
-            let parser = config
-                .parser()
+            let parser = parsers
+                .parser(&invocation.config)
                 .map_err(|error| failure("mutsuki.bot.command.node.config", error))?;
             let event: BotEvent = serde_json::from_value(invocation.input.payload.value.clone())
                 .map_err(|error| failure("mutsuki.bot.command.node.event", error))?;
@@ -627,6 +660,37 @@ mod tests {
             command.typed_args["days"],
             BotCommandArgumentValue::Integer(7)
         );
+    }
+
+    #[test]
+    fn cached_parsers_stay_keyed_to_their_own_node_config() {
+        let ban = json!({"prefixes": ["/"], "path": ["admin", "ban"]});
+        let kick = json!({"prefixes": ["!"], "path": ["admin", "kick"]});
+        let mut runner = BotCommandNodeRunner::new(1);
+        let completion = runner
+            .run_batch(
+                test_context(11, 1),
+                batch(vec![
+                    command_task("ban", "event-1", "/admin ban", ban.clone()),
+                    command_task("kick", "event-2", "!admin kick", kick),
+                    command_task("ban-again", "event-3", "/admin ban", ban),
+                ]),
+            )
+            .unwrap();
+
+        let names = completion
+            .results
+            .iter()
+            .map(|entry| {
+                let output = entry.result.as_ref().unwrap().output.clone().unwrap();
+                let result: BotNodeResult = serde_json::from_value(output).unwrap();
+                let event = result.outputs[0].event.payload.value.clone();
+                serde_json::from_value::<BotCommandEvent>(event)
+                    .map(|command| command.name)
+                    .unwrap_or_else(|_| "unmatched".into())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["admin.ban", "admin.kick", "admin.ban"]);
     }
 
     #[test]

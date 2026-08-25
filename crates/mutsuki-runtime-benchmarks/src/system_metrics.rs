@@ -1,3 +1,8 @@
+// This file is on the workspace `unsafe_code` exception list.
+// CPU and RSS samples are only available through platform C APIs. Each call is a read-only
+// query into caller-provided stack storage.
+#![allow(unsafe_code)]
+
 use std::collections::BTreeMap;
 #[cfg(unix)]
 use std::mem::MaybeUninit;

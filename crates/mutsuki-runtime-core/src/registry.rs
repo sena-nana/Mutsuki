@@ -19,6 +19,7 @@ pub struct RunnerRegistry {
     heartbeats: HashMap<RunnerId, RunnerHeartbeat>,
     capabilities: HashMap<RunnerId, RunnerCapabilityDeclaration>,
     frozen: bool,
+    generation: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -176,8 +177,16 @@ impl RunnerRegistry {
             .and_then(|mut runners| runners.pop()))
     }
 
-    pub fn freeze(&mut self) {
+    /// Seals the registry against further registration and records which registry generation the
+    /// instances inside it belong to. The generation is what lets a completion that outlived a
+    /// reload find its way back to the registry that handed out its runner.
+    pub fn freeze(&mut self, generation: u64) {
         self.frozen = true;
+        self.generation = generation;
+    }
+
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
     }
 
     pub(crate) fn validate_instance_counts(&self) -> RuntimeResult<()> {
@@ -315,9 +324,32 @@ impl RunnerRegistry {
         }
     }
 
-    pub(crate) fn put_runner(&mut self, runner: Box<dyn Runner>) {
+    /// Returns a borrowed runner instance to the dispatch pool.
+    ///
+    /// Hands the instance back to the caller instead when it does not belong here. A dispatch can
+    /// outlive the reload that replaced its registry, and parking that stale instance in the live
+    /// pool would let the next claim dispatch work to a plugin generation the LoadPlan has already
+    /// retired. The caller is expected to dispose whatever comes back.
+    #[must_use = "a rejected runner instance must be disposed, not dropped silently"]
+    pub(crate) fn put_runner(
+        &mut self,
+        runner: Box<dyn Runner>,
+        instance_generation: u64,
+    ) -> Option<Box<dyn Runner>> {
         let runner_id = RunnerId::from(runner.descriptor().runner_id.as_str());
+        // Generation 0 means "unversioned", which is what tests and single-generation embeddings
+        // use; only reject when both sides carry a real generation and they disagree.
+        if instance_generation != 0
+            && self.generation != 0
+            && instance_generation != self.generation
+        {
+            return Some(runner);
+        }
+        if !self.descriptors.contains_key(&runner_id) {
+            return Some(runner);
+        }
         self.runners.entry(runner_id).or_default().push(runner);
+        None
     }
 
     pub(crate) fn async_handler(
@@ -331,8 +363,14 @@ impl RunnerRegistry {
         mut self,
         plugin_ids: &std::collections::BTreeSet<PluginId>,
     ) -> (Self, Self) {
-        let mut retained = Self::default();
-        let mut selected = Self::default();
+        let mut retained = Self {
+            generation: self.generation,
+            ..Self::default()
+        };
+        let mut selected = Self {
+            generation: self.generation,
+            ..Self::default()
+        };
         let descriptors = std::mem::take(&mut self.descriptors);
         for (runner_id, descriptor) in descriptors {
             let target = if plugin_ids.contains(descriptor.plugin_id.as_str()) {

@@ -1,3 +1,8 @@
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(clippy::missing_errors_doc, clippy::needless_raw_string_hashes)]
+
 use std::fs;
 use std::path::{Path, PathBuf};
 

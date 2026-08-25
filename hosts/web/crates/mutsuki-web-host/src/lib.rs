@@ -3,6 +3,22 @@
 //! Owns HTTP/WebSocket lifecycle, static asset hosting, WebApplication assembly,
 //! extension loading, management bridge, and recovery shell.
 //! Does **not** own Bot admin pages, databases, logs, metrics UIs, or Axum ABI.
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::collapsible_if,
+    clippy::default_trait_access,
+    clippy::doc_markdown,
+    clippy::ignored_unit_patterns,
+    clippy::missing_errors_doc,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value,
+    clippy::return_self_not_must_use,
+    clippy::unnecessary_wraps,
+    clippy::unnested_or_patterns
+)]
 
 mod application;
 mod builder;

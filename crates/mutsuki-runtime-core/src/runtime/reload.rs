@@ -113,7 +113,7 @@ impl CoreRuntime {
             new_registry.register_async_handler(handler)?;
         }
         new_registry.validate_instance_counts()?;
-        new_registry.freeze();
+        new_registry.freeze(new_plan.registry_generation);
         for shadow_state in
             generation_states_for_plan(&new_plan, PluginGenerationPhase::ShadowStarting)
         {
@@ -318,7 +318,10 @@ impl CoreRuntime {
         let retired_runner_ids = retired_registry.runner_ids();
         retained_registry.absorb(candidate_registry);
         retained_registry.validate_instance_counts()?;
-        retained_registry.freeze();
+        retained_registry.freeze(new_plan.registry_generation);
+        // The retired half keeps the generation it was dispatched under so late completions can
+        // still find it while it drains.
+        retired_registry.freeze(old_registry_generation);
         let needs_drain = dispositions.iter().any(|disposition| {
             matches!(
                 disposition.pollution,

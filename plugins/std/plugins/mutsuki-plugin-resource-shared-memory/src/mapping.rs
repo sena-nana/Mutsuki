@@ -1,3 +1,13 @@
+//! OS shared-memory mappings behind an immutable, generation-based view.
+//!
+//! # Unsafe boundary
+//!
+//! This module is on the workspace `unsafe_code` exception list. A shared mapping is a raw
+//! pointer into memory another process may also map, which `shared_memory` therefore exposes
+//! through `unsafe` accessors. Every block below documents the ownership argument that makes
+//! it sound; no other module in this plugin contains `unsafe`.
+#![allow(unsafe_code)]
+
 use std::fmt;
 use std::sync::Arc;
 
@@ -21,9 +31,10 @@ pub(crate) struct OwnedMapping {
 #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
 pub(crate) struct OwnedMapping;
 
-// `Shmem` contains a raw mapping pointer. Mutsuki mappings are initialized before publication and
-// never mutated in place: a logical write creates a new mapping generation. The wrapper exposes no
-// mutable access, so moving or sharing the immutable generation between provider/view owners is safe.
+// SAFETY: `Shmem` contains a raw mapping pointer. Mutsuki mappings are initialized before
+// publication and never mutated in place: a logical write creates a new mapping generation. The
+// wrapper exposes no mutable access, so moving or sharing the immutable generation between
+// provider and view owners introduces no data race.
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 unsafe impl Send for OwnedMapping {}
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]

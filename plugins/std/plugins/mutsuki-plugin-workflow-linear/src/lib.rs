@@ -1,3 +1,12 @@
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::assigning_clones,
+    clippy::map_unwrap_or,
+    clippy::must_use_candidate
+)]
+
 use mutsuki_runtime_contracts::{
     CompletionBatch, DispatchLane, DomainEvent, ExecutionClass, OrderingRequirement,
     RunnerBatchCapability, RunnerContext, RunnerDescriptor, RunnerMode, RunnerPurity, RunnerResult,

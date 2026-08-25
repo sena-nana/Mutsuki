@@ -1,3 +1,19 @@
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::doc_markdown,
+    clippy::ignored_unit_patterns,
+    clippy::implicit_clone,
+    clippy::map_unwrap_or,
+    clippy::missing_errors_doc,
+    clippy::needless_borrow,
+    clippy::needless_pass_by_value,
+    clippy::semicolon_if_nothing_returned,
+    clippy::too_many_lines,
+    clippy::type_complexity
+)]
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -10,6 +26,7 @@ use mutsuki_bot_delivery::{
     reply_part_request,
 };
 use mutsuki_bot_interaction::{InteractionError, InteractionRepository};
+use mutsuki_bot_management::in_blocking_section;
 use mutsuki_bot_protocol::{
     AgentSessionBinding, BotActiveDeliveryRequest, BotDeliveryAttempt, BotDeliveryReceipt,
     BotInteractionSession, BotReplyDeliveryReceipt, BotReplyDeliveryRequest, DeliveryStatus,
@@ -356,22 +373,34 @@ impl BotStateDbRepository {
 
     async fn call<T>(
         &self,
-        make_job: impl FnOnce(oneshot::Sender<Result<T, BotStateDbError>>) -> DbJob,
+        make_job: impl FnOnce(DbReplyChannel<T>) -> DbJob,
     ) -> Result<T, BotStateDbError> {
         let (reply, response) = oneshot::channel();
         self.inner.metrics.queued();
-        if self.inner.jobs.send(make_job(reply)).await.is_err() {
+        if self
+            .inner
+            .jobs
+            .send(make_job(DbReplyChannel::Async(reply)))
+            .await
+            .is_err()
+        {
             self.inner.metrics.dequeued();
             return Err(BotStateDbError::ActorStopped);
         }
         response.await.map_err(|_| BotStateDbError::ActorStopped)?
     }
 
+    /// Blocks the caller until the SQLite actor answers.
+    ///
+    /// Runner-facing callers must stay synchronous, so this cannot become async. The Web Console
+    /// reaches the same repository from an async executor; the wait is announced as a blocking
+    /// section so the scheduler can relocate the console's other sockets first.
     fn call_sync<T>(
         &self,
-        make_job: impl FnOnce(std::sync::mpsc::SyncSender<Result<T, BotStateDbError>>) -> DbJob,
+        make_job: impl FnOnce(DbReplyChannel<T>) -> DbJob,
     ) -> Result<T, BotStateDbError> {
         let (reply, response) = std::sync::mpsc::sync_channel(1);
+        let reply = DbReplyChannel::Blocking(reply);
         self.inner.metrics.queued();
         match self.inner.jobs.try_send(make_job(reply)) {
             Ok(()) => {}
@@ -384,116 +413,116 @@ impl BotStateDbRepository {
                 return Err(BotStateDbError::ActorStopped);
             }
         }
-        response.recv().map_err(|_| BotStateDbError::ActorStopped)?
+        in_blocking_section(|| response.recv().map_err(|_| BotStateDbError::ActorStopped))?
     }
 }
 
 enum DbJob {
-    SessionBindingSync {
+    SessionBinding {
         binding_key: String,
-        reply: SyncDbReply<Option<AgentSessionBinding>>,
+        reply: DbReplyChannel<Option<AgentSessionBinding>>,
     },
-    CompareAndSetSessionBindingSync {
+    CompareAndSetSessionBinding {
         binding_key: String,
         expected_generation: Option<u64>,
         binding: AgentSessionBinding,
-        reply: SyncDbReply<bool>,
+        reply: DbReplyChannel<bool>,
     },
-    BeginAgentEventSync {
+    BeginAgentEvent {
         binding_key: String,
         event_id: String,
         turn_id: String,
-        reply: SyncDbReply<AgentEventClaim>,
+        reply: DbReplyChannel<AgentEventClaim>,
     },
-    CompleteAgentEventSync {
+    CompleteAgentEvent {
         binding_key: String,
         event_id: String,
-        reply: SyncDbReply<bool>,
+        reply: DbReplyChannel<bool>,
     },
     ReserveDelivery {
         request: BotActiveDeliveryRequest,
-        reply: SyncDbReply<DeliveryReservation>,
+        reply: DbReplyChannel<DeliveryReservation>,
     },
     DeliveryRequest {
         delivery_id: String,
-        reply: SyncDbReply<Option<BotActiveDeliveryRequest>>,
+        reply: DbReplyChannel<Option<BotActiveDeliveryRequest>>,
     },
     DeliveryReceipt {
         delivery_id: String,
-        reply: SyncDbReply<Option<BotDeliveryReceipt>>,
+        reply: DbReplyChannel<Option<BotDeliveryReceipt>>,
     },
     DeliveryAttempts {
         delivery_id: String,
-        reply: SyncDbReply<Vec<BotDeliveryAttempt>>,
+        reply: DbReplyChannel<Vec<BotDeliveryAttempt>>,
     },
     DeliveryPage {
         after: String,
         limit: u32,
-        reply: SyncDbReply<BotStatePage<(BotDeliveryReceipt, Vec<BotDeliveryAttempt>)>>,
+        reply: DbReplyChannel<BotStatePage<(BotDeliveryReceipt, Vec<BotDeliveryAttempt>)>>,
     },
     SaveDeliveryOutcome {
         attempt: BotDeliveryAttempt,
         receipt: BotDeliveryReceipt,
-        reply: SyncDbReply<()>,
+        reply: DbReplyChannel<()>,
     },
     SaveDeliveryReceipt {
         receipt: BotDeliveryReceipt,
-        reply: SyncDbReply<()>,
+        reply: DbReplyChannel<()>,
     },
     ClaimDueDeliveries {
         now_unix_ms: u64,
-        reply: SyncDbReply<Vec<String>>,
+        reply: DbReplyChannel<Vec<String>>,
     },
     BeginSendDelivery {
         delivery_id: String,
         attempt: BotDeliveryAttempt,
         now_unix_ms: u64,
         lease_ms: u64,
-        reply: SyncDbReply<BotDeliveryReceipt>,
+        reply: DbReplyChannel<BotDeliveryReceipt>,
     },
     ReserveReplyDelivery {
         request: BotReplyDeliveryRequest,
-        reply: SyncDbReply<ReplyDeliveryReservation>,
+        reply: DbReplyChannel<ReplyDeliveryReservation>,
     },
     ReplyDeliveryReceipt {
         reply_id: String,
-        reply: SyncDbReply<Option<BotReplyDeliveryReceipt>>,
+        reply: DbReplyChannel<Option<BotReplyDeliveryReceipt>>,
     },
     ClaimDueReplyParts {
         now_unix_ms: u64,
-        reply: SyncDbReply<Vec<String>>,
+        reply: DbReplyChannel<Vec<String>>,
     },
     IsReplyPart {
         delivery_id: String,
-        reply: SyncDbReply<bool>,
+        reply: DbReplyChannel<bool>,
     },
     CreateInteraction {
         session: BotInteractionSession,
-        reply: DbReply<bool>,
+        reply: DbReplyChannel<bool>,
     },
     ActiveInteractions {
         origin_key: String,
-        reply: DbReply<Vec<BotInteractionSession>>,
+        reply: DbReplyChannel<Vec<BotInteractionSession>>,
     },
     CompareAndSetInteraction {
         expected_version: u64,
         session: BotInteractionSession,
-        reply: DbReply<bool>,
+        reply: DbReplyChannel<bool>,
     },
     RecoverWaitingInteractions {
-        reply: DbReply<Vec<BotInteractionSession>>,
+        reply: DbReplyChannel<Vec<BotInteractionSession>>,
     },
     InteractionPage {
         after: String,
         limit: u32,
-        reply: SyncDbReply<BotStatePage<BotInteractionSession>>,
+        reply: DbReplyChannel<BotStatePage<BotInteractionSession>>,
     },
     ManagementRevision {
-        reply: SyncDbReply<u64>,
+        reply: DbReplyChannel<u64>,
     },
     ManagementAudits {
         limit: u32,
-        reply: SyncDbReply<Vec<BotManagementAuditRecord>>,
+        reply: DbReplyChannel<Vec<BotManagementAuditRecord>>,
     },
     BeginManagementOperation {
         operation_id: String,
@@ -501,14 +530,14 @@ enum DbJob {
         actor_id: String,
         action: String,
         created_at_unix_ms: u64,
-        reply: SyncDbReply<BotManagementOperationReservation>,
+        reply: DbReplyChannel<BotManagementOperationReservation>,
     },
     CompleteManagementOperation {
         operation_id: String,
         action: String,
         result: serde_json::Value,
         created_at_unix_ms: u64,
-        reply: SyncDbReply<BotManagementAuditRecord>,
+        reply: DbReplyChannel<BotManagementAuditRecord>,
     },
     CommitManagementAudit {
         expected_revision: u64,
@@ -516,48 +545,68 @@ enum DbJob {
         action: String,
         result: serde_json::Value,
         created_at_unix_ms: u64,
-        reply: SyncDbReply<Option<BotManagementAuditRecord>>,
+        reply: DbReplyChannel<Option<BotManagementAuditRecord>>,
     },
     InspectSnapshot {
-        reply: SyncDbReply<Vec<BotDatabaseTableInfo>>,
+        reply: DbReplyChannel<Vec<BotDatabaseTableInfo>>,
     },
     InspectRows {
         table: String,
         after: String,
         limit: u32,
-        reply: SyncDbReply<BotDatabaseTablePage>,
+        reply: DbReplyChannel<BotDatabaseTablePage>,
     },
     SandboxLoad {
-        reply: SyncDbReply<mutsuki_bot_sandbox::SandboxHistorySnapshot>,
+        reply: DbReplyChannel<mutsuki_bot_sandbox::SandboxHistorySnapshot>,
     },
     SandboxSave {
         snapshot: mutsuki_bot_sandbox::SandboxHistorySnapshot,
-        reply: SyncDbReply<()>,
+        reply: DbReplyChannel<()>,
     },
     SandboxConversations {
         kind: mutsuki_bot_sandbox::SandboxHistoryKind,
-        reply: SyncDbReply<Vec<mutsuki_bot_sandbox::SandboxConversationView>>,
+        reply: DbReplyChannel<Vec<mutsuki_bot_sandbox::SandboxConversationView>>,
     },
     SandboxMessages {
         kind: mutsuki_bot_sandbox::SandboxHistoryKind,
         conversation_id: String,
-        reply: SyncDbReply<Vec<mutsuki_bot_sandbox::SandboxMessageView>>,
+        reply: DbReplyChannel<Vec<mutsuki_bot_sandbox::SandboxMessageView>>,
     },
     SandboxMedia {
         media_id: String,
-        reply: SyncDbReply<Option<mutsuki_bot_sandbox::SandboxMediaBlob>>,
+        reply: DbReplyChannel<Option<mutsuki_bot_sandbox::SandboxMediaBlob>>,
     },
 }
 
-type DbReply<T> = oneshot::Sender<Result<T, BotStateDbError>>;
-type SyncDbReply<T> = std::sync::mpsc::SyncSender<Result<T, BotStateDbError>>;
+/// Answers whichever kind of caller submitted a job.
+///
+/// Jobs used to be split into blocking and async variants, which forced the async repository
+/// traits to answer through a blocking channel and park a reactor thread for the length of a
+/// SQLite statement. One channel type per job lets the caller decide how it waits.
+enum DbReplyChannel<T> {
+    Blocking(std::sync::mpsc::SyncSender<Result<T, BotStateDbError>>),
+    Async(oneshot::Sender<Result<T, BotStateDbError>>),
+}
+
+impl<T> DbReplyChannel<T> {
+    fn send(self, result: Result<T, BotStateDbError>) {
+        match self {
+            Self::Blocking(sender) => {
+                let _ = sender.send(result);
+            }
+            Self::Async(sender) => {
+                let _ = sender.send(result);
+            }
+        }
+    }
+}
 
 impl DbJob {
     fn transactional(&self) -> bool {
         matches!(
             self,
-            Self::CompareAndSetSessionBindingSync { .. }
-                | Self::BeginAgentEventSync { .. }
+            Self::CompareAndSetSessionBinding { .. }
+                | Self::BeginAgentEvent { .. }
                 | Self::ReserveDelivery { .. }
                 | Self::SaveDeliveryOutcome { .. }
                 | Self::ClaimDueDeliveries { .. }
@@ -575,15 +624,15 @@ impl DbJob {
 
     fn execute(self, connection: &mut Connection, metrics: &ActorMetrics) {
         match self {
-            Self::SessionBindingSync { binding_key, reply } => {
-                send_sync_reply(reply, session_binding(connection, &binding_key), metrics);
+            Self::SessionBinding { binding_key, reply } => {
+                send_reply(reply, session_binding(connection, &binding_key), metrics);
             }
-            Self::CompareAndSetSessionBindingSync {
+            Self::CompareAndSetSessionBinding {
                 binding_key,
                 expected_generation,
                 binding,
                 reply,
-            } => send_sync_reply(
+            } => send_reply(
                 reply,
                 compare_and_set_session_binding(
                     connection,
@@ -593,55 +642,55 @@ impl DbJob {
                 ),
                 metrics,
             ),
-            Self::BeginAgentEventSync {
+            Self::BeginAgentEvent {
                 binding_key,
                 event_id,
                 turn_id,
                 reply,
-            } => send_sync_reply(
+            } => send_reply(
                 reply,
                 begin_agent_event(connection, &binding_key, &event_id, &turn_id),
                 metrics,
             ),
-            Self::CompleteAgentEventSync {
+            Self::CompleteAgentEvent {
                 binding_key,
                 event_id,
                 reply,
-            } => send_sync_reply(
+            } => send_reply(
                 reply,
                 complete_agent_event(connection, &binding_key, &event_id),
                 metrics,
             ),
             Self::ReserveDelivery { request, reply } => {
-                send_sync_reply(reply, reserve_delivery(connection, &request), metrics);
+                send_reply(reply, reserve_delivery(connection, &request), metrics);
             }
             Self::DeliveryRequest { delivery_id, reply } => {
-                send_sync_reply(reply, delivery_request(connection, &delivery_id), metrics);
+                send_reply(reply, delivery_request(connection, &delivery_id), metrics);
             }
             Self::DeliveryReceipt { delivery_id, reply } => {
-                send_sync_reply(reply, delivery_receipt(connection, &delivery_id), metrics);
+                send_reply(reply, delivery_receipt(connection, &delivery_id), metrics);
             }
             Self::DeliveryAttempts { delivery_id, reply } => {
-                send_sync_reply(reply, delivery_attempts(connection, &delivery_id), metrics);
+                send_reply(reply, delivery_attempts(connection, &delivery_id), metrics);
             }
             Self::DeliveryPage {
                 after,
                 limit,
                 reply,
-            } => send_sync_reply(reply, delivery_page(connection, &after, limit), metrics),
+            } => send_reply(reply, delivery_page(connection, &after, limit), metrics),
             Self::SaveDeliveryOutcome {
                 attempt,
                 receipt,
                 reply,
-            } => send_sync_reply(
+            } => send_reply(
                 reply,
                 save_delivery_outcome(connection, &attempt, &receipt),
                 metrics,
             ),
             Self::SaveDeliveryReceipt { receipt, reply } => {
-                send_sync_reply(reply, save_delivery_receipt(connection, &receipt), metrics);
+                send_reply(reply, save_delivery_receipt(connection, &receipt), metrics);
             }
-            Self::ClaimDueDeliveries { now_unix_ms, reply } => send_sync_reply(
+            Self::ClaimDueDeliveries { now_unix_ms, reply } => send_reply(
                 reply,
                 claim_due_deliveries(connection, now_unix_ms),
                 metrics,
@@ -652,28 +701,28 @@ impl DbJob {
                 now_unix_ms,
                 lease_ms,
                 reply,
-            } => send_sync_reply(
+            } => send_reply(
                 reply,
                 begin_send_delivery(connection, &delivery_id, attempt, now_unix_ms, lease_ms),
                 metrics,
             ),
             Self::ReserveReplyDelivery { request, reply } => {
-                send_sync_reply(reply, reserve_reply_delivery(connection, &request), metrics)
+                send_reply(reply, reserve_reply_delivery(connection, &request), metrics)
             }
             Self::ReplyDeliveryReceipt { reply_id, reply } => {
-                send_sync_reply(
+                send_reply(
                     reply,
                     reply_delivery_receipt_by_id(connection, &reply_id),
                     metrics,
                 );
             }
-            Self::ClaimDueReplyParts { now_unix_ms, reply } => send_sync_reply(
+            Self::ClaimDueReplyParts { now_unix_ms, reply } => send_reply(
                 reply,
                 claim_due_reply_parts(connection, now_unix_ms),
                 metrics,
             ),
             Self::IsReplyPart { delivery_id, reply } => {
-                send_sync_reply(reply, is_reply_part(connection, &delivery_id), metrics);
+                send_reply(reply, is_reply_part(connection, &delivery_id), metrics);
             }
             Self::CreateInteraction { session, reply } => {
                 send_reply(reply, create_interaction(connection, &session), metrics);
@@ -697,12 +746,12 @@ impl DbJob {
                 after,
                 limit,
                 reply,
-            } => send_sync_reply(reply, interaction_page(connection, &after, limit), metrics),
+            } => send_reply(reply, interaction_page(connection, &after, limit), metrics),
             Self::ManagementRevision { reply } => {
-                send_sync_reply(reply, management_revision(connection), metrics);
+                send_reply(reply, management_revision(connection), metrics);
             }
             Self::ManagementAudits { limit, reply } => {
-                send_sync_reply(reply, management_audits(connection, limit), metrics);
+                send_reply(reply, management_audits(connection, limit), metrics);
             }
             Self::BeginManagementOperation {
                 operation_id,
@@ -711,7 +760,7 @@ impl DbJob {
                 action,
                 created_at_unix_ms,
                 reply,
-            } => send_sync_reply(
+            } => send_reply(
                 reply,
                 begin_management_operation(
                     connection,
@@ -729,7 +778,7 @@ impl DbJob {
                 result,
                 created_at_unix_ms,
                 reply,
-            } => send_sync_reply(
+            } => send_reply(
                 reply,
                 complete_management_operation(
                     connection,
@@ -747,7 +796,7 @@ impl DbJob {
                 result,
                 created_at_unix_ms,
                 reply,
-            } => send_sync_reply(
+            } => send_reply(
                 reply,
                 commit_management_audit(
                     connection,
@@ -760,25 +809,25 @@ impl DbJob {
                 metrics,
             ),
             Self::InspectSnapshot { reply } => {
-                send_sync_reply(reply, inspect_snapshot_tables(connection), metrics);
+                send_reply(reply, inspect_snapshot_tables(connection), metrics);
             }
             Self::InspectRows {
                 table,
                 after,
                 limit,
                 reply,
-            } => send_sync_reply(
+            } => send_reply(
                 reply,
                 inspect_rows(connection, &table, &after, limit),
                 metrics,
             ),
             Self::SandboxLoad { reply } => {
-                send_sync_reply(reply, sandbox_history::load(connection), metrics);
+                send_reply(reply, sandbox_history::load(connection), metrics);
             }
             Self::SandboxSave { snapshot, reply } => {
-                send_sync_reply(reply, sandbox_history::save(connection, &snapshot), metrics);
+                send_reply(reply, sandbox_history::save(connection, &snapshot), metrics);
             }
-            Self::SandboxConversations { kind, reply } => send_sync_reply(
+            Self::SandboxConversations { kind, reply } => send_reply(
                 reply,
                 sandbox_history::load_conversation_views(connection, kind),
                 metrics,
@@ -787,12 +836,12 @@ impl DbJob {
                 kind,
                 conversation_id,
                 reply,
-            } => send_sync_reply(
+            } => send_reply(
                 reply,
                 sandbox_history::load_conversation_messages(connection, kind, &conversation_id),
                 metrics,
             ),
-            Self::SandboxMedia { media_id, reply } => send_sync_reply(
+            Self::SandboxMedia { media_id, reply } => send_reply(
                 reply,
                 sandbox_history::load_media_by_id(connection, &media_id),
                 metrics,
@@ -813,15 +862,8 @@ fn actor_loop(mut connection: Connection, mut jobs: mpsc::Receiver<DbJob>, metri
     }
 }
 
-fn send_reply<T>(reply: DbReply<T>, result: Result<T, BotStateDbError>, metrics: &ActorMetrics) {
-    if let Err(error) = &result {
-        metrics.observe_error(error);
-    }
-    let _ = reply.send(result);
-}
-
-fn send_sync_reply<T>(
-    reply: SyncDbReply<T>,
+fn send_reply<T>(
+    reply: DbReplyChannel<T>,
     result: Result<T, BotStateDbError>,
     metrics: &ActorMetrics,
 ) {
@@ -2144,6 +2186,14 @@ fn interaction_status_name(status: InteractionStatus) -> &'static str {
     }
 }
 
+/// These methods are `async` by trait signature but answer through the blocking channel on
+/// purpose.
+///
+/// Their callers are bot Runners driven by `TaskAwaitRunnerAdapter`, which polls the runner future
+/// on a Host sync worker with a noop waker: a future that returns `Pending` for anything other
+/// than a Core task await is rejected as `runner.awaitable_unsupported`. Awaiting the DB actor
+/// here would therefore fail the batch rather than yield. Callers that really are on an async
+/// executor (the Web Console) must announce the blocking section at their own boundary.
 #[async_trait]
 impl ConversationRepository for BotStateDbRepository {
     async fn session_binding(
@@ -2151,7 +2201,7 @@ impl ConversationRepository for BotStateDbRepository {
         binding_key: &str,
     ) -> Result<Option<AgentSessionBinding>, ConversationError> {
         let binding_key = binding_key.to_owned();
-        self.call_sync(|reply| DbJob::SessionBindingSync { binding_key, reply })
+        self.call_sync(|reply| DbJob::SessionBinding { binding_key, reply })
             .map_err(conversation_error)
     }
 
@@ -2163,7 +2213,7 @@ impl ConversationRepository for BotStateDbRepository {
     ) -> Result<(), ConversationError> {
         let binding_key = binding_key.to_owned();
         let changed = self
-            .call_sync(|reply| DbJob::CompareAndSetSessionBindingSync {
+            .call_sync(|reply| DbJob::CompareAndSetSessionBinding {
                 binding_key,
                 expected_generation,
                 binding,
@@ -2184,7 +2234,7 @@ impl ConversationRepository for BotStateDbRepository {
         let binding_key = binding_key.to_owned();
         let event_id = event_id.to_owned();
         let turn_id = turn_id.to_owned();
-        self.call_sync(|reply| DbJob::BeginAgentEventSync {
+        self.call_sync(|reply| DbJob::BeginAgentEvent {
             binding_key,
             event_id,
             turn_id,
@@ -2201,7 +2251,7 @@ impl ConversationRepository for BotStateDbRepository {
         let binding_key = binding_key.to_owned();
         let event_id = event_id.to_owned();
         let changed = self
-            .call_sync(|reply| DbJob::CompleteAgentEventSync {
+            .call_sync(|reply| DbJob::CompleteAgentEvent {
                 binding_key,
                 event_id,
                 reply,
@@ -3321,6 +3371,40 @@ mod tests {
             SandboxHistoryStore::load(&repository).unwrap()
         };
         assert!(!loaded.live[0].view.active_message);
+    }
+
+    #[test]
+    fn blocking_repository_calls_survive_every_runtime_flavor() {
+        use mutsuki_bot_sandbox::SandboxHistoryStore;
+
+        let root = tempfile::tempdir().unwrap();
+        let repository =
+            Arc::new(BotStateDbRepository::open(root.path().join("flavor.db")).unwrap());
+
+        // `block_in_place` panics outside a multi-threaded runtime, and the sandbox console reaches
+        // this repository from both flavors plus plain Runner threads.
+        SandboxHistoryStore::load(repository.as_ref()).unwrap();
+
+        let current_thread = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        current_thread.block_on({
+            let repository = repository.clone();
+            async move { SandboxHistoryStore::load(repository.as_ref()).unwrap() }
+        });
+
+        let multi_thread = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        multi_thread.block_on(async move {
+            // One worker: the repository wait must release it, otherwise the spawned task never runs.
+            let peer = tokio::spawn(async { "alive" });
+            SandboxHistoryStore::load(repository.as_ref()).unwrap();
+            assert_eq!(peer.await.unwrap(), "alive");
+        });
     }
 
     struct NoopSandboxRuntime;

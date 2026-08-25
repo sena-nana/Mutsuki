@@ -29,7 +29,14 @@ pub(super) fn complete_runner_dispatch(
                 format!("batch.{}.runner", completion.batch_id),
             )
         })?;
-    let descriptors = runtime.registry.descriptor_snapshot();
+    // Route against the generation the dispatch was issued under. After a reload the active
+    // registry may no longer declare this runner, and the borrowed instance belongs to the
+    // draining registry that is waiting on exactly this completion before it can dispose.
+    let dispatch_generation = completion
+        .task_leases
+        .first()
+        .map_or(0, |lease| lease.registry_generation);
+    let descriptors = runtime.descriptors_for_generation(dispatch_generation);
     let descriptor = descriptors
         .iter()
         .find(|descriptor| descriptor.runner_id == runner_id)
@@ -39,10 +46,17 @@ pub(super) fn complete_runner_dispatch(
                 "runtime.runner_loop",
                 format!("batch.{}.runner", completion.batch_id),
             )
-        })?;
+        })?
+        .clone();
+    let descriptor = &descriptor;
     let result = completion.result;
     if let Some(runner) = completion.runner {
-        runtime.registry.put_runner(runner);
+        if let Some(mut rejected) = runtime
+            .registry_for_generation(dispatch_generation)
+            .put_runner(runner, dispatch_generation)
+        {
+            rejected.dispose()?;
+        }
     }
     let result = match result {
         Ok(result) => result,

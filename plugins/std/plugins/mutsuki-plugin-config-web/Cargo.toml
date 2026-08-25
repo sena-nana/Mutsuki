@@ -25,3 +25,6 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-
 uuid = { version = "1", features = ["v4"] }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect"] }
 futures-util = { workspace = true }
+
+[lints]
+workspace = true

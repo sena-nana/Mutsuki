@@ -13,6 +13,9 @@ serde_json.workspace = true
 [target.'cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))'.dependencies]
 shared_memory = "0.12.4"
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "mutsuki-shared-memory-child"
 path = "src/bin/mutsuki-shared-memory-child.rs"

@@ -1,3 +1,14 @@
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::cast_lossless,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::default_trait_access,
+    clippy::wildcard_imports
+)]
+
 use std::sync::Arc;
 
 use criterion::{Criterion, criterion_group, criterion_main};

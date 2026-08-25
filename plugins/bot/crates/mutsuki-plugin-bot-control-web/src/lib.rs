@@ -2,6 +2,15 @@
 //!
 //! Read-only methods require the `runtime.read` capability; mutating ops require
 //! `runtime.write` from the WebHost-authenticated RPC context.
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::doc_markdown,
+    clippy::missing_errors_doc,
+    clippy::must_use_candidate,
+    clippy::too_many_lines
+)]
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -16,7 +25,7 @@ use mutsuki_service_control::{
     TaskSubmitBatchParam, TaskSubmitBatchResponse,
 };
 use mutsuki_web_extension::{
-    ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, content_hash,
+    ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, load_bundled_manifest,
 };
 use mutsuki_web_protocol::{
     AssetEntry, EXTENSION_MANIFEST_VERSION, ExtensionManifest, WEB_PROTOCOL_VERSION,
@@ -267,7 +276,7 @@ impl WebExtension for ControlWebExtension {
     fn frontend_assets(&self) -> Option<WebFrontendAssets> {
         let root = self.assets_root.as_ref()?;
         Some(WebFrontendAssets {
-            manifest: load_manifest(root).ok()?,
+            manifest: load_bundled_manifest(root, manifest).ok()?,
             root_dir: root.clone(),
         })
     }
@@ -457,16 +466,6 @@ fn manifest(assets: Vec<AssetEntry>) -> ExtensionManifest {
         assets,
         protocol_version: WEB_PROTOCOL_VERSION.into(),
     }
-}
-
-fn load_manifest(root: &Path) -> Result<ExtensionManifest, ExtensionError> {
-    let bytes = std::fs::read(root.join("index.js"))
-        .map_err(|error| ExtensionError::Manifest(error.to_string()))?;
-    Ok(manifest(vec![AssetEntry {
-        path: "index.js".into(),
-        content_hash: content_hash(&bytes),
-        bytes: bytes.len() as u64,
-    }]))
 }
 
 pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::Error> {

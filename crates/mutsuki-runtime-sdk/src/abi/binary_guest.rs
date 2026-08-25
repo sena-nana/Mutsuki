@@ -1,3 +1,5 @@
+use std::sync::{Mutex, OnceLock};
+
 use mutsuki_runtime_contracts::RuntimeError;
 use mutsuki_runtime_core::{RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_wire::{
@@ -23,7 +25,7 @@ impl BinaryPluginGuest {
 }
 
 impl AbiGuest for BinaryPluginGuest {
-    fn request(&mut self, request: &[u8]) -> Vec<u8> {
+    fn request(&self, request: &[u8]) -> Vec<u8> {
         match decode_binary_any_request(request, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS) {
             Ok(decoded) => self.plugin.handle::<BinaryGuestCodec>(decoded),
             Err(_) => Vec::new(),
@@ -32,29 +34,29 @@ impl AbiGuest for BinaryPluginGuest {
 }
 
 pub struct ConfiguredBinaryPluginGuest {
-    factory: Option<ConfiguredPluginFactory>,
-    plugin: Option<PluginGuest>,
-    initialization_attempted: bool,
+    /// Guards the one-shot construction only. Once the plugin exists, requests reach it through
+    /// `OnceLock` without touching this lock, so the handshake does not serialise later traffic.
+    factory: Mutex<Option<ConfiguredPluginFactory>>,
+    plugin: OnceLock<PluginGuest>,
 }
 
 impl ConfiguredBinaryPluginGuest {
     pub fn new(factory: ConfiguredPluginFactory) -> Self {
         Self {
-            factory: Some(factory),
-            plugin: None,
-            initialization_attempted: false,
+            factory: Mutex::new(Some(factory)),
+            plugin: OnceLock::new(),
         }
     }
 }
 
 impl AbiGuest for ConfiguredBinaryPluginGuest {
-    fn request(&mut self, bytes: &[u8]) -> Vec<u8> {
+    fn request(&self, bytes: &[u8]) -> Vec<u8> {
         let decoded =
             match decode_binary_any_request(bytes, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS) {
                 Ok(decoded) => decoded,
                 Err(_) => return Vec::new(),
             };
-        if let Some(plugin) = self.plugin.as_mut() {
+        if let Some(plugin) = self.plugin.get() {
             return plugin.handle::<BinaryGuestCodec>(decoded);
         }
         let request_id = decoded.request_id;
@@ -68,7 +70,11 @@ impl AbiGuest for ConfiguredBinaryPluginGuest {
                 )),
             );
         };
-        if self.initialization_attempted {
+        let mut factory = self
+            .factory
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.plugin.get().is_some() {
             return encode_binary_result::<()>(
                 request_id,
                 Opcode::PluginInitialize,
@@ -78,17 +84,17 @@ impl AbiGuest for ConfiguredBinaryPluginGuest {
                 )),
             );
         }
-        self.initialization_attempted = true;
         let config = request.config.unwrap_or(Value::Null);
-        let result = self
-            .factory
+        // Taking the factory before running it makes a failed handshake terminal: the plugin was
+        // already told why it was rejected, and retrying would re-run construction side effects.
+        let result = factory
             .take()
             .ok_or_else(|| abi_failure("abi.factory_missing", "plugin factory unavailable"))
             .and_then(|factory| factory(config))
             .and_then(PluginGuest::new)
-            .and_then(|mut plugin| {
+            .and_then(|plugin| {
                 let ack = plugin.initialize::<BinaryGuestCodec>(request.hello)?;
-                self.plugin = Some(plugin);
+                let _ = self.plugin.set(plugin);
                 Ok(ack)
             });
         encode_binary_result(request_id, Opcode::PluginInitialize, result)
@@ -108,7 +114,7 @@ impl FailedBinaryAbiGuest {
 }
 
 impl AbiGuest for FailedBinaryAbiGuest {
-    fn request(&mut self, request: &[u8]) -> Vec<u8> {
+    fn request(&self, request: &[u8]) -> Vec<u8> {
         match decode_binary_frame(request, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS) {
             Ok(frame) => encode_binary_result::<()>(
                 frame.header.request_id,

@@ -2,6 +2,14 @@
 //!
 //! Public protocol runners validate input, then derive an Effect Task that shares
 //! the source payload `Arc` and optionally emits a queued diagnostic event.
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::doc_markdown,
+    clippy::missing_errors_doc,
+    clippy::must_use_candidate
+)]
 
 use mutsuki_runtime_contracts::{DomainEvent, RunnerResult, Task};
 use serde_json::json;

@@ -36,6 +36,9 @@ impl AbiHostClient {
         let bytes =
             encode_binary_request(request_id, value, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS)
                 .map_err(wire_failure)?;
+        // SAFETY: `callback` and `context` come from the `AbiHostV2` the host passed to this
+        // plugin at entry, and the host keeps that context alive for the whole connection.
+        // `bytes` stays borrowed for the duration of the call.
         let response = unsafe { callback(self.host.context, bytes.as_ptr(), bytes.len()) };
         let (ok, response_bytes) =
             consume_call_result(response, self.host.release, "abi.v2.host_callback_contract")?;

@@ -130,6 +130,94 @@ fn reload_cancels_clean_running_invocation_and_retries_on_new_generation() {
     );
 }
 
+fn execute_dispatch(dispatch: crate::RunnerDispatch) -> crate::RunnerCompletion {
+    let crate::RunnerDispatch {
+        target,
+        ctx,
+        task_leases,
+        batch,
+    } = dispatch;
+    let crate::RunnerDispatchTarget::Sync(mut runner) = target else {
+        panic!("test expected a synchronous runner dispatch");
+    };
+    let batch_id = batch.batch_id.clone();
+    let expected_entries = batch.entries.clone();
+    let result = runner.run_batch(ctx, batch);
+    crate::RunnerCompletion {
+        runner: Some(runner),
+        task_leases,
+        batch_id,
+        expected_entries,
+        result,
+    }
+}
+
+/// A Host-executed dispatch can outlive the reload that retired its generation. Its completion
+/// has to be reconciled against the registry that lent the instance out, not the registry that
+/// happens to be active when it lands: routing it to the active registry both mis-resolves the
+/// descriptor and parks a retired plugin instance where the next claim can pick it up.
+#[test]
+fn completion_that_outlives_a_reload_settles_its_own_draining_generation() {
+    let effect_v1 = runner_descriptor("effect.chat", "effect.chat.send", RunnerPurity::Effectful);
+    let plan_v1 = load_plan(vec![effect_v1.clone()], Vec::new());
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let runners_v1: Vec<Box<dyn Runner>> = vec![
+        Box::new(CompletingRunner::new(effect_v1, calls.clone())),
+        kernel_runner!(1),
+    ];
+    let mut runtime = CoreRuntime::boot(plan_v1, runners_v1).unwrap();
+    runtime
+        .enqueue_task(Task::new("in-flight", "effect.chat.send", json!({})))
+        .unwrap();
+    let (_, mut dispatches) = runtime
+        .claim_ready_dispatches(
+            |_descriptor, _load, _step, _generation| {
+                Ok(ScheduleDecision::new("test", 1, "claim").clamp_to(1))
+            },
+            None,
+        )
+        .unwrap();
+    let dispatch = dispatches.pop().expect("one in-flight dispatch");
+    assert_eq!(dispatch.task_leases[0].registry_generation, 1);
+
+    let mut effect_v2 =
+        runner_descriptor("effect.chat", "effect.chat.send", RunnerPurity::Effectful);
+    effect_v2.plugin_generation = 2;
+    let mut plan_v2 = load_plan(vec![effect_v2.clone()], Vec::new());
+    plan_v2.registry_generation = 2;
+    let runners_v2: Vec<Box<dyn Runner>> = runners_with_kernel!(2; completed_runner!(effect_v2));
+    runtime.reload_with_runners(plan_v2, runners_v2).unwrap();
+    assert_eq!(runtime.draining_generation_count(), 1);
+
+    runtime
+        .complete_runner_dispatch(execute_dispatch(dispatch))
+        .unwrap();
+    runtime.settle_draining_generations().unwrap();
+
+    // The generation-1 instance went back to the draining registry, which could then dispose it.
+    assert_eq!(runtime.draining_generation_count(), 0);
+    assert!(
+        calls
+            .lock()
+            .expect("calls mutex poisoned")
+            .iter()
+            .any(|call| call == "dispose:effect.chat")
+    );
+
+    // The retired instance must not serve anything after it was returned: only the
+    // generation-1 dispatch may appear in its call log.
+    runtime
+        .enqueue_task(Task::new("after-reload", "effect.chat.send", json!({})))
+        .unwrap();
+    runtime.run_until_idle(4).unwrap();
+    assert_eq!(
+        runtime.tasks().get("after-reload").unwrap().status,
+        TaskStatus::Completed
+    );
+    let recorded = calls.lock().expect("calls mutex poisoned").clone();
+    assert!(!recorded.iter().any(|call| call.ends_with("after-reload")));
+}
+
 #[test]
 fn reload_keeps_polluted_running_invocation_in_draining_generation() {
     let effect_v1 = runner_descriptor("effect.chat", "effect.chat.send", RunnerPurity::Effectful);

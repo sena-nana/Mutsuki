@@ -2,6 +2,26 @@
 //!
 //! Product hosts own package discovery, staging, configuration selection and persistence. This
 //! crate only owns one already validated dynamic library connection and exposes its runners.
+//!
+//! # Unsafe boundary
+//!
+//! This is one of the few crates on the workspace `unsafe_code` exception list. Loading a
+//! dynamic library and calling across the ABI v2 `extern "C"` surface cannot be expressed in
+//! safe Rust. Every `unsafe` block carries its own `SAFETY:` argument, and the library handle
+//! is kept alive by `PluginLifetime` for as long as any worker can still call into it.
+#![allow(unsafe_code)]
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::borrow_as_ptr,
+    clippy::doc_markdown,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value,
+    clippy::useless_conversion
+)]
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -284,10 +304,16 @@ unsafe extern "C" fn host_request(
         return AbiCallResult::failed(b"invalid host callback pointers".to_vec());
     }
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // SAFETY: `context` was checked non-null above and is the pointer this crate handed
+        // to the plugin in `PluginConnection::open`. The boxed `HostCallbackContext` is owned
+        // by `PluginLifetime`, which outlives every plugin call that can reach this callback.
         let context = unsafe { &*context.cast::<HostCallbackContext>() };
         let request = if request_len == 0 {
             &[]
         } else {
+            // SAFETY: the null/length combinations rejected above leave only a non-null
+            // pointer to `request_len` initialised bytes owned by the calling plugin. The
+            // borrow ends before this callback returns.
             unsafe { std::slice::from_raw_parts(request, request_len) }
         };
         context.host.dispatch_binary_request(request)
@@ -303,6 +329,9 @@ unsafe extern "C" fn host_release(buffer: AbiBuffer) {
         return;
     }
     let slice = ptr_slice(buffer);
+    // SAFETY: non-empty buffers reaching this callback were produced by this process through
+    // `AbiBuffer::from_bytes`, which leaks a `Box<[u8]>` of exactly `len` elements. The ABI
+    // contract makes release single-shot, so this is the matching free.
     unsafe {
         drop(Box::from_raw(slice));
     }
@@ -318,12 +347,20 @@ struct PluginLifetime {
     _host_context: Box<HostCallbackContext>,
 }
 
+// SAFETY: the raw pointers inside `AbiPluginV2` are an opaque plugin context plus `extern "C"`
+// function pointers. ABI v2 requires a plugin to accept those calls from any thread and to
+// synchronise its own context, which is what lets the worker pool share one lifetime. The
+// `Library` handle is owned here and is only dropped after `close`, so no worker can observe
+// an unloaded image.
 unsafe impl Send for PluginLifetime {}
 unsafe impl Sync for PluginLifetime {}
 
 impl Drop for PluginLifetime {
     fn drop(&mut self) {
         if let Some(close) = self.api.close {
+            // SAFETY: `PluginLifetime` is held behind an `Arc` by every worker, so reaching
+            // `drop` proves no further request can be in flight. `close` is called exactly
+            // once here, before `_library` unloads the image.
             unsafe {
                 close(self.api.context);
             }
@@ -331,12 +368,23 @@ impl Drop for PluginLifetime {
     }
 }
 
+/// One in-flight ABI request, carrying its own reply channel.
+///
+/// Routing the response through a per-call channel rather than one shared response queue is what
+/// lets several requests be in flight at once: a shared queue cannot tell which waiter a frame
+/// belongs to, so it forces every call to hold a global lock and serialises the whole worker pool
+/// down to one request at a time.
+struct PluginCall {
+    request_id: u64,
+    opcode: mutsuki_runtime_wire::Opcode,
+    frame: Vec<u8>,
+    reply: SyncSender<Vec<u8>>,
+}
+
 struct PluginConnection {
     _lifetime: Arc<PluginLifetime>,
-    work: SyncSender<Vec<u8>>,
-    management: SyncSender<Vec<u8>>,
-    response: Mutex<Receiver<Vec<u8>>>,
-    request_lock: Mutex<()>,
+    work: SyncSender<PluginCall>,
+    management: SyncSender<PluginCall>,
     next_request_id: AtomicU64,
     response_timeout: Duration,
 }
@@ -350,12 +398,15 @@ impl PluginConnection {
     ) -> PluginResult<Self> {
         let host_context = Box::new(HostCallbackContext { host: host_context });
         let host = AbiHostV2 {
-            context: (&*host_context as *const HostCallbackContext)
+            context: std::ptr::from_ref::<HostCallbackContext>(&*host_context)
                 .cast_mut()
                 .cast(),
             request: Some(host_request),
             release: Some(host_release),
         };
+        // SAFETY: loading an arbitrary dynamic library runs its initialisers, so soundness
+        // rests on the caller having validated provenance. Product hosts resolve the path
+        // inside the plugin root and verify the artifact hash before reaching this point.
         let library = unsafe { Library::new(&library_path) }.map_err(|error| {
             plugin_failure(
                 plugin_id,
@@ -363,6 +414,10 @@ impl PluginConnection {
                 format!("load {}: {error}", library_path.display()),
             )
         })?;
+        // SAFETY: resolving a symbol asserts that the exported signature matches `AbiEntryV2`.
+        // That is the ABI v2 contract the artifact declares in its manifest; a mismatch is a
+        // packaging error the loader cannot detect, which is why the entry is validated
+        // immediately after the call and the connection is rejected on any inconsistency.
         let entry: AbiEntryV2 = unsafe {
             match library.get::<AbiEntryV2>(ABI_V2_ENTRY_SYMBOL) {
                 Ok(entry) => *entry,
@@ -389,6 +444,8 @@ impl PluginConnection {
                 }
             }
         };
+        // SAFETY: `entry` was resolved from the ABI v2 entry symbol and `host` is a fully
+        // initialised `AbiHostV2` whose context outlives the connection.
         let api = unsafe { entry(host) };
         if api.transport_version != ABI_V2_TRANSPORT_VERSION
             || api.context.is_null()
@@ -399,6 +456,8 @@ impl PluginConnection {
             if !api.context.is_null()
                 && let Some(close) = api.close
             {
+                // SAFETY: the entry returned a context and a close callback, and no request
+                // has been issued yet, so this is the single teardown for a rejected handshake.
                 unsafe {
                     close(api.context);
                 }
@@ -419,30 +478,20 @@ impl PluginConnection {
         });
         let (work, work_rx) = mpsc::sync_channel(config.work_queue_limit.max(1));
         let (management, management_rx) = mpsc::sync_channel(config.management_queue_limit.max(1));
-        let (response_tx, response_rx) = mpsc::channel();
-        spawn_workers(
-            config.work_workers.max(1),
-            work_rx,
-            response_tx.clone(),
-            lifetime.clone(),
-        );
-        spawn_workers(1, management_rx, response_tx, lifetime.clone());
+        spawn_workers(config.work_workers.max(1), work_rx, lifetime.clone());
+        // Management stays single-threaded: initialize, cancel and dispose are ordered against
+        // each other, and interleaving them would let a dispose overtake the call it terminates.
+        spawn_workers(1, management_rx, lifetime.clone());
         Ok(Self {
             _lifetime: lifetime,
             work,
             management,
-            response: Mutex::new(response_rx),
-            request_lock: Mutex::new(()),
             next_request_id: AtomicU64::new(1),
             response_timeout: config.response_timeout,
         })
     }
 
     fn request<R: WireRequest>(&self, request: &R) -> PluginResult<R::Response> {
-        let _request_guard = self
-            .request_lock
-            .lock()
-            .map_err(|_| plugin_error("abi.v2.request_lock", "plugin request lock poisoned"))?;
         let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed).max(1);
         let frame = encode_binary_request(
             request_id,
@@ -450,20 +499,23 @@ impl PluginConnection {
             mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS,
         )
         .map_err(|error| plugin_failure("plugin", "abi.v2.encode", error.to_string()))?;
-        let is_management = R::OPCODE.is_management();
-        if is_management {
+        let (reply, response_rx) = mpsc::sync_channel(1);
+        let call = PluginCall {
+            request_id,
+            opcode: R::OPCODE,
+            frame,
+            reply,
+        };
+        if R::OPCODE.is_management() {
             self.management
-                .send(frame)
+                .send(call)
                 .map_err(|_| plugin_error("abi.v2.management_queue", "management queue closed"))?;
         } else {
             self.work
-                .send(frame)
+                .send(call)
                 .map_err(|_| plugin_error("abi.v2.work_queue", "work queue closed"))?;
         }
-        let response = self
-            .response
-            .lock()
-            .map_err(|_| plugin_error("abi.v2.response_lock", "response queue poisoned"))?
+        let response = response_rx
             .recv_timeout(self.response_timeout)
             .map_err(|error| plugin_failure("plugin", "abi.v2.response", error.to_string()))?;
         decode_binary_response::<R>(
@@ -475,45 +527,81 @@ impl PluginConnection {
     }
 }
 
-fn spawn_workers(
-    count: usize,
-    receiver: Receiver<Vec<u8>>,
-    response: mpsc::Sender<Vec<u8>>,
-    lifetime: Arc<PluginLifetime>,
-) {
+fn spawn_workers(count: usize, receiver: Receiver<PluginCall>, lifetime: Arc<PluginLifetime>) {
     let receiver = Arc::new(Mutex::new(receiver));
     for index in 0..count {
         let receiver = receiver.clone();
-        let response = response.clone();
         let lifetime = lifetime.clone();
         std::thread::Builder::new()
             .name(format!("mutsuki-plugin-host-worker-{index}"))
             .spawn(move || {
                 loop {
-                    let frame = receiver.lock().ok().and_then(|queue| queue.recv().ok());
-                    let Some(frame) = frame else { break };
-                    let response_frame = invoke_plugin(&lifetime, &frame);
-                    if response.send(response_frame).is_err() {
-                        break;
-                    }
+                    let call = receiver.lock().ok().and_then(|queue| queue.recv().ok());
+                    let Some(call) = call else { break };
+                    let response_frame = invoke_plugin(&lifetime, &call);
+                    // A closed reply channel means the caller already timed out. That is not a
+                    // reason to stop serving the queue.
+                    let _ = call.reply.send(response_frame);
                 }
             })
             .expect("spawn plugin host worker");
     }
 }
 
-fn invoke_plugin(lifetime: &PluginLifetime, frame: &[u8]) -> Vec<u8> {
+fn invoke_plugin(lifetime: &PluginLifetime, call: &PluginCall) -> Vec<u8> {
     let callback = lifetime
         .api
         .request
         .expect("validated plugin request callback");
-    let result = unsafe { callback(lifetime.api.context, frame.as_ptr(), frame.len()) };
-    let Ok((ok, bytes)) =
+    // The guest is expected to trap its own panics before they cross `extern "C"`, but the
+    // result handling on this side can still fail. Catching here keeps one bad call from
+    // killing a shared worker thread and silently shrinking the pool for every later request.
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // SAFETY: the callback and context come from a handshake that validated both, and the
+        // caller holds an `Arc<PluginLifetime>` so the library image is still loaded. The frame
+        // is a live borrow for the duration of the call.
+        let result =
+            unsafe { callback(lifetime.api.context, call.frame.as_ptr(), call.frame.len()) };
         consume_call_result(result, lifetime.api.release, "abi.v2.plugin_callback")
-    else {
-        return Vec::new();
-    };
-    if ok { bytes } else { Vec::new() }
+    }));
+    match outcome {
+        Ok(Ok((true, bytes))) => bytes,
+        Ok(Ok((false, bytes))) => abi_error_frame(
+            call,
+            "abi.v2.plugin_callback",
+            String::from_utf8_lossy(&bytes).into_owned(),
+        ),
+        Ok(Err(error)) => abi_error_frame(call, "abi.v2.plugin_callback", error.to_string()),
+        Err(_) => abi_error_frame(
+            call,
+            "abi.v2.plugin_callback_panicked",
+            "plugin host worker panicked while handling the ABI response".into(),
+        ),
+    }
+}
+
+/// Builds a wire error response the caller can decode.
+///
+/// Returning an empty frame instead would surface as an opaque decode failure that names neither
+/// the request nor the reason, which is the difference between a diagnosable plugin fault and a
+/// mystery timeout.
+fn abi_error_frame(call: &PluginCall, route: &str, detail: String) -> Vec<u8> {
+    let mut error = mutsuki_runtime_contracts::RuntimeError::new(
+        mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
+        "plugin_host.abi_v2",
+        route,
+    );
+    error.evidence.insert(
+        "reason".into(),
+        mutsuki_runtime_contracts::ScalarValue::String(detail),
+    );
+    mutsuki_runtime_wire::encode_binary_response::<()>(
+        call.request_id,
+        call.opcode,
+        Err(&error),
+        mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS,
+    )
+    .unwrap_or_default()
 }
 
 fn plugin_failure(

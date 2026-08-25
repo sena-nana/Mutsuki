@@ -1,3 +1,26 @@
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::assigning_clones,
+    clippy::borrow_as_ptr,
+    clippy::default_trait_access,
+    clippy::doc_markdown,
+    clippy::map_unwrap_or,
+    clippy::match_same_arms,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value,
+    clippy::redundant_closure_for_method_calls,
+    clippy::redundant_else,
+    clippy::return_self_not_must_use,
+    clippy::single_match_else,
+    clippy::too_many_lines,
+    clippy::unnecessary_literal_bound,
+    clippy::useless_conversion
+)]
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::future::Future;
@@ -57,7 +80,7 @@ use mutsuki_service_plugin_loader::{
     PluginRecord,
 };
 use mutsuki_service_runner_supervisor::{
-    ManagedRunnerSpec, RunnerProcessState, RunnerSnapshot, RunnerSupervisor,
+    ManagedRunnerSpec, RestartPolicy, RunnerProcessState, RunnerSnapshot, RunnerSupervisor,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -1564,12 +1587,52 @@ impl ServiceRuntime {
         Ok(())
     }
 
+    /// Stops the service in dependency order: stop producing work, let in-flight work finish,
+    /// then tear down from the outside in, with Core last.
+    ///
+    /// The ordering matters because everything else in the service holds a handle into Core.
+    /// Dropping Core first would abandon in-flight tasks, leave sidecars running against a
+    /// runtime that no longer exists, and let EventSources submit into a closed channel.
     pub async fn shutdown(mut self) {
+        let graceful = Duration::from_millis(self.inner.config.runners.graceful_shutdown_ms);
+
+        // 1. Tell Core to stop accepting new work while the existing work is still allowed to
+        //    finish. This has to happen before the ingress shutdowns so that anything they flush
+        //    on their way out is rejected rather than half-executed.
+        let drain_started = {
+            let runtime = self.inner.host_runtime.lock().expect("host runtime mutex");
+            match runtime.as_ref() {
+                Some(runtime) => match runtime.begin_drain() {
+                    Ok(state) => {
+                        tracing::info!(state = ?state, "core drain started");
+                        true
+                    }
+                    Err(error) => {
+                        tracing::warn!(error = %error, "failed to begin core drain");
+                        false
+                    }
+                },
+                None => false,
+            }
+        };
+
+        // 2. Wait for in-flight tasks, bounded by the same budget used for runner shutdown.
+        if drain_started {
+            self.await_core_drain(graceful).await;
+        }
+
+        // 3. Close ingress. No new control requests or upstream events can arrive after this.
         drop(self.link_control_server.take());
         if let Some(server) = self.ipc_server.take() {
             server.shutdown().await;
         }
-        let graceful = Duration::from_millis(self.inner.config.runners.graceful_shutdown_ms);
+        self.inner.event_sources.shutdown(graceful).await;
+
+        // 4. Stop the Runner processes while Core is still alive, so their in-flight batches can
+        //    still report completions instead of dying against a dropped runtime.
+        self.inner.supervisor.shutdown(graceful).await;
+
+        // 5. Core last.
         let host_runtime = self
             .inner
             .host_runtime
@@ -1581,9 +1644,37 @@ impl ServiceRuntime {
             // async, so release the Host-owned executor outside the caller's async context.
             let _ = tokio::task::spawn_blocking(move || drop(host_runtime)).await;
         }
-        // These are recovery sweeps for resources that failed before an effect could be bound.
-        self.inner.event_sources.shutdown(graceful).await;
-        self.inner.supervisor.shutdown(graceful).await;
+    }
+
+    /// Polls Core until no task is running or ready, or the budget expires.
+    ///
+    /// A timeout is not an error: the remaining work is abandoned deliberately, which is what
+    /// the `graceful_shutdown_ms` budget means. It is logged so an operator can tell a clean
+    /// stop from a truncated one.
+    async fn await_core_drain(&self, budget: Duration) {
+        let deadline = Instant::now() + budget;
+        loop {
+            let outstanding = {
+                let runtime = self.inner.host_runtime.lock().expect("host runtime mutex");
+                match runtime.as_ref().map(HostRuntime::statistics) {
+                    Some(Ok(statistics)) => statistics.tasks.running + statistics.tasks.ready,
+                    // Core is gone or unreachable; there is nothing left to wait for.
+                    Some(Err(_)) | None => 0,
+                }
+            };
+            if outstanding == 0 {
+                return;
+            }
+            if Instant::now() >= deadline {
+                tracing::warn!(
+                    outstanding,
+                    budget_ms = budget.as_millis(),
+                    "core drain budget expired with tasks still outstanding"
+                );
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
     }
 
     /// Shared control-plane handler for in-process consumers (e.g. Web overview extension).
@@ -2217,7 +2308,7 @@ impl ServiceRuntimeInner {
     }
 
     async fn handle_request(&self, request: ControlRequest) -> ControlResponse {
-        if request.token != self.config.control_token() {
+        if !tokens_match(&request.token, self.config.control_token()) {
             return ControlResponse::err(ControlError::Unauthorized);
         }
         let change_domain = match &request.command {
@@ -3657,6 +3748,21 @@ async fn reconcile_supervised_sidecars(
         .collect()
 }
 
+/// Compares a presented token against the control token without leaking the shared prefix length
+/// through timing. The control socket lets an unauthenticated local caller retry indefinitely, so
+/// the byte-by-byte early exit of `==` is an oracle for recovering the token one byte at a time.
+fn tokens_match(presented: &str, expected: &str) -> bool {
+    let presented = presented.as_bytes();
+    let expected = expected.as_bytes();
+    let mut diff = u8::from(presented.len() != expected.len());
+    for index in 0..presented.len().max(expected.len()) {
+        let left = presented.get(index).copied().unwrap_or(0);
+        let right = expected.get(index).copied().unwrap_or(0);
+        diff |= left ^ right;
+    }
+    diff == 0
+}
+
 fn sidecar_specs(config: &ServiceConfig, catalog: &PluginCatalog) -> Vec<ManagedRunnerSpec> {
     catalog
         .external_records()
@@ -3679,7 +3785,7 @@ fn sidecar_specs(config: &ServiceConfig, catalog: &PluginCatalog) -> Vec<Managed
                 runtime: runtime.clone(),
                 env_allowlist: config.runners.env_allowlist.clone(),
                 service_home: config.service.home_dir.clone(),
-                session_token: config.control_token().to_string(),
+                restart: RestartPolicy::from_config(&config.runners),
             })
         })
         .collect()
@@ -3950,6 +4056,16 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+
+    #[test]
+    fn token_comparison_rejects_prefixes_and_length_variants() {
+        assert!(tokens_match("local-abc", "local-abc"));
+        assert!(!tokens_match("local-ab", "local-abc"));
+        assert!(!tokens_match("local-abcd", "local-abc"));
+        assert!(!tokens_match("", "local-abc"));
+        assert!(!tokens_match("local-abc", ""));
+        assert!(tokens_match("", ""));
+    }
 
     #[tokio::test]
     async fn control_change_hub_publishes_typed_invalidations() {
@@ -4483,6 +4599,94 @@ generation = 7
 
         runtime.shutdown().await;
         assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    }
+
+    type ShutdownTrace = Arc<Mutex<Vec<&'static str>>>;
+
+    struct TracingLoadPlanHook(ShutdownTrace);
+
+    impl LoadPlanLifecycleHook for TracingLoadPlanHook {
+        fn validate(&self, _plan: &RuntimeLoadPlan) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn activate(&self, _plan: &RuntimeLoadPlan) {}
+
+        fn deactivate(&self) -> Result<(), String> {
+            self.0.lock().expect("trace mutex").push("core.deactivate");
+            Ok(())
+        }
+    }
+
+    struct TracingEventSource {
+        descriptor: HostEventSourceDescriptor,
+        trace: ShutdownTrace,
+    }
+
+    impl HostEventSource for TracingEventSource {
+        fn descriptor(&self) -> &HostEventSourceDescriptor {
+            &self.descriptor
+        }
+
+        fn start(&mut self, ctx: HostEventSourceContext) -> HostEventSourceFuture {
+            Box::pin(async move {
+                let mut shutdown = ctx.shutdown;
+                shutdown.cancelled().await;
+                Ok(())
+            })
+        }
+
+        fn shutdown(&mut self) -> HostEventSourceFuture {
+            self.trace
+                .lock()
+                .expect("trace mutex")
+                .push("event_source.shutdown");
+            Box::pin(async { Ok(()) })
+        }
+
+        fn health(&self) -> HostEventSourceHealth {
+            HostEventSourceHealth::Healthy
+        }
+    }
+
+    /// Core must outlive everything that holds a handle into it. An EventSource that is still
+    /// running when Core goes away submits into a dead runtime, and in-flight work is abandoned
+    /// rather than drained.
+    #[tokio::test]
+    async fn shutdown_stops_ingress_before_core_is_released() {
+        let root = tempdir().expect("temp dir");
+        let mut config = ServiceConfig::default();
+        config.ipc.enabled = false;
+        config.observe.console = false;
+        config.service.home_dir = root.path().to_path_buf();
+        config.service.data_dir = root.path().join("data");
+        config.service.log_dir = root.path().join("logs");
+        config.service.run_dir = root.path().join("run");
+        config.plugins.dynamic_dirs.clear();
+        config.plugins.disabled_dir = root.path().join("disabled");
+        config.runners.graceful_shutdown_ms = 250;
+
+        let trace: ShutdownTrace = Arc::new(Mutex::new(Vec::new()));
+        let runtime = ServiceRuntimeBuilder::new(config)
+            .register_builtin_plugin(minimal_manifest("test.shutdown-order"))
+            .register_load_plan_hook(
+                "test.shutdown-order",
+                Arc::new(TracingLoadPlanHook(trace.clone())),
+            )
+            .register_event_source(Box::new(TracingEventSource {
+                descriptor: HostEventSourceDescriptor::new("trace-source", "test.source"),
+                trace: trace.clone(),
+            }))
+            .start()
+            .await
+            .expect("runtime starts");
+
+        runtime.shutdown().await;
+
+        assert_eq!(
+            trace.lock().expect("trace mutex").as_slice(),
+            &["event_source.shutdown", "core.deactivate"]
+        );
     }
 
     #[tokio::test]

@@ -7,14 +7,54 @@ edition = "2024"
 [package.metadata]
 cargo-fuzz = true
 
+# Its own workspace root: cargo-fuzz builds this crate standalone with instrumentation flags that
+# must not reach the main build. The lint table below mirrors the root workspace, because an
+# excluded package cannot inherit `workspace.lints` from it.
+[workspace]
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"
+
 [dependencies]
 libfuzzer-sys = "0.4"
+mutsuki-agent-contracts = { path = "../kits/agent/crates/mutsuki-agent-contracts" }
+mutsuki-bot-flow = { path = "../plugins/bot/crates/mutsuki-bot-flow" }
+mutsuki-bot-protocol = { path = "../plugins/bot/crates/mutsuki-bot-protocol" }
+mutsuki-plugin-bot-command = { path = "../plugins/bot/crates/mutsuki-plugin-bot-command" }
 mutsuki-runtime-wire = { path = "../crates/mutsuki-runtime-wire" }
 serde_json = "1.0"
+
+[lints]
+workspace = true
 
 [[bin]]
 name = "runtime_wire_binary"
 path = "fuzz_targets/runtime_wire_binary.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "bot_command_parse"
+path = "fuzz_targets/bot_command_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "bot_flow_document"
+path = "fuzz_targets/bot_flow_document.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "agent_wire_envelope"
+path = "fuzz_targets/agent_wire_envelope.rs"
 test = false
 doc = false
 bench = false

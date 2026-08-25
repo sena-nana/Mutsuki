@@ -10,6 +10,20 @@
 //! - config / metrics
 //!
 //! Frontend assets generate forms from ConfigDescriptor (Koishi-like shell + LiliaUI tokens).
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::doc_markdown,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value,
+    clippy::redundant_closure_for_method_calls,
+    clippy::ref_option,
+    clippy::return_self_not_must_use,
+    clippy::too_many_lines
+)]
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};

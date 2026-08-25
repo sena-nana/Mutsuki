@@ -1,3 +1,12 @@
+//! ABI v2 conformance tests.
+//!
+//! These drive the raw `extern "C"` surface on purpose, so every call here is an `unsafe` one.
+//! Unless a test says otherwise, each `api` value comes from a local `plugin_api_from_guest`,
+//! which means context, request, release and close all belong to the same live guest, and each
+//! buffer is released exactly once before the guest is closed.
+//!
+//! SAFETY: that shared argument covers every block below; deviations are documented inline.
+
 use super::*;
 use crate::{PluginBuilder, RunnerDescriptorBuilder};
 use mutsuki_runtime_contracts::{
@@ -5,11 +14,13 @@ use mutsuki_runtime_contracts::{
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_wire::{
-    BINARY_CODEC_ID, DisposeRunnerRequest, InitializeRequest, ProtocolHello,
+    BINARY_CODEC_ID, CancelRunnerRequest, DisposeRunnerRequest, InitializeRequest, ProtocolHello,
     decode_binary_response, encode_binary_request,
 };
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 
 static TRACKED_RELEASES: AtomicUsize = AtomicUsize::new(0);
 
@@ -37,7 +48,7 @@ impl Runner for NoopRunner {
 #[test]
 fn configured_binary_guest_initializes_with_abi_v2_codec() {
     let plugin = PluginBuilder::new("test.abi.v2").build();
-    let mut guest = ConfiguredBinaryPluginGuest::new(Box::new(move |config| {
+    let guest = ConfiguredBinaryPluginGuest::new(Box::new(move |config| {
         assert_eq!(config, json!({"mode": "binary"}));
         Ok(plugin)
     }));
@@ -134,7 +145,7 @@ fn abi_result_contract_rejects_bad_status_and_pointer_pairs() {
 #[test]
 fn configured_guest_initializes_from_typed_request_and_returns_surface() {
     let plugin = PluginBuilder::new("test.abi").build();
-    let mut guest = ConfiguredBinaryPluginGuest::new(Box::new(move |config| {
+    let guest = ConfiguredBinaryPluginGuest::new(Box::new(move |config| {
         assert_eq!(config, json!({"mode": "test"}));
         Ok(plugin)
     }));
@@ -165,7 +176,7 @@ fn configured_guest_initializes_from_typed_request_and_returns_surface() {
 
 #[test]
 fn configured_guest_rejects_business_request_before_init_and_duplicate_init() {
-    let mut guest =
+    let guest =
         ConfiguredBinaryPluginGuest::new(Box::new(|_| Ok(PluginBuilder::new("test.abi").build())));
     let dispose = DisposeRunnerRequest {
         runner_id: "missing".into(),
@@ -203,6 +214,136 @@ fn configured_guest_rejects_business_request_before_init_and_duplicate_init() {
     )
     .unwrap_err();
     assert_eq!(error.route, "abi.already_initialized");
+}
+
+/// Two runners must be able to occupy the guest at the same time.
+///
+/// Each runner blocks until the other one has arrived, so a guest that serialises every request
+/// behind one lock cannot satisfy both: the first call would hold the lock while waiting for a
+/// second call that can never be dispatched, and the rendezvous would time out.
+#[test]
+fn two_runners_are_dispatched_concurrently() {
+    let rendezvous = Arc::new(Rendezvous::default());
+    let plugin = PluginBuilder::new("test.abi.concurrent")
+        .runner(Box::new(RendezvousRunner::new(
+            "test.abi.concurrent.first",
+            rendezvous.clone(),
+        )))
+        .runner(Box::new(RendezvousRunner::new(
+            "test.abi.concurrent.second",
+            rendezvous.clone(),
+        )))
+        .build();
+    let guest = Arc::new(ConfiguredBinaryPluginGuest::new(Box::new(move |_| {
+        Ok(plugin)
+    })));
+    let initialize = InitializeRequest {
+        hello: ProtocolHello::binary(),
+        config: None,
+    };
+    let encoded =
+        encode_binary_request(1, &initialize, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS).unwrap();
+    decode_binary_response::<InitializeRequest>(
+        &guest.request(&encoded),
+        1,
+        mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS,
+    )
+    .unwrap();
+
+    let handles: Vec<_> = ["test.abi.concurrent.first", "test.abi.concurrent.second"]
+        .into_iter()
+        .enumerate()
+        .map(|(index, runner_id)| {
+            let guest = guest.clone();
+            let request_id = index as u64 + 2;
+            std::thread::spawn(move || {
+                let cancel = CancelRunnerRequest {
+                    runner_id: runner_id.into(),
+                    invocation_id: "rendezvous".into(),
+                };
+                let encoded = encode_binary_request(
+                    request_id,
+                    &cancel,
+                    mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS,
+                )
+                .unwrap();
+                decode_binary_response::<CancelRunnerRequest>(
+                    &guest.request(&encoded),
+                    request_id,
+                    mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS,
+                )
+            })
+        })
+        .collect();
+
+    for handle in handles {
+        handle.join().unwrap().expect("both runners must be served");
+    }
+}
+
+#[derive(Default)]
+struct Rendezvous {
+    arrived: Mutex<usize>,
+    ready: Condvar,
+}
+
+impl Rendezvous {
+    fn meet(&self) -> RuntimeResult<()> {
+        let mut arrived = self.arrived.lock().unwrap();
+        *arrived += 1;
+        self.ready.notify_all();
+        while *arrived < 2 {
+            let (guard, timeout) = self
+                .ready
+                .wait_timeout(arrived, Duration::from_secs(5))
+                .unwrap();
+            arrived = guard;
+            if timeout.timed_out() {
+                return Err(RuntimeFailure::new(
+                    mutsuki_runtime_contracts::RuntimeError::new(
+                        mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
+                        "abi.test",
+                        "abi.test.rendezvous_timed_out",
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+struct RendezvousRunner {
+    descriptor: RunnerDescriptor,
+    rendezvous: Arc<Rendezvous>,
+}
+
+impl RendezvousRunner {
+    fn new(runner_id: &str, rendezvous: Arc<Rendezvous>) -> Self {
+        Self {
+            descriptor: RunnerDescriptorBuilder::new(runner_id, "test.abi.concurrent")
+                .accepted_protocol("test.abi.concurrent.run")
+                .build(),
+            rendezvous,
+        }
+    }
+}
+
+impl Runner for RendezvousRunner {
+    fn descriptor(&self) -> &RunnerDescriptor {
+        &self.descriptor
+    }
+
+    fn run_batch(
+        &mut self,
+        _ctx: RunnerContext,
+        batch: WorkBatch,
+    ) -> RuntimeResult<CompletionBatch> {
+        Ok(CompletionBatch::from_results(&batch, Vec::new()))
+    }
+
+    fn cancel(&mut self, _invocation_id: &str) -> RuntimeResult<()> {
+        self.rendezvous.meet()
+    }
 }
 
 #[test]

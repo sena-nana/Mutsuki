@@ -1,3 +1,14 @@
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::format_push_string,
+    clippy::map_unwrap_or,
+    clippy::missing_errors_doc,
+    clippy::must_use_candidate,
+    clippy::wildcard_imports
+)]
+
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -405,7 +416,7 @@ mod platform {
             )
         })?;
         let token_path = config.service.run_dir.join("control.token");
-        std::fs::write(&token_path, config.control_token())
+        mutsuki_service_config::write_control_token(&token_path, config.control_token())
             .with_context(|| format!("failed to write control token {}", token_path.display()))?;
         Ok(())
     }
@@ -578,10 +589,8 @@ mod platform {
             )
         })?;
         let token_path = config.service.run_dir.join("control.token");
-        fs::write(&token_path, config.control_token())
+        mutsuki_service_config::write_control_token(&token_path, config.control_token())
             .with_context(|| format!("failed to write control token {}", token_path.display()))?;
-        fs::set_permissions(&token_path, fs::Permissions::from_mode(0o600))
-            .with_context(|| format!("failed to secure control token {}", token_path.display()))?;
         if let Some(service_user) = service_user {
             let mut command = Command::new("chown");
             command.arg(service_user).arg(&token_path);

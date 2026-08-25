@@ -390,17 +390,25 @@ const ABI_ENTRY_CONTRACT: AbiSymbolContract = AbiSymbolContract {
 };
 const RETIRED_ABI_V1_ENTRY_SYMBOL: &str = "mutsuki_plugin_abi_v1";
 
+// This upgrade probe is on the workspace `unsafe_code` exception list: deciding whether a
+// downloaded artifact is a usable ABI v2 plugin requires opening it and looking for the entry
+// symbol, which has no safe equivalent. The probe never calls the symbols it resolves.
+#[allow(unsafe_code)]
 fn verify_abi_entry_symbol(path: &Path) -> Result<AbiSymbolContract, String> {
-    // Safety: only resolving presence of known ABI entry symbols; never calling them.
+    // SAFETY: opening a dynamic library runs its initialisers, so this is only performed on
+    // artifacts the catalog has already resolved inside the managed plugin root.
     let library = unsafe { libloading::Library::new(path) }
         .map_err(|error| format!("not a loadable ABI dynamic library ({error})"))?;
     let mut symbol = ABI_ENTRY_CONTRACT.entry_symbol.as_bytes().to_vec();
     symbol.push(0);
+    // SAFETY: the symbol is resolved as an opaque `*const ()` and is only tested for presence,
+    // so no signature is asserted and nothing is ever called through it.
     if unsafe { library.get::<libloading::Symbol<*const ()>>(symbol.as_slice()) }.is_ok() {
         return Ok(ABI_ENTRY_CONTRACT);
     }
     let mut retired = RETIRED_ABI_V1_ENTRY_SYMBOL.as_bytes().to_vec();
     retired.push(0);
+    // SAFETY: same as above, an opaque presence check used to report the retired ABI clearly.
     if unsafe { library.get::<libloading::Symbol<*const ()>>(retired.as_slice()) }.is_ok() {
         return Err("unsupported ABI version 1; rebuild the plugin for ABI v2".into());
     }

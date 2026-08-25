@@ -1,5 +1,14 @@
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate
+)]
+
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -27,10 +36,14 @@ pub enum LinkParseError {
     InvalidJson(String),
 }
 
+/// Compiled once: `expand_card_payload` calls `extract_urls` per candidate string, so rebuilding
+/// the automaton here would dominate the cost of parsing a single card.
+static URL_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"https?://[^\s<>\"'\]\[()]+"#).expect("static URL regex"));
+
 pub fn extract_urls(text: &str) -> Vec<Url> {
-    let regex = Regex::new(r#"https?://[^\s<>\"'\]\[()]+"#).expect("static URL regex");
     let mut seen = BTreeSet::new();
-    regex
+    URL_PATTERN
         .find_iter(text)
         .filter_map(|found| Url::parse(found.as_str().trim_end_matches(['.', ',', ';'])).ok())
         .filter(|url| seen.insert(url.as_str().to_owned()))

@@ -30,3 +30,6 @@ futures-util.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true
 tempfile = "3"
+
+[lints]
+workspace = true

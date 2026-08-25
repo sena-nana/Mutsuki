@@ -2,6 +2,10 @@
 //!
 //! This crate owns plugin identities and manifest construction only. ServiceHost
 //! assembly belongs to `mutsuki-std-service-host-integration`.
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(clippy::doc_markdown)]
 
 use mutsuki_plugin_image_render::ImageRenderConfig;
 use mutsuki_plugin_io_browser_chromium::ChromiumConfig;
