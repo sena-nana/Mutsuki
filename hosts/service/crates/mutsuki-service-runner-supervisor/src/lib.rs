@@ -1,9 +1,20 @@
-use std::collections::BTreeMap;
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::missing_errors_doc,
+    clippy::must_use_candidate,
+    clippy::needless_continue,
+    clippy::similar_names
+)]
+
+use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::time::Instant;
 
-use mutsuki_service_config::filtered_environment;
+use mutsuki_service_config::{filtered_environment, generate_runner_session_token};
 use mutsuki_service_plugin_loader::ExternalRuntimeSpec;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -38,7 +49,26 @@ pub struct ManagedRunnerSpec {
     pub runtime: ExternalRuntimeSpec,
     pub env_allowlist: Vec<String>,
     pub service_home: PathBuf,
-    pub session_token: String,
+    pub restart: RestartPolicy,
+}
+
+/// Governs how the supervisor reacts to a Runner process that exits on its own.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RestartPolicy {
+    pub enabled: bool,
+    /// Restarts allowed inside any trailing 60s window. Zero disables restarts entirely, which
+    /// keeps `enabled = true, max_per_minute = 0` from meaning "restart without limit".
+    pub max_per_minute: u32,
+}
+
+impl RestartPolicy {
+    #[must_use]
+    pub fn from_config(section: &mutsuki_service_config::RunnersSection) -> Self {
+        Self {
+            enabled: section.restart,
+            max_per_minute: section.max_restart_per_minute,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -312,7 +342,10 @@ async fn run_runner_actor(
     changed: Arc<dyn Fn() + Send + Sync>,
 ) {
     let mut child = Some(initial_child);
+    let mut restarts = RestartBudget::new(spec.restart);
+    let mut spawned_at = Instant::now();
     loop {
+        let mut pending_command = None;
         if let Some(active) = child.as_mut() {
             tokio::select! {
                 status = active.wait() => {
@@ -331,18 +364,170 @@ async fn run_runner_actor(
                     child = None;
                     drop(state);
                     changed();
+                    // The process left on its own. An operator-requested stop takes the command
+                    // path instead, and must not be undone by the restart policy.
+                    if spawned_at.elapsed() >= RestartBudget::MAX_BACKOFF {
+                        restarts.reset_backoff();
+                    }
+                    match supervise_unexpected_exit(
+                        &spec,
+                        &snapshot,
+                        &mut child,
+                        &changed,
+                        &mut restarts,
+                        &mut commands,
+                    )
+                    .await
+                    {
+                        ExitOutcome::Restarted => spawned_at = Instant::now(),
+                        ExitOutcome::StayDown => {}
+                        ExitOutcome::Interrupted(command) => pending_command = Some(command),
+                    }
                 }
                 command = commands.recv() => {
-                    if handle_runner_command(command, &spec, &snapshot, &mut child, &changed).await {
-                        break;
-                    }
+                    pending_command = Some(command);
                 }
             }
         } else {
-            let command = commands.recv().await;
+            pending_command = Some(commands.recv().await);
+        }
+
+        if let Some(command) = pending_command {
             if handle_runner_command(command, &spec, &snapshot, &mut child, &changed).await {
                 break;
             }
+            restarts.reset_backoff();
+            spawned_at = Instant::now();
+        }
+    }
+}
+
+enum ExitOutcome {
+    Restarted,
+    StayDown,
+    /// An operator command arrived during the restart backoff. The caller owns it, because
+    /// dropping it here would strand the requester's reply channel.
+    Interrupted(Option<RunnerCommand>),
+}
+
+/// Restart accounting for one Runner.
+///
+/// The budget is a sliding 60s window rather than a total, so a Runner that crashes rarely keeps
+/// recovering forever while one that crash-loops is parked in `Failed` for an operator to look
+/// at. Backoff is separate from the budget: it stops a fast crash loop from burning the whole
+/// window inside a few milliseconds.
+struct RestartBudget {
+    policy: RestartPolicy,
+    recent: VecDeque<Instant>,
+    consecutive: u32,
+}
+
+impl RestartBudget {
+    const WINDOW: Duration = Duration::from_secs(60);
+    const BASE_BACKOFF: Duration = Duration::from_millis(100);
+    const MAX_BACKOFF: Duration = Duration::from_secs(10);
+
+    fn new(policy: RestartPolicy) -> Self {
+        Self {
+            policy,
+            recent: VecDeque::new(),
+            consecutive: 0,
+        }
+    }
+
+    /// Returns the delay to wait before respawning, or `None` when the policy or the budget says
+    /// this Runner should stay down.
+    fn next_delay(&mut self) -> Option<Duration> {
+        if !self.policy.enabled || self.policy.max_per_minute == 0 {
+            return None;
+        }
+        let now = Instant::now();
+        while self
+            .recent
+            .front()
+            .is_some_and(|at| now.duration_since(*at) >= Self::WINDOW)
+        {
+            self.recent.pop_front();
+        }
+        if self.recent.len() >= self.policy.max_per_minute as usize {
+            return None;
+        }
+        self.recent.push_back(now);
+        let delay = Self::BASE_BACKOFF
+            .saturating_mul(1u32 << self.consecutive.min(7))
+            .min(Self::MAX_BACKOFF);
+        self.consecutive = self.consecutive.saturating_add(1);
+        Some(delay)
+    }
+
+    /// Drops the backoff streak. Both callers mean the same thing: the next failure is a new
+    /// incident, not the continuation of a crash loop — either because an operator replaced the
+    /// process, or because it stayed up past the backoff ceiling before dying.
+    fn reset_backoff(&mut self) {
+        self.consecutive = 0;
+    }
+}
+
+/// Waits out the backoff and respawns, unless the policy or budget forbids it, or an operator
+/// command arrives first.
+async fn supervise_unexpected_exit(
+    spec: &ManagedRunnerSpec,
+    snapshot: &Arc<Mutex<RunnerSnapshot>>,
+    child: &mut Option<Child>,
+    changed: &Arc<dyn Fn() + Send + Sync>,
+    restarts: &mut RestartBudget,
+    commands: &mut mpsc::Receiver<RunnerCommand>,
+) -> ExitOutcome {
+    let Some(delay) = restarts.next_delay() else {
+        if restarts.policy.enabled {
+            tracing::warn!(
+                runner_id = %spec.runner_id,
+                max_per_minute = restarts.policy.max_per_minute,
+                "runner exceeded its restart budget and will stay down"
+            );
+            let mut state = snapshot.lock().await;
+            state.state = RunnerProcessState::Failed;
+            state.last_error = Some(format!(
+                "restart budget exhausted: more than {} restarts in 60s",
+                restarts.policy.max_per_minute
+            ));
+            drop(state);
+            changed();
+        }
+        return ExitOutcome::StayDown;
+    };
+
+    tracing::info!(
+        runner_id = %spec.runner_id,
+        delay_ms = delay.as_millis(),
+        "restarting runner after unexpected exit"
+    );
+    // A stop or shutdown that arrives during the backoff wins: the caller asked for this Runner
+    // to be down, so respawning it would fight the operator.
+    if let Ok(command) = tokio::time::timeout(delay, commands.recv()).await {
+        return ExitOutcome::Interrupted(command);
+    }
+
+    match spawn_child(spec) {
+        Ok(next) => {
+            let mut state = snapshot.lock().await;
+            state.state = RunnerProcessState::Running;
+            state.pid = next.id();
+            state.restarts = state.restarts.saturating_add(1);
+            state.last_error = None;
+            *child = Some(next);
+            drop(state);
+            changed();
+            ExitOutcome::Restarted
+        }
+        Err(error) => {
+            let mut state = snapshot.lock().await;
+            state.state = RunnerProcessState::Failed;
+            state.pid = None;
+            state.last_error = Some(error.to_string());
+            drop(state);
+            changed();
+            ExitOutcome::StayDown
         }
     }
 }
@@ -415,9 +600,12 @@ fn spawn_child(spec: &ManagedRunnerSpec) -> RunnerSupervisorResult<Child> {
         "MUTSUKI_HOME".into(),
         spec.service_home.to_string_lossy().into_owned(),
     );
+    // Minted per spawn rather than carried in the spec: the token identifies one process
+    // incarnation, so a restart invalidates the previous one, and it never derives from the
+    // control token, which would make every sidecar a control-plane superuser.
     extra_env.insert(
         "MUTSUKI_RUNNER_SESSION_TOKEN".into(),
-        spec.session_token.clone(),
+        generate_runner_session_token(),
     );
     extra_env.insert("MUTSUKI_RUNNER_ID".into(), spec.runner_id.clone());
     extra_env.insert("MUTSUKI_PLUGIN_ID".into(), spec.plugin_id.clone());
@@ -553,6 +741,190 @@ mod tests {
             .unwrap();
     }
 
+    /// `restart = true` has to actually restart. Without this the setting is inert configuration
+    /// and a crashed sidecar stays down until an operator notices.
+    #[tokio::test]
+    async fn crashed_runner_is_restarted_under_the_configured_budget() {
+        let supervisor = RunnerSupervisor::new();
+        let mut spec = exit_spec("crash-loop");
+        spec.restart = RestartPolicy {
+            enabled: true,
+            max_per_minute: 2,
+        };
+        supervisor.start(spec).await.expect("start");
+
+        let snapshot = wait_for_snapshot("crash-loop", &supervisor, |snapshot| {
+            matches!(snapshot.state, RunnerProcessState::Failed)
+        })
+        .await;
+
+        // Two restarts, then the budget is spent and the runner is parked for an operator.
+        assert_eq!(snapshot.restarts, 2);
+        assert!(
+            snapshot
+                .last_error
+                .as_deref()
+                .is_some_and(|error| error.contains("restart budget exhausted"))
+        );
+
+        supervisor
+            .remove("crash-loop", Duration::from_millis(200))
+            .await
+            .expect("remove");
+    }
+
+    /// An operator stop must stick. Restarting a Runner the operator just stopped would make the
+    /// stop command silently ineffective.
+    #[tokio::test]
+    async fn restart_policy_does_not_resurrect_an_operator_stopped_runner() {
+        let supervisor = RunnerSupervisor::new();
+        let mut spec = sleeping_spec("stoppable");
+        spec.restart = RestartPolicy {
+            enabled: true,
+            max_per_minute: 5,
+        };
+        supervisor.start(spec).await.expect("start");
+        supervisor.stop("stoppable").await.expect("stop");
+
+        tokio::time::sleep(Duration::from_millis(400)).await;
+
+        let snapshot = supervisor.list().await;
+        assert!(matches!(snapshot[0].state, RunnerProcessState::Stopped));
+        assert_eq!(snapshot[0].restarts, 0);
+
+        supervisor
+            .remove("stoppable", Duration::from_millis(200))
+            .await
+            .expect("remove");
+    }
+
+    /// The default policy leaves a crashed Runner down, so an embedder that never opts in does
+    /// not silently inherit a restart loop.
+    #[tokio::test]
+    async fn disabled_restart_policy_leaves_a_crashed_runner_down() {
+        let supervisor = RunnerSupervisor::new();
+        supervisor
+            .start(exit_spec("no-restart"))
+            .await
+            .expect("start");
+
+        let snapshot = wait_for_snapshot("no-restart", &supervisor, |snapshot| {
+            matches!(snapshot.state, RunnerProcessState::Exited(_))
+        })
+        .await;
+        assert_eq!(snapshot.restarts, 0);
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(supervisor.list().await[0].restarts, 0);
+
+        supervisor
+            .remove("no-restart", Duration::from_millis(200))
+            .await
+            .expect("remove");
+    }
+
+    async fn wait_for_snapshot(
+        runner_id: &str,
+        supervisor: &RunnerSupervisor,
+        predicate: impl Fn(&RunnerSnapshot) -> bool,
+    ) -> RunnerSnapshot {
+        for _ in 0..400 {
+            if let Some(snapshot) = supervisor
+                .list()
+                .await
+                .into_iter()
+                .find(|snapshot| snapshot.runner_id == runner_id)
+                && predicate(&snapshot)
+            {
+                return snapshot;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        panic!("runner {runner_id} never reached the expected state");
+    }
+
+    /// The session token is a per-incarnation credential, not a service-wide one: a restart must
+    /// invalidate the value the previous process held.
+    #[tokio::test]
+    async fn each_spawn_hands_the_child_a_freshly_minted_session_token() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let log = dir.path().join("tokens.txt");
+        let supervisor = RunnerSupervisor::new();
+        supervisor
+            .start(token_echo_spec("token-echo", &log))
+            .await
+            .expect("start");
+        wait_for_lines(&log, 1).await;
+        supervisor.restart("token-echo").await.expect("restart");
+        let tokens = wait_for_lines(&log, 2).await;
+        supervisor
+            .remove("token-echo", Duration::from_millis(500))
+            .await
+            .expect("remove");
+
+        assert_eq!(tokens.len(), 2);
+        assert_ne!(tokens[0], tokens[1]);
+        assert!(tokens.iter().all(|token| token.starts_with("runner-")));
+    }
+
+    async fn wait_for_lines(path: &std::path::Path, expected: usize) -> Vec<String> {
+        for _ in 0..200 {
+            if let Ok(contents) = std::fs::read_to_string(path) {
+                let lines = contents
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .map(ToOwned::to_owned)
+                    .collect::<Vec<_>>();
+                if lines.len() >= expected {
+                    return lines;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        panic!(
+            "child never wrote {expected} session token line(s) to {}",
+            path.display()
+        );
+    }
+
+    fn token_echo_spec(runner_id: &str, log: &std::path::Path) -> ManagedRunnerSpec {
+        let log = log.display().to_string();
+        #[cfg(windows)]
+        let (command, args) = (
+            "powershell".into(),
+            vec![
+                "-NoProfile".into(),
+                "-Command".into(),
+                format!(
+                    "Add-Content -Path '{log}' -Value $env:MUTSUKI_RUNNER_SESSION_TOKEN; Start-Sleep -Seconds 30"
+                ),
+            ],
+        );
+        #[cfg(unix)]
+        let (command, args) = (
+            "/bin/sh".into(),
+            vec![
+                "-c".into(),
+                format!("echo \"$MUTSUKI_RUNNER_SESSION_TOKEN\" >> '{log}'; sleep 30"),
+            ],
+        );
+        ManagedRunnerSpec {
+            runner_id: runner_id.into(),
+            plugin_id: "plugin-a".into(),
+            runtime: mutsuki_service_plugin_loader::ExternalRuntimeSpec {
+                command,
+                args,
+                env: BTreeMap::new(),
+                cwd: Option::<PathBuf>::None,
+                runner_link: "sidecar".into(),
+            },
+            env_allowlist: Vec::new(),
+            service_home: PathBuf::from("."),
+            restart: RestartPolicy::default(),
+        }
+    }
+
     fn sleeping_spec(runner_id: &str) -> ManagedRunnerSpec {
         #[cfg(windows)]
         let (command, args) = (
@@ -577,7 +949,7 @@ mod tests {
             },
             env_allowlist: Vec::new(),
             service_home: PathBuf::from("."),
-            session_token: "token".into(),
+            restart: RestartPolicy::default(),
         }
     }
 
@@ -601,7 +973,7 @@ mod tests {
             },
             env_allowlist: Vec::new(),
             service_home: PathBuf::from("."),
-            session_token: "token".into(),
+            restart: RestartPolicy::default(),
         }
     }
 }

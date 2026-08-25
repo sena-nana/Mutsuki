@@ -32,3 +32,6 @@ mutsuki-agent-contracts.workspace = true
 mutsuki-agent-sdk.workspace = true
 mutsuki-plugin-agent-model-gateway.workspace = true
 mutsuki-tauri-abi-fixture = { path = "../../fixtures/abi-plugin" }
+
+[lints]
+workspace = true

@@ -353,6 +353,65 @@ fn core_resource_facade_wraps_descriptor_and_lease_operations() {
     assert_eq!(runtime.reclaim_expired_resource_leases(), vec![expiring]);
 }
 
+/// A borrower that dies without releasing must not pin a resource cell forever. Task-lease
+/// expiry already frees the task for a retry, so the resource sweep has to run on the same tick
+/// boundary or the retry blocks on the lease its own dead attempt is still holding.
+#[test]
+fn tick_reclaims_expired_resource_leases_alongside_task_leases() {
+    let plan = super::fixtures::load_plan(Vec::new(), Vec::new());
+    let mut runtime = super::fixtures::boot_with_kernel(plan);
+    let cell = runtime
+        .create_resource_cell(
+            "cell:exclusive",
+            "http.connection_pool",
+            "plugin-http",
+            "http.connection_pool.v1",
+            "drain",
+        )
+        .unwrap();
+    let abandoned = runtime
+        .acquire_resource_lease(
+            &cell.cell_id,
+            "task-abandoned",
+            "executor-gone",
+            "exclusive",
+            Some(runtime.current_step() + 1),
+        )
+        .unwrap();
+
+    // A second exclusive borrower is refused while the abandoned lease is still active.
+    assert!(
+        runtime
+            .acquire_resource_lease(
+                &cell.cell_id,
+                "task-next",
+                "executor-next",
+                "exclusive",
+                None,
+            )
+            .is_err()
+    );
+
+    runtime.tick_once().unwrap();
+    runtime.tick_once().unwrap();
+
+    assert!(runtime.reclaim_expired_resource_leases().is_empty());
+    assert!(runtime.events().iter().any(|event| {
+        event.name == "resource.lease.expired"
+            && event.attributes.get("lease_id")
+                == Some(&ScalarValue::String(abandoned.lease_id.to_string()))
+    }));
+    runtime
+        .acquire_resource_lease(
+            &cell.cell_id,
+            "task-next",
+            "executor-next",
+            "exclusive",
+            None,
+        )
+        .expect("cell is free once the abandoned lease is reclaimed");
+}
+
 #[test]
 fn resource_hub_routes_typed_resource_descriptors_and_builds_lazy_plans() {
     let mut resources = ResourceManager::new();

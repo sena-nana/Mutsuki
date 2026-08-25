@@ -12,3 +12,6 @@ mutsuki-runtime-contracts = { path = "../../../mutsuki-runtime-contracts" }
 mutsuki-runtime-core = { path = "../../../mutsuki-runtime-core" }
 mutsuki-runtime-sdk = { path = "../../../mutsuki-runtime-sdk" }
 serde_json = "1.0"
+
+[lints]
+workspace = true

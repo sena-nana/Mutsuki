@@ -1,3 +1,8 @@
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(clippy::duration_suboptimal_units, clippy::too_many_lines)]
+
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -107,11 +112,12 @@ async fn published_flow_routes_agent_reply_once_and_recovers_after_restart() {
     wait_for(&fixture.sends, 1).await;
 
     // Replaying the same external event cannot cross the durable Agent/delivery fencing twice.
+    // Draining the pipeline before counting is what makes this a real assertion: once every task
+    // the replay could have spawned is terminal, a second submit or send can no longer appear.
     submit_event(&runtime, "event-1", "wake hello").await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    wait_for_flow_tasks(&runtime).await;
     assert_eq!(fixture.submits.load(Ordering::SeqCst), 1);
     assert_eq!(fixture.sends.load(Ordering::SeqCst), 1);
-    wait_for_flow_tasks(&runtime).await;
     runtime.shutdown().await;
 
     let runtime = start_runtime(&fixture, false, Duration::from_millis(250), None).await;
@@ -138,7 +144,7 @@ async fn agent_node_reserves_reply_before_return_and_restart_recovers_without_re
     assert_eq!(fixture.submits.load(Ordering::SeqCst), 1);
 
     submit_agent_node(&runtime, "event-reserved").await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    wait_for_flow_tasks(&runtime).await;
     assert_eq!(fixture.submits.load(Ordering::SeqCst), 1);
     assert_eq!(fixture.sends.load(Ordering::SeqCst), 1);
     runtime.shutdown().await;
@@ -157,7 +163,7 @@ async fn transient_failure_recovers_and_duplicate_event_does_not_repeat_agent_or
     assert_eq!(fixture.submits.load(Ordering::SeqCst), 1);
 
     submit_event(&runtime, "event-transient", "wake transient").await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    wait_for_flow_tasks(&runtime).await;
     assert_eq!(fixture.send_plan.attempts.load(Ordering::SeqCst), 2);
     assert_eq!(fixture.submits.load(Ordering::SeqCst), 1);
     assert_eq!(fixture.sends.load(Ordering::SeqCst), 1);
@@ -549,7 +555,9 @@ async fn assert_terminal_send_outcome(
         );
         assert_eq!(fixture.submits.load(Ordering::SeqCst), 1);
     } else {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // No retry was asked for, so the terminal delivery must stay terminal. Draining first is
+        // what proves it: with every flow task finished, a second attempt can no longer be issued.
+        wait_for_flow_tasks(&runtime).await;
         assert_eq!(fixture.send_plan.attempts.load(Ordering::SeqCst), 1);
     }
     runtime.shutdown().await;

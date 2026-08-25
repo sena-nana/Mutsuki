@@ -1,3 +1,14 @@
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::cast_possible_wrap,
+    clippy::doc_markdown,
+    clippy::format_push_string,
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate
+)]
+
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};

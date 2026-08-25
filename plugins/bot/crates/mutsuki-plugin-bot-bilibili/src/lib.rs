@@ -1,3 +1,31 @@
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::assigning_clones,
+    clippy::cast_lossless,
+    clippy::cast_possible_wrap,
+    clippy::default_trait_access,
+    clippy::if_not_else,
+    clippy::manual_string_new,
+    clippy::map_unwrap_or,
+    clippy::match_same_arms,
+    clippy::missing_errors_doc,
+    clippy::missing_fields_in_debug,
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value,
+    clippy::needless_update,
+    clippy::redundant_closure_for_method_calls,
+    clippy::return_self_not_must_use,
+    clippy::similar_names,
+    clippy::too_many_lines,
+    clippy::trivially_copy_pass_by_ref,
+    clippy::unnecessary_wraps,
+    clippy::unreadable_literal,
+    clippy::useless_vec
+)]
+
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
@@ -581,6 +609,12 @@ pub trait BilibiliTransport: Send {
     fn profile(&mut self, uid: u64) -> Result<BilibiliProfile, BilibiliError>;
 }
 
+/// Blocking HTTP transport for the Bilibili runner.
+///
+/// The runner reaches this through `TaskAwaitRunnerAdapter`, which the Host polls on its sync
+/// worker threads, so a call here occupies one worker and never the async reactor. Every request
+/// is bounded by `timeout` to keep that occupancy finite. Console code paths are async and must
+/// not call these methods inline; `management::in_blocking_section` marks the hand-off.
 pub struct ReqwestBilibiliTransport {
     client: Option<Client>,
     credential: SharedBilibiliCredential,

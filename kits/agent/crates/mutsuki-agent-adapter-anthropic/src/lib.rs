@@ -3,6 +3,16 @@
 //! Implements `ModelProtocolAdapter` for Anthropic Console API keys (`x-api-key`).
 //! Hosts inject credentials and provider endpoints; this crate does not read env
 //! vars or ship default secrets.
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::map_unwrap_or,
+    clippy::missing_errors_doc,
+    clippy::must_use_candidate,
+    clippy::needless_continue,
+    clippy::too_many_lines
+)]
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;

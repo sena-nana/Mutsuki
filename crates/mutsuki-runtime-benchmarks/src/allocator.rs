@@ -1,3 +1,8 @@
+// This file is on the workspace `unsafe_code` exception list.
+// Benchmarks measure allocator traffic, which requires implementing `GlobalAlloc`; that trait
+// is `unsafe` by definition. Every operation is delegated unchanged to `System`.
+#![allow(unsafe_code)]
+
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;

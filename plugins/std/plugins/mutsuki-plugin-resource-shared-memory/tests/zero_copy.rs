@@ -1,3 +1,8 @@
+// This file is on the workspace `unsafe_code` exception list.
+// Benchmarks and allocation-budget tests measure allocator traffic, which requires
+// implementing `GlobalAlloc`; that trait is `unsafe` by definition. Every operation is
+// delegated unchanged to `System` and only the atomic counters are added.
+#![allow(unsafe_code)]
 #![cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -15,6 +20,9 @@ struct TrackingAllocator;
 static TRACKING: AtomicBool = AtomicBool::new(false);
 static ALLOCATED: AtomicU64 = AtomicU64::new(0);
 
+// SAFETY: every method forwards its arguments unchanged to the `System` allocator, so the
+// layout and pointer contract of `GlobalAlloc` is upheld by `System` itself. The only
+// additions are relaxed atomic counters, which touch no allocator state.
 unsafe impl GlobalAlloc for TrackingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let pointer = unsafe { System.alloc(layout) };

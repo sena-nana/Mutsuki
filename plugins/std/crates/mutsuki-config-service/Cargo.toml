@@ -19,6 +19,9 @@ tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 criterion = { version = "0.8.2", features = ["html_reports"] }
 rmp-serde = { workspace = true }
 
+[lints]
+workspace = true
+
 [[bench]]
 name = "config_perf"
 harness = false

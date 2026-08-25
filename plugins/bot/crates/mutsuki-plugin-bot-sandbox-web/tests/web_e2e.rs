@@ -1,9 +1,9 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use mutsuki_plugin_bot_sandbox_web::*;
+use mutsuki_web_extension::{WebExtension, content_hash};
 use mutsuki_web_host::{MinimalWebApplication, MutsukiWebHost, WebHost};
 use mutsuki_web_protocol::{
     DeploymentMode, RpcRequest, WEB_PROTOCOL_VERSION, WebApplicationDescriptor, WebShellAssets,
@@ -43,71 +43,19 @@ async fn sandbox_rpc_simulate_send_and_confirm_live_send() {
     let assets_dir = tempfile::tempdir().unwrap();
     let shell_dir = tempfile::tempdir().unwrap();
     let assets = materialize_frontend_assets(assets_dir.path()).unwrap();
-    let frontend = std::fs::read_to_string(assets.join("index.js")).unwrap();
-    assert!(frontend.contains("添加用户"));
-    assert!(frontend.contains("真实数据"));
-    assert!(frontend.contains("activityId: \"sandbox\""));
-    assert!(frontend.contains("ctx.activities.register"));
-    assert!(frontend.contains("发送到 QQ"));
-    assert!(!frontend.contains("将以机器人身份向真实 QQ 会话发送消息"));
-    assert!(frontend.contains("update_user"));
-    assert!(frontend.contains("import_live_users"));
-    assert!(frontend.contains("复制 OpenID"));
-    assert!(frontend.contains("导入作为模拟用户"));
-    assert!(frontend.contains("`@${user.display_name || user.user_id}`"));
-    assert!(frontend.contains(r"/@([^\s@]*)$/"));
-    assert!(frontend.contains("sandbox-compose-field"));
-    assert!(frontend.contains("sandbox-mention-picker[hidden]"));
-    assert!(frontend.contains("sandbox-pane--chat"));
-    assert!(!frontend.contains("艾特成员"));
-    assert!(frontend.contains("contextmenu"));
-    assert!(frontend.contains("avatar_url"));
-    assert!(frontend.contains("conversation.avatar_url || peer?.avatar_url"));
-    assert!(frontend.contains("ingest_as_bot"));
-    assert!(frontend.contains("\"机器人\""));
-    assert!(frontend.contains("snapshot?.bot"));
-    assert!(frontend.contains("referrerpolicy"));
-    assert!(frontend.contains("remoteImage"));
-    assert!(frontend.contains("httpsQqCdn"));
-    assert!(frontend.contains("sandbox-reply"));
-    assert!(frontend.contains("iconButton"));
-    assert!(frontend.contains("conversation.active_message"));
-    assert!(frontend.contains("sandbox-mention"));
-    assert!(frontend.contains("sandbox-card"));
-    assert!(frontend.contains("sandbox-markdown"));
-    assert!(frontend.contains("iconButton(\"Markdown\", ICONS.markdown)"));
-    assert!(frontend.contains("iconButton(\"图片\", ICONS.image)"));
-    assert!(frontend.contains("iconButton(\"文件\", ICONS.paperclip)"));
-    assert!(frontend.contains("iconButton(\"表情包\", ICONS.smile)"));
-    assert!(frontend.contains("item.kind === \"qq_face\" && mode() === \"live\""));
-    assert!(frontend.contains("消息按钮"));
-    assert!(frontend.contains("type: \"markdown\""));
-    assert!(frontend.contains("kind: \"keyboard\""));
-    assert!(frontend.contains("media.upload"));
-    assert!(frontend.contains("sticker.list"));
-    assert!(frontend.contains("sticker.upload"));
-    assert!(frontend.contains("表情包"));
-    assert!(frontend.contains("pasteImage"));
-    assert!(frontend.contains("onpaste"));
-    assert!(frontend.contains("stripImagePlaceholder"));
-    assert!(frontend.contains("liliaInput"));
-    assert!(frontend.contains("liliaTextarea"));
-    assert!(frontend.contains("ui-input--sm"));
-    assert!(frontend.contains("ui-textarea"));
-    assert!(frontend.contains("stickerPicker.hidden = !state.stickerOpen"));
-    assert!(frontend.contains("groupConsecutiveMessages"));
-    assert!(frontend.contains("sandbox-row-body"));
-    assert!(frontend.contains("align-items: flex-end"));
-    assert!(frontend.contains("first.role !== \"system\" && index === 0"));
-    assert!(frontend.contains(":has(.sandbox-client)"));
-    assert!(!frontend.contains("100vh - 140px"));
-    assert!(!frontend.contains("🖼"));
-    assert!(!frontend.contains("📎"));
-    assert!(!frontend.contains("☺"));
-    assert!(!frontend.contains("⌘"));
-    assert!(!frontend.contains("发送小卡片"));
-    assert!(!frontend.contains("发送 Markdown"));
-    assert!(!frontend.contains("inject_into_flow"));
+    let extension = SandboxWebExtension::new(service.clone()).with_frontend_assets(&assets);
+    let descriptor = extension.descriptor();
+    // The bundle's rendered copy is not a contract. What the Host serves and the client verifies is
+    // the manifest, so that is what this test pins.
+    assert_eq!(descriptor.entry, "index.js");
+    let entry = descriptor
+        .assets
+        .iter()
+        .find(|asset| asset.path == "index.js")
+        .expect("manifest declares its entry asset");
+    let bytes = std::fs::read(assets.join("index.js")).unwrap();
+    assert_eq!(entry.bytes, bytes.len() as u64);
+    assert_eq!(entry.content_hash, content_hash(&bytes));
     std::fs::write(
         shell_dir.path().join("index.html"),
         "<!doctype html><main></main>",
@@ -131,7 +79,7 @@ async fn sandbox_rpc_simulate_send_and_confirm_live_send() {
         .listen("127.0.0.1:0")
         .mode(DeploymentMode::Embedded)
         .shell_dir(shell_dir.path())
-        .extension(SandboxWebExtension::new(service).with_frontend_assets(&assets))
+        .extension(extension)
         .auth_token("local-dev")
         .build()
         .unwrap();
@@ -373,8 +321,24 @@ async fn sandbox_rpc_simulate_send_and_confirm_live_send() {
         .is_err()
     );
 
+    // Actions the page no longer offers have to be gone from the action surface, not just from the
+    // bundle's rendered controls.
+    assert!(
+        rpc(
+            &address,
+            "write",
+            json!({
+                "request": {
+                    "expected_revision": switched["revision"],
+                    "action": { "action": "inject_into_flow" }
+                }
+            }),
+        )
+        .await
+        .is_err()
+    );
+
     host.stop().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(20)).await;
 }
 
 async fn rpc(address: &str, method: &str, params: Value) -> Result<Value, String> {

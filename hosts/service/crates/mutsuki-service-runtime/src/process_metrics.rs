@@ -1,3 +1,12 @@
+//! Resident-set sampling for health reporting.
+//!
+//! # Unsafe boundary
+//!
+//! This module is on the workspace `unsafe_code` exception list: resident memory is only
+//! exposed through platform C APIs. Every call is a read-only query with no pointers handed
+//! back to the OS beyond the stack slot being filled, and each block documents its argument.
+#![allow(unsafe_code)]
+
 pub(crate) fn current_rss_bytes() -> Option<u64> {
     platform::current_rss_bytes()
 }
@@ -7,6 +16,8 @@ mod platform {
     pub(super) fn current_rss_bytes() -> Option<u64> {
         let statm = std::fs::read_to_string("/proc/self/statm").ok()?;
         let pages: u64 = statm.split_whitespace().nth(1)?.parse().ok()?;
+        // SAFETY: `sysconf` is a pure lookup with no pointer arguments; a non-positive
+        // result is treated as unavailable below.
         let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
         if page_size <= 0 {
             return None;
@@ -22,6 +33,9 @@ mod platform {
 
         let mut info = MaybeUninit::<libc::mach_task_basic_info>::uninit();
         let mut count = libc::MACH_TASK_BASIC_INFO_COUNT;
+        // SAFETY: `count` is initialised to the element count that matches
+        // `mach_task_basic_info`, and `info` provides writable storage of exactly that size,
+        // so the kernel cannot write out of bounds.
         #[allow(deprecated)]
         let kr = unsafe {
             libc::task_info(
@@ -34,6 +48,7 @@ mod platform {
         if kr != libc::KERN_SUCCESS {
             return None;
         }
+        // SAFETY: `task_info` reported `KERN_SUCCESS` above, so it fully initialised `info`.
         let info = unsafe { info.assume_init() };
         Some(info.resident_size)
     }

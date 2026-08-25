@@ -112,7 +112,7 @@ impl CoreRuntime {
             registry.register_async_handler(handler)?;
         }
         registry.validate_instance_counts()?;
-        registry.freeze();
+        registry.freeze(load_plan.registry_generation);
         let handler_bindings = HandlerBindingRegistry::from_load_plan(&load_plan);
         let generation_states =
             reload::generation_states_for_plan(&load_plan, PluginGenerationPhase::Active);
@@ -166,6 +166,43 @@ impl CoreRuntime {
 
     pub fn plugin_generation_states(&self) -> &[PluginGenerationState] {
         &self.generation_states
+    }
+
+    /// Resolves the registry that handed out a dispatch, given the generation recorded on its
+    /// lease.
+    ///
+    /// A dispatch can outlive the reload that replaced the active registry. Its completion must
+    /// be reconciled against the registry it was dispatched from, not whatever is active now:
+    /// the active registry may no longer declare that runner at all, and returning the borrowed
+    /// instance to it would leak a retired plugin generation into live dispatch.
+    pub(crate) fn registry_for_generation(&mut self, generation: u64) -> &mut RunnerRegistry {
+        if generation == 0 || generation == self.registry.generation() {
+            return &mut self.registry;
+        }
+        if let Some(index) = self
+            .draining_generations
+            .iter()
+            .position(|draining| draining.registry_generation == generation)
+        {
+            return &mut self.draining_generations[index].registry;
+        }
+        &mut self.registry
+    }
+
+    pub(crate) fn descriptors_for_generation(
+        &self,
+        generation: u64,
+    ) -> Arc<[mutsuki_runtime_contracts::RunnerDescriptor]> {
+        if generation == 0 || generation == self.registry.generation() {
+            return self.registry.descriptor_snapshot();
+        }
+        self.draining_generations
+            .iter()
+            .find(|draining| draining.registry_generation == generation)
+            .map_or_else(
+                || self.registry.descriptor_snapshot(),
+                |draining| draining.registry.descriptor_snapshot(),
+            )
     }
 
     pub fn current_step(&self) -> u64 {
@@ -402,7 +439,7 @@ impl CoreRuntime {
         let active_mutable = self.resources.active_mutable_lease_routes_for_task(task_id);
         if !active_mutable.is_empty() {
             let mut error = crate::runtime_error(
-                "resource.lease_cross_await",
+                mutsuki_runtime_contracts::ERR_RESOURCE_LEASE_CROSS_AWAIT,
                 "runtime.resource_manager",
                 format!("task.await.{task_id}"),
             );

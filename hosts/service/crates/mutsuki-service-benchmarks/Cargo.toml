@@ -26,6 +26,9 @@ tempfile.workspace = true
 tokio.workspace = true
 toml.workspace = true
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "mutsuki-service-benchmarks"
 path = "src/main.rs"

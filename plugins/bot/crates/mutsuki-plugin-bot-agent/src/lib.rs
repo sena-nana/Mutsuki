@@ -1,3 +1,18 @@
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::field_reassign_with_default,
+    clippy::if_same_then_else,
+    clippy::large_futures,
+    clippy::map_unwrap_or,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::redundant_closure_for_method_calls,
+    clippy::too_many_lines,
+    clippy::unused_async
+)]
+
 use std::fmt::Write as _;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};

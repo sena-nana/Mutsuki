@@ -22,3 +22,6 @@ mutsuki-distributed-host-adapter.workspace = true
 mutsuki-plugin-db-sqlite = { path = "../../../../plugins/std/plugins/mutsuki-plugin-db-sqlite" }
 mutsuki-runtime-core.workspace = true
 tempfile.workspace = true
+
+[lints]
+workspace = true

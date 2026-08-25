@@ -10,6 +10,7 @@ mutsuki-bot-conversation.workspace = true
 mutsuki-bot-delivery.workspace = true
 mutsuki-bot-flow.workspace = true
 mutsuki-bot-interaction.workspace = true
+mutsuki-bot-management.workspace = true
 mutsuki-bot-protocol.workspace = true
 mutsuki-bot-sandbox.workspace = true
 rusqlite.workspace = true

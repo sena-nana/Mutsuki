@@ -1,6 +1,17 @@
 //! Auto-upgrade WebExtension: release set module checks + upgrade plan (Git fetch / build / ABI / pin).
 //!
 //! Does not run git/build in the WebHost process; Console surfaces checks and CLI-oriented plans.
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::doc_markdown,
+    clippy::missing_errors_doc,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value,
+    clippy::redundant_closure_for_method_calls,
+    clippy::return_self_not_must_use
+)]
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -12,7 +23,7 @@ use mutsuki_plugin_catalog::{
     plan_module_upgrade, upgrade_check_json,
 };
 use mutsuki_web_extension::{
-    ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, content_hash,
+    ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, load_bundled_manifest,
 };
 use mutsuki_web_protocol::{
     AssetEntry, EXTENSION_MANIFEST_VERSION, ExtensionManifest, JsonValue, WEB_PROTOCOL_VERSION,
@@ -71,7 +82,7 @@ impl WebExtension for UpgradeWebExtension {
     fn frontend_assets(&self) -> Option<WebFrontendAssets> {
         let root = self.assets_root.as_ref()?;
         Some(WebFrontendAssets {
-            manifest: load_manifest(root).ok()?,
+            manifest: load_bundled_manifest(root, manifest).ok()?,
             root_dir: root.clone(),
         })
     }
@@ -246,16 +257,6 @@ fn manifest(assets: Vec<AssetEntry>) -> ExtensionManifest {
         assets,
         protocol_version: WEB_PROTOCOL_VERSION.into(),
     }
-}
-
-fn load_manifest(root: &Path) -> Result<ExtensionManifest, ExtensionError> {
-    let bytes = std::fs::read(root.join("index.js"))
-        .map_err(|error| ExtensionError::Manifest(error.to_string()))?;
-    Ok(manifest(vec![AssetEntry {
-        path: "index.js".into(),
-        content_hash: content_hash(&bytes),
-        bytes: bytes.len() as u64,
-    }]))
 }
 
 pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::Error> {

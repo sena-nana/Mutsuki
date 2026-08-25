@@ -1,4 +1,19 @@
 //! Headless QQ conversation sandbox used by the Bot Web Console.
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::assigning_clones,
+    clippy::implicit_hasher,
+    clippy::match_wildcard_for_single_variants,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::needless_pass_by_value,
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    clippy::unnecessary_lazy_evaluations,
+    clippy::unused_async
+)]
 
 mod content;
 mod service;
@@ -9,7 +24,9 @@ pub use content::{
     remap_sandbox_media_ids,
 };
 pub use service::{
+    PROACTIVE_SEND_DENIED, REPLY_TARGET_NOT_FOUND, REPLY_TARGET_NOT_USER, REPLY_WINDOW_EXPIRED,
     SandboxApi, SandboxChangeSubscription, SandboxHistoryStore, SandboxRuntime, SandboxService,
+    UNSUPPORTED_SEGMENT,
 };
 pub use types::*;
 
@@ -651,8 +668,7 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert_eq!(denied.code, "invalid_argument");
-        assert!(denied.message.contains("主动消息权限"));
+        assert_eq!(denied.code, PROACTIVE_SEND_DENIED);
     }
 
     #[tokio::test]
@@ -753,8 +769,7 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert_eq!(error.code, "invalid_argument");
-        assert!(error.message.contains("QQ 表情"));
+        assert_eq!(error.code, UNSUPPORTED_SEGMENT);
     }
 
     #[tokio::test]
@@ -852,8 +867,7 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert_eq!(bot_quote.code, "invalid_argument");
-        assert!(bot_quote.message.contains("用户消息"));
+        assert_eq!(bot_quote.code, REPLY_TARGET_NOT_USER);
 
         let unknown = write(
             &service,
@@ -868,8 +882,7 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert_eq!(unknown.code, "invalid_argument");
-        assert!(unknown.message.contains("不存在"));
+        assert_eq!(unknown.code, REPLY_TARGET_NOT_FOUND);
 
         service.observe_event(live_group_event(
             "qq-msg-old",
@@ -889,8 +902,7 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert_eq!(expired.code, "invalid_argument");
-        assert!(expired.message.contains("5 分钟"));
+        assert_eq!(expired.code, REPLY_WINDOW_EXPIRED);
     }
 
     #[tokio::test]

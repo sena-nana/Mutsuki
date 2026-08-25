@@ -1,3 +1,14 @@
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate,
+    clippy::redundant_closure_for_method_calls,
+    clippy::return_self_not_must_use
+)]
+
 use mutsuki_runtime_contracts::{
     BindingId, ProtocolId, RefId, ResourceRef, RuntimeError, RuntimeEvent, ScalarValue, Task,
     TaskId, TaskOutcome, TaskStatus, TraceId, TraceSpan,

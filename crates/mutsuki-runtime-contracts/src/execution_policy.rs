@@ -625,7 +625,7 @@ mod tests {
         assert_eq!(profile.latency_histogram.total, 100);
         assert_eq!(snapshot.sample_count, 100);
         assert_eq!(snapshot.peak_memory_bytes, 100 * 1024);
-        assert_eq!(snapshot.failure_rate, 0.1);
+        assert!((snapshot.failure_rate - 0.1).abs() < f64::EPSILON);
         assert!(snapshot.p50_ms >= 69);
         assert!(snapshot.p99_ms <= 100);
     }

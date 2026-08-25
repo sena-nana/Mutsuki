@@ -1,3 +1,12 @@
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::missing_errors_doc,
+    clippy::must_use_candidate,
+    clippy::redundant_closure_for_method_calls
+)]
+
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;

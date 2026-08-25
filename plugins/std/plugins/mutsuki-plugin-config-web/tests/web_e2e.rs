@@ -1,7 +1,10 @@
 //! WebHost fixture E2E for config.* RPC (Issue #15 Phase 4).
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(clippy::default_trait_access, clippy::doc_markdown)]
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use mutsuki_config_service::{
     ConfigApplyMode, ConfigProviderRegistry, ConfigService, ConfigValue, MemoryConfigProvider,
@@ -243,7 +246,6 @@ async fn config_rpc_list_schema_read_validate_apply() {
     assert!(!snap2.to_string().contains("s3cr3t"));
 
     host.stop().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
 }
 
 #[tokio::test]
@@ -262,5 +264,4 @@ async fn product_visibility_policy_filters_discovery_and_direct_access() {
     );
 
     host.stop().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
 }

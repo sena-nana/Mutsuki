@@ -1,3 +1,8 @@
+// This file is on the workspace `unsafe_code` exception list.
+// This lane drives the `extern "C"` ABI v2 surface directly so the benchmark measures the real
+// call path rather than a safe wrapper around it.
+#![allow(unsafe_code)]
+
 use std::collections::BTreeMap;
 use std::ffi::c_void;
 use std::hint::black_box;
@@ -11,7 +16,7 @@ use crate::report::{BenchmarkMode, CaseResult};
 struct EchoGuest;
 
 impl AbiGuest for EchoGuest {
-    fn request(&mut self, request: &[u8]) -> Vec<u8> {
+    fn request(&self, request: &[u8]) -> Vec<u8> {
         request.to_vec()
     }
 }
@@ -36,6 +41,8 @@ pub(super) fn run(
         v2.request.expect("v2 request"),
         v2.release.expect("v2 release"),
     );
+    // SAFETY: the guest was built locally by `plugin_api_from_guest`, so the context matches the
+    // callback, and the measurement loop above has already returned every borrowed buffer.
     unsafe { v2.close.expect("v2 close")(v2.context) };
     Ok(vec![binary_case])
 }
@@ -51,8 +58,12 @@ fn measure(
 ) -> CaseResult {
     let measurement = allocator.measurement();
     for _ in 0..iterations {
+        // SAFETY: `context`, `callback` and `release` come from one locally constructed
+        // `AbiPluginV2` and are used together; `request` stays borrowed for the call.
         let response = unsafe { callback(context, request.as_ptr(), request.len()) };
+        // SAFETY: the payload is owned by the guest until the paired release below.
         black_box(unsafe { response.payload.as_slice() });
+        // SAFETY: single release for the payload returned by the call above.
         unsafe { release(response.payload) };
     }
     let (elapsed_ns, allocations) = measurement.finish(allocator);

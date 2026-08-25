@@ -40,3 +40,6 @@ mutsuki-service-abi-fixture = { path = "../../fixtures/abi-plugin" }
 hex.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
+
+[lints]
+workspace = true

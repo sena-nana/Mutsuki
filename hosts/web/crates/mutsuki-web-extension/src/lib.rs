@@ -2,11 +2,22 @@
 //!
 //! Extensions contribute through stable registries and explicit extension points.
 //! Unrestricted global Vue registration is intentionally not provided.
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::doc_markdown,
+    clippy::missing_errors_doc,
+    clippy::must_use_candidate
+)]
 
 mod manifest;
 mod registry;
 
-pub use manifest::{ManifestError, content_hash, load_manifest, validate_manifest};
+pub use manifest::{
+    BUNDLED_ENTRY_ASSET, ManifestError, content_hash, load_bundled_manifest, load_manifest,
+    validate_manifest,
+};
 pub use registry::{
     EventRegistry, ExtensionLoadReport, ExtensionRecord, ExtensionRegistry, RpcCallContext,
     RpcHandler, RpcRegistry, WebExtensionContext, WebServiceContext,

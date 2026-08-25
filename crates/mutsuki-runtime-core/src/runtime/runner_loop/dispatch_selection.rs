@@ -60,25 +60,31 @@ pub(super) fn claim_runner_work(
         ));
     }
     let mut dispatch_groups = batch::split_leased_tasks_by_resource_conflict(leased_tasks);
-    let dispatch_group = dispatch_groups.remove(0);
+    let mut dispatch_group = dispatch_groups.remove(0);
     for deferred_group in dispatch_groups {
         for (lease, _task) in deferred_group {
             runtime.tasks.defer_leased(&lease, runtime.current_step)?;
         }
     }
-    let mut chunks = dispatch_group
-        .chunks(descriptor.batch.max_batch_entries)
-        .take(max_batches)
-        .map(|chunk| chunk.to_vec())
-        .collect::<Vec<_>>();
-    let dispatched_tasks: usize = chunks.iter().map(Vec::len).sum();
-    let mut deferred_tail = dispatch_group.into_iter().skip(dispatched_tasks);
-    for (lease, _task) in deferred_tail.by_ref() {
+    // The group is split in place. Copying each chunk out first would duplicate every lease and
+    // bump every task refcount for tasks that are about to be handed straight to a dispatch.
+    let chunk_size = descriptor.batch.max_batch_entries.max(1);
+    let dispatched_tasks = dispatch_group
+        .len()
+        .min(chunk_size.saturating_mul(max_batches));
+    for (lease, _task) in dispatch_group.split_off(dispatched_tasks) {
         runtime.tasks.defer_leased(&lease, runtime.current_step)?;
     }
-    let mut dispatches = Vec::with_capacity(chunks.len());
-    for chunk in chunks.drain(..) {
-        dispatches.push(runtime.build_runner_dispatch(descriptor, executor_id.clone(), chunk)?);
+    let mut dispatches = Vec::with_capacity(dispatched_tasks.div_ceil(chunk_size));
+    let mut remaining = dispatch_group;
+    while !remaining.is_empty() {
+        let tail = remaining.split_off(remaining.len().min(chunk_size));
+        dispatches.push(runtime.build_runner_dispatch(
+            descriptor,
+            executor_id.clone(),
+            remaining,
+        )?);
+        remaining = tail;
     }
     Ok((
         RunnerLoopReport {

@@ -2,6 +2,14 @@
 //!
 //! ABI v2 uses the length-prefixed typed MessagePack Runtime Wire codec.
 //! Dispatch and clients consume `mutsuki-runtime-wire` request types directly.
+//!
+//! # Unsafe boundary
+//!
+//! This module is on the workspace `unsafe_code` exception list. It mirrors the `extern "C"`
+//! ABI v2 surface for plugin authors, so raw pointers and manual buffer ownership are
+//! unavoidable. Every `unsafe` block carries its own `SAFETY:` argument, and the rest of the
+//! SDK stays free of `unsafe`.
+#![allow(unsafe_code)]
 
 mod binary_guest;
 mod binary_host_client;

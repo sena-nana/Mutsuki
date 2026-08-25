@@ -1,3 +1,14 @@
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::doc_markdown,
+    clippy::map_unwrap_or,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate
+)]
+
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
@@ -7,6 +18,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -742,7 +754,7 @@ impl CoreSection {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct IpcSection {
     pub enabled: bool,
@@ -756,6 +768,28 @@ pub struct IpcSection {
     pub max_in_flight: usize,
     pub idle_timeout_ms: u64,
     pub request_timeout_ms: u64,
+}
+
+/// Hand-written so the control token never reaches a log line. `ServiceConfig` derives `Debug`,
+/// and it is routinely dumped on startup and in diagnostics, which would otherwise print the
+/// credential that grants full control-plane authority in plaintext.
+impl std::fmt::Debug for IpcSection {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("IpcSection")
+            .field("enabled", &self.enabled)
+            .field("transport", &self.transport)
+            .field("codec", &self.codec)
+            .field("name", &self.name)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("tcp_debug_addr", &self.tcp_debug_addr)
+            .field("max_frame_bytes", &self.max_frame_bytes)
+            .field("max_payload_bytes", &self.max_payload_bytes)
+            .field("max_in_flight", &self.max_in_flight)
+            .field("idle_timeout_ms", &self.idle_timeout_ms)
+            .field("request_timeout_ms", &self.request_timeout_ms)
+            .finish()
+    }
 }
 
 impl Default for IpcSection {
@@ -889,12 +923,28 @@ impl Default for SecuritySection {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct ConfigOverrides {
     pub profile: Option<String>,
     pub config_file: Option<PathBuf>,
     pub home_dir: Option<PathBuf>,
     pub control_token: Option<String>,
+}
+
+/// Carries the CLI `--token`, so it is redacted for the same reason as [`IpcSection`].
+impl std::fmt::Debug for ConfigOverrides {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ConfigOverrides")
+            .field("profile", &self.profile)
+            .field("config_file", &self.config_file)
+            .field("home_dir", &self.home_dir)
+            .field(
+                "control_token",
+                &self.control_token.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
 }
 
 impl ServiceConfig {
@@ -1128,13 +1178,47 @@ impl ServiceConfig {
             }
         }
         let generated = generate_local_token();
-        fs::write(&token_path, &generated).map_err(|source| ConfigError::CreateDir {
-            path: token_path,
-            source,
-        })?;
+        write_control_token(&token_path, &generated)?;
         self.ipc.token = Some(generated);
         Ok(())
     }
+}
+
+/// Writes the control token so that only the owner can read it back.
+///
+/// The mode is applied at creation rather than with a follow-up `set_permissions`, because the
+/// window between the two would expose the token to every local user on a default `umask`.
+pub fn write_control_token(path: &Path, token: &str) -> ConfigResult<()> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(path)
+        .map_err(|source| ConfigError::CreateDir {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    file.write_all(token.as_bytes())
+        .map_err(|source| ConfigError::CreateDir {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    // An existing file keeps its old mode through `create(true)`, so tighten it explicitly.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|source| {
+            ConfigError::CreateDir {
+                path: path.to_path_buf(),
+                source,
+            }
+        })?;
+    }
+    Ok(())
 }
 
 fn secret_journal_path(path: &Path) -> PathBuf {
@@ -1368,12 +1452,24 @@ fn default_transport() -> IpcTransport {
     }
 }
 
+/// Mints the control token used when the operator did not configure one.
+///
+/// The value must not be derivable from observable process state: the control socket accepts any
+/// local caller that presents it, so a clock- or pid-derived token has a search space small enough
+/// to brute force. `Uuid::new_v4` draws from the OS CSPRNG.
 fn generate_local_token() -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
-    format!("local-{nanos:x}-{}", std::process::id())
+    format!("local-{}", Uuid::new_v4().simple())
+}
+
+/// Mints a per-Runner session token.
+///
+/// This is deliberately unrelated to the control token: a sidecar receives it through the
+/// environment, so reusing the control token here would hand every Runner process full
+/// control-plane authority. The supervisor re-mints one on every spawn, so a leaked token dies
+/// with the process that leaked it.
+#[must_use]
+pub fn generate_runner_session_token() -> String {
+    format!("runner-{}", Uuid::new_v4().simple())
 }
 
 pub fn filtered_environment(
@@ -1390,13 +1486,91 @@ pub fn filtered_environment(
     envs
 }
 
+// Secret precedence is defined against the process environment, so these tests have to mutate
+// it. `env::set_var` is unsafe under the 2024 edition, which is why this module is on the
+// workspace `unsafe_code` exception list. Production code in this crate carries no `unsafe`.
 #[cfg(test)]
+#[allow(unsafe_code)]
 mod tests {
     use std::sync::Mutex;
 
     use super::*;
 
+    /// Serialises every test that touches the process environment. `env::set_var` is
+    /// process-global and unsound to race against concurrent readers in other test threads.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn set_secret_env(key: &str, value: &str) {
+        // SAFETY: every caller holds `ENV_LOCK` for the duration of the test, so no other
+        // test thread reads or writes the environment concurrently.
+        unsafe { env::set_var(key, value) };
+    }
+
+    fn remove_secret_env(key: &str) {
+        // SAFETY: see `set_secret_env`; callers hold `ENV_LOCK`.
+        unsafe { env::remove_var(key) };
+    }
+
+    /// The control token grants full control-plane authority, so it must not be world-readable
+    /// even for the moment between creation and a follow-up `chmod`.
+    #[cfg(unix)]
+    #[test]
+    fn control_token_file_is_owner_only_including_when_it_replaces_a_loose_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("control.token");
+        fs::write(&path, "stale").expect("seed loose file");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).expect("loosen");
+
+        write_control_token(&path, "fresh").expect("write token");
+
+        let mode = fs::metadata(&path).expect("metadata").permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        assert_eq!(fs::read_to_string(&path).expect("read token"), "fresh");
+    }
+
+    /// `ServiceConfig` derives `Debug` and is dumped in startup diagnostics, so the sections that
+    /// hold credentials must redact them.
+    #[test]
+    fn debug_output_redacts_control_tokens() {
+        let ipc = IpcSection {
+            token: Some("super-secret-token".into()),
+            ..IpcSection::default()
+        };
+        let rendered = format!("{ipc:?}");
+        assert!(!rendered.contains("super-secret-token"));
+        assert!(rendered.contains("redacted"));
+
+        let overrides = ConfigOverrides {
+            control_token: Some("super-secret-token".into()),
+            ..ConfigOverrides::default()
+        };
+        let rendered = format!("{overrides:?}");
+        assert!(!rendered.contains("super-secret-token"));
+
+        let mut config = ServiceConfig::default();
+        config.ipc.token = Some("super-secret-token".into());
+        assert!(!format!("{config:?}").contains("super-secret-token"));
+    }
+
+    #[test]
+    fn runner_session_tokens_are_unique_per_mint_and_never_reuse_the_control_token() {
+        let first = generate_runner_session_token();
+        let second = generate_runner_session_token();
+        assert_ne!(first, second);
+        assert_ne!(first, generate_local_token());
+    }
+
+    /// A clock- or pid-derived token collides whenever two mints land in the same observable
+    /// state, which is exactly the property that makes such a token guessable.
+    #[test]
+    fn generated_control_tokens_stay_distinct_across_a_tight_mint_loop() {
+        let tokens = (0..1024)
+            .map(|_| generate_local_token())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(tokens.len(), 1024);
+    }
 
     #[test]
     fn worker_profiles_keep_default_threads_close_to_compute_plus_bounded_blocking() {
@@ -1515,12 +1689,12 @@ mod tests {
         assert!(!format!("{config:?}").contains("FILE_SECRET"));
         assert!(!toml::to_string(&config).unwrap().contains("FILE_SECRET"));
 
-        unsafe { env::set_var("MUTSUKI_SECRET_QQBOT_CLIENT_SECRET", "ENV_SECRET") };
+        set_secret_env("MUTSUKI_SECRET_QQBOT_CLIENT_SECRET", "ENV_SECRET");
         assert_eq!(
             config.secret("QQBOT_CLIENT_SECRET").as_deref(),
             Some("ENV_SECRET")
         );
-        unsafe { env::remove_var("MUTSUKI_SECRET_QQBOT_CLIENT_SECRET") };
+        remove_secret_env("MUTSUKI_SECRET_QQBOT_CLIENT_SECRET");
     }
 
     #[test]
@@ -1552,12 +1726,12 @@ mod tests {
         );
         assert!(!format!("{first:?}").contains("SESSDATA"));
 
-        unsafe { env::set_var("MUTSUKI_SECRET_BILIBILI_COOKIE", "ENV") };
+        set_secret_env("MUTSUKI_SECRET_BILIBILI_COOKIE", "ENV");
         assert!(matches!(
             first.rotate("BILIBILI_COOKIE", "REJECTED".into()),
             Err(ConfigError::SecretEnvironmentOverride { .. })
         ));
-        unsafe { env::remove_var("MUTSUKI_SECRET_BILIBILI_COOKIE") };
+        remove_secret_env("MUTSUKI_SECRET_BILIBILI_COOKIE");
     }
 
     #[test]
@@ -1646,14 +1820,14 @@ mod tests {
         })
         .unwrap();
 
-        unsafe { env::set_var("MUTSUKI_SECRET_OPENAI_API_KEY", "ENV") };
+        set_secret_env("MUTSUKI_SECRET_OPENAI_API_KEY", "ENV");
         let result = config
             .host_secret_store()
             .prepare_mutations(BTreeMap::from([(
                 "OPENAI_API_KEY".into(),
                 Some("REJECTED".into()),
             )]));
-        unsafe { env::remove_var("MUTSUKI_SECRET_OPENAI_API_KEY") };
+        remove_secret_env("MUTSUKI_SECRET_OPENAI_API_KEY");
 
         assert!(matches!(
             result,

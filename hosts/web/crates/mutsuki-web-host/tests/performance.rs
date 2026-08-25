@@ -1,4 +1,8 @@
 //! Performance baselines for WebHost startup and critical RPC path.
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(clippy::doc_markdown, clippy::duration_suboptimal_units)]
 
 use std::time::{Duration, Instant};
 

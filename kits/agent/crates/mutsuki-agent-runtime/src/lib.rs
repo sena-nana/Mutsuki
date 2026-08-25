@@ -1,3 +1,28 @@
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::assigning_clones,
+    clippy::cast_lossless,
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::default_trait_access,
+    clippy::doc_markdown,
+    clippy::map_unwrap_or,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value,
+    clippy::redundant_closure_for_method_calls,
+    clippy::ref_option,
+    clippy::return_self_not_must_use,
+    clippy::single_char_pattern,
+    clippy::too_many_lines,
+    clippy::uninlined_format_args,
+    clippy::unnecessary_wraps,
+    clippy::unused_self
+)]
+
 mod agent_loop;
 mod context_assembly;
 mod context_batch;

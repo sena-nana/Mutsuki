@@ -1,3 +1,9 @@
+// This file is on the workspace `unsafe_code` exception list.
+// Benchmarks and allocation-budget tests measure allocator traffic, which requires
+// implementing `GlobalAlloc`; that trait is `unsafe` by definition. Every operation is
+// delegated unchanged to `System` and only the atomic counters are added.
+#![allow(unsafe_code)]
+
 use std::{
     alloc::{GlobalAlloc, Layout, System},
     sync::atomic::{AtomicU64, Ordering},
@@ -11,6 +17,9 @@ pub struct CountingAllocator;
 static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
 static ALLOCATED_BYTES: AtomicU64 = AtomicU64::new(0);
 
+// SAFETY: every method forwards its arguments unchanged to the `System` allocator, so the
+// layout and pointer contract of `GlobalAlloc` is upheld by `System` itself. The only
+// additions are relaxed atomic counters, which touch no allocator state.
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let pointer = unsafe { System.alloc(layout) };

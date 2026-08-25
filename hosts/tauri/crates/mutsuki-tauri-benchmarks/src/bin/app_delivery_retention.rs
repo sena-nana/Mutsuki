@@ -3,6 +3,17 @@
 //! Verifies that 100_000 unique request IDs keep store occupancy at the
 //! configured ceiling, and that eviction does not introduce multi-millisecond
 //! pauses on the hot path.
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::doc_markdown,
+    clippy::too_many_lines,
+    clippy::uninlined_format_args
+)]
 
 use std::time::{Duration, Instant};
 

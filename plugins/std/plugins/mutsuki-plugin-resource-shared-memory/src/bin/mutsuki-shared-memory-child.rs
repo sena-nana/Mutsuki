@@ -1,3 +1,8 @@
+// This file is on the workspace `unsafe_code` exception list.
+// Shared mappings are raw memory another process may also map, so `shared_memory` exposes
+// them through `unsafe` accessors. Each block documents its ownership argument.
+#![allow(unsafe_code)]
+
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 use std::env;
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]

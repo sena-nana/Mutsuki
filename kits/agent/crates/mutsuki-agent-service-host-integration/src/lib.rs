@@ -3,7 +3,20 @@
 //! Connector implementations own endpoint and authentication config. Consumers receive only a
 //! validated connection id and an Agent wire backend proxy whose active generation can be swapped
 //! after a successful handshake.
-
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::default_trait_access,
+    clippy::doc_markdown,
+    clippy::duration_suboptimal_units,
+    clippy::map_unwrap_or,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value,
+    clippy::unnecessary_literal_bound
+)]
 #![forbid(unsafe_code)]
 
 mod local_runtime;

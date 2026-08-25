@@ -1,3 +1,23 @@
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::assigning_clones,
+    clippy::default_trait_access,
+    clippy::doc_markdown,
+    clippy::manual_let_else,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate,
+    clippy::needless_maybe_sized,
+    clippy::needless_pass_by_value,
+    clippy::redundant_closure_for_method_calls,
+    clippy::return_self_not_must_use,
+    clippy::similar_names,
+    clippy::too_many_lines,
+    clippy::useless_conversion
+)]
+
 use std::collections::{BTreeSet, HashMap};
 use std::future::Future;
 use std::marker::PhantomData;
@@ -484,7 +504,7 @@ impl<P> Future for CallFuture<P> {
         if self.self_call_blocked {
             return Poll::Ready(Err(mutsuki_runtime_core::RuntimeFailure::new(
                 mutsuki_runtime_contracts::RuntimeError::new(
-                    "task.self_call_blocked",
+                    mutsuki_runtime_contracts::ERR_TASK_SELF_CALL_BLOCKED,
                     "runtime.sdk",
                     format!("task.await.{}", self.parent_task_id),
                 ),
@@ -988,7 +1008,13 @@ fn continuation_ref(parent_task_id: &TaskId) -> ResourceRef {
     }
 }
 
+// `RawWakerVTable` is an `unsafe` construction API with no safe equivalent in std, which puts
+// this helper on the workspace `unsafe_code` exception list.
+#[allow(unsafe_code)]
 fn noop_waker() -> Waker {
+    // SAFETY: every vtable entry ignores its data pointer, so the null pointer below is never
+    // dereferenced. `clone` returns a waker backed by the same stateless vtable, and both
+    // `wake` and `drop` are no-ops, which satisfies the `RawWakerVTable` contract.
     unsafe fn clone(_: *const ()) -> RawWaker {
         RawWaker::new(std::ptr::null(), &VTABLE)
     }
@@ -996,6 +1022,7 @@ fn noop_waker() -> Waker {
     unsafe fn wake_by_ref(_: *const ()) {}
     unsafe fn drop(_: *const ()) {}
     static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, wake, wake_by_ref, drop);
+    // SAFETY: the vtable above upholds the `RawWaker` contract for a stateless waker.
     unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) }
 }
 

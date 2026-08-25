@@ -1,5 +1,4 @@
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
@@ -11,6 +10,7 @@ use mutsuki_bot_management::{
 };
 use mutsuki_bot_protocol::BotTarget;
 use mutsuki_plugin_bot_bilibili_web::*;
+use mutsuki_web_extension::{WebExtension, content_hash};
 use mutsuki_web_host::{MinimalWebApplication, MutsukiWebHost, WebHost};
 use mutsuki_web_protocol::{
     DeploymentMode, RpcRequest, WEB_PROTOCOL_VERSION, WebApplicationDescriptor, WebShellAssets,
@@ -157,11 +157,18 @@ async fn bilibili_management_rpc_strips_qr_secrets_and_requires_confirmation() {
     let assets_dir = tempfile::tempdir().unwrap();
     let shell_dir = tempfile::tempdir().unwrap();
     let assets = materialize_frontend_assets(assets_dir.path()).unwrap();
-    assert!(
-        std::fs::read_to_string(assets.join("index.js"))
-            .unwrap()
-            .contains("mountBilibiliPanel")
-    );
+    let extension = BilibiliWebExtension::new(api.clone()).with_frontend_assets(&assets);
+    // The manifest is what the Host serves and what the client integrity-checks, so it — not the
+    // bundle's rendered copy — is the contract this test can hold.
+    let descriptor = extension.descriptor();
+    let entry = descriptor
+        .assets
+        .iter()
+        .find(|asset| asset.path == descriptor.entry)
+        .expect("manifest declares its entry asset");
+    let bytes = std::fs::read(assets.join(&descriptor.entry)).unwrap();
+    assert_eq!(entry.bytes, bytes.len() as u64);
+    assert_eq!(entry.content_hash, content_hash(&bytes));
     std::fs::write(
         shell_dir.path().join("index.html"),
         "<!doctype html><main></main>",
@@ -185,7 +192,7 @@ async fn bilibili_management_rpc_strips_qr_secrets_and_requires_confirmation() {
         .listen("127.0.0.1:0")
         .mode(DeploymentMode::Embedded)
         .shell_dir(shell_dir.path())
-        .extension(BilibiliWebExtension::new(api.clone()).with_frontend_assets(&assets))
+        .extension(extension)
         .auth_token("local-dev")
         .build()
         .unwrap();
@@ -249,7 +256,6 @@ async fn bilibili_management_rpc_strips_qr_secrets_and_requires_confirmation() {
     assert_eq!(*api.unsubs.lock().unwrap(), 1);
 
     host.stop().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(20)).await;
 }
 
 async fn rpc(address: &str, method: &str, params: Value) -> Result<Value, String> {

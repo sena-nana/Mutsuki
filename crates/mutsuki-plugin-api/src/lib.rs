@@ -2,11 +2,30 @@
 //!
 //! This crate deliberately contains only stable descriptors, FFI-safe ABI types and optional
 //! host gateways. It does not own a task pool, executor, runtime actor or product host.
+//!
+//! # Unsafe boundary
+//!
+//! This is one of the few crates on the workspace `unsafe_code` exception list. It defines the
+//! `extern "C"` guest side of ABI v2, so raw pointers, manual `Send`/`Sync` and `Box::from_raw`
+//! are unavoidable here. Every `unsafe` block carries its own `SAFETY:` argument, and no other
+//! module in this crate is allowed to grow one without the same justification.
+#![allow(unsafe_code)]
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::manual_let_else,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate,
+    clippy::return_self_not_must_use,
+    clippy::too_many_lines
+)]
 
 use std::ffi::c_void;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use mutsuki_runtime_contracts::resource::experimental::{CommandBatch, SagaPlan};
 use mutsuki_runtime_contracts::{
@@ -426,6 +445,9 @@ impl AbiBuffer {
         if self.len == 0 {
             return &[];
         }
+        // SAFETY: the caller guarantees `ptr`/`len` came from an ABI peer, which only ever
+        // produces them through `from_bytes` (a leaked `Box<[u8]>`). The zero-length case
+        // returned above is the only one where `ptr` may dangle.
         unsafe { std::slice::from_raw_parts(self.ptr.cast_const(), self.len) }
     }
 }
@@ -476,15 +498,26 @@ pub struct AbiPluginV2 {
 
 pub type AbiEntryV2 = unsafe extern "C" fn(AbiHostV2) -> AbiPluginV2;
 
+// SAFETY: `AbiHostV2` is a plain `#[repr(C)]` bundle of an opaque host context pointer and
+// two `extern "C"` function pointers. The host contract requires those callbacks to be
+// callable from any thread and to serialize access to the context internally, so moving and
+// sharing the bundle carries no additional aliasing obligation of its own.
 unsafe impl Send for AbiHostV2 {}
 unsafe impl Sync for AbiHostV2 {}
 
-pub trait AbiGuest: Send {
-    fn request(&mut self, request: &[u8]) -> Vec<u8>;
+/// A plugin-side ABI v2 endpoint.
+///
+/// `request` takes `&self` and the trait requires `Sync` because the host may have several calls
+/// in flight at once. Wrapping the whole guest in one mutex here would push every plugin back to
+/// one request at a time no matter how the host schedules them, so the synchronisation belongs
+/// inside the guest, where it can be scoped to the individual runner or provider a request
+/// actually touches.
+pub trait AbiGuest: Send + Sync {
+    fn request(&self, request: &[u8]) -> Vec<u8>;
 }
 
 pub fn plugin_api_from_guest(guest: Box<dyn AbiGuest>) -> AbiPluginV2 {
-    let context = Box::into_raw(Box::new(Mutex::new(guest))).cast::<c_void>();
+    let context = Box::into_raw(Box::new(guest)).cast::<c_void>();
     AbiPluginV2 {
         transport_version: ABI_V2_TRANSPORT_VERSION,
         context,
@@ -506,13 +539,17 @@ unsafe extern "C" fn guest_request(
         let request = if request_len == 0 {
             &[]
         } else {
+            // SAFETY: the null/length combinations rejected above leave only a non-null
+            // pointer to `request_len` initialised bytes owned by the caller. The borrow
+            // ends before this function returns, so it cannot outlive the caller's buffer.
             unsafe { std::slice::from_raw_parts(request, request_len) }
         };
-        let guest = unsafe { &*(context.cast::<Mutex<Box<dyn AbiGuest>>>()) };
-        guest
-            .lock()
-            .expect("ABI guest mutex poisoned")
-            .request(request)
+        // SAFETY: `context` was checked non-null above and is only ever produced by
+        // `plugin_api_from_guest`, which leaks exactly this type. The host keeps it alive
+        // until it calls `close_guest`, and `AbiGuest: Sync` makes the shared reference sound
+        // across the host threads that may call in concurrently.
+        let guest = unsafe { &*(context.cast::<Box<dyn AbiGuest>>()) };
+        guest.request(request)
     }));
     match result {
         Ok(response) => AbiCallResult::ok(response),
@@ -525,6 +562,9 @@ unsafe extern "C" fn release_buffer(buffer: AbiBuffer) {
         return;
     }
     let slice = ptr::slice_from_raw_parts_mut(buffer.ptr, buffer.len);
+    // SAFETY: non-empty buffers reaching this point were built by `AbiBuffer::from_bytes`,
+    // which leaks a `Box<[u8]>` of exactly `len` elements. The ABI contract makes release
+    // single-shot, so reconstructing and dropping that box here is the matching free.
     unsafe {
         drop(Box::from_raw(slice));
     }
@@ -532,8 +572,10 @@ unsafe extern "C" fn release_buffer(buffer: AbiBuffer) {
 
 unsafe extern "C" fn close_guest(context: *mut c_void) {
     if !context.is_null() {
+        // SAFETY: `context` is the pointer leaked by `plugin_api_from_guest` and the ABI
+        // contract calls `close` at most once, after the last `request` has returned.
         unsafe {
-            drop(Box::from_raw(context.cast::<Mutex<Box<dyn AbiGuest>>>()));
+            drop(Box::from_raw(context.cast::<Box<dyn AbiGuest>>()));
         }
     }
 }
@@ -554,8 +596,13 @@ pub fn consume_call_result(
             "non-empty payload is missing its release callback",
         ));
     }
+    // SAFETY: the pointer/length pair was validated as a consistent pair just above, so it is
+    // either empty or a live ABI-owned allocation. The copy completes before the buffer is
+    // handed back to its owner for release.
     let bytes = unsafe { result.payload.as_slice() }.to_vec();
     if result.payload.len > 0 {
+        // SAFETY: a non-empty payload was proven to carry a release callback above, and this
+        // is the single release call for that buffer.
         unsafe {
             release.expect("validated release callback")(result.payload);
         }

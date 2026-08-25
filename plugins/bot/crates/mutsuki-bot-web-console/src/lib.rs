@@ -2,6 +2,21 @@
 //!
 //! Console = WebApplication shell + control/overview/(optional) config WebExtensions.
 //! Does not embed business pages into WebHost Recovery.
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::default_trait_access,
+    clippy::doc_markdown,
+    clippy::fn_params_excessive_bools,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate,
+    clippy::pub_underscore_fields,
+    clippy::question_mark,
+    clippy::too_many_arguments,
+    clippy::too_many_lines
+)]
 
 mod config_demo;
 mod secret_status;
@@ -19,7 +34,7 @@ pub use watch_bridge::{
 
 use mutsuki_bot_flow::BotFlowRegistry;
 use mutsuki_bot_management::BilibiliManagementApi;
-use mutsuki_bot_sandbox::{SandboxApi, SandboxService};
+use mutsuki_bot_sandbox::SandboxApi;
 use mutsuki_bot_state_db::BotStateDbRepository;
 use mutsuki_config_service::{ConfigProviderRegistry, ConfigService, InMemoryConfigRepository};
 use mutsuki_plugin_bot_agent_web::{
@@ -270,7 +285,11 @@ pub fn build_console_host_with_agent(
             .extension(QqBotWebExtension::new(api).with_frontend_assets(&asset_dirs.qq_assets));
     }
     if config.has_extension("sandbox") {
-        let api = sandbox.unwrap_or_else(|| Arc::new(SandboxService::new()));
+        let api = sandbox.ok_or_else(|| {
+            mutsuki_web_host::WebHostError::InvalidConfig(
+                "sandbox WebExtension requires its management service".into(),
+            )
+        })?;
         builder = builder.extension(
             SandboxWebExtension::new(api).with_frontend_assets(&asset_dirs.sandbox_assets),
         );

@@ -1,4 +1,16 @@
 //! Bilibili console WebExtension: login state + subscription management RPC.
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::doc_markdown,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::redundant_closure_for_method_calls,
+    clippy::return_self_not_must_use,
+    clippy::too_many_lines,
+    clippy::uninlined_format_args
+)]
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -8,7 +20,8 @@ use mutsuki_bot_management::{
 };
 use mutsuki_bot_protocol::BotTarget;
 use mutsuki_web_extension::{
-    ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, content_hash,
+    BUNDLED_ENTRY_ASSET, ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor,
+    content_hash, load_bundled_manifest,
 };
 use mutsuki_web_protocol::{
     AssetEntry, EXTENSION_MANIFEST_VERSION, ExtensionManifest, WEB_PROTOCOL_VERSION,
@@ -45,28 +58,17 @@ impl BilibiliWebExtension {
 
 impl WebExtension for BilibiliWebExtension {
     fn descriptor(&self) -> WebExtensionDescriptor {
-        ExtensionManifest {
-            manifest_version: EXTENSION_MANIFEST_VERSION,
-            id: PLUGIN_ID.into(),
-            version: PLUGIN_VERSION.into(),
-            entry: "index.js".into(),
-            capabilities: vec![
-                CAPABILITY_RUNTIME_READ.into(),
-                CAPABILITY_RUNTIME_WRITE.into(),
-            ],
-            permissions: vec!["pages".into(), "navigation".into()],
-            assets: self
-                .frontend_assets()
+        manifest(
+            self.frontend_assets()
                 .map(|assets| assets.manifest.assets)
                 .unwrap_or_default(),
-            protocol_version: WEB_PROTOCOL_VERSION.into(),
-        }
+        )
     }
 
     fn frontend_assets(&self) -> Option<WebFrontendAssets> {
         let root = self.assets_root.as_ref()?;
         Some(WebFrontendAssets {
-            manifest: load_or_synthesize_manifest(root).ok()?,
+            manifest: load_bundled_manifest(root, manifest).ok()?,
             root_dir: root.clone(),
         })
     }
@@ -254,60 +256,36 @@ impl WebExtension for BilibiliWebExtension {
     }
 }
 
-pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::Error> {
-    std::fs::create_dir_all(out_dir)?;
-    let js = include_str!("../assets/index.js");
-    std::fs::write(out_dir.join("index.js"), js)?;
-    let assets = vec![AssetEntry {
-        path: "index.js".into(),
-        content_hash: content_hash(js.as_bytes()),
-        bytes: js.len() as u64,
-    }];
-    std::fs::write(
-        out_dir.join("manifest.json"),
-        serde_json::to_vec_pretty(&ExtensionManifest {
-            manifest_version: EXTENSION_MANIFEST_VERSION,
-            id: PLUGIN_ID.into(),
-            version: PLUGIN_VERSION.into(),
-            entry: "index.js".into(),
-            capabilities: vec![
-                CAPABILITY_RUNTIME_READ.into(),
-                CAPABILITY_RUNTIME_WRITE.into(),
-            ],
-            permissions: vec!["pages".into(), "navigation".into()],
-            assets,
-            protocol_version: WEB_PROTOCOL_VERSION.into(),
-        })
-        .expect("manifest"),
-    )?;
-    Ok(out_dir.to_path_buf())
-}
-
-fn load_or_synthesize_manifest(root: &Path) -> Result<ExtensionManifest, ExtensionError> {
-    let path = root.join("manifest.json");
-    if path.exists() {
-        let bytes = std::fs::read(&path).map_err(|e| ExtensionError::Manifest(e.to_string()))?;
-        return serde_json::from_slice(&bytes).map_err(|e| ExtensionError::Manifest(e.to_string()));
-    }
-    let bytes = std::fs::read(root.join("index.js"))
-        .map_err(|e| ExtensionError::Manifest(e.to_string()))?;
-    Ok(ExtensionManifest {
+fn manifest(assets: Vec<AssetEntry>) -> ExtensionManifest {
+    ExtensionManifest {
         manifest_version: EXTENSION_MANIFEST_VERSION,
         id: PLUGIN_ID.into(),
         version: PLUGIN_VERSION.into(),
-        entry: "index.js".into(),
+        entry: BUNDLED_ENTRY_ASSET.into(),
         capabilities: vec![
             CAPABILITY_RUNTIME_READ.into(),
             CAPABILITY_RUNTIME_WRITE.into(),
         ],
         permissions: vec!["pages".into(), "navigation".into()],
-        assets: vec![AssetEntry {
-            path: "index.js".into(),
-            content_hash: content_hash(&bytes),
-            bytes: bytes.len() as u64,
-        }],
+        assets,
         protocol_version: WEB_PROTOCOL_VERSION.into(),
-    })
+    }
+}
+
+pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::Error> {
+    std::fs::create_dir_all(out_dir)?;
+    let js = include_str!("../assets/index.js");
+    std::fs::write(out_dir.join(BUNDLED_ENTRY_ASSET), js)?;
+    let assets = vec![AssetEntry {
+        path: BUNDLED_ENTRY_ASSET.into(),
+        content_hash: content_hash(js.as_bytes()),
+        bytes: js.len() as u64,
+    }];
+    std::fs::write(
+        out_dir.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest(assets)).expect("manifest"),
+    )?;
+    Ok(out_dir.to_path_buf())
 }
 
 fn map_bili_error(error: BilibiliManagementError) -> ExtensionError {

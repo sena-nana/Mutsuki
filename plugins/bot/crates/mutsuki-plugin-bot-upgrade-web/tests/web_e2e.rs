@@ -1,8 +1,11 @@
 //! upgrade.* WebHost E2E with fixture remote head provider.
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(clippy::default_trait_access, clippy::doc_markdown)]
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use mutsuki_plugin_bot_upgrade_web::UpgradeWebExtension;
@@ -80,7 +83,6 @@ async fn upgrade_check_and_plan_use_fixture_remote() {
     assert_eq!(plan["reload"]["method"], "plugin_reload");
 
     host.stop().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
 }
 
 #[tokio::test]
@@ -100,7 +102,6 @@ async fn upgrade_execute_dry_run_via_web() {
     assert!(report["report"]["steps"].as_array().unwrap().len() >= 3);
 
     host.stop().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
 }
 
 async fn ws_rpc(

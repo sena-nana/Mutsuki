@@ -1,3 +1,15 @@
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::map_unwrap_or,
+    clippy::needless_pass_by_value,
+    clippy::similar_names,
+    clippy::too_many_lines,
+    clippy::wildcard_imports
+)]
+
 mod harness;
 mod measurement;
 

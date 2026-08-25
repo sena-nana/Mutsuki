@@ -39,11 +39,23 @@ jobs:
             patchelf \
             xdg-utils
 
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          # check_workspace.py needs tomllib.
+          python-version: "3.11"
+
       - name: Check formatting
-        run: cargo fmt --check
+        run: cargo fmt --all -- --check
 
       - name: Check monorepo boundaries
         run: python3 skills/monorepo-maintenance/scripts/check_workspace.py
+
+      - name: Check dependency graph resolves against the committed lockfile
+        run: cargo metadata --locked --format-version 1 > /dev/null
+
+      - name: Check distributed zero-intrusion boundary
+        run: bash scripts/check-distributed-boundary.sh
 
       - name: Check locked workspace
         run: cargo check --workspace --all-targets --locked
@@ -56,6 +68,13 @@ jobs:
 
       - name: Performance smoke gate
         run: cargo bench-smoke
+
+      # The fuzz crate lives outside the root Workspace, so nothing above compiles it. Without this
+      # step a target silently rots the moment one of the DTOs it fuzzes changes shape. Running the
+      # fuzzers themselves needs nightly and a time budget; that belongs in a scheduled job.
+      - name: Check fuzz targets
+        working-directory: fuzz
+        run: cargo check --all-targets --locked
 
       - name: Print sccache stats
         if: always()

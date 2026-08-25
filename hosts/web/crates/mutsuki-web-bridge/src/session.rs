@@ -101,7 +101,7 @@ impl AuthPolicy {
                     });
                 }
                 let token = token.ok_or(ProtocolError::Unauthenticated)?;
-                if accepted_tokens.is_empty() || accepted_tokens.iter().any(|item| item == token) {
+                if token_accepted(accepted_tokens, token) {
                     Ok(AuthGrant {
                         principal_id: "local-web-console".into(),
                         capabilities: default_capabilities.clone(),
@@ -120,7 +120,7 @@ impl AuthPolicy {
                     return Err(ProtocolError::Internal("remote auth requires TLS".into()));
                 }
                 let token = token.ok_or(ProtocolError::Unauthenticated)?;
-                if accepted_tokens.iter().any(|item| item == token) {
+                if token_accepted(accepted_tokens, token) {
                     Ok(AuthGrant {
                         principal_id: "remote-web-console".into(),
                         capabilities: default_capabilities.clone(),
@@ -131,6 +131,33 @@ impl AuthPolicy {
             }
         }
     }
+}
+
+/// Decides whether a presented token is on the accepted list.
+///
+/// An empty accepted list means "no token can authenticate", never "every token authenticates".
+/// The capability set attached to a policy is chosen independently of the token list, so a
+/// fail-open list would hand whatever capabilities that policy carries to any caller that guesses
+/// a token exists at all.
+///
+/// The comparison is constant-time: an unauthenticated caller may retry indefinitely, and a
+/// byte-by-byte early exit turns each retry into a probe for the next byte of the token.
+fn token_accepted(accepted_tokens: &[String], presented: &str) -> bool {
+    let mut accepted = false;
+    for candidate in accepted_tokens {
+        accepted |= constant_time_eq(candidate.as_bytes(), presented.as_bytes());
+    }
+    accepted
+}
+
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    let mut diff = u8::from(left.len() != right.len());
+    for index in 0..left.len().max(right.len()) {
+        let lhs = left.get(index).copied().unwrap_or(0);
+        let rhs = right.get(index).copied().unwrap_or(0);
+        diff |= lhs ^ rhs;
+    }
+    diff == 0
 }
 
 struct SessionState {

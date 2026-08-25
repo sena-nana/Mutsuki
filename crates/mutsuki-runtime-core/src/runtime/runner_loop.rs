@@ -21,21 +21,20 @@ mod result_router;
 mod trace_metadata;
 
 impl CoreRuntime {
-    pub fn runner_load_snapshot(&self) -> Vec<(RunnerDescriptor, RunnerLoad)> {
-        self.registry
-            .descriptor_snapshot()
-            .iter()
-            .map(|descriptor| {
-                (
-                    descriptor.clone(),
-                    self.tasks.runner_load(
-                        descriptor,
-                        self.current_step,
-                        self.load_plan.registry_generation,
-                    ),
-                )
-            })
-            .collect()
+    /// Visits the current queue load of every registered runner.
+    ///
+    /// The descriptor is lent, not cloned: a `RunnerDescriptor` carries its input and output
+    /// schemas plus its metadata map, so cloning the whole set once per scheduling pass copies
+    /// kilobytes of JSON that the caller only reads a couple of enum fields from.
+    pub fn for_each_runner_load(&self, mut visit: impl FnMut(&RunnerDescriptor, RunnerLoad)) {
+        for descriptor in self.registry.descriptor_snapshot().iter() {
+            let load = self.tasks.runner_load(
+                descriptor,
+                self.current_step,
+                self.load_plan.registry_generation,
+            );
+            visit(descriptor, load);
+        }
     }
 
     pub fn tick_once(&mut self) -> RuntimeResult<RunnerLoopReport> {
@@ -50,7 +49,7 @@ impl CoreRuntime {
         self.ensure_not_aborted()?;
         self.current_step += 1;
         self.states.prune(self.current_step);
-        self.reclaim_expired_task_leases();
+        self.reclaim_expired_leases();
         self.wake_due_tasks();
         let mut loop_report = empty_runner_loop_report();
         loop_report.completed_tasks += self.reject_stale_ready_tasks()?;
@@ -122,7 +121,7 @@ impl CoreRuntime {
         }
         self.current_step = target_step;
         self.states.prune(self.current_step);
-        self.reclaim_expired_task_leases();
+        self.reclaim_expired_leases();
         self.wake_due_tasks();
         let mut loop_report = empty_runner_loop_report();
         loop_report.completed_tasks += self.reject_stale_ready_tasks()?;
@@ -272,13 +271,25 @@ impl CoreRuntime {
         }
         let deferred = dispatch.task_leases.len();
         if let executor::RunnerDispatchTarget::Sync(runner) = dispatch.target {
-            self.registry.put_runner(runner);
+            let generation = dispatch
+                .task_leases
+                .first()
+                .map_or(0, |lease| lease.registry_generation);
+            if let Some(mut rejected) = self
+                .registry_for_generation(generation)
+                .put_runner(runner, generation)
+            {
+                rejected.dispose()?;
+            }
         }
         Ok(deferred)
     }
 
-    fn reclaim_expired_task_leases(&mut self) {
+    /// Sweeps both lease kinds in one place so a step never reclaims a task while leaving the
+    /// resource its dead attempt held pinned to that same attempt.
+    fn reclaim_expired_leases(&mut self) {
         failure_reporting::reclaim_expired_task_leases(self);
+        failure_reporting::reclaim_expired_resource_leases(self);
     }
 
     pub fn run_until_idle(&mut self, max_ticks: usize) -> RuntimeResult<RunnerLoopReport> {

@@ -185,7 +185,9 @@ impl RpcRegistry {
                 ExtensionError::Registration(format!("rpc method not found: {key}"))
             })?;
         match handler {
-            RegisteredRpcHandler::Sync(handler) => handler(RpcCallContext::default(), params),
+            RegisteredRpcHandler::Sync(handler) => {
+                dispatch_sync_handler(handler, RpcCallContext::default(), params).await
+            }
             RegisteredRpcHandler::Async(handler) => {
                 handler(RpcCallContext::default(), params).await
             }
@@ -208,7 +210,9 @@ impl RpcRegistry {
                 ExtensionError::Registration(format!("rpc method not found: {key}"))
             })?;
         match handler {
-            RegisteredRpcHandler::Sync(handler) => handler(context, params),
+            RegisteredRpcHandler::Sync(handler) => {
+                dispatch_sync_handler(handler, context, params).await
+            }
             RegisteredRpcHandler::Async(handler) => handler(context, params).await,
         }
     }
@@ -216,6 +220,32 @@ impl RpcRegistry {
     pub fn methods(&self) -> Vec<String> {
         self.handlers.keys().cloned().collect()
     }
+}
+
+/// Runs a synchronous RPC handler without occupying an async worker.
+///
+/// Extensions register plenty of handlers that talk to SQLite, the filesystem or an HTTP endpoint
+/// straight from the closure. Calling those inline from the WebHost's async dispatch stalls a
+/// reactor thread for the whole round trip, which shows up as unrelated sockets going quiet. The
+/// blocking pool exists for exactly this, so sync handlers go there and only fall back to an
+/// inline call when there is no runtime to hand the work to.
+async fn dispatch_sync_handler(
+    handler: RpcHandler,
+    context: RpcCallContext,
+    params: JsonValue,
+) -> Result<JsonValue, ExtensionError> {
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return handler(context, params);
+    };
+    runtime
+        .spawn_blocking(move || handler(context, params))
+        .await
+        .unwrap_or_else(|error| {
+            Err(ExtensionError::Rpc {
+                code: "rpc_failed".into(),
+                message: format!("synchronous rpc handler aborted: {error}"),
+            })
+        })
 }
 
 #[derive(Default)]
@@ -488,6 +518,36 @@ mod tests {
             .unwrap();
         assert_eq!(value, serde_json::json!({"content": "login"}));
         assert!(rpc.call("qr.render", serde_json::json!({})).is_err());
+    }
+
+    /// The runtime has a single worker, so an inline synchronous handler would own it for the
+    /// whole call and the release below could never be reached.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn synchronous_handlers_leave_the_async_worker_free() {
+        let (release, blocked) = std::sync::mpsc::channel::<()>();
+        let blocked = std::sync::Mutex::new(blocked);
+        let mut rpc = RpcRegistry::new("demo");
+        rpc.register("block", move |_params| {
+            blocked
+                .lock()
+                .expect("release channel")
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .map_err(|_| ExtensionError::Rpc {
+                    code: "rpc_failed".into(),
+                    message: "handler was never released".into(),
+                })?;
+            Ok(JsonValue::Null)
+        });
+        let rpc = Arc::new(rpc);
+
+        let call = tokio::spawn({
+            let rpc = rpc.clone();
+            async move { rpc.call_async("block", JsonValue::Null).await }
+        });
+        tokio::task::yield_now().await;
+        release.send(()).expect("handler still waiting");
+
+        call.await.expect("rpc task").expect("handler released");
     }
 
     #[test]

@@ -1,4 +1,15 @@
 //! Headless Bot management contracts: QQ and Bilibili console APIs.
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::doc_markdown,
+    clippy::missing_errors_doc,
+    clippy::must_use_candidate,
+    clippy::needless_continue,
+    clippy::similar_names,
+    clippy::struct_excessive_bools
+)]
 
 mod bilibili;
 
@@ -16,6 +27,21 @@ use mutsuki_bot_protocol::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
+
+/// Runs blocking management IO from an async context without stalling a reactor thread.
+///
+/// The management stores answer over SQLite and blocking HTTP, and their Runner-facing callers
+/// depend on that: `TaskAwaitRunnerAdapter` rejects a runner future that yields for anything other
+/// than a Core task await, so the stores cannot become async. The Web Console reaches the same
+/// stores from a real async executor, where an inline call parks the worker that the console's
+/// other sockets share. Announcing the section lets the scheduler relocate those tasks first;
+/// off a multi-threaded runtime there is nothing to relocate to, so the work runs where it is.
+pub fn in_blocking_section<T>(work: impl FnOnce() -> T) -> T {
+    match tokio::runtime::Handle::try_current().map(|handle| handle.runtime_flavor()) {
+        Ok(tokio::runtime::RuntimeFlavor::MultiThread) => tokio::task::block_in_place(work),
+        _ => work(),
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -527,9 +553,11 @@ impl QqBotManagementApi for QqBotManagementService {
         query: &str,
         include_secret_status: bool,
     ) -> Result<QqBotManagementSnapshot, QqManagementError> {
-        let mut snapshot = self.provider.load_snapshot(query, include_secret_status)?;
-        snapshot.revision = self.state.revision()?;
-        Ok(snapshot)
+        in_blocking_section(|| {
+            let mut snapshot = self.provider.load_snapshot(query, include_secret_status)?;
+            snapshot.revision = self.state.revision()?;
+            Ok(snapshot)
+        })
     }
 
     async fn write(
@@ -556,13 +584,16 @@ impl QqBotManagementApi for QqBotManagementService {
                 code: "invalid_argument".into(),
                 message: error.to_string(),
             })?;
-        let replaying = match self.state.begin_operation(
-            &request.operation_id,
-            request.expected_revision,
-            actor_id,
-            &operation_fingerprint,
-            unix_ms(),
-        )? {
+        let reservation = in_blocking_section(|| {
+            self.state.begin_operation(
+                &request.operation_id,
+                request.expected_revision,
+                actor_id,
+                &operation_fingerprint,
+                unix_ms(),
+            )
+        })?;
+        let replaying = match reservation {
             QqManagementOperationReservation::Completed(audit) => {
                 return Ok(QqManagementWriteResult {
                     revision: audit.revision,
@@ -577,12 +608,10 @@ impl QqBotManagementApi for QqBotManagementService {
             .provider
             .apply(&request.operation_id, replaying, actor_id, &request.action)
             .await?;
-        let audit = self.state.complete_operation(
-            &request.operation_id,
-            action,
-            result.clone(),
-            unix_ms(),
-        )?;
+        let audit = in_blocking_section(|| {
+            self.state
+                .complete_operation(&request.operation_id, action, result.clone(), unix_ms())
+        })?;
         let _ = self.changes.send(QqManagementChangeEvent {
             revision: audit.revision,
             areas: vec![
@@ -604,7 +633,7 @@ impl QqBotManagementApi for QqBotManagementService {
         after: Option<&str>,
         limit: u32,
     ) -> Result<crate::QqManagementPage<QqDeliveryView>, QqManagementError> {
-        self.provider.delivery_page(query, after, limit)
+        in_blocking_section(|| self.provider.delivery_page(query, after, limit))
     }
 
     async fn interaction_page(
@@ -613,7 +642,7 @@ impl QqBotManagementApi for QqBotManagementService {
         after: Option<&str>,
         limit: u32,
     ) -> Result<crate::QqManagementPage<BotInteractionSession>, QqManagementError> {
-        self.provider.interaction_page(query, after, limit)
+        in_blocking_section(|| self.provider.interaction_page(query, after, limit))
     }
 }
 

@@ -6,3 +6,6 @@ edition = "2024"
 [dependencies]
 mutsuki-agent-contracts = { path = "../../crates/mutsuki-agent-contracts" }
 mutsuki-plugin-agent-model-gateway = { path = "../../crates/mutsuki-plugin-agent-model-gateway" }
+
+[lints]
+workspace = true

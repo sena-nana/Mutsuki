@@ -1,7 +1,10 @@
 //! control.* WebHost E2E.
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(clippy::default_trait_access, clippy::doc_markdown)]
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use mutsuki_plugin_bot_control_web::{ControlWebExtension, FixtureControlHandler};
@@ -57,13 +60,23 @@ async fn ws_rpc(
     params: serde_json::Value,
     hello_caps: &[&str],
 ) -> Result<serde_json::Value, String> {
+    ws_rpc_with_token(addr, method, params, hello_caps, Some("local-dev")).await
+}
+
+async fn ws_rpc_with_token(
+    addr: &str,
+    method: &str,
+    params: serde_json::Value,
+    hello_caps: &[&str],
+    auth_token: Option<&str>,
+) -> Result<serde_json::Value, String> {
     use tokio_tungstenite::{connect_async, tungstenite::Message};
     let (mut ws, _) = connect_async(format!("ws://{addr}/ws")).await.expect("ws");
     ws.send(Message::Binary(
         WireMessage::Hello {
             protocol_version: WEB_PROTOCOL_VERSION.into(),
             capabilities: hello_caps.iter().map(|cap| (*cap).into()).collect(),
-            auth_token: Some("local-dev".into()),
+            auth_token: auth_token.map(str::to_string),
         }
         .encode()
         .unwrap()
@@ -129,7 +142,6 @@ async fn control_read_methods() {
         .unwrap();
     assert_eq!(plugins["plugins"][0]["plugin_id"], "demo.plugin");
     host.stop().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
 }
 
 #[tokio::test]
@@ -145,7 +157,6 @@ async fn control_log_tail_and_task_list() {
         .unwrap();
     assert_eq!(tasks[0]["task_id"], "demo.task");
     host.stop().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
 }
 
 #[tokio::test]
@@ -153,18 +164,20 @@ async fn client_capabilities_cannot_grant_control_access() {
     let handler = Arc::new(FixtureControlHandler::default());
     let mut host = start_with_local_admin(handler.clone(), false).await;
     let addr = host.listen_addr().unwrap().to_string();
-    let denied = ws_rpc(
+    // No console token is configured, so the session is the anonymous read-only one. The Hello
+    // capability list is client-supplied and must not widen it.
+    let denied = ws_rpc_with_token(
         &addr,
         "plugin_reload",
         json!({"capabilities": ["runtime.write", "*"]}),
         &["runtime.read", "runtime.write", "*"],
+        None,
     )
     .await
     .unwrap_err();
     assert!(denied.contains("capability denied"), "{denied}");
     assert!(handler.mutations.lock().unwrap().is_empty());
     host.stop().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
 }
 
 #[tokio::test]
@@ -210,7 +223,6 @@ async fn control_write_deployment_and_event_source_restart() {
         assert!(mutations.contains(&"event_source_restart".to_string()));
     }
     host.stop().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
 }
 
 #[tokio::test]
@@ -229,7 +241,6 @@ async fn control_plugin_list_includes_candidates_and_diagnostics() {
     );
     assert_eq!(plugins["diagnostics"][0]["plugin_id"], "broken.plugin");
     host.stop().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
 }
 
 #[tokio::test]
@@ -306,5 +317,4 @@ async fn control_task_debug_and_lifecycle_methods() {
     }
 
     host.stop().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
 }

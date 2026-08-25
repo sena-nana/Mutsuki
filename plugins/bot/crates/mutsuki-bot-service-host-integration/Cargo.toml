@@ -49,3 +49,6 @@ mutsuki-bot-testkit.workspace = true
 mutsuki-plugin-config-sqlite.workspace = true
 toml.workspace = true
 tempfile.workspace = true
+
+[lints]
+workspace = true

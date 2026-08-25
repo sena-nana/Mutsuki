@@ -1,3 +1,21 @@
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::default_trait_access,
+    clippy::manual_let_else,
+    clippy::match_same_arms,
+    clippy::missing_errors_doc,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value,
+    clippy::return_self_not_must_use,
+    clippy::semicolon_if_nothing_returned,
+    clippy::single_match_else,
+    clippy::too_many_lines,
+    clippy::unused_async
+)]
+
 mod client;
 mod codec;
 mod error;

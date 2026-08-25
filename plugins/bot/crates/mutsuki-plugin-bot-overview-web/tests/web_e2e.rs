@@ -1,7 +1,10 @@
 //! overview.summary WebHost E2E.
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(clippy::default_trait_access, clippy::doc_markdown)]
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use mutsuki_plugin_bot_control_web::{ControlRpcCaller, FixtureControlHandler};
@@ -133,7 +136,6 @@ async fn overview_summary() {
             .any(|p| p["plugin_id"] == "demo.plugin")
     );
     host.stop().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
 }
 
 #[tokio::test]
@@ -143,5 +145,4 @@ async fn overview_summary_without_core_statistics() {
     let summary = ws_rpc(&addr, "summary").await.unwrap();
     assert!(summary["counts"]["tasks"].is_null());
     host.stop().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
 }

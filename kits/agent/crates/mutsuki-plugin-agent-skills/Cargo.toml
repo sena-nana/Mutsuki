@@ -9,3 +9,6 @@ mutsuki-agent-contracts.workspace = true
 mutsuki-agent-runtime.workspace = true
 mutsuki-agent-sdk.workspace = true
 mutsuki-runtime-sdk.workspace = true
+
+[lints]
+workspace = true

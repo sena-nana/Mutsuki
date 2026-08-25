@@ -153,7 +153,7 @@ pub(super) fn schedule_ready_at(
 ) -> RuntimeResult<RunnerLoopReport> {
     let scheduler_started = Instant::now();
     let mut domain_lane_demand: BTreeMap<String, BTreeMap<DispatchLane, usize>> = BTreeMap::new();
-    for (descriptor, load) in core.runner_load_snapshot() {
+    core.for_each_runner_load(|descriptor, load| {
         let async_invocation = matches!(
             descriptor.invocation_mode,
             InvocationMode::AsyncReentrant | InvocationMode::AsyncExclusive
@@ -170,7 +170,7 @@ pub(super) fn schedule_ready_at(
         for (lane, count) in load.queued_by_lane {
             *demand.entry(lane).or_default() += count;
         }
-    }
+    });
     let mut domain_reservations: BTreeMap<String, usize> = BTreeMap::new();
     let mut async_reservations = 0usize;
     let (report, dispatches) = core.claim_ready_dispatches_at_step(

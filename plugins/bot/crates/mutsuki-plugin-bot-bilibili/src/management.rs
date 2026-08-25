@@ -10,7 +10,7 @@ use mutsuki_bot_management::{
     BilibiliManagementChangeArea, BilibiliManagementChangeEvent,
     BilibiliManagementChangeSubscription, BilibiliManagementError, BilibiliManagementStatus,
     BilibiliNotificationKind, BilibiliPreviewCardView, BilibiliQrLoginStatus,
-    BilibiliSubscriptionView,
+    BilibiliSubscriptionView, in_blocking_section,
 };
 use mutsuki_bot_protocol::BotTarget;
 
@@ -132,7 +132,7 @@ impl BilibiliManagementService {
             .ok_or_else(|| {
                 BilibiliError::ManagementUnavailable("image QR renderer is unavailable".into())
             })?;
-        let session = self.login_start_session_impl(actor_id)?;
+        let session = in_blocking_section(|| self.login_start_session_impl(actor_id))?;
         let png = renderer.render_qr(&session.url).await?;
         Ok(BilibiliLoginStartResult {
             url: session.url,

@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use mutsuki_runtime_contracts::{PluginManifest, RunnerId};
 use mutsuki_runtime_core::{Runner, RuntimeResult};
@@ -13,11 +13,17 @@ use crate::{LoadedPlugin, ResourceProviderGateway};
 
 use super::error::{abi_failure, encode_binary_result};
 
+/// Plugin-side dispatch target for one loaded plugin.
+///
+/// Every method takes `&self` so the host can keep several ABI calls in flight. Mutability is
+/// scoped to what a request actually touches: a `Runner` still runs one batch at a time because
+/// `Runner::run_batch` takes `&mut self`, but two different runners, or a runner and a resource
+/// provider, no longer wait on each other.
 pub(super) struct PluginGuest {
     manifest: PluginManifest,
-    runners: BTreeMap<RunnerId, Box<dyn Runner>>,
+    runners: BTreeMap<RunnerId, Mutex<Box<dyn Runner>>>,
     providers: BTreeMap<String, Arc<dyn ResourceProviderGateway>>,
-    initialized: bool,
+    initialized: Mutex<bool>,
 }
 
 pub(super) trait GuestResponseCodec {
@@ -55,7 +61,10 @@ impl PluginGuest {
         let mut runners = BTreeMap::new();
         for runner in plugin.runners {
             let runner_id = RunnerId::from(runner.descriptor().runner_id.clone());
-            if runners.insert(runner_id.clone(), runner).is_some() {
+            if runners
+                .insert(runner_id.clone(), Mutex::new(runner))
+                .is_some()
+            {
                 return Err(abi_failure("abi.runner_duplicate", runner_id.to_string()));
             }
         }
@@ -72,15 +81,18 @@ impl PluginGuest {
             manifest: plugin.manifest,
             runners,
             providers,
-            initialized: false,
+            initialized: Mutex::new(false),
         })
     }
 
     pub(super) fn initialize<C: GuestResponseCodec>(
-        &mut self,
+        &self,
         hello: ProtocolHello,
     ) -> RuntimeResult<ProtocolHelloAck> {
-        if self.initialized {
+        // The lock is held across the handshake so two concurrent initialize frames cannot both
+        // observe `false` and both answer with an ack.
+        let mut initialized = lock_ignoring_poison(&self.initialized);
+        if *initialized {
             return Err(abi_failure(
                 "abi.already_initialized",
                 "plugin.initialize may only be called once",
@@ -93,11 +105,11 @@ impl PluginGuest {
         let ack = hello
             .accept(C::CODEC_ID, Some(plugin))
             .map_err(|error| abi_failure("abi.handshake", error.to_string()))?;
-        self.initialized = true;
+        *initialized = true;
         Ok(ack)
     }
 
-    pub(super) fn handle<C: GuestResponseCodec>(&mut self, decoded: DecodedWireRequest) -> Vec<u8> {
+    pub(super) fn handle<C: GuestResponseCodec>(&self, decoded: DecodedWireRequest) -> Vec<u8> {
         let request_id = decoded.request_id;
         if let AnyWireRequest::Initialize(request) = decoded.request {
             return C::encode(
@@ -106,7 +118,7 @@ impl PluginGuest {
                 self.initialize::<C>(request.hello),
             );
         }
-        if !self.initialized {
+        if !*lock_ignoring_poison(&self.initialized) {
             return C::encode::<()>(
                 request_id,
                 decoded.request.opcode(),
@@ -119,28 +131,24 @@ impl PluginGuest {
         self.dispatch::<C>(request_id, decoded.request)
     }
 
-    fn dispatch<C: GuestResponseCodec>(
-        &mut self,
-        request_id: u64,
-        request: AnyWireRequest,
-    ) -> Vec<u8> {
+    fn dispatch<C: GuestResponseCodec>(&self, request_id: u64, request: AnyWireRequest) -> Vec<u8> {
         match request {
             AnyWireRequest::RunBatch(request) => {
                 let result = self
                     .runner(&request.runner_id)
-                    .and_then(|runner| runner.run_batch(request.ctx, request.batch));
+                    .and_then(|mut runner| runner.run_batch(request.ctx, request.batch));
                 C::encode(request_id, Opcode::RunnerRunBatch, result)
             }
             AnyWireRequest::CancelRunner(request) => {
                 let result = self
                     .runner(&request.runner_id)
-                    .and_then(|runner| runner.cancel(&request.invocation_id));
+                    .and_then(|mut runner| runner.cancel(&request.invocation_id));
                 C::encode(request_id, Opcode::RunnerCancel, result)
             }
             AnyWireRequest::DisposeRunner(request) => {
                 let result = self
                     .runner(&request.runner_id)
-                    .and_then(|runner| runner.dispose());
+                    .and_then(|mut runner| runner.dispose());
                 C::encode(request_id, Opcode::RunnerDispose, result)
             }
             AnyWireRequest::CreateBlob(request) => {
@@ -239,10 +247,17 @@ impl PluginGuest {
         }
     }
 
-    fn runner(&mut self, runner_id: &str) -> RuntimeResult<&mut Box<dyn Runner>> {
+    /// Borrows one runner for the duration of a single request.
+    ///
+    /// A poisoned lock means a previous batch panicked mid-run and left the runner in whatever
+    /// state it had reached. Reusing it would silently build on that state, so the request is
+    /// rejected with a code the caller can act on instead.
+    fn runner(&self, runner_id: &str) -> RuntimeResult<MutexGuard<'_, Box<dyn Runner>>> {
         self.runners
-            .get_mut(runner_id)
-            .ok_or_else(|| abi_failure("abi.runner_not_found", runner_id))
+            .get(runner_id)
+            .ok_or_else(|| abi_failure("abi.runner_not_found", runner_id))?
+            .lock()
+            .map_err(|_| abi_failure("abi.runner_poisoned", runner_id))
     }
 
     fn provider(
@@ -255,6 +270,13 @@ impl PluginGuest {
             .get(provider_id)
             .ok_or_else(|| abi_failure("abi.provider_not_found", provider_id))
     }
+}
+
+/// The flag only records whether the handshake already happened, so a panic elsewhere in the
+/// guest cannot corrupt it and refusing to serve on poison would only turn one failed request
+/// into a permanently dead plugin.
+fn lock_ignoring_poison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 pub(super) type ConfiguredPluginFactory =

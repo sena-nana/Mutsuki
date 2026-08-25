@@ -35,3 +35,6 @@ mutsuki-agent-adapter-anthropic.workspace = true
 mutsuki-agent-testkit = { path = "../mutsuki-agent-testkit" }
 mutsuki-runtime-host.workspace = true
 serde_json.workspace = true
+
+[lints]
+workspace = true

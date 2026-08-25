@@ -1,3 +1,22 @@
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::collapsible_if,
+    clippy::default_trait_access,
+    clippy::doc_markdown,
+    clippy::field_reassign_with_default,
+    clippy::items_after_test_module,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate,
+    clippy::needless_borrows_for_generic_args,
+    clippy::needless_pass_by_value,
+    clippy::single_match_else,
+    clippy::struct_excessive_bools,
+    clippy::too_many_lines
+)]
+
 use std::sync::Arc;
 
 use mutsuki_agent_service_host_integration::{

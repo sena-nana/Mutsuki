@@ -1,4 +1,14 @@
 //! Overview WebExtension: `overview.summary` aggregated via control-web caller.
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::doc_markdown,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate,
+    clippy::return_self_not_must_use
+)]
 
 use std::path::{Path, PathBuf};
 
@@ -6,6 +16,7 @@ use mutsuki_plugin_bot_control_web::{CAPABILITY_RUNTIME_READ, ControlRpcCaller};
 use mutsuki_service_control::ControlErrorCode;
 use mutsuki_web_extension::{
     ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, content_hash,
+    load_bundled_manifest,
 };
 use mutsuki_web_protocol::{
     AssetEntry, EXTENSION_MANIFEST_VERSION, ExtensionManifest, WEB_PROTOCOL_VERSION,
@@ -103,7 +114,7 @@ impl WebExtension for OverviewWebExtension {
     fn frontend_assets(&self) -> Option<WebFrontendAssets> {
         let root = self.assets_root.as_ref()?;
         Some(WebFrontendAssets {
-            manifest: load_manifest(root).ok()?,
+            manifest: load_bundled_manifest(root, manifest_for).ok()?,
             root_dir: root.clone(),
         })
     }
@@ -139,21 +150,6 @@ fn manifest_for(assets: Vec<AssetEntry>) -> ExtensionManifest {
         assets,
         protocol_version: WEB_PROTOCOL_VERSION.into(),
     }
-}
-
-fn load_manifest(root: &Path) -> Result<ExtensionManifest, ExtensionError> {
-    let path = root.join("manifest.json");
-    if path.exists() {
-        let bytes = std::fs::read(&path).map_err(|e| ExtensionError::Manifest(e.to_string()))?;
-        return serde_json::from_slice(&bytes).map_err(|e| ExtensionError::Manifest(e.to_string()));
-    }
-    let bytes = std::fs::read(root.join("index.js"))
-        .map_err(|e| ExtensionError::Manifest(e.to_string()))?;
-    Ok(manifest_for(vec![AssetEntry {
-        path: "index.js".into(),
-        content_hash: content_hash(&bytes),
-        bytes: bytes.len() as u64,
-    }]))
 }
 
 pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::Error> {
