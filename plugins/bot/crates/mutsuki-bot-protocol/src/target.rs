@@ -35,4 +35,20 @@ impl BotTarget {
             id: id.into(),
         }
     }
+
+    #[must_use]
+    pub fn conversation_key(&self) -> String {
+        match self {
+            Self::User { user_id } => format!("user:{user_id}"),
+            Self::Group { group_id } => format!("group:{group_id}"),
+            Self::GuildChannel {
+                guild_id,
+                channel_id,
+            } => format!("channel:{guild_id}:{channel_id}"),
+            Self::Conversation { conversation_id } => format!("conversation:{conversation_id}"),
+            Self::PlatformSpecific { platform, kind, id } => {
+                format!("platform:{platform}:{kind}:{id}")
+            }
+        }
+    }
 }
