@@ -20,28 +20,38 @@ use mutsuki_bot_delivery::{
 use mutsuki_bot_flow::{
     BOT_FLOW_CONFIG_PROVIDER_ID, BotFlowConfigProvider, BotFlowRegistry, BotNodeCatalog,
 };
-use mutsuki_bot_interaction::{InteractionConditionMatcher, InteractionError};
+use mutsuki_bot_interaction::{
+    InteractionConditionMatcher, InteractionError, bot_interaction_manifest,
+};
 use mutsuki_bot_protocol::{
     AgentSessionScope, BOT_AGENT_SUBMIT_PROTOCOL_ID, BOT_EVENT_INGEST_PROTOCOL_ID,
     BOT_FLOW_BOT_EVENT_TYPE, BOT_FLOW_INGRESS_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID,
-    BOT_REPLY_DELIVERY_PROTOCOL_ID, BotAccountRef, BotDeliveryContent, BotEvent, BotEventKind,
-    BotFlowContext, BotFlowDocument, BotFlowEdge, BotFlowEdgeKind, BotFlowEventEnvelope,
-    BotFlowNode, BotFlowNodePosition, BotFlowPayload, BotFlowSourceSelector, BotFlowTypeRef,
-    BotMessage, BotNodeCatalogFragment, BotNodeDescriptor, BotNodeInvocation,
-    BotNodePortDescriptor, BotNodePortDirection, BotNodeRole, BotPlatform, BotReplyDeliveryCommand,
-    BotReplyDeliveryPart, BotReplyDeliveryRequest, BotSpeechReplyPolicy, BotTarget, BotUser,
-    ConversationPolicy, DeliveryPolicy, DeliveryStatus, MessageSegment, QqConversationRef,
+    BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID, BOT_REPLY_DELIVERY_PROTOCOL_ID, BotAccountRef,
+    BotDeliveryContent, BotEvent, BotEventKind, BotFlowContext, BotFlowDocument, BotFlowEdge,
+    BotFlowEdgeKind, BotFlowEventEnvelope, BotFlowNode, BotFlowNodePosition, BotFlowPayload,
+    BotFlowSourceSelector, BotFlowTypeRef, BotMessage, BotNodeCatalogFragment, BotNodeDescriptor,
+    BotNodeInvocation, BotNodeOutput, BotNodePortDescriptor, BotNodePortDirection, BotNodeResult,
+    BotNodeRole, BotPlatform, BotReplyDeliveryCommand, BotReplyDeliveryPart,
+    BotReplyDeliveryRequest, BotSpeechReplyPolicy, BotTarget, BotUser, ConversationPolicy,
+    DeliveryPolicy, DeliveryStatus, MessageSegment, QqConversationRef,
 };
-use mutsuki_bot_service_host_integration::QqAiBotPluginBundle;
+use mutsuki_bot_service_host_integration::{
+    QqAiBotPluginBundle, qq_ai_orchestrated_flow_with_source,
+};
 use mutsuki_bot_state_db::BotStateDbRepository;
 use mutsuki_config_service::{ConfigContext, ConfigProviderRegistry, ConfigService, ConfigValue};
 use mutsuki_plugin_bot_agent::{
     AgentBridgeClient, BOT_AGENT_BRIDGE_PLUGIN_ID, BOT_AGENT_NODE_SUBMIT, bot_agent_bridge_manifest,
 };
+use mutsuki_plugin_bot_conversation_context::{
+    MemoryConversationContextStore, bot_conversation_context_manifest,
+};
 use mutsuki_plugin_bot_event_router::{
     BOT_FLOW_REGISTRY_SERVICE_ID, BOT_FLOW_ROUTER_PLUGIN_ID, BotFlowMatchRunner,
     flow_ingress_runner, flow_node_runner, flow_router_manifest,
 };
+use mutsuki_plugin_bot_persona::bot_persona_manifest;
+use mutsuki_plugin_bot_reply::bot_reply_manifest;
 use mutsuki_plugin_config_sqlite::SqliteConfigRepository;
 use mutsuki_runtime_contracts::{
     CompletionBatch, ExecutionClass, InvocationMode, ResourceAccess, ResourceId, ResourceLifetime,
@@ -64,6 +74,7 @@ const TEST_SEND_PLUGIN_ID: &str = "test.qq.flow.send";
 const TEST_SEND_RUNNER_ID: &str = "test.qq.flow.send.runner";
 const TEST_MEDIA_PLUGIN_ID: &str = "test.agent.media";
 const TEST_MEDIA_RUNNER_ID: &str = "test.agent.media.runner";
+const TEST_FORWARD_FOLD_PLUGIN_ID: &str = "test.qq.forward-fold.catalog";
 static RUNTIME_E2E_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 struct FlowHook(Arc<BotFlowRegistry>);
@@ -88,6 +99,8 @@ struct RuntimeFixture {
     sends: Arc<AtomicUsize>,
     agent_state: Arc<Mutex<TestAgentState>>,
     send_plan: Arc<TestSendPlan>,
+    conversation_context: Arc<MemoryConversationContextStore>,
+    last_send: Arc<Mutex<Option<BotMessage>>>,
 }
 
 impl RuntimeFixture {
@@ -98,6 +111,8 @@ impl RuntimeFixture {
             sends: Arc::new(AtomicUsize::new(0)),
             agent_state: Arc::new(Mutex::new(TestAgentState::default())),
             send_plan: Arc::new(TestSendPlan::new(outcomes)),
+            conversation_context: Arc::new(MemoryConversationContextStore::default()),
+            last_send: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -130,23 +145,200 @@ async fn published_flow_routes_agent_reply_once_and_recovers_after_restart() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn agent_node_reserves_reply_before_return_and_restart_recovers_without_resubmit() {
+async fn orchestrated_mention_path_attaches_context_then_presents_reply() {
     let _guard = RUNTIME_E2E_LOCK.lock().await;
     let fixture = RuntimeFixture::new([]);
-    let runtime = start_runtime(&fixture, true, Duration::from_secs(60), None).await;
+    let runtime = start_runtime_with_flow(
+        &fixture,
+        true,
+        Duration::from_millis(250),
+        None,
+        orchestrated_test_flow(),
+    )
+    .await;
+    wait_for_flow_revision(&runtime, 1).await;
+    let active = runtime
+        .host_service::<BotFlowRegistry>(BOT_FLOW_REGISTRY_SERVICE_ID)
+        .unwrap()
+        .active();
+    assert_eq!(
+        active.flow.flow_id, "qq.ai.orchestrated",
+        "active flow: {active:?}"
+    );
+    submit_event_mentioned(&runtime, "event-orch-1", "wake hello").await;
+    wait_for_flow_tasks(&runtime).await;
+    assert_eq!(
+        fixture.submits.load(Ordering::SeqCst),
+        1,
+        "tasks: {:#?}",
+        runtime.task_snapshots()
+    );
+    wait_for(&fixture.sends, 1).await;
+    wait_for_flow_tasks(&runtime).await;
+    let sent = fixture
+        .last_send
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("delivery send captured BotMessage");
+    assert!(
+        sent.reply_to.as_deref() == Some("msg-event-orch-1")
+            || sent.segments.iter().any(|segment| matches!(
+                segment,
+                MessageSegment::Quote { .. } | MessageSegment::Reply { .. }
+            )),
+        "quoted reply missing: {sent:?}"
+    );
+    runtime.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn orchestrated_unmentioned_message_records_icl_without_agent_submit() {
+    let _guard = RUNTIME_E2E_LOCK.lock().await;
+    let fixture = RuntimeFixture::new([]);
+    let runtime = start_runtime_with_flow(
+        &fixture,
+        true,
+        Duration::from_millis(250),
+        None,
+        orchestrated_test_flow(),
+    )
+    .await;
+    wait_for_flow_revision(&runtime, 1).await;
+    let active = runtime
+        .host_service::<BotFlowRegistry>(BOT_FLOW_REGISTRY_SERVICE_ID)
+        .unwrap()
+        .active();
+    assert_eq!(
+        active.flow.flow_id, "qq.ai.orchestrated",
+        "active flow: {active:?}"
+    );
+    submit_event(&runtime, "event-icl-only", "group chatter").await;
+    wait_for_flow_tasks(&runtime).await;
+    assert_eq!(fixture.submits.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.sends.load(Ordering::SeqCst), 0);
+    let recorded = mutsuki_plugin_bot_conversation_context::ConversationContextStore::load_icl(
+        fixture.conversation_context.as_ref(),
+        "user:actor",
+        20,
+    )
+    .unwrap();
+    assert!(
+        recorded.iter().any(|entry| entry.text == "group chatter"),
+        "expected ICL record, got {recorded:?}"
+    );
+    runtime.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn orchestrated_empty_mention_does_not_submit_agent_without_waiter() {
+    let _guard = RUNTIME_E2E_LOCK.lock().await;
+    let fixture = RuntimeFixture::new([]);
+    let runtime = start_runtime_with_flow(
+        &fixture,
+        true,
+        Duration::from_millis(250),
+        None,
+        orchestrated_test_flow(),
+    )
+    .await;
+    wait_for_flow_revision(&runtime, 1).await;
+    submit_event_mentioned(&runtime, "event-empty-at", "").await;
+    wait_for_flow_tasks(&runtime).await;
+    assert_eq!(
+        fixture.submits.load(Ordering::SeqCst),
+        0,
+        "bare @ must not fall through to Agent"
+    );
+    runtime.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn orchestrated_empty_mention_next_message_submits_agent() {
+    let _guard = RUNTIME_E2E_LOCK.lock().await;
+    let fixture = RuntimeFixture::new([]);
+    let runtime = start_runtime_with_flow(
+        &fixture,
+        true,
+        Duration::from_millis(250),
+        None,
+        orchestrated_test_flow(),
+    )
+    .await;
+    wait_for_flow_revision(&runtime, 1).await;
+    submit_event_mentioned(&runtime, "event-empty-at", "").await;
+    wait_for_flow_tasks(&runtime).await;
+    assert_eq!(
+        fixture.submits.load(Ordering::SeqCst),
+        0,
+        "bare @ creates a waiter and must not submit"
+    );
+    submit_event(&runtime, "event-follow-up", "下一则普通话").await;
+    wait_for(&fixture.submits, 1).await;
+    wait_for_flow_tasks(&runtime).await;
+    assert_eq!(fixture.submits.load(Ordering::SeqCst), 1);
+    runtime.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn agent_node_occupancy_is_not_resumed_before_submit() {
+    let _guard = RUNTIME_E2E_LOCK.lock().await;
+    let fixture = RuntimeFixture::new([]);
+    let runtime = start_runtime(&fixture, true, Duration::from_millis(10), None).await;
     submit_agent_node(&runtime, "event-reserved").await;
     assert_eq!(fixture.submits.load(Ordering::SeqCst), 1);
-    assert_eq!(fixture.sends.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        fixture.sends.load(Ordering::SeqCst),
+        0,
+        "Agent node Reserve occupies reply_id without sending"
+    );
     runtime.shutdown().await;
 
     let runtime = start_runtime(&fixture, false, Duration::from_millis(10), None).await;
-    wait_for(&fixture.sends, 1).await;
-    assert_eq!(fixture.submits.load(Ordering::SeqCst), 1);
+    wait_for_flow_tasks(&runtime).await;
+    tokio::time::sleep(Duration::from_millis(80)).await;
+    assert_eq!(
+        fixture.submits.load(Ordering::SeqCst),
+        1,
+        "direct Agent submit must not recover a second turn"
+    );
+    assert_eq!(
+        fixture.sends.load(Ordering::SeqCst),
+        0,
+        "occupancy-only draft must not ResumeDue before presentation Submit"
+    );
+    runtime.shutdown().await;
+}
 
-    submit_agent_node(&runtime, "event-reserved").await;
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn orchestrated_presentation_failure_sends_error_notice() {
+    let _guard = RUNTIME_E2E_LOCK.lock().await;
+    let fixture = RuntimeFixture::new([]);
+    let mut flow = orchestrated_test_flow();
+    let segment = flow
+        .nodes
+        .iter_mut()
+        .find(|node| node.node_id == "segment")
+        .expect("segment node");
+    segment.config = json!({"pattern": "("});
+    let runtime =
+        start_runtime_with_flow(&fixture, true, Duration::from_secs(60), None, flow).await;
+    wait_for_flow_revision(&runtime, 1).await;
+    submit_event_mentioned(&runtime, "event-present-fail", "wake hello").await;
+    wait_for(&fixture.sends, 1).await;
     wait_for_flow_tasks(&runtime).await;
     assert_eq!(fixture.submits.load(Ordering::SeqCst), 1);
     assert_eq!(fixture.sends.load(Ordering::SeqCst), 1);
+    let sent = fixture
+        .last_send
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("error-edge notice captured");
+    assert_eq!(
+        sent.plain_text(),
+        mutsuki_bot_service_host_integration::QQ_AI_PRESENTATION_FAILURE_TEXT
+    );
     runtime.shutdown().await;
 }
 
@@ -255,9 +447,27 @@ async fn start_runtime(
     recovery_interval: Duration,
     send_timeout_ms: Option<u64>,
 ) -> ServiceRuntime {
+    start_runtime_with_flow(
+        fixture,
+        publish,
+        recovery_interval,
+        send_timeout_ms,
+        agent_flow(),
+    )
+    .await
+}
+
+async fn start_runtime_with_flow(
+    fixture: &RuntimeFixture,
+    publish: bool,
+    recovery_interval: Duration,
+    send_timeout_ms: Option<u64>,
+    flow: BotFlowDocument,
+) -> ServiceRuntime {
     let root = fixture.root.path();
     let submits = fixture.submits.clone();
     let sends = fixture.sends.clone();
+    let last_send = fixture.last_send.clone();
     let agent_state = fixture.agent_state.clone();
     let send_plan = fixture.send_plan.clone();
     let data_dir = root.join("data");
@@ -267,52 +477,6 @@ async fn start_runtime(
     std::fs::create_dir_all(root.join("run")).unwrap();
     let repository = Arc::new(BotStateDbRepository::open(state_dir.join("state.sqlite3")).unwrap());
     let source_manifest = source_manifest();
-    let mut flow_manifest = flow_router_manifest();
-    flow_manifest
-        .provides
-        .services
-        .push(BOT_FLOW_REGISTRY_SERVICE_ID.into());
-    flow_manifest.provides.capabilities.push("bot.flow".into());
-    let agent_manifest = bot_agent_bridge_manifest();
-    let reply_manifest = bot_reply_delivery_manifest();
-    let catalog = BotNodeCatalog::from_manifests(&[
-        source_manifest.clone(),
-        flow_manifest.clone(),
-        agent_manifest,
-        reply_manifest,
-    ])
-    .unwrap();
-    let registry = Arc::new(BotFlowRegistry::new(catalog));
-    let providers = Arc::new(ConfigProviderRegistry::default());
-    providers
-        .register(Arc::new(BotFlowConfigProvider::new(registry.clone())))
-        .unwrap();
-    let flow_config = Arc::new(
-        ConfigService::new(
-            providers,
-            Arc::new(
-                SqliteConfigRepository::open(root.join("flow-config.sqlite3"), "qq-ai-pipeline")
-                    .unwrap(),
-            ),
-        )
-        .unwrap(),
-    );
-    if publish {
-        flow_config
-            .create_if_absent(
-                BOT_FLOW_CONFIG_PROVIDER_ID,
-                ConfigValue::from_json(&json!({ "flow": agent_flow() })),
-                ConfigContext::global(),
-            )
-            .await
-            .unwrap();
-    } else {
-        flow_config
-            .restore(BOT_FLOW_CONFIG_PROVIDER_ID, ConfigContext::global())
-            .await
-            .unwrap();
-    }
-
     let mut send_descriptor =
         RunnerDescriptorBuilder::new(TEST_SEND_RUNNER_ID, TEST_SEND_PLUGIN_ID)
             .accepted_protocol(BOT_MESSAGE_SEND_PROTOCOL_ID)
@@ -341,8 +505,66 @@ async fn start_runtime(
             TEST_SEND_RUNNER_ID,
             "test-send",
         )
+        .extension(
+            BotNodeCatalogFragment {
+                nodes: vec![qq_send_catalog_node()],
+            }
+            .into_plugin_extension()
+            .unwrap(),
+        )
         .build()
         .manifest;
+    let mut flow_manifest = flow_router_manifest();
+    flow_manifest
+        .provides
+        .services
+        .push(BOT_FLOW_REGISTRY_SERVICE_ID.into());
+    flow_manifest.provides.capabilities.push("bot.flow".into());
+    let catalog = BotNodeCatalog::from_manifests(&[
+        source_manifest.clone(),
+        send_manifest.clone(),
+        flow_manifest.clone(),
+        bot_agent_bridge_manifest(),
+        bot_reply_delivery_manifest(),
+        bot_conversation_context_manifest(),
+        bot_reply_manifest(),
+        bot_persona_manifest(),
+        mutsuki_plugin_bot_command::bot_command_manifest(1),
+        bot_interaction_manifest(),
+        qq_forward_fold_catalog_manifest(),
+    ])
+    .unwrap();
+    let registry = Arc::new(BotFlowRegistry::new(catalog));
+    let providers = Arc::new(ConfigProviderRegistry::default());
+    providers
+        .register(Arc::new(BotFlowConfigProvider::new(registry.clone())))
+        .unwrap();
+    let flow_config = Arc::new(
+        ConfigService::new(
+            providers,
+            Arc::new(
+                SqliteConfigRepository::open(root.join("flow-config.sqlite3"), "qq-ai-pipeline")
+                    .unwrap(),
+            ),
+        )
+        .unwrap(),
+    );
+    if publish {
+        flow_config
+            .create_if_absent(
+                BOT_FLOW_CONFIG_PROVIDER_ID,
+                ConfigValue::from_json(&json!({ "flow": flow })),
+                ConfigContext::global(),
+            )
+            .await
+            .unwrap();
+    } else {
+        flow_config
+            .restore(BOT_FLOW_CONFIG_PROVIDER_ID, ConfigContext::global())
+            .await
+            .unwrap();
+    }
+
     let media_descriptor = RunnerDescriptorBuilder::new(TEST_MEDIA_RUNNER_ID, TEST_MEDIA_PLUGIN_ID)
         .accepted_protocol(AGENT_TRANSCRIBE_PROTOCOL)
         .accepted_protocol(AGENT_SPEECH_SYNTHESIZE_PROTOCOL)
@@ -376,12 +598,16 @@ async fn start_runtime(
         BOT_FLOW_ROUTER_PLUGIN_ID,
         BOT_AGENT_BRIDGE_PLUGIN_ID,
         mutsuki_plugin_bot_command::BOT_COMMAND_PLUGIN_ID,
+        mutsuki_plugin_bot_conversation_context::BOT_CONVERSATION_CONTEXT_PLUGIN_ID,
         mutsuki_plugin_bot_media::BOT_MEDIA_BRIDGE_PLUGIN_ID,
+        mutsuki_plugin_bot_persona::BOT_PERSONA_PLUGIN_ID,
+        mutsuki_plugin_bot_reply::BOT_REPLY_PLUGIN_ID,
         mutsuki_bot_delivery::BOT_DELIVERY_PLUGIN_ID,
         mutsuki_bot_delivery::BOT_REPLY_DELIVERY_PLUGIN_ID,
         mutsuki_bot_interaction::BOT_INTERACTION_PLUGIN_ID,
         TEST_SEND_PLUGIN_ID,
         TEST_MEDIA_PLUGIN_ID,
+        TEST_FORWARD_FOLD_PLUGIN_ID,
     ]
     .into_iter()
     .map(|id| ConfiguredPluginSelection {
@@ -399,6 +625,7 @@ async fn start_runtime(
         .register_builtin_plugin(source_manifest)
         .register_builtin_plugin(send_manifest)
         .register_builtin_plugin(media_manifest)
+        .register_builtin_plugin(qq_forward_fold_catalog_manifest())
         .register_builtin_loaded_plugin_factory(flow_manifest, move || {
             Ok::<mutsuki_runtime_sdk::LoadedPlugin, String>(mutsuki_runtime_sdk::LoadedPlugin {
                 manifest: flow_loaded_manifest.clone(),
@@ -418,6 +645,7 @@ async fn start_runtime(
             Arc::new(MessageSendHandler {
                 descriptor: send_descriptor.clone(),
                 sends: sends.clone(),
+                last_send: last_send.clone(),
                 plan: send_plan.clone(),
             })
         })
@@ -429,6 +657,7 @@ async fn start_runtime(
         })
         .register_builtin_runner(move || flow_ingress_runner(ingress_registry.clone()))
         .register_builtin_runner(|| Box::new(BotFlowMatchRunner::default()))
+        .register_builtin_runner(|| Box::new(TestForwardFoldRunner::default()))
         .register_runtime_client_runner(move |client| {
             flow_node_runner(client, node_registry.clone())
         })
@@ -452,13 +681,15 @@ async fn start_runtime(
     let bundle = QqAiBotPluginBundle::new(
         repository.clone(),
         repository.clone(),
-        repository,
+        repository.clone(),
         policy,
         Box::new(TestAgent::new(submits, agent_state)),
         Arc::new(TestMedia),
         Arc::new(TestDeliveryGateway),
         Arc::new(Allow),
         Arc::new(Allow),
+        fixture.conversation_context.clone(),
+        repository,
     );
     bundle
         .with_reply_delivery_recovery_interval(recovery_interval)
@@ -636,6 +867,7 @@ fn multipart_reply_request() -> BotReplyDeliveryRequest {
                     summary: None,
                     reply_to: None,
                 },
+                not_before_unix_ms: None,
             })
             .collect(),
         policy: DeliveryPolicy {
@@ -648,6 +880,7 @@ fn multipart_reply_request() -> BotReplyDeliveryRequest {
         source_event_id: "multipart".into(),
         source_turn_id: "turn-multipart".into(),
         source_binding_key: None,
+        occupancy_only: false,
     }
 }
 
@@ -676,7 +909,20 @@ fn test_audio_resource(id: &str) -> ResourceRef {
 }
 
 async fn submit_event(runtime: &ServiceRuntime, event_id: &str, text: &str) {
-    let event = bot_event(event_id, text);
+    submit_bot_event(runtime, bot_event(event_id, text)).await;
+}
+
+async fn submit_event_mentioned(runtime: &ServiceRuntime, event_id: &str, text: &str) {
+    let mut event = bot_event(event_id, text);
+    event.ext.insert("qqbot.mentioned_bot".into(), json!(true));
+    if let Some(message) = event.message.as_mut() {
+        message.message_id = Some(format!("msg-{event_id}"));
+    }
+    submit_bot_event(runtime, event).await;
+}
+
+async fn submit_bot_event(runtime: &ServiceRuntime, event: BotEvent) {
+    let event_id = event.event_id.clone();
     let envelope = BotFlowEventEnvelope {
         event_id: event.event_id.clone(),
         protocol_id: BOT_EVENT_INGEST_PROTOCOL_ID.into(),
@@ -704,6 +950,16 @@ async fn submit_event(runtime: &ServiceRuntime, event_id: &str, text: &str) {
         wait_outcome(runtime, &handle).await,
         TaskOutcome::Completed { .. }
     ));
+}
+
+fn orchestrated_test_flow() -> BotFlowDocument {
+    qq_ai_orchestrated_flow_with_source(
+        TEST_SOURCE_NODE_TYPE,
+        Some(BotFlowSourceSelector {
+            protocol_id: BOT_EVENT_INGEST_PROTOCOL_ID.into(),
+            event_type: Some(BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1)),
+        }),
+    )
 }
 
 fn agent_flow() -> BotFlowDocument {
@@ -759,6 +1015,41 @@ fn source_manifest() -> mutsuki_runtime_contracts::PluginManifest {
         )
         .build()
         .manifest
+}
+
+fn qq_send_catalog_node() -> BotNodeDescriptor {
+    BotNodeDescriptor {
+        node_type_id: "mutsuki.bot.qq.send".into(),
+        version: 1,
+        title: "发送消息".into(),
+        category: "QQ".into(),
+        role: BotNodeRole::Sink,
+        binding: Some(mutsuki_bot_protocol::BotNodeBinding {
+            binding_id: format!("binding:{BOT_MESSAGE_SEND_PROTOCOL_ID}"),
+            protocol_id: BOT_MESSAGE_SEND_PROTOCOL_ID.into(),
+            runner_hint: Some(TEST_SEND_RUNNER_ID.into()),
+        }),
+        ports: vec![
+            BotNodePortDescriptor {
+                port_id: "input".into(),
+                title: "消息".into(),
+                direction: BotNodePortDirection::Input,
+                event_type: BotFlowTypeRef::new("mutsuki.bot.message.send", 1),
+                required: false,
+            },
+            BotNodePortDescriptor {
+                port_id: "event".into(),
+                title: "消息事件".into(),
+                direction: BotNodePortDirection::Input,
+                event_type: BotFlowTypeRef::new(
+                    mutsuki_bot_protocol::BOT_FLOW_MESSAGE_EVENT_TYPE,
+                    1,
+                ),
+                required: false,
+            },
+        ],
+        config_schema: json!({"type": "object", "additionalProperties": false}),
+    }
 }
 
 fn flow_node(
@@ -830,6 +1121,141 @@ fn test_protocol_descriptor(protocol_id: &str) -> mutsuki_runtime_contracts::Pro
         .build()
 }
 
+fn forward_fold_runner_descriptor() -> mutsuki_runtime_contracts::RunnerDescriptor {
+    RunnerDescriptorBuilder::new(
+        "mutsuki.bot.adapter.qqbot.openapi",
+        TEST_FORWARD_FOLD_PLUGIN_ID,
+    )
+    .accepted_protocol(BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID)
+    .execution_class(ExecutionClass::Orchestration)
+    .build()
+}
+
+fn qq_forward_fold_catalog_manifest() -> mutsuki_runtime_contracts::PluginManifest {
+    let adapter = mutsuki_plugin_bot_adapter_qqbot::qqbot_adapter_manifest(1, false);
+    let fold = adapter
+        .provides
+        .extensions
+        .iter()
+        .find_map(|extension| {
+            BotNodeCatalogFragment::from_plugin_extension(extension)
+                .ok()
+                .flatten()
+        })
+        .into_iter()
+        .flat_map(|fragment| fragment.nodes)
+        .find(|node| node.node_type_id == "mutsuki.bot.qq.reply.forward_fold")
+        .expect("adapter publishes forward_fold");
+    PluginBuilder::new(TEST_FORWARD_FOLD_PLUGIN_ID)
+        .runner_descriptor(forward_fold_runner_descriptor())
+        .protocol_handler(
+            ProtocolDescriptorBuilder::new(BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID)
+                .input_schema(json!({"type": "object"}))
+                .output_schema(json!({
+                    "type": "object",
+                    "required": ["outputs", "metadata"]
+                }))
+                .error_schema(json!({
+                    "type": "object",
+                    "required": ["code", "source", "route"]
+                }))
+                .build(),
+            "mutsuki.bot.adapter.qqbot.openapi",
+            "qqbot-reply-forward-fold",
+        )
+        .extension(
+            BotNodeCatalogFragment { nodes: vec![fold] }
+                .into_plugin_extension()
+                .expect("forward_fold catalog serializes"),
+        )
+        .build()
+        .manifest
+}
+
+struct TestForwardFoldRunner {
+    descriptor: mutsuki_runtime_contracts::RunnerDescriptor,
+}
+
+impl Default for TestForwardFoldRunner {
+    fn default() -> Self {
+        Self {
+            descriptor: forward_fold_runner_descriptor(),
+        }
+    }
+}
+
+impl Runner for TestForwardFoldRunner {
+    fn descriptor(&self) -> &mutsuki_runtime_contracts::RunnerDescriptor {
+        &self.descriptor
+    }
+
+    fn run_batch(
+        &mut self,
+        _ctx: RunnerContext,
+        batch: WorkBatch,
+    ) -> RuntimeResult<CompletionBatch> {
+        map_work_batch_entries(&batch, |task| {
+            let invocation =
+                task.payload
+                    .decode_shared::<BotNodeInvocation>()
+                    .map_err(|error| {
+                        mutsuki_runtime_contracts::RuntimeError::new(
+                            mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
+                            "mutsuki.plugin.bot.adapter.qqbot",
+                            error.to_string(),
+                        )
+                    })?;
+            let mut request: BotReplyDeliveryRequest = serde_json::from_value(
+                invocation.input.payload.value.clone(),
+            )
+            .map_err(|error| {
+                mutsuki_runtime_contracts::RuntimeError::new(
+                    mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
+                    "mutsuki.plugin.bot.adapter.qqbot",
+                    error.to_string(),
+                )
+            })?;
+            mutsuki_plugin_bot_adapter_qqbot::tasks::apply_forward_fold(
+                &invocation.config,
+                &mut request,
+            )
+            .map_err(|error| {
+                mutsuki_runtime_contracts::RuntimeError::new(
+                    mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
+                    "mutsuki.plugin.bot.adapter.qqbot",
+                    error,
+                )
+            })?;
+            let mut event = invocation.input.clone();
+            event.payload.value = serde_json::to_value(&request).map_err(|error| {
+                mutsuki_runtime_contracts::RuntimeError::new(
+                    mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
+                    "mutsuki.plugin.bot.adapter.qqbot",
+                    error.to_string(),
+                )
+            })?;
+            let mut result = RunnerResult::completed(task.task_id.clone());
+            result.output = Some(
+                serde_json::to_value(BotNodeResult {
+                    outputs: vec![BotNodeOutput {
+                        port_id: "reply".into(),
+                        event,
+                    }],
+                    metadata: Default::default(),
+                })
+                .map_err(|error| {
+                    mutsuki_runtime_contracts::RuntimeError::new(
+                        mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
+                        "mutsuki.plugin.bot.adapter.qqbot",
+                        error.to_string(),
+                    )
+                })?,
+            );
+            Ok(result)
+        })
+    }
+}
+
 struct UnusedMediaRunner {
     descriptor: mutsuki_runtime_contracts::RunnerDescriptor,
 }
@@ -890,6 +1316,7 @@ impl TestSendPlan {
 struct MessageSendHandler {
     descriptor: mutsuki_runtime_contracts::RunnerDescriptor,
     sends: Arc<AtomicUsize>,
+    last_send: Arc<Mutex<Option<BotMessage>>>,
     plan: Arc<TestSendPlan>,
 }
 
@@ -901,17 +1328,30 @@ impl AsyncBatchHandler for MessageSendHandler {
     fn run_batch(&self, _ctx: RunnerContext, batch: WorkBatch) -> AsyncCompletionFuture {
         let outcome = self.plan.next();
         let sends = self.sends.clone();
+        let last_send = self.last_send.clone();
         Box::pin(async move {
             if matches!(outcome, TestSendOutcome::Timeout) {
                 tokio::time::sleep(Duration::from_millis(200)).await;
             }
             map_work_batch_entries(&batch, |task| {
-                let _: BotMessage = serde_json::from_value(task.payload.to_value()).unwrap();
+                let (message, as_node) = outbound_send(task);
                 match outcome {
                     TestSendOutcome::Success | TestSendOutcome::Timeout => {
+                        *last_send.lock().unwrap() = Some(message);
                         sends.fetch_add(1, Ordering::SeqCst);
                         let mut result = RunnerResult::completed(task.task_id.clone());
-                        result.output = Some(json!({"id": "qq-message"}));
+                        result.output = Some(if as_node {
+                            serde_json::to_value(BotNodeResult {
+                                outputs: Vec::new(),
+                                metadata: BTreeMap::from([(
+                                    "receipt".into(),
+                                    json!({"id": "qq-message"}),
+                                )]),
+                            })
+                            .unwrap()
+                        } else {
+                            json!({"id": "qq-message"})
+                        });
                         Ok(result)
                     }
                     TestSendOutcome::TransientFailure | TestSendOutcome::PermanentFailure => {
@@ -943,6 +1383,18 @@ impl AsyncBatchHandler for MessageSendHandler {
                 }
             })
         })
+    }
+}
+
+fn outbound_send(task: &Task) -> (BotMessage, bool) {
+    let value = task.payload.to_value();
+    if let Ok(invocation) = serde_json::from_value::<BotNodeInvocation>(value.clone()) {
+        (
+            serde_json::from_value(invocation.input.payload.value).unwrap(),
+            true,
+        )
+    } else {
+        (serde_json::from_value(value).unwrap(), false)
     }
 }
 

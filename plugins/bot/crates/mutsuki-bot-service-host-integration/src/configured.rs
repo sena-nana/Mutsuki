@@ -27,10 +27,15 @@ use mutsuki_plugin_bot_agent::{
 use mutsuki_plugin_bot_command::{
     BOT_COMMAND_PLUGIN_ID, BotCommandNodeRunner, bot_command_manifest,
 };
+use mutsuki_plugin_bot_conversation_context::{
+    ConversationContextRunner, ConversationContextStore, bot_conversation_context_manifest,
+};
 use mutsuki_plugin_bot_event_router::{
     BOT_FLOW_REGISTRY_SERVICE_ID, BOT_FLOW_ROUTER_PLUGIN_ID, BotFlowMatchRunner,
     flow_ingress_runner, flow_node_runner,
 };
+use mutsuki_plugin_bot_persona::{PersonaRunner, PersonaStore, bot_persona_manifest};
+use mutsuki_plugin_bot_reply::{BotReplyRunner, bot_reply_manifest};
 use mutsuki_runtime_contracts::{
     ContractSurfaceKind, PluginManifest, RuntimeLoadPlan, SurfaceRequirement,
 };
@@ -327,6 +332,8 @@ impl ConfiguredPluginFactory for BotAgentConfiguredPlugin {
             BotStateDbRepository::open(state_dir.join("state.sqlite3"))
                 .map_err(|error| error.to_string())?,
         );
+        let conversation_context: Arc<dyn ConversationContextStore> = repository.clone();
+        let persona_store: Arc<dyn PersonaStore> = repository.clone();
         let connection_id = config
             .selected_connection_id()
             .map_err(|error| error.to_string())?
@@ -360,6 +367,18 @@ impl ConfiguredPluginFactory for BotAgentConfiguredPlugin {
                 Duration::from_millis(250),
                 BOT_AGENT_BRIDGE_PLUGIN_ID,
             )))
+            .register_builtin_plugin(bot_conversation_context_manifest())
+            .register_builtin_plugin(bot_reply_manifest())
+            .register_builtin_plugin(bot_persona_manifest())
+            .register_builtin_runner({
+                let store = conversation_context.clone();
+                move || Box::new(ConversationContextRunner::new(store.clone()))
+            })
+            .register_builtin_runner(|| Box::new(BotReplyRunner::default()))
+            .register_builtin_runner({
+                let store = persona_store.clone();
+                move || Box::new(PersonaRunner::new(store.clone()))
+            })
             .register_dynamic_runner_limit(BOT_AGENT_BRIDGE_RUNNER_ID, {
                 let config = config_handle.clone();
                 move || {
@@ -918,6 +937,10 @@ impl ConfiguredPluginFactory for MihuashiConfiguredPlugin {
 /// Catalog of production Bot plugins that can be selected by ServiceHost configuration.
 /// Media upload is intentionally absent until a product registers an explicit provider-backed
 /// QQ factory of its own.
+///
+/// Conversation-context, reply and persona runners are registered by
+/// `BotAgentConfiguredPlugin` against the shared `BotStateDb` file. They are not
+/// independently selectable factories (that path used a process-local Memory store).
 pub fn configured_bot_plugin_catalog() -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
     configured_bot_plugin_catalog_inner(None)
 }
