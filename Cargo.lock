@@ -3994,6 +3994,8 @@ dependencies = [
  "mutsuki-bot-management",
  "mutsuki-bot-protocol",
  "mutsuki-bot-sandbox",
+ "mutsuki-plugin-bot-conversation-context",
+ "mutsuki-plugin-bot-persona",
  "rusqlite",
  "serde",
  "serde_json",

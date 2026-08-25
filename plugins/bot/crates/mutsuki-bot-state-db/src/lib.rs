@@ -29,9 +29,11 @@ use mutsuki_bot_interaction::{InteractionError, InteractionRepository};
 use mutsuki_bot_management::in_blocking_section;
 use mutsuki_bot_protocol::{
     AgentSessionBinding, BotActiveDeliveryRequest, BotDeliveryAttempt, BotDeliveryReceipt,
-    BotInteractionSession, BotReplyDeliveryReceipt, BotReplyDeliveryRequest, DeliveryStatus,
-    InteractionStatus,
+    BotInteractionSession, BotPersona, BotReplyDeliveryReceipt, BotReplyDeliveryRequest,
+    ConversationIclEntry, DeliveryStatus, InteractionStatus,
 };
+use mutsuki_plugin_bot_conversation_context::ConversationContextStore;
+use mutsuki_plugin_bot_persona::PersonaStore;
 use rusqlite::types::ValueRef;
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use thiserror::Error;
@@ -371,6 +373,7 @@ impl BotStateDbRepository {
         })
     }
 
+    #[allow(dead_code)]
     async fn call<T>(
         &self,
         make_job: impl FnOnce(DbReplyChannel<T>) -> DbJob,
@@ -517,6 +520,37 @@ enum DbJob {
         limit: u32,
         reply: DbReplyChannel<BotStatePage<BotInteractionSession>>,
     },
+    RecordIcl {
+        origin_key: String,
+        entry: ConversationIclEntry,
+        max_count: usize,
+        reply: DbReplyChannel<()>,
+    },
+    LoadIcl {
+        origin_key: String,
+        max_count: usize,
+        reply: DbReplyChannel<Vec<ConversationIclEntry>>,
+    },
+    UpsertPersona {
+        persona: BotPersona,
+        reply: DbReplyChannel<()>,
+    },
+    ListPersonas {
+        reply: DbReplyChannel<Vec<BotPersona>>,
+    },
+    GetPersona {
+        persona_id: String,
+        reply: DbReplyChannel<Option<BotPersona>>,
+    },
+    BindConversationPersona {
+        origin_key: String,
+        persona_id: String,
+        reply: DbReplyChannel<()>,
+    },
+    ConversationPersona {
+        origin_key: String,
+        reply: DbReplyChannel<Option<String>>,
+    },
     ManagementRevision {
         reply: DbReplyChannel<u64>,
     },
@@ -585,6 +619,7 @@ enum DbJob {
 /// SQLite statement. One channel type per job lets the caller decide how it waits.
 enum DbReplyChannel<T> {
     Blocking(std::sync::mpsc::SyncSender<Result<T, BotStateDbError>>),
+    #[allow(dead_code)]
     Async(oneshot::Sender<Result<T, BotStateDbError>>),
 }
 
@@ -615,6 +650,9 @@ impl DbJob {
                 | Self::ClaimDueReplyParts { .. }
                 | Self::CreateInteraction { .. }
                 | Self::CompareAndSetInteraction { .. }
+                | Self::RecordIcl { .. }
+                | Self::UpsertPersona { .. }
+                | Self::BindConversationPersona { .. }
                 | Self::BeginManagementOperation { .. }
                 | Self::CompleteManagementOperation { .. }
                 | Self::CommitManagementAudit { .. }
@@ -747,6 +785,44 @@ impl DbJob {
                 limit,
                 reply,
             } => send_reply(reply, interaction_page(connection, &after, limit), metrics),
+            Self::RecordIcl {
+                origin_key,
+                entry,
+                max_count,
+                reply,
+            } => send_reply(
+                reply,
+                record_icl(connection, &origin_key, &entry, max_count),
+                metrics,
+            ),
+            Self::LoadIcl {
+                origin_key,
+                max_count,
+                reply,
+            } => send_reply(reply, load_icl(connection, &origin_key, max_count), metrics),
+            Self::UpsertPersona { persona, reply } => {
+                send_reply(reply, upsert_persona(connection, &persona), metrics);
+            }
+            Self::ListPersonas { reply } => {
+                send_reply(reply, list_personas(connection), metrics);
+            }
+            Self::GetPersona { persona_id, reply } => {
+                send_reply(reply, get_persona(connection, &persona_id), metrics);
+            }
+            Self::BindConversationPersona {
+                origin_key,
+                persona_id,
+                reply,
+            } => send_reply(
+                reply,
+                bind_conversation_persona(connection, &origin_key, &persona_id),
+                metrics,
+            ),
+            Self::ConversationPersona { origin_key, reply } => send_reply(
+                reply,
+                conversation_persona(connection, &origin_key),
+                metrics,
+            ),
             Self::ManagementRevision { reply } => {
                 send_reply(reply, management_revision(connection), metrics);
             }
@@ -994,6 +1070,20 @@ fn migrate_schema(connection: &Connection) -> Result<(), BotStateDbError> {
              ON bot_delivery_attempt(status, retry_at, delivery_id, attempt);
          CREATE INDEX IF NOT EXISTS bot_interaction_active
              ON bot_interaction(origin_key, status, session_id);
+         CREATE TABLE IF NOT EXISTS bot_conversation_icl(
+             origin_key TEXT NOT NULL,
+             seq INTEGER NOT NULL,
+             body TEXT NOT NULL,
+             PRIMARY KEY(origin_key, seq)
+         );
+         CREATE TABLE IF NOT EXISTS bot_persona(
+             persona_id TEXT PRIMARY KEY,
+             body TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS bot_persona_binding(
+             origin_key TEXT PRIMARY KEY,
+             persona_id TEXT NOT NULL
+         );
          {}
          COMMIT;",
         sandbox_history::SANDBOX_SCHEMA_SQL
@@ -1032,7 +1122,7 @@ fn migrate_schema(connection: &Connection) -> Result<(), BotStateDbError> {
             )?;
         }
     }
-    connection.pragma_update(None, "user_version", 11)?;
+    connection.pragma_update(None, "user_version", 12)?;
     Ok(())
 }
 
@@ -1235,13 +1325,24 @@ fn reserve_reply_delivery(
         .optional()?
     {
         let existing: BotReplyDeliveryRequest = decode(&body)?;
-        if existing != *request {
+        if existing.reply_id != request.reply_id
+            || existing.idempotency_key != request.idempotency_key
+        {
             return Ok(ReplyDeliveryReservation::Conflict);
         }
+        if existing == *request {
+            complete_reply_source_event(&transaction, request)?;
+            let receipt = reply_delivery_receipt(&transaction, &existing)?;
+            transaction.commit()?;
+            return Ok(ReplyDeliveryReservation::Existing(receipt));
+        }
+        if !reply_parts_all_pending(&transaction, &existing)? {
+            return Ok(ReplyDeliveryReservation::Conflict);
+        }
+        replace_pending_reply_parts(&transaction, &existing, request)?;
         complete_reply_source_event(&transaction, request)?;
-        let receipt = reply_delivery_receipt(&transaction, &existing)?;
         transaction.commit()?;
-        return Ok(ReplyDeliveryReservation::Existing(receipt));
+        return Ok(ReplyDeliveryReservation::Reserved);
     }
     transaction.execute(
         "INSERT INTO bot_reply_delivery(reply_id, idempotency_key, body) VALUES (?1, ?2, ?3)",
@@ -1270,6 +1371,73 @@ fn reserve_reply_delivery(
     complete_reply_source_event(&transaction, request)?;
     transaction.commit()?;
     Ok(ReplyDeliveryReservation::Reserved)
+}
+
+fn reply_parts_all_pending(
+    connection: &Connection,
+    request: &BotReplyDeliveryRequest,
+) -> Result<bool, BotStateDbError> {
+    for part in &request.parts {
+        let Some(receipt) = delivery_receipt(connection, &part.part_id)? else {
+            return Ok(false);
+        };
+        if receipt.status != DeliveryStatus::Pending {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn replace_pending_reply_parts(
+    transaction: &Transaction<'_>,
+    existing: &BotReplyDeliveryRequest,
+    request: &BotReplyDeliveryRequest,
+) -> Result<(), BotStateDbError> {
+    for part in &existing.parts {
+        transaction.execute(
+            "DELETE FROM bot_delivery_attempt WHERE delivery_id=?1",
+            params![part.part_id],
+        )?;
+        transaction.execute(
+            "DELETE FROM bot_delivery_receipt WHERE delivery_id=?1",
+            params![part.part_id],
+        )?;
+        transaction.execute(
+            "DELETE FROM bot_reply_delivery_part WHERE delivery_id=?1",
+            params![part.part_id],
+        )?;
+        transaction.execute(
+            "DELETE FROM bot_delivery_request WHERE delivery_id=?1",
+            params![part.part_id],
+        )?;
+    }
+    transaction.execute(
+        "UPDATE bot_reply_delivery SET idempotency_key=?2, body=?3 WHERE reply_id=?1",
+        params![request.reply_id, request.idempotency_key, encode(request)?],
+    )?;
+    for (index, part) in request.parts.iter().enumerate() {
+        let delivery = reply_part_request(request, part);
+        if !matches!(
+            reserve_delivery_in_transaction(transaction, &delivery)?,
+            DeliveryReservation::Reserved
+        ) {
+            return Err(BotStateDbError::Invariant(
+                "pending reply part replacement collided with another delivery".into(),
+            ));
+        }
+        transaction.execute(
+            "INSERT INTO bot_reply_delivery_part(reply_id, delivery_id, part_index)
+             VALUES (?1, ?2, ?3)",
+            params![
+                request.reply_id,
+                part.part_id,
+                i64::try_from(index).map_err(|_| {
+                    BotStateDbError::Invariant("reply part index exceeds SQLite integer".into())
+                })?
+            ],
+        )?;
+    }
+    Ok(())
 }
 
 fn complete_reply_source_event(
@@ -1488,9 +1656,10 @@ fn claim_due_deliveries_by_kind(
     let now = sqlite_integer(now_unix_ms)?;
     let candidates = {
         let query = if reply_parts {
-            "SELECT r.delivery_id, r.status, r.body
+            "SELECT r.delivery_id, r.status, r.body, d.body
              FROM bot_delivery_receipt r
              JOIN bot_reply_delivery_part p ON p.delivery_id=r.delivery_id
+             JOIN bot_reply_delivery d ON d.reply_id=p.reply_id
              WHERE r.status IN ('pending', 'retry_scheduled', 'sending')
                AND NOT EXISTS (
                    SELECT 1
@@ -1505,7 +1674,7 @@ fn claim_due_deliveries_by_kind(
                )
              ORDER BY p.reply_id, p.part_index"
         } else {
-            "SELECT r.delivery_id, r.status, r.body
+            "SELECT r.delivery_id, r.status, r.body, NULL
              FROM bot_delivery_receipt r
              WHERE r.status IN ('pending', 'retry_scheduled', 'sending')
                AND NOT EXISTS (
@@ -1520,12 +1689,20 @@ fn claim_due_deliveries_by_kind(
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?
     };
     let mut claimed = Vec::new();
-    for (delivery_id, status, body) in candidates {
+    for (delivery_id, status, body, reply_body) in candidates {
+        if reply_body
+            .as_deref()
+            .and_then(|body| decode::<BotReplyDeliveryRequest>(body).ok())
+            .is_some_and(|request| request.occupancy_only)
+        {
+            continue;
+        }
         let mut receipt: BotDeliveryReceipt = decode(&body)?;
         match status.as_str() {
             "sending" => {
@@ -2186,6 +2363,120 @@ fn interaction_status_name(status: InteractionStatus) -> &'static str {
     }
 }
 
+fn record_icl(
+    connection: &Connection,
+    origin_key: &str,
+    entry: &ConversationIclEntry,
+    max_count: usize,
+) -> Result<(), BotStateDbError> {
+    let next_seq: i64 = connection.query_row(
+        "SELECT COALESCE(MAX(seq), 0) + 1 FROM bot_conversation_icl WHERE origin_key = ?1",
+        params![origin_key],
+        |row| row.get(0),
+    )?;
+    connection.execute(
+        "INSERT INTO bot_conversation_icl(origin_key, seq, body) VALUES(?1, ?2, ?3)",
+        params![origin_key, next_seq, encode(entry)?],
+    )?;
+    if max_count > 0 {
+        let keep = i64::try_from(max_count).unwrap_or(i64::MAX);
+        if next_seq > keep {
+            connection.execute(
+                "DELETE FROM bot_conversation_icl WHERE origin_key = ?1 AND seq <= ?2",
+                params![origin_key, next_seq - keep],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn load_icl(
+    connection: &Connection,
+    origin_key: &str,
+    max_count: usize,
+) -> Result<Vec<ConversationIclEntry>, BotStateDbError> {
+    let mut statement = connection
+        .prepare("SELECT body FROM bot_conversation_icl WHERE origin_key = ?1 ORDER BY seq ASC")?;
+    let rows = statement
+        .query_map(params![origin_key], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut entries = rows
+        .into_iter()
+        .map(|body| decode(&body))
+        .collect::<Result<Vec<ConversationIclEntry>, _>>()?;
+    if max_count > 0 && entries.len() > max_count {
+        let extra = entries.len() - max_count;
+        entries.drain(..extra);
+    }
+    Ok(entries)
+}
+
+fn upsert_persona(connection: &Connection, persona: &BotPersona) -> Result<(), BotStateDbError> {
+    connection.execute(
+        "INSERT INTO bot_persona(persona_id, body) VALUES(?1, ?2)
+         ON CONFLICT(persona_id) DO UPDATE SET body = excluded.body",
+        params![persona.persona_id, encode(persona)?],
+    )?;
+    Ok(())
+}
+
+fn list_personas(connection: &Connection) -> Result<Vec<BotPersona>, BotStateDbError> {
+    let mut statement = connection.prepare("SELECT body FROM bot_persona ORDER BY persona_id")?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    rows.into_iter()
+        .map(|body| decode(&body))
+        .collect::<Result<Vec<_>, _>>()
+}
+
+fn get_persona(
+    connection: &Connection,
+    persona_id: &str,
+) -> Result<Option<BotPersona>, BotStateDbError> {
+    connection
+        .query_row(
+            "SELECT body FROM bot_persona WHERE persona_id = ?1",
+            params![persona_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .map(|body| decode(&body))
+        .transpose()
+}
+
+fn bind_conversation_persona(
+    connection: &Connection,
+    origin_key: &str,
+    persona_id: &str,
+) -> Result<(), BotStateDbError> {
+    if get_persona(connection, persona_id)?.is_none() {
+        return Err(BotStateDbError::Invariant(format!(
+            "unknown persona {persona_id}"
+        )));
+    }
+    connection.execute(
+        "INSERT INTO bot_persona_binding(origin_key, persona_id) VALUES(?1, ?2)
+         ON CONFLICT(origin_key) DO UPDATE SET persona_id = excluded.persona_id",
+        params![origin_key, persona_id],
+    )?;
+    Ok(())
+}
+
+fn conversation_persona(
+    connection: &Connection,
+    origin_key: &str,
+) -> Result<Option<String>, BotStateDbError> {
+    connection
+        .query_row(
+            "SELECT persona_id FROM bot_persona_binding WHERE origin_key = ?1",
+            params![origin_key],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(BotStateDbError::from)
+}
+
 /// These methods are `async` by trait signature but answer through the blocking channel on
 /// purpose.
 ///
@@ -2385,49 +2676,44 @@ impl ReplyDeliveryRepository for BotStateDbRepository {
     }
 }
 
-#[async_trait]
 impl InteractionRepository for BotStateDbRepository {
-    async fn create(&self, session: BotInteractionSession) -> Result<(), InteractionError> {
+    fn create(&self, session: BotInteractionSession) -> Result<(), InteractionError> {
         let changed = self
-            .call(|reply| DbJob::CreateInteraction { session, reply })
-            .await
+            .call_sync(|reply| DbJob::CreateInteraction { session, reply })
             .map_err(interaction_error)?;
         changed
             .then_some(())
             .ok_or(InteractionError::WaiterConflict)
     }
 
-    async fn active_for_origin(
+    fn active_for_origin(
         &self,
         origin_key: &str,
     ) -> Result<Vec<BotInteractionSession>, InteractionError> {
         let origin_key = origin_key.to_owned();
-        self.call(|reply| DbJob::ActiveInteractions { origin_key, reply })
-            .await
+        self.call_sync(|reply| DbJob::ActiveInteractions { origin_key, reply })
             .map_err(interaction_error)
     }
 
-    async fn compare_and_set(
+    fn compare_and_set(
         &self,
         expected_version: u64,
         session: BotInteractionSession,
     ) -> Result<(), InteractionError> {
         let changed = self
-            .call(|reply| DbJob::CompareAndSetInteraction {
+            .call_sync(|reply| DbJob::CompareAndSetInteraction {
                 expected_version,
                 session,
                 reply,
             })
-            .await
             .map_err(interaction_error)?;
         changed
             .then_some(())
             .ok_or(InteractionError::GenerationConflict)
     }
 
-    async fn recover_waiting(&self) -> Result<Vec<BotInteractionSession>, InteractionError> {
-        self.call(|reply| DbJob::RecoverWaitingInteractions { reply })
-            .await
+    fn recover_waiting(&self) -> Result<Vec<BotInteractionSession>, InteractionError> {
+        self.call_sync(|reply| DbJob::RecoverWaitingInteractions { reply })
             .map_err(interaction_error)
     }
 }
@@ -2442,6 +2728,73 @@ fn delivery_error(error: BotStateDbError) -> DeliveryError {
 
 fn interaction_error(error: BotStateDbError) -> InteractionError {
     InteractionError::Repository(state_db_error_message(error))
+}
+
+impl ConversationContextStore for BotStateDbRepository {
+    fn record_icl(
+        &self,
+        origin_key: &str,
+        entry: ConversationIclEntry,
+        max_count: usize,
+    ) -> Result<(), String> {
+        let origin_key = origin_key.to_owned();
+        self.call_sync(|reply| DbJob::RecordIcl {
+            origin_key,
+            entry,
+            max_count,
+            reply,
+        })
+        .map_err(state_db_error_message)
+    }
+
+    fn load_icl(
+        &self,
+        origin_key: &str,
+        max_count: usize,
+    ) -> Result<Vec<ConversationIclEntry>, String> {
+        let origin_key = origin_key.to_owned();
+        self.call_sync(|reply| DbJob::LoadIcl {
+            origin_key,
+            max_count,
+            reply,
+        })
+        .map_err(state_db_error_message)
+    }
+}
+
+impl PersonaStore for BotStateDbRepository {
+    fn upsert(&self, persona: BotPersona) -> Result<(), String> {
+        self.call_sync(|reply| DbJob::UpsertPersona { persona, reply })
+            .map_err(state_db_error_message)
+    }
+
+    fn list(&self) -> Result<Vec<BotPersona>, String> {
+        self.call_sync(|reply| DbJob::ListPersonas { reply })
+            .map_err(state_db_error_message)
+    }
+
+    fn get(&self, persona_id: &str) -> Result<Option<BotPersona>, String> {
+        let persona_id = persona_id.to_owned();
+        self.call_sync(|reply| DbJob::GetPersona { persona_id, reply })
+            .map_err(state_db_error_message)
+    }
+
+    fn bind_conversation(&self, origin_key: &str, persona_id: &str) -> Result<(), String> {
+        let origin_key = origin_key.to_owned();
+        let persona_id = persona_id.to_owned();
+        self.call_sync(|reply| DbJob::BindConversationPersona {
+            origin_key,
+            persona_id,
+            reply,
+        })
+        .map_err(state_db_error_message)
+    }
+
+    fn conversation_persona(&self, origin_key: &str) -> Result<Option<String>, String> {
+        let origin_key = origin_key.to_owned();
+        self.call_sync(|reply| DbJob::ConversationPersona { origin_key, reply })
+            .map_err(state_db_error_message)
+    }
 }
 
 fn state_db_error_message(error: BotStateDbError) -> String {
@@ -2483,6 +2836,48 @@ mod tests {
     use tokio::task::JoinSet;
 
     use super::*;
+    use mutsuki_plugin_bot_conversation_context::ConversationContextStore;
+    use mutsuki_plugin_bot_persona::PersonaStore;
+
+    #[test]
+    fn icl_and_persona_persist_on_shared_repository() {
+        let root = tempfile::tempdir().unwrap();
+        let repository = BotStateDbRepository::open(root.path().join("state.db")).unwrap();
+        repository
+            .record_icl(
+                "group:g1",
+                ConversationIclEntry {
+                    actor_id: "u1".into(),
+                    display_name: Some("Alice".into()),
+                    text: "hello".into(),
+                    time_ms: 1,
+                },
+                20,
+            )
+            .unwrap();
+        let entries = repository.load_icl("group:g1", 20).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].text, "hello");
+
+        repository
+            .upsert(BotPersona {
+                persona_id: "guide".into(),
+                name: "向导".into(),
+                system_prompt: "hi".into(),
+                begin_dialogs: Vec::new(),
+                allowed_tools: None,
+                agent_runtime_profile_id: "qq-guide".into(),
+            })
+            .unwrap();
+        repository.bind_conversation("group:g1", "guide").unwrap();
+        assert_eq!(
+            repository
+                .conversation_persona("group:g1")
+                .unwrap()
+                .as_deref(),
+            Some("guide")
+        );
+    }
 
     #[tokio::test]
     async fn pending_after_reserve_and_expired_sending_are_recoverable() {
@@ -2611,6 +3006,109 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn unsent_reply_bundle_can_replace_parts_until_a_part_succeeds() {
+        let root = tempfile::tempdir().unwrap();
+        let repository = BotStateDbRepository::open(root.path().join("state.db")).unwrap();
+        let conversation = conversation();
+        let request = reply_delivery(&conversation, "replace-reply", &["replace:part:0"]);
+        assert!(repository.reserve_reply(&request).await.unwrap().is_none());
+
+        let mut upgraded = request.clone();
+        upgraded.parts[0].content.reply_to = Some("quoted-message".into());
+        upgraded.parts.push(BotReplyDeliveryPart {
+            part_id: "replace:part:1".into(),
+            content: BotDeliveryContent {
+                segments: vec![MessageSegment::text("second")],
+                summary: None,
+                reply_to: Some("quoted-message".into()),
+            },
+            not_before_unix_ms: None,
+        });
+        assert!(repository.reserve_reply(&upgraded).await.unwrap().is_none());
+        let receipt = repository.reply_receipt("replace-reply").await.unwrap();
+        assert_eq!(receipt.part_receipts.len(), 2);
+        assert!(
+            receipt
+                .part_receipts
+                .iter()
+                .all(|part| part.status == DeliveryStatus::Pending)
+        );
+        assert_eq!(
+            repository
+                .request("replace:part:1")
+                .await
+                .unwrap()
+                .content
+                .reply_to
+                .as_deref(),
+            Some("quoted-message")
+        );
+
+        let mut first = repository.receipt("replace:part:0").await.unwrap();
+        first.status = DeliveryStatus::Succeeded;
+        first.lease_expires_at_unix_ms = None;
+        repository.save_receipt(first).await.unwrap();
+        let mut after_send = upgraded.clone();
+        after_send.parts[0].content.reply_to = Some("rewrite-succeeded".into());
+        assert_eq!(
+            repository.reserve_reply(&after_send).await.unwrap_err(),
+            DeliveryError::Conflict
+        );
+        assert_eq!(
+            repository
+                .request("replace:part:0")
+                .await
+                .unwrap()
+                .content
+                .reply_to
+                .as_deref(),
+            Some("quoted-message")
+        );
+    }
+
+    #[tokio::test]
+    async fn occupancy_only_reply_is_not_due_until_submit_clears_hold() {
+        let root = tempfile::tempdir().unwrap();
+        let repository = BotStateDbRepository::open(root.path().join("state.db")).unwrap();
+        let conversation = conversation();
+        let mut draft = reply_delivery(&conversation, "hold-reply", &["hold:part:0"]);
+        draft.occupancy_only = true;
+        assert!(repository.reserve_reply(&draft).await.unwrap().is_none());
+        assert!(
+            repository
+                .claim_due_reply_part_id(10)
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        let mut finalized = draft.clone();
+        finalized.occupancy_only = false;
+        finalized.parts[0].content.reply_to = Some("quoted".into());
+        assert!(
+            repository
+                .reserve_reply(&finalized)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            repository.claim_due_reply_part_id(10).await.unwrap(),
+            Some("hold:part:0".into())
+        );
+        assert_eq!(
+            repository
+                .request("hold:part:0")
+                .await
+                .unwrap()
+                .content
+                .reply_to
+                .as_deref(),
+            Some("quoted")
+        );
+    }
+
+    #[tokio::test]
     async fn state_recovers_after_reopen_and_uses_one_actor_connection() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("bot-state.db");
@@ -2641,7 +3139,7 @@ mod tests {
             .save_outcome(retry_attempt("delivery"), retry_receipt("delivery", "key"))
             .await
             .unwrap();
-        repository.create(interaction(&conversation)).await.unwrap();
+        repository.create(interaction(&conversation)).unwrap();
         assert_eq!(repository.metrics().connection_open_count, 1);
         assert_eq!(repository.journal_mode(), "wal");
         drop(repository);
@@ -2668,7 +3166,7 @@ mod tests {
             reopened.claim_due_delivery_ids(150).await.unwrap(),
             vec!["delivery"]
         );
-        assert_eq!(reopened.recover_waiting().await.unwrap().len(), 1);
+        assert_eq!(reopened.recover_waiting().unwrap().len(), 1);
         assert_eq!(reopened.metrics().connection_open_count, 1);
     }
 
@@ -2689,10 +3187,10 @@ mod tests {
         }
         let mut second_interaction = interaction(&conversation);
         second_interaction.session_id = "interaction-b".into();
-        repository.create(second_interaction).await.unwrap();
+        repository.create(second_interaction).unwrap();
         let mut first_interaction = interaction(&conversation);
         first_interaction.session_id = "interaction-a".into();
-        repository.create(first_interaction).await.unwrap();
+        repository.create(first_interaction).unwrap();
 
         let deliveries = repository.delivery_page(None, 1).unwrap();
         assert_eq!(deliveries.items[0].0.delivery_id, "delivery-a");
@@ -2823,14 +3321,14 @@ mod tests {
         assert_eq!(cas_successes, 1);
 
         let waiting = interaction(&conversation);
-        repository.create(waiting.clone()).await.unwrap();
+        repository.create(waiting.clone()).unwrap();
         let mut interaction_cas = JoinSet::new();
         for index in 0..64 {
             let repository = repository.clone();
             let mut next = waiting.clone();
             next.version = 2;
             next.retries_remaining = index + 1;
-            interaction_cas.spawn(async move { repository.compare_and_set(1, next).await });
+            interaction_cas.spawn(async move { repository.compare_and_set(1, next) });
         }
         let mut interaction_cas_successes = 0;
         while let Some(result) = interaction_cas.join_next().await {
@@ -2949,7 +3447,7 @@ mod tests {
             .await
             .unwrap();
         let waiting = interaction(&conversation);
-        repository.create(waiting.clone()).await.unwrap();
+        repository.create(waiting.clone()).unwrap();
 
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let lock_path = path.clone();
@@ -2993,7 +3491,7 @@ mod tests {
                         let mut next = waiting.clone();
                         next.version = u64::from(index) + 2;
                         next.retries_remaining = index;
-                        let _ = repository.compare_and_set(1, next).await;
+                        let _ = repository.compare_and_set(1, next);
                     }
                     _ => {
                         let mut next = binding(&conversation, 2);
@@ -3503,6 +4001,7 @@ mod tests {
                         summary: None,
                         reply_to: None,
                     },
+                    not_before_unix_ms: None,
                 })
                 .collect(),
             policy: DeliveryPolicy {
@@ -3515,6 +4014,7 @@ mod tests {
             source_event_id: "event".into(),
             source_turn_id: "turn".into(),
             source_binding_key: None,
+            occupancy_only: false,
         }
     }
 
