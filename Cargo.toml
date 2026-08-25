@@ -193,6 +193,9 @@ mutsuki-plugin-bot-bilibili = { path = "plugins/bot/crates/mutsuki-plugin-bot-bi
 mutsuki-plugin-bot-bilibili-web = { path = "plugins/bot/crates/mutsuki-plugin-bot-bilibili-web" }
 mutsuki-plugin-bot-bilibili-workshop = { path = "plugins/bot/crates/mutsuki-plugin-bot-bilibili-workshop" }
 mutsuki-plugin-bot-command = { path = "plugins/bot/crates/mutsuki-plugin-bot-command" }
+mutsuki-plugin-bot-conversation-context = { path = "plugins/bot/crates/mutsuki-plugin-bot-conversation-context" }
+mutsuki-plugin-bot-persona = { path = "plugins/bot/crates/mutsuki-plugin-bot-persona" }
+mutsuki-plugin-bot-reply = { path = "plugins/bot/crates/mutsuki-plugin-bot-reply" }
 mutsuki-plugin-config-web = { path = "plugins/std/plugins/mutsuki-plugin-config-web" }
 mutsuki-plugin-bot-control-web = { path = "plugins/bot/crates/mutsuki-plugin-bot-control-web" }
 mutsuki-plugin-bot-database-web = { path = "plugins/bot/crates/mutsuki-plugin-bot-database-web" }
