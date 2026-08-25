@@ -551,7 +551,6 @@ impl QqManagementProvider for OwnerBackedQqManagementProvider {
                 }
                 self.interaction
                     .cancel(session)
-                    .await
                     .map_err(interaction_error)?;
                 Ok(json!({
                     "session_id": session_id,

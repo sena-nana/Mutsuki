@@ -457,14 +457,12 @@ pub fn interaction_transition_sample(session_count: usize) -> Sample {
                     exclusive: false,
                     retries_remaining: 1,
                 })
-                .await
                 .unwrap();
             let mut next = event.clone();
             next.event_id = format!("interaction-event-{index}");
             assert!(
                 service
                     .match_event(&next, index as u64)
-                    .await
                     .unwrap()
                     .unwrap()
                     .accepted
@@ -727,9 +725,8 @@ struct BenchmarkInteractionRepository {
     sessions: Mutex<BTreeMap<String, BotInteractionSession>>,
 }
 
-#[async_trait]
 impl InteractionRepository for BenchmarkInteractionRepository {
-    async fn create(&self, session: BotInteractionSession) -> Result<(), InteractionError> {
+    fn create(&self, session: BotInteractionSession) -> Result<(), InteractionError> {
         self.sessions
             .lock()
             .unwrap()
@@ -737,7 +734,7 @@ impl InteractionRepository for BenchmarkInteractionRepository {
         Ok(())
     }
 
-    async fn active_for_origin(
+    fn active_for_origin(
         &self,
         origin_key: &str,
     ) -> Result<Vec<BotInteractionSession>, InteractionError> {
@@ -754,7 +751,7 @@ impl InteractionRepository for BenchmarkInteractionRepository {
             .collect())
     }
 
-    async fn compare_and_set(
+    fn compare_and_set(
         &self,
         expected_version: u64,
         session: BotInteractionSession,
@@ -771,7 +768,7 @@ impl InteractionRepository for BenchmarkInteractionRepository {
         Ok(())
     }
 
-    async fn recover_waiting(&self) -> Result<Vec<BotInteractionSession>, InteractionError> {
+    fn recover_waiting(&self) -> Result<Vec<BotInteractionSession>, InteractionError> {
         Ok(self
             .sessions
             .lock()
