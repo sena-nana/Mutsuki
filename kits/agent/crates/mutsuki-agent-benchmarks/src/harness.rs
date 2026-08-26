@@ -700,6 +700,7 @@ pub fn context_sample(label: &str, bytes: usize) -> Sample {
             providers: Vec::new(),
             knowledge: None,
             discover_skills: false,
+            session_version: None,
         })
         .unwrap();
     let elapsed_ns = started.elapsed().as_nanos();
@@ -1267,7 +1268,8 @@ pub fn native_coding_bundle_sample(iterations: usize) -> Sample {
             git,
             filesystem: fs,
             ..Default::default()
-        },
+        }
+        .with_fake_process_and_browser(),
         Arc::new(EchoChildExecutor),
     );
     bundle.assert_shared_service_identity().unwrap();

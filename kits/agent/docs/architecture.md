@@ -81,3 +81,21 @@ fragments、allowlist 和 policy，但 AgentKit 不定义 Persona 类型，也�
 - 不通过字符串前缀承担关键路由；使用 protocol/descriptor/typed DTO。
 - production bundle 不注册 fake/mock Provider 或 fallback。
 - feature flag 不改变同名 contract 的基础语义。
+
+## Harness 不变量（会话日志 SSOT）
+
+模型可见内容必须先进入 append-only session log，再投影为模型请求。
+
+- Context extras 先记 `AgentEvent::ContextInjected`（带 `ContextProvenance`），再通过
+  `AgentContext::model_messages` / `derive_model_messages` 投影；同一 turn 发给模型的
+  messages 必须能从 session log 重建。
+- ContextProvider collect 是 live path：`profile.context.provider_ids` 经
+  `ContextProviderBatchPlan` 以 `runner_hint = provider_id` 调用
+  `mutsuki.agent.context.provider/collect@1`。required 失败 fail loud；可选失败降级。
+- 能力 seam 按 Protocol / Host 注入的 Provider / Plugin Consumer 组装。未注入
+  process/browser/search 则 `agent.provider_unavailable`，禁止暗默 Fake。
+- `mutsuki.agent.session/trajectory@1` 按 provenance 只读投影；产品 UI 以后消费。
+
+Bot 桥把 ICL / 人格放在 submit metadata（`context_injections`），不塞进 user text。
+AstrBot 只作 IM 功能清单，落 Bot Flow / Profile 插件，不进 Harness 内核。不抄巨型
+`platform_settings`、Cordis、Code Mode、Ralph loop。

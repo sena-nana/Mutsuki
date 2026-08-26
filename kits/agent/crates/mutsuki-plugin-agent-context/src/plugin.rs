@@ -1,9 +1,10 @@
 use mutsuki_agent_contracts::*;
+use mutsuki_agent_runtime::{ContextProviderBatchPlan, ContextProviderCompletion};
 use mutsuki_agent_sdk::{
-    AgentContextBuildProtocol, AgentKnowledgeRetrieveProtocol, AgentMemoryQueryProtocol,
-    AgentModelGenerateProtocol, AgentPromptRenderProtocol, AgentSkillDiscoverProtocol,
-    AgentSkillLoadProtocol, completed_output, orchestration_runner, result_event, runtime_failure,
-    task_payload, unsupported_protocol,
+    AgentContextBuildProtocol, AgentContextProviderCollectProtocol, AgentKnowledgeRetrieveProtocol,
+    AgentMemoryQueryProtocol, AgentModelGenerateProtocol, AgentPromptRenderProtocol,
+    AgentSkillDiscoverProtocol, AgentSkillLoadProtocol, completed_output, orchestration_runner,
+    result_event, runtime_failure, task_payload, unsupported_protocol,
 };
 use mutsuki_runtime_sdk::contracts::{RunnerResult, Task};
 use mutsuki_runtime_sdk::{
@@ -14,6 +15,7 @@ use crate::{AgentContextBuildPreparation, AgentContextModelSummary, ContextBuild
 
 pub const PLUGIN_ID: &str = "mutsuki.plugin.agent.context";
 pub const RUNNER_ID: &str = "mutsuki.agent.context.runner";
+pub const CONVERSATION_INJECTION_PROVIDER_ID: &str = "mutsuki.agent.context.conversation";
 
 pub fn plugin(client: RuntimeClientRef, builder: ContextBuilder) -> PluginBuilder {
     PluginBuilder::new(PLUGIN_ID)
@@ -30,6 +32,7 @@ pub fn runner(client: RuntimeClientRef, builder: ContextBuilder) -> TaskAwaitRun
         .requires::<AgentSkillDiscoverProtocol>()
         .requires::<AgentSkillLoadProtocol>()
         .requires::<AgentKnowledgeRetrieveProtocol>()
+        .requires::<AgentContextProviderCollectProtocol>()
         .build();
     TaskAwaitRunnerAdapter::new(
         descriptor,
@@ -135,7 +138,16 @@ async fn enrich_context(
     mut context: AgentContext,
 ) -> AgentResult<AgentContext> {
     let task_id = task_id.as_ref();
-    let mut extras = Vec::new();
+    let source_version = request
+        .session_version
+        .unwrap_or(SessionVersion(0))
+        .0
+        .to_string();
+    let mut injections = injections_from_user_metadata(
+        &request.messages,
+        CONVERSATION_INJECTION_PROVIDER_ID,
+        &source_version,
+    );
     if let Some(template_id) = request
         .prompt_template_id
         .as_deref()
@@ -150,7 +162,14 @@ async fn enrich_context(
             .map_err(|error| AgentError::provider_unavailable(error.to_string()))?;
         let rendered: AgentPromptRenderResult = completed_output(PLUGIN_ID, task_id, outcome)
             .map_err(|error| AgentError::provider_unavailable(error.to_string()))?;
-        extras.push(rendered.text);
+        push_injection(
+            &mut injections,
+            rendered.text,
+            PLUGIN_ID,
+            CONTEXT_SOURCE_PROMPT,
+            template_id,
+            &source_version,
+        );
     }
     if let Some(query) = request
         .memory_query
@@ -170,7 +189,17 @@ async fn enrich_context(
             .map_err(|error| AgentError::provider_unavailable(error.to_string()))?;
         let memories: AgentMemoryQueryResult = completed_output(PLUGIN_ID, task_id, outcome)
             .map_err(|error| AgentError::provider_unavailable(error.to_string()))?;
-        context.memories.extend(memories.records);
+        context.memories.extend(memories.records.clone());
+        for record in memories.records {
+            push_injection(
+                &mut injections,
+                record.text,
+                PLUGIN_ID,
+                CONTEXT_SOURCE_MEMORY,
+                record.memory_id,
+                &source_version,
+            );
+        }
     }
     if request.discover_skills {
         let outcome = ctx
@@ -187,19 +216,31 @@ async fn enrich_context(
             .filter(|entry| entry.available)
             .take(4)
         {
-            extras.push(format!("skill {}: {}", entry.skill_id, entry.summary));
+            push_injection(
+                &mut injections,
+                format!("skill {}: {}", entry.skill_id, entry.summary),
+                PLUGIN_ID,
+                CONTEXT_SOURCE_SKILL,
+                &entry.skill_id,
+                entry.generation.to_string(),
+            );
             let outcome = ctx
                 .call::<AgentSkillLoadProtocol>(SkillLoadRequest {
-                    skill_id: entry.skill_id,
+                    skill_id: entry.skill_id.clone(),
                     generation: Some(entry.generation),
                 })
                 .await
                 .map_err(|error| AgentError::provider_unavailable(error.to_string()))?;
             let loaded: SkillLoadResult = completed_output(PLUGIN_ID, task_id, outcome)
                 .map_err(|error| AgentError::provider_unavailable(error.to_string()))?;
-            if !loaded.instructions_text.trim().is_empty() {
-                extras.push(loaded.instructions_text);
-            }
+            push_injection(
+                &mut injections,
+                loaded.instructions_text,
+                PLUGIN_ID,
+                CONTEXT_SOURCE_SKILL,
+                format!("{}:body", entry.skill_id),
+                entry.generation.to_string(),
+            );
         }
     }
     if let Some(query) = request.knowledge.clone() {
@@ -209,24 +250,141 @@ async fn enrich_context(
             .map_err(|error| AgentError::provider_unavailable(error.to_string()))?;
         let retrieved: RetrievalResult = completed_output(PLUGIN_ID, task_id, outcome)
             .map_err(|error| AgentError::provider_unavailable(error.to_string()))?;
-        extras.extend(
-            retrieved
-                .citations
-                .into_iter()
-                .map(|citation| format!("{}: {}", citation.title, citation.excerpt)),
-        );
+        for citation in retrieved.citations {
+            push_injection(
+                &mut injections,
+                format!("{}: {}", citation.title, citation.excerpt),
+                PLUGIN_ID,
+                CONTEXT_SOURCE_KNOWLEDGE,
+                citation.document_id,
+                &source_version,
+            );
+        }
     }
-    if request.providers.iter().any(|provider| provider.required) {
-        return Err(AgentError::provider_unavailable(
-            "required context providers need a collect runner before context/build",
-        ));
+    if !request.providers.is_empty() {
+        let plan = collect_providers(ctx, task_id, request).await?;
+        injections.extend(injections_from_context_plan(&plan));
+        context.context_plan = Some(plan);
     }
-    if !extras.is_empty() {
-        let extra = extras.join("\n\n");
+    context.injections = injections;
+    if !context.injections.is_empty() {
+        let extra = context
+            .injections
+            .iter()
+            .map(|injection| injection.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n");
         context.rendered_prompt = Some(match context.rendered_prompt {
             Some(existing) if !existing.trim().is_empty() => format!("{existing}\n\n{extra}"),
             _ => extra,
         });
     }
     Ok(context)
+}
+
+fn push_injection(
+    injections: &mut Vec<ContextInjection>,
+    text: impl Into<String>,
+    provider_id: &str,
+    source_kind: &str,
+    source_id: impl Into<String>,
+    source_version: impl Into<String>,
+) {
+    let text = text.into();
+    if text.trim().is_empty() {
+        return;
+    }
+    injections.push(ContextInjection::new(
+        text,
+        ContextProvenance::new(provider_id, source_kind, source_id, source_version),
+    ));
+}
+
+async fn collect_providers(
+    ctx: &AsyncRunnerContext,
+    task_id: &str,
+    request: &AgentContextBuildRequest,
+) -> AgentResult<ContextPlan> {
+    let session_id = request
+        .session_id
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            AgentError::invalid_input("context provider collect requires a session id")
+        })?;
+    let turn_id = request
+        .turn_id
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| AgentError::invalid_input("context provider collect requires a turn id"))?;
+    let batch = ContextProviderBatchPlan::build(ContextProviderBatchRequest {
+        session_id,
+        turn_id,
+        session_version: request.session_version.unwrap_or(SessionVersion(0)),
+        providers: request.providers.clone(),
+    })?;
+    let mut completions = Vec::with_capacity(request.providers.len());
+    for provider in &request.providers {
+        let outcome = ctx
+            .call_targeted::<AgentContextProviderCollectProtocol>(
+                format!("binding:{}", provider.provider_id),
+                provider.provider_id.clone(),
+                ContextProviderRequest {
+                    session_id: batch.request.session_id.clone(),
+                    turn_id: batch.request.turn_id.clone(),
+                    provider_id: provider.provider_id.clone(),
+                    input: provider.input.clone(),
+                },
+            )
+            .await;
+        let result = match outcome {
+            Ok(outcome) => completed_output::<ContextProviderResult>(PLUGIN_ID, task_id, outcome)
+                .map_err(|error| AgentError::provider_unavailable(error.to_string())),
+            Err(error) => Err(AgentError::provider_unavailable(error.to_string())),
+        };
+        completions.push(ContextProviderCompletion {
+            provider_id: provider.provider_id.clone(),
+            result,
+        });
+    }
+    batch.resolve(
+        request
+            .compaction
+            .as_ref()
+            .map(|_| ContextBudget::default())
+            .unwrap_or_else(|| ContextBudget {
+                max_tokens: request.max_context_tokens,
+                max_bytes: None,
+                max_items: Some(u32::try_from(request.providers.len()).unwrap_or(u32::MAX)),
+            }),
+        completions,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mutsuki_runtime_sdk::RuntimeClient;
+    use mutsuki_runtime_sdk::contracts::{TaskBatch, TaskHandle, TaskOutcome};
+    use std::sync::Arc;
+
+    struct NoopClient;
+
+    impl RuntimeClient for NoopClient {
+        fn submit_batch(&self, _batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
+            Ok(Vec::new())
+        }
+
+        fn task_outcome(&self, _handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
+            Ok(None)
+        }
+    }
+
+    #[test]
+    fn plugin_requires_collect_protocol() {
+        let loaded = plugin(Arc::new(NoopClient), ContextBuilder::default()).build();
+        assert!(loaded.manifest.requires.iter().any(|requirement| {
+            requirement.surface_id.as_str() == AGENT_CONTEXT_PROVIDER_COLLECT_PROTOCOL
+        }));
+    }
 }

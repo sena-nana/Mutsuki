@@ -18,7 +18,9 @@ use mutsuki_agent_contracts::{
     LspServiceRequest, LspWorkspaceId, ProcessExecRequest, SubAgentDescriptor, SubAgentOutcomeKind,
     ToolSideEffect, ToolTargetPayloadMode, WorkspacePathRequest,
 };
-use mutsuki_agent_plugin_api::{AgentPluginRegistrar, AgentService, ToolProvider};
+use mutsuki_agent_plugin_api::{
+    AgentPluginRegistrar, AgentService, ContextProvider, ToolProvider, context_collect_plugin,
+};
 use mutsuki_agent_plugin_code_index::{CodeIndexLspSignals, SharedCodeIndexService};
 use mutsuki_agent_plugin_computer_use::{
     BrowserGateway, FakeBrowserBackend, FakeProcessBackend, FilesystemGateway,
@@ -107,12 +109,22 @@ impl Default for NativeCodingBackends {
         Self {
             git: Arc::new(InMemoryGitBackend::default()),
             filesystem: Arc::new(InMemoryFilesystemBackend::default()),
-            process: Some(Arc::new(FakeProcessBackend::default())),
-            browser: Some(Arc::new(FakeBrowserBackend::default())),
+            process: None,
+            browser: None,
             lsp: Arc::new(UnavailableLspFactory),
             mcp: Arc::new(UnavailableMcpFactory),
             code_index_lsp: Arc::new(mutsuki_agent_plugin_code_index::UnavailableLspSignals),
         }
+    }
+}
+
+impl NativeCodingBackends {
+    /// Test helper. Production assemblies leave process/browser unset until the
+    /// Host injects real backends; Native Coding does not register Fake by default.
+    pub fn with_fake_process_and_browser(mut self) -> Self {
+        self.process = Some(Arc::new(FakeProcessBackend::default()));
+        self.browser = Some(Arc::new(FakeBrowserBackend::default()));
+        self
     }
 }
 
@@ -239,6 +251,32 @@ impl NativeCodingAgentBundle {
             SharedMcpService::plugin_descriptor(generation)?,
             lsp_plugin_descriptor(generation)?,
         ])
+    }
+
+    /// Hosts register these so `profile.context.provider_ids` hit live collect.
+    pub fn context_collect_plugins(&self, generation: u64) -> AgentResult<Vec<PluginBuilder>> {
+        [
+            ("git", Arc::clone(&self.git) as Arc<dyn ContextProvider>),
+            (
+                "code-index",
+                Arc::clone(&self.code_index) as Arc<dyn ContextProvider>,
+            ),
+            ("lsp", Arc::clone(&self.lsp) as Arc<dyn ContextProvider>),
+            (
+                "computer-use",
+                Arc::clone(&self.computer_use) as Arc<dyn ContextProvider>,
+            ),
+            ("mcp", Arc::clone(&self.mcp) as Arc<dyn ContextProvider>),
+        ]
+        .into_iter()
+        .map(|(name, provider)| {
+            context_collect_plugin(
+                format!("mutsuki.plugin.agent.context.collect.{name}"),
+                generation,
+                provider,
+            )
+        })
+        .collect()
     }
 
     /// Tools that the Native Coding model may call directly.
@@ -1318,7 +1356,8 @@ mod tests {
                 git,
                 filesystem: fs,
                 ..Default::default()
-            },
+            }
+            .with_fake_process_and_browser(),
             Arc::new(EchoChildExecutor),
         )
     }
@@ -1455,6 +1494,34 @@ mod tests {
         assert_eq!(
             bundle.core.manifests().len(),
             AgentPluginBundle::default().manifests().len()
+        );
+        assert_eq!(bundle.context_collect_plugins(1).unwrap().len(), 5);
+    }
+
+    #[test]
+    fn default_backends_do_not_register_fake_process_or_browser() {
+        let backends = NativeCodingBackends::default();
+        assert!(backends.process.is_none());
+        assert!(backends.browser.is_none());
+        let bundle = NativeCodingAgentBundle::reference(backends);
+        let context = NativeCodingToolContext {
+            session_id: "native-default".into(),
+            turn_id: "turn-1".into(),
+            workspace: bundle.workspace_ref(),
+            approval_version: 1,
+            approved: true,
+            permission_mode: mutsuki_agent_contracts::AgentPermissionMode::Ask,
+        };
+        assert_eq!(
+            bundle
+                .invoke_model_tool(
+                    "computer.shell.exec",
+                    json!({"command": "echo", "args": ["hi"]}),
+                    &context,
+                )
+                .unwrap_err()
+                .code,
+            "agent.provider_unavailable"
         );
     }
 

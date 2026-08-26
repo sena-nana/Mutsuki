@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AgentBudget, AgentEventEnvelope, AgentMessage, CoordinatorLease, PermissionRequest,
-    ResourceCellRef, ResourceRef, SessionVersion,
+    AgentBudget, AgentEvent, AgentEventEnvelope, AgentMessage, ContextInjection, ContextProvenance,
+    CoordinatorLease, PermissionRequest, ResourceCellRef, ResourceRef, SessionVersion,
+    apply_injections_to_messages,
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -161,5 +162,204 @@ impl AgentSession {
             resource,
             cell,
         }
+    }
+
+    pub fn trajectory(&self) -> SessionTrajectory {
+        project_session_trajectory(&self.session_id, &self.events)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentSessionTrajectoryRequest {
+    pub session_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SessionTrajectory {
+    pub session_id: String,
+    pub groups: Vec<SessionTrajectoryGroup>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SessionTrajectoryGroup {
+    pub source_kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<ContextProvenance>,
+    pub items: Vec<SessionTrajectoryItem>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionTrajectoryItem {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sequence: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+    pub summary: String,
+}
+
+/// Rebuilds the model-visible prefix from `ContextInjected` events for one turn.
+pub fn derive_model_messages(
+    events: &[AgentEventEnvelope],
+    turn_id: &str,
+    transcript: &[AgentMessage],
+) -> Vec<AgentMessage> {
+    let injections = events
+        .iter()
+        .filter_map(|envelope| match &envelope.event {
+            AgentEvent::ContextInjected {
+                turn_id: event_turn,
+                text,
+                provenance,
+            } if event_turn == turn_id && !text.trim().is_empty() => {
+                Some(ContextInjection::new(text.clone(), provenance.clone()))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    apply_injections_to_messages(&injections, transcript)
+}
+
+pub fn project_session_trajectory(
+    session_id: &str,
+    events: &[AgentEventEnvelope],
+) -> SessionTrajectory {
+    let mut groups: Vec<SessionTrajectoryGroup> = Vec::new();
+    for envelope in events {
+        let (source_kind, provenance, turn_id, summary) = match &envelope.event {
+            AgentEvent::UserMessage {
+                turn_id, content, ..
+            } => ("user".into(), None, Some(turn_id.clone()), content.clone()),
+            AgentEvent::ContextInjected {
+                turn_id,
+                text,
+                provenance,
+            } => (
+                provenance.source_kind.clone(),
+                Some(provenance.clone()),
+                Some(turn_id.clone()),
+                text.clone(),
+            ),
+            AgentEvent::ToolCall {
+                turn_id,
+                name,
+                call_id,
+                ..
+            } => (
+                "tool".into(),
+                None,
+                Some(turn_id.clone()),
+                format!("{name} ({call_id})"),
+            ),
+            AgentEvent::ToolResult {
+                turn_id, summary, ..
+            }
+            | AgentEvent::ToolCallCompleted {
+                turn_id, summary, ..
+            } => ("tool".into(), None, Some(turn_id.clone()), summary.clone()),
+            AgentEvent::FinalResponse {
+                turn_id, summary, ..
+            } => (
+                "assistant".into(),
+                None,
+                Some(turn_id.clone()),
+                summary.clone(),
+            ),
+            AgentEvent::ModelDelta { turn_id, text } => (
+                "assistant".into(),
+                None,
+                Some(turn_id.clone()),
+                text.clone(),
+            ),
+            _ => continue,
+        };
+        let item = SessionTrajectoryItem {
+            sequence: Some(envelope.sequence),
+            turn_id,
+            summary,
+        };
+        if let Some(last) = groups.last_mut()
+            && last.source_kind == source_kind
+            && last.provenance == provenance
+        {
+            last.items.push(item);
+        } else {
+            groups.push(SessionTrajectoryGroup {
+                source_kind,
+                provenance,
+                items: vec![item],
+            });
+        }
+    }
+    SessionTrajectory {
+        session_id: session_id.to_owned(),
+        groups,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{AgentEvent, AgentEventMeta, CONTEXT_SOURCE_ICL, ContextProvenance};
+
+    fn envelope(sequence: u64, event: AgentEvent) -> AgentEventEnvelope {
+        AgentEventEnvelope {
+            session_id: "session".into(),
+            sequence,
+            meta: AgentEventMeta::new(format!("e{sequence}"), "test"),
+            event,
+        }
+    }
+
+    #[test]
+    fn model_messages_reconstruct_from_context_injected_events() {
+        let transcript = vec![AgentMessage::user("hello")];
+        let events = vec![
+            envelope(
+                1,
+                AgentEvent::ContextInjected {
+                    turn_id: "turn-1".into(),
+                    text: "you are a helper".into(),
+                    provenance: ContextProvenance::new(
+                        "bot.conversation",
+                        crate::CONTEXT_SOURCE_PERSONA,
+                        "persona",
+                        "1",
+                    ),
+                },
+            ),
+            envelope(
+                2,
+                AgentEvent::ContextInjected {
+                    turn_id: "turn-1".into(),
+                    text: "群聊：alice: hi".into(),
+                    provenance: ContextProvenance::new(
+                        "bot.conversation",
+                        CONTEXT_SOURCE_ICL,
+                        "group",
+                        "1",
+                    ),
+                },
+            ),
+            envelope(
+                3,
+                AgentEvent::UserMessage {
+                    turn_id: "turn-1".into(),
+                    content: "hello".into(),
+                    metadata: None,
+                },
+            ),
+        ];
+        let derived = derive_model_messages(&events, "turn-1", &transcript);
+        assert_eq!(derived[0].content, "you are a helper");
+        assert_eq!(derived[1].content, "群聊：alice: hi");
+        assert_eq!(derived[2].content, "hello");
+
+        let trajectory = project_session_trajectory("session", &events);
+        assert_eq!(
+            trajectory.groups[0].source_kind,
+            crate::CONTEXT_SOURCE_PERSONA
+        );
+        assert_eq!(trajectory.groups[1].source_kind, CONTEXT_SOURCE_ICL);
+        assert_eq!(trajectory.groups[2].source_kind, "user");
     }
 }
