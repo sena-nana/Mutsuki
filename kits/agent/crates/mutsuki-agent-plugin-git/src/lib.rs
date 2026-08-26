@@ -41,7 +41,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 pub const PLUGIN_ID: &str = "mutsuki.plugin.agent.git";
-pub const SERVICE_ID: &str = "mutsuki.agent.service.git";
+pub const SERVICE_ID: &str = mutsuki_agent_contracts::AGENT_GIT_PROTOCOL;
 pub const CONTEXT_PROVIDER_ID: &str = "mutsuki.agent.context.git";
 pub const INLINE_LIMIT: usize = 2_048;
 pub const SUMMARY_LIMIT: usize = 512;

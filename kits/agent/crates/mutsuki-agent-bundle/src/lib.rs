@@ -16,13 +16,17 @@ use std::sync::Arc;
 
 mod native_coding;
 
-pub use mutsuki_agent_runtime::{KnowledgeService, SkillRegistry};
+pub use mutsuki_agent_runtime::{CredentialBrokerService, KnowledgeService, SkillRegistry};
+pub use mutsuki_agent_runtime::{
+    EchoChildExecutor, RequiredChildExecutor, RuntimeClientChildExecutor,
+};
 pub use mutsuki_plugin_agent_context::ContextBuilder;
 pub use mutsuki_plugin_agent_loop::AgentLoop;
 pub use mutsuki_plugin_agent_memory_router::MemoryRouter;
 pub use mutsuki_plugin_agent_model_gateway::{
     AdapterBackedModelProvider, HttpModelProvider, HttpModelProviderOptions, ModelGateway,
 };
+use mutsuki_plugin_agent_proactive::ProactiveScheduleService;
 pub use mutsuki_plugin_agent_prompt::PromptRegistry;
 pub use mutsuki_plugin_agent_session::SessionStore;
 pub use mutsuki_plugin_agent_tool_router::ToolRegistry;
@@ -54,6 +58,8 @@ pub struct AgentPluginBundle {
     pub sessions: SessionStore,
     pub skills: SkillRegistry,
     pub tools: ToolRegistry,
+    pub credential: CredentialBrokerService,
+    pub proactive: Option<ProactiveScheduleService>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,10 +72,11 @@ pub enum AgentRuntimeRunner {
     Session,
     Skill,
     Tool,
+    Credential,
 }
 
 impl AgentRuntimeRunner {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Context,
         Self::Knowledge,
         Self::Loop,
@@ -78,13 +85,14 @@ impl AgentRuntimeRunner {
         Self::Session,
         Self::Skill,
         Self::Tool,
+        Self::Credential,
     ];
 }
 
 impl AgentPluginBundle {
     pub fn manifests(&self) -> Vec<PluginManifest> {
         let client = noop_client();
-        vec![
+        let mut manifests = vec![
             mutsuki_plugin_agent_context::plugin(client.clone(), self.context.clone())
                 .build()
                 .manifest,
@@ -109,10 +117,21 @@ impl AgentPluginBundle {
             mutsuki_plugin_agent_skills::plugin(client.clone(), self.skills.clone())
                 .build()
                 .manifest,
-            mutsuki_plugin_agent_tool_router::plugin(client, self.tools.clone())
+            mutsuki_plugin_agent_tool_router::plugin(client.clone(), self.tools.clone())
                 .build()
                 .manifest,
-        ]
+            mutsuki_plugin_agent_credential::plugin(client.clone(), self.credential.clone())
+                .build()
+                .manifest,
+        ];
+        if let Some(proactive) = &self.proactive {
+            manifests.push(
+                mutsuki_plugin_agent_proactive::plugin(client, proactive.clone())
+                    .build()
+                    .manifest,
+            );
+        }
+        manifests
     }
 
     pub fn runtime_runner(
@@ -153,6 +172,10 @@ impl AgentPluginBundle {
                 client,
                 self.tools.clone(),
             )),
+            AgentRuntimeRunner::Credential => take_runner(mutsuki_plugin_agent_credential::plugin(
+                client,
+                self.credential.clone(),
+            )),
         }
     }
 
@@ -160,7 +183,7 @@ impl AgentPluginBundle {
         mutsuki_plugin_agent_model_gateway::async_handler(self.model.clone())
     }
 
-    pub fn runner_ids() -> [&'static str; 9] {
+    pub fn runner_ids() -> [&'static str; 10] {
         [
             mutsuki_plugin_agent_context::RUNNER_ID,
             mutsuki_plugin_agent_knowledge::RUNNER_ID,
@@ -171,7 +194,17 @@ impl AgentPluginBundle {
             mutsuki_plugin_agent_session::RUNNER_ID,
             mutsuki_plugin_agent_skills::RUNNER_ID,
             mutsuki_plugin_agent_tool_router::RUNNER_ID,
+            mutsuki_plugin_agent_credential::RUNNER_ID,
         ]
+    }
+
+    pub fn configure_profile(
+        &self,
+        profile: &mutsuki_agent_contracts::AgentRuntimeProfile,
+    ) -> mutsuki_agent_contracts::AgentResult<()> {
+        self.agent_loop.configure_profile(profile)?;
+        self.tools.configure_profile(profile);
+        Ok(())
     }
 }
 
@@ -235,7 +268,7 @@ mod tests {
     #[test]
     fn standard_bundle_has_unique_batch_first_manifests() {
         let manifests = AgentPluginBundle::default().manifests();
-        assert_eq!(manifests.len(), 9);
+        assert_eq!(manifests.len(), 10);
         let ids = manifests
             .iter()
             .map(|manifest| manifest.plugin_id.as_str())

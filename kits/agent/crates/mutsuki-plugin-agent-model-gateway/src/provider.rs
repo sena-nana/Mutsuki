@@ -221,6 +221,7 @@ impl ModelGateway {
             .insert(slot.clone(), generated.message.content.clone());
         AgentModelStreamResult {
             stream: stream_resource_ref(PLUGIN_ID, slot),
+            message: generated.message,
             stop_reason: generated.stop_reason,
             tool_calls: generated.tool_calls,
             usage: generated.usage,
@@ -310,68 +311,6 @@ impl HttpModelProvider {
             api_key: Arc::new(SecretValue(api_key)),
             client,
         })
-    }
-
-    fn request_blocking(
-        &self,
-        request: AgentModelGenerateRequest,
-    ) -> AgentResult<AgentModelGenerateResult> {
-        let payload = self.payload(&request);
-        mutsuki_agent_sdk::ensure_http_crypto_provider();
-        let client = reqwest::blocking::Client::builder()
-            .build()
-            .map_err(|error| AgentError::provider_unavailable(error.to_string()))?;
-        let attempts = self.options.max_retries.saturating_add(1);
-        for attempt in 0..attempts {
-            let response = client
-                .post(&self.options.endpoint)
-                .bearer_auth(self.api_key.expose())
-                .timeout(std::time::Duration::from_millis(self.options.timeout_ms))
-                .json(&payload)
-                .send();
-            match response {
-                Err(error)
-                    if attempt + 1 < attempts && (error.is_timeout() || error.is_connect()) =>
-                {
-                    continue;
-                }
-                Err(error) if error.is_timeout() => {
-                    return Err(AgentError::new(
-                        "agent.model.timeout",
-                        "model request timed out",
-                    ));
-                }
-                Err(error) => {
-                    return Err(AgentError::provider_unavailable(format!(
-                        "model transport failed: {}",
-                        transport_error_kind(&error)
-                    )));
-                }
-                Ok(response) if response.status().is_success() => {
-                    let body: serde_json::Value = response.json().map_err(|error| {
-                        AgentError::new("agent.model.invalid_response", error.to_string())
-                    })?;
-                    return parse_http_result(body);
-                }
-                Ok(response)
-                    if (response.status().as_u16() == 429
-                        || response.status().is_server_error())
-                        && attempt + 1 < attempts =>
-                {
-                    continue;
-                }
-                Ok(response) => {
-                    return Err(AgentError::new(
-                        "agent.model.http_status",
-                        format!(
-                            "model endpoint returned HTTP {}",
-                            response.status().as_u16()
-                        ),
-                    ));
-                }
-            }
-        }
-        Err(AgentError::provider_unavailable("model retry exhausted"))
     }
 
     fn payload(&self, request: &AgentModelGenerateRequest) -> serde_json::Value {
@@ -515,9 +454,12 @@ impl ModelProvider for HttpModelProvider {
 
     fn generate(
         &self,
-        request: AgentModelGenerateRequest,
+        _request: AgentModelGenerateRequest,
     ) -> AgentResult<AgentModelGenerateResult> {
-        self.request_blocking(request)
+        Err(AgentError::new(
+            "agent.model.effect_runner_required",
+            "HTTP Model Providers may only execute in the ModelGateway async effect handler",
+        ))
     }
 
     fn generate_async(&self, request: AgentModelGenerateRequest) -> ModelProviderFuture {

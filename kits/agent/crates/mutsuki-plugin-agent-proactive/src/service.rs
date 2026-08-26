@@ -1,6 +1,6 @@
 //! Proactive schedule service. Timer loops stay in Host SchedulerService.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -435,9 +435,19 @@ impl ProactiveScheduleService {
 }
 
 /// In-memory SchedulerService used by tests. Not a production timer loop.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct InMemorySchedulerService {
     inner: Arc<Mutex<BTreeMap<String, ScheduleTrigger>>>,
+    paused: Arc<Mutex<BTreeSet<String>>>,
+}
+
+impl Default for InMemorySchedulerService {
+    fn default() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(BTreeMap::new())),
+            paused: Arc::new(Mutex::new(BTreeSet::new())),
+        }
+    }
 }
 
 impl SchedulerService for InMemorySchedulerService {
@@ -467,6 +477,10 @@ impl SchedulerService for InMemorySchedulerService {
     }
 
     fn cancel_trigger(&self, schedule_id: &str) -> Result<(), AgentError> {
+        self.paused
+            .lock()
+            .expect("scheduler mutex")
+            .remove(schedule_id);
         self.inner
             .lock()
             .expect("scheduler mutex")
@@ -474,11 +488,29 @@ impl SchedulerService for InMemorySchedulerService {
         Ok(())
     }
 
-    fn pause_trigger(&self, _schedule_id: &str) -> Result<(), AgentError> {
+    fn pause_trigger(&self, schedule_id: &str) -> Result<(), AgentError> {
+        let inner = self.inner.lock().expect("scheduler mutex");
+        if !inner.contains_key(schedule_id) {
+            return Err(AgentError::not_found("scheduler trigger was not found"));
+        }
+        drop(inner);
+        self.paused
+            .lock()
+            .expect("scheduler mutex")
+            .insert(schedule_id.to_owned());
         Ok(())
     }
 
-    fn resume_trigger(&self, _schedule_id: &str) -> Result<(), AgentError> {
+    fn resume_trigger(&self, schedule_id: &str) -> Result<(), AgentError> {
+        let inner = self.inner.lock().expect("scheduler mutex");
+        if !inner.contains_key(schedule_id) {
+            return Err(AgentError::not_found("scheduler trigger was not found"));
+        }
+        drop(inner);
+        self.paused
+            .lock()
+            .expect("scheduler mutex")
+            .remove(schedule_id);
         Ok(())
     }
 }

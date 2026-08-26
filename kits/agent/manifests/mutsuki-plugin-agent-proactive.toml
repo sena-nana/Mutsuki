@@ -12,4 +12,5 @@ provides = [
   "mutsuki.agent.schedule/cancel@1",
   "mutsuki.agent.schedule/history@1",
   "mutsuki.agent.schedule/due@1",
+  "mutsuki.agent.schedule/complete@1",
 ]

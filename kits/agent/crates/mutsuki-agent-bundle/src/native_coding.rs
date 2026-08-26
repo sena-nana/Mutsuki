@@ -30,7 +30,7 @@ use mutsuki_agent_plugin_mcp::{
     McpRequestControl, McpTransport, McpTransportFactory, SharedMcpService,
 };
 use mutsuki_agent_runtime::{
-    AgentResourceStore, EchoChildExecutor, SubAgentOrchestrator,
+    AgentResourceStore, ChildAgentExecutor, RequiredChildExecutor, SubAgentOrchestrator,
     reference_coding_agent_test_profile,
 };
 use mutsuki_agent_sdk::{orchestration_runner, runtime_failure};
@@ -73,6 +73,7 @@ pub struct NativeCodingToolContext {
     pub workspace: AgentWorkspaceRef,
     pub approval_version: u64,
     pub approved: bool,
+    pub permission_mode: mutsuki_agent_contracts::AgentPermissionMode,
 }
 
 /// Host-neutral Native Coding Agent assembly used by conformance, LiliaCode
@@ -148,6 +149,15 @@ impl McpTransportFactory for UnavailableMcpFactory {
 impl NativeCodingAgentBundle {
     /// Builds a reference Native Coding Bundle with shared coding services.
     pub fn reference(backends: NativeCodingBackends) -> Self {
+        Self::reference_with_child_executor(backends, Arc::new(RequiredChildExecutor))
+    }
+
+    /// Test helper that injects a child executor. Production assemblies must use
+    /// `RuntimeClientChildExecutor` or another TaskPool-backed implementation.
+    pub fn reference_with_child_executor(
+        backends: NativeCodingBackends,
+        executor: Arc<dyn ChildAgentExecutor>,
+    ) -> Self {
         let resources = AgentResourceStore::default();
         let git = Arc::new(SharedGitService::new(backends.git, resources.clone()));
         let code_index = Arc::new(SharedCodeIndexService::with_lsp(
@@ -168,7 +178,7 @@ impl NativeCodingAgentBundle {
             backends.mcp,
             resources.clone(),
         ));
-        let subagents = SubAgentOrchestrator::new(Arc::new(EchoChildExecutor));
+        let subagents = SubAgentOrchestrator::new(executor);
         let _ = subagents.register_agent(SubAgentDescriptor {
             agent_id: "review".into(),
             profile_id: "mutsuki.reference.coding-agent.review".into(),
@@ -190,10 +200,7 @@ impl NativeCodingAgentBundle {
             context: ContextBuilder::with_resources(resources.clone()),
             ..AgentPluginBundle::default()
         };
-        core.agent_loop
-            .configure_profile(&profile)
-            .expect("reference coding profile configures AgentLoop");
-        Self {
+        let bundle = Self {
             core,
             resources,
             git,
@@ -203,7 +210,21 @@ impl NativeCodingAgentBundle {
             mcp,
             subagents,
             profile,
+        };
+        bundle
+            .install_routed_tools()
+            .expect("reference coding tools register on the ToolRegistry");
+        bundle
+    }
+
+    /// Registers model-visible tools onto the core ToolRegistry and applies the
+    /// profile allowlist. Call again after MCP connect so newly advertised tools
+    /// enter `tool/list`.
+    pub fn install_routed_tools(&self) -> AgentResult<()> {
+        for tool in self.routed_model_tools() {
+            self.core.tools.register(tool)?;
         }
+        self.core.configure_profile(&self.profile)
     }
 
     /// Returns kit plugin descriptors for coding surfaces (generation pinned).
@@ -478,6 +499,14 @@ impl NativeCodingAgentBundle {
             return Err(AgentError::new(
                 "agent.permission.denied",
                 format!("Native Coding tool `{name}` requires approval"),
+            ));
+        }
+        if context.permission_mode == mutsuki_agent_contracts::AgentPermissionMode::ReadOnly
+            && descriptor.side_effect.is_write()
+        {
+            return Err(AgentError::new(
+                "agent.permission.read_only",
+                format!("Native Coding tool `{name}` is blocked by read-only policy"),
             ));
         }
         match name {
@@ -820,6 +849,7 @@ fn run_native_coding_tool(
         workspace: context.workspace,
         approval_version,
         approved,
+        permission_mode: request.permission_mode,
     };
     let output = bundle
         .invoke_model_tool(&request.name, request.input, &tool_context)
@@ -1262,6 +1292,7 @@ mod tests {
     use mutsuki_agent_contracts::{
         AgentRuntimeMode, EditorContextServiceRequest, EditorContextServiceResponse,
     };
+    use mutsuki_agent_runtime::EchoChildExecutor;
     use mutsuki_agent_testkit::{
         CodingEventLog, FakeEditorContextService, emit_deterministic_coding_run,
     };
@@ -1282,11 +1313,14 @@ mod tests {
                     b"#[test]\nfn answer_is_42() { assert_eq!(fixture::answer(), 42); }\n",
                 ),
         );
-        NativeCodingAgentBundle::reference(NativeCodingBackends {
-            git,
-            filesystem: fs,
-            ..Default::default()
-        })
+        NativeCodingAgentBundle::reference_with_child_executor(
+            NativeCodingBackends {
+                git,
+                filesystem: fs,
+                ..Default::default()
+            },
+            Arc::new(EchoChildExecutor),
+        )
     }
 
     /// LiliaCode migration surface exercised in-crate (product imports the bundle APIs).
@@ -1428,6 +1462,14 @@ mod tests {
     fn native_model_tools_route_through_shared_services() {
         let bundle = seeded_bundle();
         seed_fix_fixture(&bundle).unwrap();
+        let listed = bundle
+            .core
+            .tools
+            .list(mutsuki_agent_contracts::AgentToolListRequest {
+                profile_id: Some(bundle.profile.profile_id.clone()),
+            });
+        assert!(listed.tools.iter().any(|tool| tool.name == "git.status"
+            && tool.target_protocol_id == NATIVE_CODING_TOOL_PROTOCOL));
         let tools = bundle.model_tools();
         for name in [
             "git.status",
@@ -1476,6 +1518,7 @@ mod tests {
             workspace: bundle.workspace_ref(),
             approval_version: 1,
             approved: true,
+            permission_mode: mutsuki_agent_contracts::AgentPermissionMode::Ask,
         };
         let status = bundle
             .invoke_model_tool("git.status", json!({}), &context)

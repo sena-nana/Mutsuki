@@ -7,4 +7,5 @@ provides = [
   "mutsuki.agent.session/get@1",
   "mutsuki.agent.session/append@1",
   "mutsuki.agent.session/snapshot@1",
+  "mutsuki.agent.session/fork@1",
 ]

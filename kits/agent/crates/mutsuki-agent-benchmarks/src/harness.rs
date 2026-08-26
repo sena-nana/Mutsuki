@@ -302,6 +302,7 @@ impl Harness {
                 session_id: None,
                 approval: None,
                 context: None,
+                permission_mode: Default::default(),
             },
             self.latency,
         );
@@ -371,6 +372,7 @@ pub fn parallel_tools_sample(latency: SimulatedLatency) -> Sample {
                     session_id: None,
                     approval: None,
                     context: None,
+                    permission_mode: Default::default(),
                 })
                 .unwrap(),
             )
@@ -412,6 +414,7 @@ pub fn parallel_tools_sample(latency: SimulatedLatency) -> Sample {
                             session_id: None,
                             approval: None,
                             context: None,
+                            permission_mode: Default::default(),
                         },
                         latency,
                     );
@@ -690,6 +693,13 @@ pub fn context_sample(label: &str, bytes: usize) -> Sample {
             max_context_tokens: Some(bytes as u64),
             compaction: None,
             metadata: Some(json!({"fixture": label, "seed": BENCHMARK_FIXED_SEED})),
+            system_instructions: Vec::new(),
+            prompt_fragments: Vec::new(),
+            prompt_template_id: None,
+            memory_query: None,
+            providers: Vec::new(),
+            knowledge: None,
+            discover_skills: false,
         })
         .unwrap();
     let elapsed_ns = started.elapsed().as_nanos();
@@ -1236,7 +1246,8 @@ pub fn native_coding_bundle_sample(iterations: usize) -> Sample {
     use std::collections::BTreeMap;
 
     use mutsuki_agent_bundle::{
-        NativeCodingAgentBundle, NativeCodingBackends, run_fix_golden_path, run_review_golden_path,
+        EchoChildExecutor, NativeCodingAgentBundle, NativeCodingBackends, run_fix_golden_path,
+        run_review_golden_path,
     };
     use mutsuki_agent_plugin_computer_use::InMemoryFilesystemBackend;
     use mutsuki_agent_plugin_git::InMemoryGitBackend;
@@ -1251,11 +1262,14 @@ pub fn native_coding_bundle_sample(iterations: usize) -> Sample {
         InMemoryFilesystemBackend::default()
             .with_file("src/lib.rs", b"pub fn answer() -> u32 { 41 }\n"),
     );
-    let bundle = NativeCodingAgentBundle::reference(NativeCodingBackends {
-        git,
-        filesystem: fs,
-        ..Default::default()
-    });
+    let bundle = NativeCodingAgentBundle::reference_with_child_executor(
+        NativeCodingBackends {
+            git,
+            filesystem: fs,
+            ..Default::default()
+        },
+        Arc::new(EchoChildExecutor),
+    );
     bundle.assert_shared_service_identity().unwrap();
     bundle.assert_no_official_agent_server_dependency().unwrap();
 

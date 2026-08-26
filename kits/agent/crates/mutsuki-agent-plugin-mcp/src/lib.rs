@@ -21,19 +21,20 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use mutsuki_agent_contracts::{
-    AgentError, AgentKitPluginDescriptor, AgentPluginStateKind, AgentPromptFragment,
-    AgentServiceDescriptor, AgentToolDescriptor, ContextItemRef, ContextPriority,
-    ContextProvenance, ContextProviderRequest, ContextProviderResult, McpCallResult, McpCatalog,
-    McpPromptArgument, McpPromptGetResult, McpPromptInfo, McpResourceInfo, McpResourceReadResult,
-    McpServerManifest, McpServerState, McpServerStatus, McpServiceRequest, McpServiceResponse,
-    McpToolAnnotations, McpToolInfo, McpTransportKind, ToolSideEffect, mcp_namespaced_name,
+    AGENT_MCP_PROTOCOL, AgentError, AgentKitPluginDescriptor, AgentPluginStateKind,
+    AgentPromptFragment, AgentServiceDescriptor, AgentToolDescriptor, ContextItemRef,
+    ContextPriority, ContextProvenance, ContextProviderRequest, ContextProviderResult,
+    McpCallResult, McpCatalog, McpPromptArgument, McpPromptGetResult, McpPromptInfo,
+    McpResourceInfo, McpResourceReadResult, McpServerManifest, McpServerState, McpServerStatus,
+    McpServiceRequest, McpServiceResponse, McpToolAnnotations, McpToolInfo, McpTransportKind,
+    ToolSideEffect, ToolTargetPayloadMode, mcp_namespaced_name,
 };
 use mutsuki_agent_plugin_api::{AgentPluginRegistrar, AgentService, ContextProvider, ToolProvider};
 use mutsuki_agent_runtime::AgentResourceStore;
 use serde_json::{Value, json};
 
 pub const PLUGIN_ID: &str = "mutsuki.plugin.agent.mcp";
-pub const SERVICE_ID: &str = "mutsuki.agent.service.mcp";
+pub const SERVICE_ID: &str = AGENT_MCP_PROTOCOL;
 pub const CONTEXT_PROVIDER_ID: &str = "mutsuki.agent.context.mcp";
 pub const PROTOCOL_VERSION: &str = "2024-11-05";
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -1108,13 +1109,11 @@ impl SharedMcpService {
             .require_capability("process.spawn")
             .require_capability("network.http")
             .require_service(SERVICE_ID);
-        let mut tool = AgentToolDescriptor::new(
-            "mcp.call",
-            "mutsuki.agent.tool.mcp.call@1",
-            "Call a namespaced MCP tool",
-        );
+        let mut tool =
+            AgentToolDescriptor::new("mcp.call", AGENT_MCP_PROTOCOL, "Call a namespaced MCP tool");
         tool.side_effect = ToolSideEffect::ExternalWrite;
         tool.requires_approval = true;
+        tool.target_payload_mode = ToolTargetPayloadMode::ExecutionRequest;
         registrar = registrar.tool(tool);
         registrar.build()
     }
@@ -1309,18 +1308,10 @@ impl SharedMcpService {
             .iter()
             .any(|tool| tool.name == tool_name)
         {
-            // Allow pinned tools that still exist by namespaced name even if live moved on.
-            let pinned = self.pinned_catalog.lock().expect("mcp pin mutex");
-            if !pinned
-                .tools
-                .iter()
-                .any(|tool| tool.namespaced_name == namespaced_name && tool.server_id == server_id)
-            {
-                return Err(AgentError::new(
-                    "agent.mcp.tool_not_found",
-                    format!("MCP tool `{namespaced_name}` was not found"),
-                ));
-            }
+            return Err(AgentError::new(
+                "agent.mcp.tool_not_found",
+                format!("MCP tool `{namespaced_name}` was not found in the live catalog"),
+            ));
         }
         let result = session.request(
             "tools/call",
@@ -1549,12 +1540,13 @@ impl SharedMcpService {
             .map(|tool| {
                 let mut descriptor = AgentToolDescriptor::new(
                     tool.namespaced_name,
-                    format!("mutsuki.agent.tool.mcp.{}@1", tool.name),
+                    AGENT_MCP_PROTOCOL,
                     tool.description,
                 );
                 descriptor.input_schema = tool.input_schema;
                 descriptor.side_effect = tool.annotations.side_effect();
                 descriptor.requires_approval = tool.annotations.requires_approval();
+                descriptor.target_payload_mode = ToolTargetPayloadMode::ExecutionRequest;
                 descriptor
             })
             .collect()
@@ -2131,6 +2123,50 @@ mod tests {
         assert_eq!(
             set.validate(&reloaded).unwrap_err().code,
             "agent.plugin.generation_changed"
+        );
+    }
+
+    #[test]
+    fn call_tool_refuses_tools_dropped_from_the_live_catalog() {
+        let mut factory = MockFactory::new();
+        factory.responses.insert(
+            "initialize".into(),
+            json!({"protocolVersion": PROTOCOL_VERSION, "capabilities": {}}),
+        );
+        factory.responses.insert(
+            "tools/list".into(),
+            json!({"tools": [echo_tool("alpha", false)]}),
+        );
+        factory
+            .responses
+            .insert("resources/list".into(), json!({"resources": []}));
+        factory
+            .responses
+            .insert("prompts/list".into(), json!({"prompts": []}));
+        *factory.list_tools_extra.lock().unwrap() = Some(json!({"tools": []}));
+        let service = SharedMcpService::new(Arc::new(factory));
+        service.connect(manifest("alpha")).unwrap();
+        service.pin_turn(1).unwrap();
+        assert_eq!(service.tools().len(), 1);
+        service
+            .inject_notification_for_tests(
+                "alpha",
+                json!({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}),
+            )
+            .unwrap();
+        assert_eq!(service.tools().len(), 1);
+        assert_eq!(
+            service
+                .call_tool("alpha/echo", json!({}), &McpRequestControl::default())
+                .unwrap_err()
+                .code,
+            "agent.mcp.tool_not_found"
+        );
+        let tools = service.tools();
+        assert_eq!(tools[0].target_protocol_id, AGENT_MCP_PROTOCOL);
+        assert_eq!(
+            tools[0].target_payload_mode,
+            ToolTargetPayloadMode::ExecutionRequest
         );
     }
 

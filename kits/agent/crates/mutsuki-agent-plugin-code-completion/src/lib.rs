@@ -37,7 +37,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 pub const PLUGIN_ID: &str = "mutsuki.plugin.agent.code-completion";
-pub const SERVICE_ID: &str = "mutsuki.agent.service.code-completion";
+pub const SERVICE_ID: &str = mutsuki_agent_contracts::AGENT_CODE_COMPLETION_PROTOCOL;
 
 const CACHE_CAPACITY: usize = 128;
 

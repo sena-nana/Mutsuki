@@ -38,7 +38,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 pub const PLUGIN_ID: &str = "mutsuki.plugin.agent.code-index";
-pub const SERVICE_ID: &str = "mutsuki.agent.service.code-index";
+pub const SERVICE_ID: &str = mutsuki_agent_contracts::AGENT_CODE_INDEX_PROTOCOL;
 pub const CONTEXT_PROVIDER_ID: &str = "mutsuki.agent.context.code-index";
 pub const INLINE_RESULT_BYTES: usize = 64 * 1024;
 

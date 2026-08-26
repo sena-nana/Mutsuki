@@ -297,12 +297,18 @@ pub fn reference_coding_agent_test_profile() -> AgentRuntimeProfile {
             plugin_id: "mutsuki.plugin.agent.tool-router".into(),
             generation: 1,
             tools: vec![
+                "ask_user_question".into(),
+                "confirm_plan".into(),
                 "computer.fs.read".into(),
                 "computer.fs.write".into(),
                 "computer.fs.patch".into(),
                 "computer.shell.exec".into(),
+                "computer.browser.snapshot".into(),
                 "git.status".into(),
+                "git.diff".into(),
+                "git.log".into(),
                 "lsp.hover".into(),
+                "lsp.workspace_symbols".into(),
                 "code.search".into(),
                 "code.symbol_query".into(),
                 "mcp.call".into(),
@@ -313,13 +319,13 @@ pub fn reference_coding_agent_test_profile() -> AgentRuntimeProfile {
             plugin_id: "mutsuki.plugin.agent.code-index".into(),
             generation: 1,
             tools: Vec::new(),
-            services: vec!["mutsuki.agent.service.code-index".into()],
+            services: vec![mutsuki_agent_contracts::AGENT_CODE_INDEX_PROTOCOL.into()],
         })
         .plugin(AgentProfilePlugin {
             plugin_id: "mutsuki.plugin.agent.next-edit".into(),
             generation: 1,
             tools: Vec::new(),
-            services: vec!["mutsuki.agent.service.next-edit".into()],
+            services: vec![mutsuki_agent_contracts::AGENT_NEXT_EDIT_PROTOCOL.into()],
         })
         .plugin(AgentProfilePlugin {
             plugin_id: "mutsuki.plugin.agent.git".into(),
@@ -331,13 +337,13 @@ pub fn reference_coding_agent_test_profile() -> AgentRuntimeProfile {
                 "git.commit".into(),
                 "git.push".into(),
             ],
-            services: vec!["mutsuki.agent.service.git".into()],
+            services: vec![mutsuki_agent_contracts::AGENT_GIT_PROTOCOL.into()],
         })
         .plugin(AgentProfilePlugin {
             plugin_id: "mutsuki.plugin.agent.lsp".into(),
             generation: 1,
             tools: vec!["lsp.hover".into(), "lsp.diagnostics".into()],
-            services: vec!["mutsuki.agent.service.lsp".into()],
+            services: vec![mutsuki_agent_contracts::AGENT_LSP_PROTOCOL.into()],
         })
         .plugin(AgentProfilePlugin {
             plugin_id: "mutsuki.plugin.agent.computer-use".into(),
@@ -347,13 +353,13 @@ pub fn reference_coding_agent_test_profile() -> AgentRuntimeProfile {
                 "computer.fs.patch".into(),
                 "computer.shell.exec".into(),
             ],
-            services: vec!["mutsuki.agent.service.computer-use".into()],
+            services: vec![mutsuki_agent_contracts::AGENT_COMPUTER_USE_PROTOCOL.into()],
         })
         .plugin(AgentProfilePlugin {
             plugin_id: "mutsuki.plugin.agent.mcp".into(),
             generation: 1,
             tools: vec!["mcp.call".into()],
-            services: vec!["mutsuki.agent.service.mcp".into()],
+            services: vec![mutsuki_agent_contracts::AGENT_MCP_PROTOCOL.into()],
         })
         .plugin(AgentProfilePlugin {
             plugin_id: "mutsuki.plugin.agent.session".into(),

@@ -31,7 +31,7 @@ use mutsuki_agent_plugin_api::{AgentService, ContextProvider, ToolProvider};
 use mutsuki_agent_runtime::AgentResourceStore;
 use serde_json::{Value, json};
 
-pub const SERVICE_ID: &str = "mutsuki.agent.service.lsp";
+pub const SERVICE_ID: &str = mutsuki_agent_contracts::AGENT_LSP_PROTOCOL;
 pub const CONTEXT_PROVIDER_ID: &str = "mutsuki.agent.context.lsp";
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 

@@ -139,6 +139,41 @@ pub struct AgentContextBuildRequest {
     pub compaction: Option<AgentContextCompactionConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub system_instructions: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prompt_fragments: Vec<crate::AgentPromptFragment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_template_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_query: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub providers: Vec<ContextProviderSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub knowledge: Option<crate::RetrievalQuery>,
+    #[serde(default)]
+    pub discover_skills: bool,
+}
+
+impl AgentContextBuildRequest {
+    pub fn new(profile_id: impl Into<String>, messages: Vec<AgentMessage>) -> Self {
+        Self {
+            profile_id: profile_id.into(),
+            messages,
+            session_id: None,
+            turn_id: None,
+            max_context_tokens: None,
+            compaction: None,
+            metadata: None,
+            system_instructions: Vec::new(),
+            prompt_fragments: Vec::new(),
+            prompt_template_id: None,
+            memory_query: None,
+            providers: Vec::new(),
+            knowledge: None,
+            discover_skills: false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

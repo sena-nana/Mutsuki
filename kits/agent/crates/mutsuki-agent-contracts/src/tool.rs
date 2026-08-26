@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 
 use crate::{AgentError, InteractionKind, PermissionDecision, PermissionRequest};
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolSideEffect {
     #[default]
@@ -12,6 +12,16 @@ pub enum ToolSideEffect {
     WorkspaceWrite,
     ExternalRead,
     ExternalWrite,
+}
+
+impl ToolSideEffect {
+    pub fn is_read_only(self) -> bool {
+        matches!(self, Self::None | Self::WorkspaceRead | Self::ExternalRead)
+    }
+
+    pub fn is_write(self) -> bool {
+        matches!(self, Self::WorkspaceWrite | Self::ExternalWrite)
+    }
 }
 
 /// Payload shape delivered to the tool's target protocol.
@@ -103,6 +113,10 @@ pub struct AgentToolExecuteRequest {
     /// targets must still validate workspace and approval capabilities.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<Value>,
+    /// Copied from the originating Agent run. Tool Router enforces `read_only`
+    /// even when callers bypass AgentLoop.
+    #[serde(default)]
+    pub permission_mode: crate::AgentPermissionMode,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

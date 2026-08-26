@@ -1,9 +1,9 @@
 use mutsuki_agent_contracts::*;
 use mutsuki_agent_sdk::{
-    AgentScheduleCancelProtocol, AgentScheduleCreateProtocol, AgentScheduleDueProtocol,
-    AgentScheduleGetProtocol, AgentScheduleHistoryProtocol, AgentScheduleListProtocol,
-    AgentSchedulePauseProtocol, AgentScheduleResumeProtocol, AgentScheduleUpdateProtocol,
-    orchestration_runner, service_result_event, unsupported_protocol,
+    AgentScheduleCancelProtocol, AgentScheduleCompleteProtocol, AgentScheduleCreateProtocol,
+    AgentScheduleDueProtocol, AgentScheduleGetProtocol, AgentScheduleHistoryProtocol,
+    AgentScheduleListProtocol, AgentSchedulePauseProtocol, AgentScheduleResumeProtocol,
+    AgentScheduleUpdateProtocol, orchestration_runner, service_result_event, unsupported_protocol,
 };
 use mutsuki_runtime_sdk::contracts::{RunnerResult, Task};
 use mutsuki_runtime_sdk::{PluginBuilder, RuntimeClientRef, RuntimeResult, TaskAwaitRunnerAdapter};
@@ -25,6 +25,7 @@ pub fn plugin(client: RuntimeClientRef, service: ProactiveScheduleService) -> Pl
         .protocol::<AgentScheduleCancelProtocol>()
         .protocol::<AgentScheduleHistoryProtocol>()
         .protocol::<AgentScheduleDueProtocol>()
+        .protocol::<AgentScheduleCompleteProtocol>()
         .runner(Box::new(runner(client, service)))
 }
 
@@ -42,6 +43,7 @@ pub fn runner(
         .accepts::<AgentScheduleCancelProtocol>()
         .accepts::<AgentScheduleHistoryProtocol>()
         .accepts::<AgentScheduleDueProtocol>()
+        .accepts::<AgentScheduleCompleteProtocol>()
         .build();
     TaskAwaitRunnerAdapter::new(
         descriptor,
@@ -140,7 +142,7 @@ async fn run_task(service: ProactiveScheduleService, task: Task) -> RuntimeResul
                 service.due(&request.schedule_id, request.due_at_unix_ms, request.epoch)
             },
         ),
-        "mutsuki.agent.schedule/complete@1" => service_result_event(
+        AGENT_SCHEDULE_COMPLETE_PROTOCOL => service_result_event(
             PLUGIN_ID,
             &task,
             "mutsuki.agent.schedule.completed",
