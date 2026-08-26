@@ -767,6 +767,47 @@ fn gateway_runner_maps_attachments_ark_markdown_and_keyboard() {
 }
 
 #[test]
+fn gateway_runner_maps_ark_data_and_msg_elements() {
+    let mut runner = QqGatewayMapRunner::new(1, "main");
+    let task = Task::new(
+        "miniapp",
+        QQBOT_GATEWAY_FRAME_PROTOCOL_ID,
+        json!({
+            "op": 0,
+            "s": 9,
+            "t": "GROUP_MESSAGE_CREATE",
+            "id": "miniapp-event",
+            "d": {
+                "id": "miniapp-message",
+                "group_openid": "GROUP_OPENID",
+                "content": "{\"qqdocurl\":\"https://b23.tv/mini\"}",
+                "ark_data": {"meta": {"jumpUrl": "https://b23.tv/ark"}},
+                "msg_elements": [{"url": "https://www.bilibili.com/video/BV1xx"}],
+                "author": {"member_openid": "MEMBER_OPENID"}
+            }
+        }),
+    );
+
+    let result = run_one(&mut runner, task).unwrap();
+    let segments = decode_ingress_event(&result.tasks[0])
+        .message
+        .unwrap()
+        .segments;
+    assert!(segments.iter().any(|segment| matches!(
+        segment,
+        MessageSegment::PlatformSpecific { kind, .. } if kind == "ark_data"
+    )));
+    assert!(segments.iter().any(|segment| matches!(
+        segment,
+        MessageSegment::PlatformSpecific { kind, .. } if kind == "msg_elements"
+    )));
+    assert!(segments.iter().any(|segment| matches!(
+        segment,
+        MessageSegment::Text { text } if text.contains("https://b23.tv/mini")
+    )));
+}
+
+#[test]
 fn gateway_runner_maps_template_markdown_to_platform_specific() {
     let mut runner = QqGatewayMapRunner::new(1, "main");
     let task = Task::new(

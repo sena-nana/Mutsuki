@@ -13,7 +13,7 @@ use std::io::Read;
 use std::sync::Arc;
 use std::time::Duration;
 
-use mutsuki_bot_link_parser::{MAX_LINK_CARD_MEDIA_BYTES, ResolvedLinkCard};
+use mutsuki_bot_link_parser::{MAX_LINK_CARD_MEDIA_BYTES, ResolvedLinkCard, preferred_event_url};
 use mutsuki_bot_protocol::{
     BOT_MESSAGE_SEND_PROTOCOL_ID, BotEvent, BotExtMap, BotFlowEventEnvelope, BotFlowPayload,
     BotFlowTypeRef, BotMessage, BotNodeBinding, BotNodeCatalogFragment, BotNodeDescriptor,
@@ -349,24 +349,12 @@ fn workshop_request_from_invocation(
     let url = config
         .url
         .filter(|value| !value.is_empty())
-        .or_else(|| first_http_url(&event))
+        .or_else(|| preferred_event_url(&event, &["mall.bilibili.com", "hdslb.com"]))
         .ok_or_else(|| "workshop url is missing".to_string())?;
     Ok(WorkshopResolveRequest {
         url,
         target: event.target,
         outbound_binding: config.outbound_binding.unwrap_or_default(),
-    })
-}
-
-fn first_http_url(event: &BotEvent) -> Option<String> {
-    event.message.as_ref().and_then(|message| {
-        message.segments.iter().find_map(|segment| match segment {
-            MessageSegment::Text { text } => text
-                .split_whitespace()
-                .find(|part| part.starts_with("http://") || part.starts_with("https://"))
-                .map(str::to_owned),
-            _ => None,
-        })
     })
 }
 

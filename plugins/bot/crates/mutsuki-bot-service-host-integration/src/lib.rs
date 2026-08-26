@@ -54,4 +54,5 @@ pub use event_source::{
 };
 pub use orchestrated_flow::{
     QQ_AI_PRESENTATION_FAILURE_TEXT, qq_ai_orchestrated_flow, qq_ai_orchestrated_flow_with_source,
+    qq_link_resolve_flow,
 };

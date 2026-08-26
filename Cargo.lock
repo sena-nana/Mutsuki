@@ -3870,6 +3870,7 @@ dependencies = [
 name = "mutsuki-bot-link-parser"
 version = "0.1.0"
 dependencies = [
+ "mutsuki-bot-protocol",
  "regex",
  "serde",
  "serde_json",
@@ -4636,6 +4637,7 @@ name = "mutsuki-plugin-bot-event-router"
 version = "0.1.0"
 dependencies = [
  "mutsuki-bot-flow",
+ "mutsuki-bot-link-parser",
  "mutsuki-bot-protocol",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",

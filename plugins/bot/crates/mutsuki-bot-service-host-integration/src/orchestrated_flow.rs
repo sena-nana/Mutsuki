@@ -269,6 +269,85 @@ pub fn qq_ai_orchestrated_flow_with_source(
     }
 }
 
+/// Example graph: QQ message → domain link match → Bilibili / Mihuashi resolve → QQ send.
+/// Requires `web_cookie` Bilibili, Mihuashi, Chromium snapshot, and full group receive
+/// (`GROUP_MESSAGE_CREATE`); AT-only mode will not see unmentioned mini-program shares.
+#[must_use]
+pub fn qq_link_resolve_flow() -> BotFlowDocument {
+    BotFlowDocument {
+        flow_id: "qq.link.resolve".into(),
+        name: "QQ 链接自动解析".into(),
+        nodes: vec![
+            flow_node(
+                "source",
+                "mutsuki.bot.qq.message.created",
+                json!({}),
+                Some(BotFlowSourceSelector {
+                    protocol_id: BOT_EVENT_INGEST_PROTOCOL_ID.into(),
+                    event_type: Some(BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1)),
+                }),
+            ),
+            flow_node(
+                "bili-link",
+                "mutsuki.bot.match.link",
+                json!({"hosts": ["b23.tv", "bilibili.com"]}),
+                None,
+            ),
+            flow_node(
+                "mihuashi-link",
+                "mutsuki.bot.match.link",
+                json!({"hosts": ["mihuashi.com"]}),
+                None,
+            ),
+            flow_node(
+                "bili-resolve",
+                "mutsuki.bot.bilibili.resolve",
+                json!({}),
+                None,
+            ),
+            flow_node(
+                "mihuashi-resolve",
+                "mutsuki.bot.mihuashi.resolve",
+                json!({}),
+                None,
+            ),
+            flow_node("qq-send", "mutsuki.bot.qq.send", json!({}), None),
+        ],
+        edges: vec![
+            flow_edge("source-bili", "source", "event", "bili-link", "event"),
+            flow_edge(
+                "source-mihuashi",
+                "source",
+                "event",
+                "mihuashi-link",
+                "event",
+            ),
+            flow_edge(
+                "bili-matched",
+                "bili-link",
+                "matched",
+                "bili-resolve",
+                "event",
+            ),
+            flow_edge(
+                "mihuashi-matched",
+                "mihuashi-link",
+                "matched",
+                "mihuashi-resolve",
+                "event",
+            ),
+            flow_edge("bili-send", "bili-resolve", "message", "qq-send", "input"),
+            flow_edge(
+                "mihuashi-send",
+                "mihuashi-resolve",
+                "message",
+                "qq-send",
+                "input",
+            ),
+        ],
+    }
+}
+
 fn flow_node(
     node_id: &str,
     node_type_id: &str,
@@ -428,6 +507,34 @@ mod tests {
             !matches!(edge.kind, BotFlowEdgeKind::Error)
                 || (edge.from_port_id == "error" && edge.to_node_id == "present-fail")
         }));
+    }
+
+    #[test]
+    fn link_resolve_flow_validates_against_bilibili_and_mihuashi_catalogs() {
+        let catalog = BotNodeCatalog::from_manifests(&[
+            qqbot_adapter_manifest(1, false),
+            flow_router_manifest(),
+            mutsuki_plugin_bot_bilibili::manifest(),
+            mutsuki_plugin_bot_mihuashi::manifest(),
+        ])
+        .expect("link catalogs merge");
+        let result = validate_flow(&qq_link_resolve_flow(), &catalog);
+        assert!(result.valid, "{:#?}", result.issues);
+        let flow = qq_link_resolve_flow();
+        assert!(
+            flow.edges
+                .iter()
+                .any(|edge| edge.from_node_id == "bili-link"
+                    && edge.from_port_id == "matched"
+                    && edge.to_node_id == "bili-resolve")
+        );
+        assert!(
+            flow.edges
+                .iter()
+                .any(|edge| edge.from_node_id == "mihuashi-link"
+                    && edge.from_port_id == "matched"
+                    && edge.to_node_id == "mihuashi-resolve")
+        );
     }
 
     #[test]

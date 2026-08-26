@@ -11,6 +11,7 @@ Standard Bot protocols:
 - `mutsuki.bot.flow.match/interaction@1`
 - `mutsuki.bot.flow.interaction/create@1`
 - `mutsuki.bot.flow.match/probability@1`
+- `mutsuki.bot.flow.match/link@1`
 - `mutsuki.bot.agent/bind-profile@1`
 - `mutsuki.bot.agent/persona@1`
 - `mutsuki.bot.agent/attach-bound-persona@1`
@@ -25,6 +26,9 @@ Standard Bot protocols:
 - `mutsuki.bot.media/upload@1`
 - `mutsuki.bot.command/parse@1`
 - `mutsuki.bot.delivery/reply@1`
+
+`mutsuki.bot.flow.match/link@1` matches extracted URLs against a host allowlist and writes
+`bot.link.url`. Processors such as Bilibili and Mihuashi prefer that URL.
 
 These conversation, persona and reply protocols are independent node bindings, not
 `BotAgentConfig` fields. `mutsuki.bot.agent/bind-profile@1` writes `bot.agent.runtime_profile_id`;

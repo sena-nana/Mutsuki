@@ -14,7 +14,7 @@ output edges, node output edges and error edges are explicit; multiple edges fan
 incoming edges invoke the target separately. Version 1 rejects cycles and does not infer join,
 priority, propagation or hooks.
 
-Match nodes are a series of single-purpose filters: conversation, user, role, prefix, keyword,
+Match nodes are a series of single-purpose filters: conversation, user, role, prefix, keyword, link,
 mention, empty mention, probability, rate limit and QQ event type. Conversation/user/role/rate-limit/QQ-event ports use the
 generic `mutsuki.bot.event` type so member, reaction and lifecycle sources can connect; a typed
 `mutsuki.bot.event.*` output assigns to that generic input. Each node emits `matched` or
@@ -33,6 +33,9 @@ almost always AT, so listen on mention unmatched never runs). Empty-mention matc
 60s waiter; a bare @ does not submit Agent. Empty-mention unmatched rematches on interaction;
 `interaction.matched` joins the same record-icl → attach-icl submit chain. Timeout or no waiter
 does not enter Agent. Probability and prefix stay in the catalog; the example graph omits them.
+The first-party link example (`qq.link.resolve`) sequences source → `mutsuki.bot.match.link` →
+Bilibili / Mihuashi resolve → `qq.send`. It requires the Bilibili `web_cookie` catalog node and
+full group receive; AT-only traffic will not see unmentioned mini-program shares.
 
 Submit uses mention/interaction matched → record-icl → attach-icl → identifiers →
 attach-bound-persona → bind-profile → agent → quote → mention-reply → segment →
@@ -42,7 +45,7 @@ by the Agent configured plugin against the shared state-db store, not as indepen
 factories.
 
 Only runners that publish `mutsuki.bot.flow.nodes@1` appear in the editor. Flow does not scan
-every `RunnerDescriptor`. Mihuashi, Bilibili workshop and scheduled delivery opt in through that
+every `RunnerDescriptor`. Mihuashi, Bilibili resolve, Bilibili workshop and scheduled delivery opt in through that
 extension; internal ingest runners such as the QQ gateway stay off the canvas. Std workflow/io/db
 and Agent loop/tool/session use a different orchestration surface.
 

@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use mutsuki_bot_link_parser::MAX_LINK_CARD_MEDIA_BYTES;
+use mutsuki_bot_link_parser::{MAX_LINK_CARD_MEDIA_BYTES, preferred_event_url};
 use mutsuki_bot_protocol::{
     BOT_MESSAGE_SEND_PROTOCOL_ID, BotEvent, BotExtMap, BotFlowEventEnvelope, BotFlowPayload,
     BotFlowTypeRef, BotMessage, BotNodeBinding, BotNodeCatalogFragment, BotNodeDescriptor,
@@ -44,6 +44,7 @@ pub const RUNNER_ID: &str = "mutsuki.bot.mihuashi.runner";
 pub const LINK_RESOLVE: &str = "mutsuki.bot.mihuashi.link/resolve@1";
 
 const MIHUASHI_DOMAIN: &str = "mihuashi.com";
+const DEFAULT_SNAPSHOT_SELECTOR: &str = "h1";
 const MEDIA_CONNECT_TIMEOUT_MS: u64 = 5_000;
 const MEDIA_HEADER_TIMEOUT_MS: u64 = 10_000;
 const MEDIA_IDLE_TIMEOUT_MS: u64 = 10_000;
@@ -415,7 +416,8 @@ fn mihuashi_node_catalog() -> BotNodeCatalogFragment {
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                    "url": {"type": "string", "title": "米画师链接"}
+                    "url": {"type": "string", "title": "米画师链接"},
+                    "selector": {"type": "string", "title": "等待选择器"}
                 }
             }),
         }],
@@ -427,6 +429,7 @@ fn mihuashi_node_catalog() -> BotNodeCatalogFragment {
 struct MihuashiFlowConfig {
     url: Option<String>,
     outbound_binding: Option<String>,
+    selector: Option<String>,
 }
 
 fn mihuashi_request_from_invocation(
@@ -439,26 +442,17 @@ fn mihuashi_request_from_invocation(
     let url = config
         .url
         .filter(|value| !value.is_empty())
-        .or_else(|| first_http_url(&event))
+        .or_else(|| preferred_event_url(&event, &[MIHUASHI_DOMAIN]))
         .ok_or_else(|| "mihuashi url is missing".to_string())?;
     Ok(MihuashiResolveRequest {
         url,
         target: event.target,
         outbound_binding: config.outbound_binding.unwrap_or_default(),
-        selector: String::new(),
+        selector: config
+            .selector
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| DEFAULT_SNAPSHOT_SELECTOR.into()),
         timeout_ms: 30_000,
-    })
-}
-
-fn first_http_url(event: &BotEvent) -> Option<String> {
-    event.message.as_ref().and_then(|message| {
-        message.segments.iter().find_map(|segment| match segment {
-            MessageSegment::Text { text } => text
-                .split_whitespace()
-                .find(|part| part.starts_with("http://") || part.starts_with("https://"))
-                .map(str::to_owned),
-            _ => None,
-        })
     })
 }
 
@@ -732,6 +726,68 @@ mod tests {
             mihuashi_layout("https://www.mihuashi.com/artworks/9"),
             CardLayout::Art
         );
+    }
+
+    #[test]
+    fn flow_invocation_reads_card_json_and_defaults_selector() {
+        let event = BotEvent {
+            event_id: "e1".into(),
+            platform: mutsuki_bot_protocol::BotPlatform::QqBot,
+            bot: mutsuki_bot_protocol::BotAccountRef {
+                account_id: "bot".into(),
+                platform: mutsuki_bot_protocol::BotPlatform::QqBot,
+            },
+            kind: mutsuki_bot_protocol::BotEventKind::MessageCreated,
+            time_ms: 1,
+            target: BotTarget::Group {
+                group_id: "g1".into(),
+            },
+            actor: None,
+            message: Some(BotMessage {
+                message_id: None,
+                target: BotTarget::Group {
+                    group_id: "g1".into(),
+                },
+                sender: None,
+                segments: vec![MessageSegment::platform_specific(
+                    "qqbot",
+                    "ark_data",
+                    json!({"url": "https://www.mihuashi.com/profiles/1"}),
+                )],
+                reply_to: None,
+                time_ms: None,
+                ext: BotExtMap::new(),
+            }),
+            raw: None,
+            ext: BotExtMap::new(),
+        };
+        let invocation = BotNodeInvocation {
+            flow_id: "link".into(),
+            graph_revision: 1,
+            execution_id: "exec".into(),
+            node_id: "mihuashi".into(),
+            input_port_id: "event".into(),
+            config: json!({}),
+            input: BotFlowEventEnvelope {
+                event_id: "e1".into(),
+                protocol_id: mutsuki_bot_protocol::BOT_EVENT_INGEST_PROTOCOL_ID.into(),
+                payload: BotFlowPayload {
+                    event_type: BotFlowTypeRef::new("mutsuki.bot.event", 1),
+                    value: serde_json::to_value(&event).unwrap(),
+                },
+                context: mutsuki_bot_protocol::BotFlowContext {
+                    bot: Some(event.bot.clone()),
+                    target: Some(event.target.clone()),
+                    actor: None,
+                    ext: Default::default(),
+                },
+                trace_id: None,
+                correlation_id: None,
+            },
+        };
+        let request = mihuashi_request_from_invocation(&invocation).unwrap();
+        assert_eq!(request.url, "https://www.mihuashi.com/profiles/1");
+        assert_eq!(request.selector, DEFAULT_SNAPSHOT_SELECTOR);
     }
 
     #[test]

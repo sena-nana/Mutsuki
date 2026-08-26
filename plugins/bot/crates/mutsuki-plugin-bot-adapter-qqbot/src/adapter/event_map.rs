@@ -439,6 +439,8 @@ fn extend_qq_rich_segments(segments: &mut Vec<MessageSegment>, data: &Value) {
         }
     }
     push_named_payload(segments, data, "ark");
+    push_named_payload(segments, data, "ark_data");
+    push_named_payload(segments, data, "msg_elements");
     push_inbound_markdown(segments, data);
     push_named_payload(segments, data, "embed");
     if let Some(embeds) = data.get("embeds").and_then(Value::as_array) {
