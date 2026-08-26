@@ -1,7 +1,7 @@
 use mutsuki_agent_contracts::*;
 use mutsuki_agent_sdk::{
-    AgentModelGenerateProtocol, AgentModelStreamProtocol, orchestration_runner, result_event,
-    runtime_failure, task_payload, unsupported_protocol,
+    AgentModelGenerateProtocol, AgentModelPollProtocol, AgentModelStreamProtocol,
+    orchestration_runner, result_event, runtime_failure, task_payload, unsupported_protocol,
 };
 use mutsuki_runtime_core::{AsyncBatchHandler, AsyncCompletionFuture, RunnerContext};
 use mutsuki_runtime_sdk::contracts::{
@@ -20,6 +20,7 @@ pub fn plugin(_client: RuntimeClientRef, gateway: ModelGateway) -> PluginBuilder
     PluginBuilder::new(PLUGIN_ID)
         .protocol::<AgentModelGenerateProtocol>()
         .protocol::<AgentModelStreamProtocol>()
+        .protocol::<AgentModelPollProtocol>()
         .async_handler(Arc::new(ModelAsyncHandler::new(gateway)))
 }
 
@@ -34,6 +35,7 @@ impl ModelAsyncHandler {
             descriptor: orchestration_runner(RUNNER_ID, PLUGIN_ID)
                 .accepts::<AgentModelGenerateProtocol>()
                 .accepts::<AgentModelStreamProtocol>()
+                .accepts::<AgentModelPollProtocol>()
                 .execution_class(ExecutionClass::Io)
                 .invocation_mode(InvocationMode::AsyncReentrant)
                 .concurrency(RunnerConcurrency::Reentrant {
@@ -127,6 +129,13 @@ async fn run_task(gateway: ModelGateway, task: Task) -> RuntimeResult<RunnerResu
                 .map_err(|error| runtime_failure(PLUGIN_ID, &task.task_id, error))?;
             result_event(task.task_id, "mutsuki.agent.model.stream_opened", streamed)
         }
+        AGENT_MODEL_POLL_PROTOCOL => Err(runtime_failure(
+            PLUGIN_ID,
+            &task.task_id,
+            AgentError::invalid_input(
+                "mutsuki.agent.model/poll@1 is unused; generate/stream async handlers complete the HTTP effect",
+            ),
+        )),
         _ => Err(unsupported_protocol(PLUGIN_ID, &task)),
     }
 }

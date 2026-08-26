@@ -66,6 +66,22 @@ async fn run_task(
                     ),
                 ));
             }
+            if request.permission_mode == AgentPermissionMode::ReadOnly
+                && descriptor.side_effect.is_write()
+            {
+                let result = AgentToolExecuteResult {
+                    call_id: request.call_id,
+                    name: request.name,
+                    output: None,
+                    output_ref: None,
+                    error: Some(AgentError::new(
+                        "agent.permission.read_only",
+                        format!("tool `{}` is blocked by read-only policy", descriptor.name),
+                    )),
+                    approved: false,
+                };
+                return result_event(task.task_id, "mutsuki.agent.tool.executed", result);
+            }
             if descriptor.requires_approval {
                 validate_approval(&request, &descriptor)
                     .map_err(|error| runtime_failure(PLUGIN_ID, &task.task_id, error))?;
@@ -279,6 +295,7 @@ mod tests {
                 },
             }),
             context: Some(serde_json::json!({"workspace": "/repo"})),
+            permission_mode: AgentPermissionMode::Ask,
         };
         validate_approval(&execution, &descriptor).unwrap();
         let mut stale = execution;
@@ -298,6 +315,7 @@ mod tests {
             session_id: Some("session".into()),
             approval: None,
             context: Some(serde_json::json!({"workspace": "/repo"})),
+            permission_mode: AgentPermissionMode::Ask,
         };
         let raw = AgentToolDescriptor::new("echo", "test.echo@1", "echo");
         assert_eq!(target_payload(&raw, &request).unwrap(), request.input);
@@ -309,5 +327,25 @@ mod tests {
         let payload = target_payload(&contextual, &request).unwrap();
         assert_eq!(payload["call_id"], "call");
         assert_eq!(payload["context"]["workspace"], "/repo");
+    }
+
+    #[test]
+    fn read_only_mode_blocks_write_tools_before_target_dispatch() {
+        let descriptor = AgentToolDescriptor {
+            side_effect: ToolSideEffect::WorkspaceWrite,
+            requires_approval: false,
+            ..AgentToolDescriptor::new("write", "workspace.write@1", "write")
+        };
+        let request = AgentToolExecuteRequest {
+            call_id: Some("call".into()),
+            name: "write".into(),
+            input: serde_json::json!({}),
+            session_id: Some("session".into()),
+            approval: None,
+            context: None,
+            permission_mode: AgentPermissionMode::ReadOnly,
+        };
+        assert!(descriptor.side_effect.is_write());
+        assert_eq!(request.permission_mode, AgentPermissionMode::ReadOnly);
     }
 }

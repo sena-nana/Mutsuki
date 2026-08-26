@@ -5,12 +5,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use mutsuki_agent_contracts::{
-    AgentDelegationRequest, AgentError, AgentHandoffRequest, AgentMessage, AgentResult,
-    AgentRunRequest, AgentRunResult, AgentRunStatus, AggregationPolicy, ChildAgentRunRef,
-    DelegationBudget, DelegationMode, DelegationScope, HandoffRecord, ParallelDelegationRequest,
-    ParallelDelegationResult, SubAgentDescriptor, SubAgentOutcomeKind, SubAgentResult,
+    AGENT_RUN_PROTOCOL, AgentDelegationRequest, AgentError, AgentHandoffRequest, AgentMessage,
+    AgentResult, AgentRunRequest, AgentRunResult, AgentRunStatus, AggregationPolicy,
+    ChildAgentRunRef, DelegationBudget, DelegationMode, DelegationScope, HandoffRecord,
+    ParallelDelegationRequest, ParallelDelegationResult, SubAgentDescriptor, SubAgentOutcomeKind,
+    SubAgentResult,
 };
 use mutsuki_agent_sdk::{memory_resource_ref, session_resource_ref};
+use mutsuki_runtime_sdk::RuntimeClientRef;
+use mutsuki_runtime_sdk::contracts::{ScalarValue, Task, TaskBatch, TaskOutcome};
 use serde_json::{Value, json};
 
 const OWNER_ID: &str = "mutsuki.agent.runtime.subagent";
@@ -18,6 +21,23 @@ const DEFAULT_MAX_DEPTH: u32 = 4;
 
 pub trait ChildAgentExecutor: Send + Sync {
     fn execute_child(&self, request: AgentRunRequest) -> AgentResult<AgentRunResult>;
+}
+
+/// Fails until a TaskPool-backed executor is injected. Production/reference
+/// assemblies must not pretend child runs completed.
+#[derive(Clone, Default)]
+pub struct RequiredChildExecutor;
+
+impl ChildAgentExecutor for RequiredChildExecutor {
+    fn execute_child(&self, request: AgentRunRequest) -> AgentResult<AgentRunResult> {
+        Err(AgentError::new(
+            "agent.subagent.executor_required",
+            format!(
+                "child profile `{}` requires a TaskPool-backed ChildAgentExecutor",
+                request.profile_id
+            ),
+        ))
+    }
 }
 
 /// Deterministic in-process executor used by conformance and unit tests.
@@ -46,6 +66,94 @@ impl ChildAgentExecutor for EchoChildExecutor {
             events: Vec::new(),
         })
     }
+}
+
+/// Submits `mutsuki.agent/run@1` through Core TaskPool and waits for the child
+/// outcome. Parent cancel/generation is inherited via the RuntimeClient.
+pub struct RuntimeClientChildExecutor {
+    client: RuntimeClientRef,
+}
+
+impl RuntimeClientChildExecutor {
+    pub fn new(client: RuntimeClientRef) -> Self {
+        Self { client }
+    }
+}
+
+impl ChildAgentExecutor for RuntimeClientChildExecutor {
+    fn execute_child(&self, request: AgentRunRequest) -> AgentResult<AgentRunResult> {
+        let task_id = format!(
+            "subagent:{}:{}",
+            request.profile_id,
+            request.turn_id.as_deref().unwrap_or("child")
+        );
+        let payload = serde_json::to_value(&request).map_err(|error| {
+            AgentError::invalid_input(format!(
+                "child AgentRunRequest is not serializable: {error}"
+            ))
+        })?;
+        let handles = self
+            .client
+            .submit_batch(TaskBatch::one(
+                format!("{task_id}:batch"),
+                Task::new(task_id.clone(), AGENT_RUN_PROTOCOL, payload),
+            ))
+            .map_err(runtime_client_error)?;
+        let handle = handles.into_iter().next().ok_or_else(|| {
+            AgentError::new(
+                "agent.subagent.submit_failed",
+                "TaskPool did not return a child run handle",
+            )
+        })?;
+        loop {
+            match self
+                .client
+                .task_outcome(&handle)
+                .map_err(runtime_client_error)?
+            {
+                Some(TaskOutcome::Completed {
+                    output: Some(output),
+                    ..
+                }) => {
+                    return serde_json::from_value(output).map_err(|error| {
+                        AgentError::new(
+                            "agent.subagent.invalid_result",
+                            format!("child run result is not an AgentRunResult: {error}"),
+                        )
+                    });
+                }
+                Some(TaskOutcome::Completed { .. }) => {
+                    return Err(AgentError::new(
+                        "agent.subagent.result_missing",
+                        "child run completed without an AgentRunResult",
+                    ));
+                }
+                Some(TaskOutcome::Failed { error, .. }) => {
+                    let message = match error.evidence.get("message") {
+                        Some(ScalarValue::String(message)) => message.clone(),
+                        _ => error.route.clone(),
+                    };
+                    return Err(AgentError::new(error.code, message));
+                }
+                Some(other) => {
+                    return Err(AgentError::new(
+                        "agent.subagent.incomplete",
+                        format!("child run did not complete: {other:?}"),
+                    ));
+                }
+                None => std::thread::yield_now(),
+            }
+        }
+    }
+}
+
+fn runtime_client_error(error: mutsuki_runtime_sdk::RuntimeFailure) -> AgentError {
+    let error = error.error();
+    let message = match error.evidence.get("message") {
+        Some(ScalarValue::String(message)) => message.clone(),
+        _ => error.route.clone(),
+    };
+    AgentError::new(error.code.clone(), message)
 }
 
 #[derive(Clone)]

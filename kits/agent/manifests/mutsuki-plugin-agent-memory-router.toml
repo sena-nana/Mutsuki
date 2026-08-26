@@ -6,4 +6,9 @@ provides = [
   "mutsuki.agent.memory/query@1",
   "mutsuki.agent.memory/write@1",
   "mutsuki.agent.memory/activate@1",
+  "mutsuki.agent.memory/disable@1",
+  "mutsuki.agent.memory/delete@1",
+  "mutsuki.agent.memory/revise@1",
+  "mutsuki.agent.memory/opportunity@1",
+  "mutsuki.agent.memory/feedback@1",
 ]

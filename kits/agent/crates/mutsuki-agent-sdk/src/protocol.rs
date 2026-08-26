@@ -15,6 +15,11 @@ macro_rules! protocol_marker {
 }
 
 protocol_marker!(AgentRunProtocol, AGENT_RUN_PROTOCOL);
+protocol_marker!(
+    AgentContextProviderCollectProtocol,
+    AGENT_CONTEXT_PROVIDER_COLLECT_PROTOCOL
+);
+protocol_marker!(AgentWireProtocol, AGENT_WIRE_PROTOCOL);
 protocol_marker!(AgentContextBuildProtocol, AGENT_CONTEXT_BUILD_PROTOCOL);
 protocol_marker!(AgentToolListProtocol, AGENT_TOOL_LIST_PROTOCOL);
 protocol_marker!(AgentToolExecuteProtocol, AGENT_TOOL_EXECUTE_PROTOCOL);
@@ -63,6 +68,10 @@ protocol_marker!(
     AGENT_SCHEDULE_HISTORY_PROTOCOL
 );
 protocol_marker!(AgentScheduleDueProtocol, AGENT_SCHEDULE_DUE_PROTOCOL);
+protocol_marker!(
+    AgentScheduleCompleteProtocol,
+    AGENT_SCHEDULE_COMPLETE_PROTOCOL
+);
 protocol_marker!(AgentSkillDiscoverProtocol, AGENT_SKILL_DISCOVER_PROTOCOL);
 protocol_marker!(AgentSkillLoadProtocol, AGENT_SKILL_LOAD_PROTOCOL);
 protocol_marker!(AgentSkillReloadProtocol, AGENT_SKILL_RELOAD_PROTOCOL);
@@ -83,6 +92,9 @@ protocol_marker!(AgentCodeIndexProtocol, AGENT_CODE_INDEX_PROTOCOL);
 protocol_marker!(AgentCodeCompletionProtocol, AGENT_CODE_COMPLETION_PROTOCOL);
 protocol_marker!(AgentNextEditProtocol, AGENT_NEXT_EDIT_PROTOCOL);
 protocol_marker!(AgentGitProtocol, AGENT_GIT_PROTOCOL);
+protocol_marker!(AgentLspProtocol, AGENT_LSP_PROTOCOL);
+protocol_marker!(AgentComputerUseProtocol, AGENT_COMPUTER_USE_PROTOCOL);
+protocol_marker!(AgentMcpProtocol, AGENT_MCP_PROTOCOL);
 protocol_marker!(
     AgentCredentialLoginProtocol,
     AGENT_CREDENTIAL_LOGIN_PROTOCOL

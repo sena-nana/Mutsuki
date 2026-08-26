@@ -378,7 +378,7 @@ impl ContextBuilder {
             .lock()
             .expect("context builder mutex poisoned")
             .clone();
-        let rendered_prompt = self
+        let builder_prompt = self
             .system_prompt
             .lock()
             .expect("context builder mutex poisoned")
@@ -387,7 +387,7 @@ impl ContextBuilder {
             profile_id: request.profile_id.clone(),
             tools,
             memories,
-            rendered_prompt,
+            rendered_prompt: assembled_prompt(request, builder_prompt),
             preparation_usage: AgentUsage::default(),
             preparation_cost_microunits: 0,
         })
@@ -468,6 +468,36 @@ impl ContextBuilder {
     }
 }
 
+fn assembled_prompt(
+    request: &AgentContextBuildRequest,
+    builder_prompt: Option<String>,
+) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(prompt) = builder_prompt.filter(|prompt| !prompt.trim().is_empty()) {
+        parts.push(prompt);
+    }
+    parts.extend(
+        request
+            .system_instructions
+            .iter()
+            .filter(|instruction| !instruction.trim().is_empty())
+            .cloned(),
+    );
+    let mut fragments = request.prompt_fragments.clone();
+    fragments.sort_by_key(|fragment| fragment.priority);
+    parts.extend(
+        fragments
+            .into_iter()
+            .map(|fragment| fragment.content)
+            .filter(|content| !content.trim().is_empty()),
+    );
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n\n"))
+    }
+}
+
 fn joined_transcript(candidate: &TranscriptCompactionCandidate) -> Vec<AgentMessage> {
     let mut messages = candidate.system_messages.clone();
     messages.extend(candidate.dropped_messages.clone());
@@ -518,6 +548,13 @@ mod tests {
                 provider_hint: Some("provider-a".into()),
             }),
             metadata: None,
+            system_instructions: Vec::new(),
+            prompt_fragments: Vec::new(),
+            prompt_template_id: None,
+            memory_query: None,
+            providers: Vec::new(),
+            knowledge: None,
+            discover_skills: false,
         }
     }
 

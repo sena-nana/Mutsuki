@@ -59,6 +59,10 @@ pub struct AgentModelStreamRequest {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AgentModelStreamResult {
     pub stream: ResourceRef,
+    /// Assistant text for transcript continuation. `stream` remains the
+    /// ResourceRef for large payloads; loops must not resume on an empty message.
+    #[serde(default = "default_stream_message")]
+    pub message: AgentMessage,
     #[serde(default)]
     pub stop_reason: AgentModelStopReason,
     #[serde(default)]
@@ -83,4 +87,8 @@ pub struct AgentModelResultCallback {
 pub enum AgentModelHttpEffectRequest {
     Generate(AgentModelGenerateRequest),
     Stream(AgentModelStreamRequest),
+}
+
+fn default_stream_message() -> AgentMessage {
+    AgentMessage::assistant("")
 }

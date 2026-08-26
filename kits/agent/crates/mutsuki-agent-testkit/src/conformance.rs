@@ -106,6 +106,7 @@ pub fn tool_round_trip() {
         session_id: Some("session-a".into()),
         approval: None,
         context: None,
+        permission_mode: Default::default(),
     });
     assert_eq!(result.output, Some(serde_json::json!({"value": "hello"})));
     assert!(result.approved);
@@ -177,11 +178,7 @@ pub fn model_stream_round_trip() {
         gateway.read_stream(&streamed.stream).as_deref(),
         Some("Echo: stream")
     );
-    assert!(
-        !serde_json::to_string(&streamed)
-            .unwrap()
-            .contains("Echo: stream")
-    );
+    assert_eq!(streamed.message.content, "Echo: stream");
 }
 
 pub fn prompt_round_trip() {

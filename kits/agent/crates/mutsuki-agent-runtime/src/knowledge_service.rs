@@ -24,6 +24,8 @@ pub trait RerankService: Send + Sync {
     fn rerank(&self, query: &str, candidates: &[(String, f32)]) -> Vec<(String, f32)>;
 }
 
+/// Lexical stand-in used by tests and in-process fixtures.
+/// Production Hosts must inject a real `EmbeddingService`.
 #[derive(Clone, Default)]
 pub struct HashEmbedding;
 
@@ -108,6 +110,8 @@ impl Default for KnowledgeService {
 }
 
 impl KnowledgeService {
+    /// In-process default uses `HashEmbedding`, a lexical stand-in. Production
+    /// Hosts must call `with_services` with a real embedding implementation.
     pub fn new(policy: AgentKnowledgePolicy) -> Self {
         Self::with_services(policy, Arc::new(HashEmbedding), Arc::new(IdentityRerank))
     }

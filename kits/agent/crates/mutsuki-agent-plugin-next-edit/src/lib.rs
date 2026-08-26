@@ -14,17 +14,15 @@
 )]
 
 use std::collections::BTreeMap;
-use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 
 use mutsuki_agent_adapter_api::ModelProtocolAdapter;
 use mutsuki_agent_contracts::{
-    AgentError, AgentMessage, AgentModelGenerateRequest, AgentPluginStateKind,
-    AgentServiceDescriptor, AgentToolDescriptor, ContextProviderRequest, ContextProviderResult,
-    DocumentVersion, EditorDocumentRef, EditorWorkspaceRef, FileChangeDescriptor, FileChangeStatus,
-    GitHeadIdentity, ModelGenerateRequest, NextEditCandidate, NextEditFeedback,
+    AgentError, AgentMessage, AgentModelGenerateRequest, AgentModelGenerateResult,
+    AgentPluginStateKind, AgentServiceDescriptor, AgentToolDescriptor, ContextProviderRequest,
+    ContextProviderResult, DocumentVersion, EditorDocumentRef, EditorWorkspaceRef,
+    FileChangeDescriptor, FileChangeStatus, GitHeadIdentity, NextEditCandidate, NextEditFeedback,
     NextEditFeedbackKind, NextEditFeedbackStats, NextEditPlanningPath, NextEditRequest,
     NextEditServiceRequest, NextEditServiceResponse, NextEditStaleConflict, NextEditTarget,
     ProviderInstanceDescriptor, RecentEditEvent, TextPosition, TextSelection, ToolSideEffect,
@@ -36,7 +34,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 pub const PLUGIN_ID: &str = "mutsuki.plugin.agent.next-edit";
-pub const SERVICE_ID: &str = "mutsuki.agent.service.next-edit";
+pub const SERVICE_ID: &str = mutsuki_agent_contracts::AGENT_NEXT_EDIT_PROTOCOL;
 pub const CONTEXT_PROVIDER_ID: &str = "mutsuki.agent.context.next-edit";
 
 const INLINE_PREVIEW_LIMIT: usize = 2_048;
@@ -103,12 +101,8 @@ pub trait NextEditPlanner: Send + Sync {
     ) -> Result<Option<NextEditPlan>, AgentError>;
 }
 
-#[derive(Clone)]
-pub struct ProtocolNextEditPlanner {
-    adapter: Arc<dyn ModelProtocolAdapter>,
-    provider: ProviderInstanceDescriptor,
-    model: String,
-}
+#[derive(Clone, Default)]
+pub struct ProtocolNextEditPlanner;
 
 impl ProtocolNextEditPlanner {
     pub fn new(
@@ -127,11 +121,7 @@ impl ProtocolNextEditPlanner {
                 "next edit provider does not belong to the selected adapter",
             ));
         }
-        Ok(Self {
-            adapter,
-            provider,
-            model,
-        })
+        Ok(Self)
     }
 }
 
@@ -789,158 +779,249 @@ struct ModelTextEdit {
 impl NextEditPlanner for ProtocolNextEditPlanner {
     fn plan(
         &self,
-        request: &NextEditRequest,
-        targets: &[NextEditTarget],
+        _request: &NextEditRequest,
+        _targets: &[NextEditTarget],
     ) -> Result<Option<NextEditPlan>, AgentError> {
-        let allowed = targets
-            .iter()
-            .map(|target| target.document.uri.as_str())
-            .collect::<Vec<_>>();
-        let contexts = request
-            .document_contexts
-            .iter()
-            .filter_map(|context| {
-                let text = context.inline_text.as_deref()?;
-                if !allowed.contains(&context.document.uri.as_str()) {
-                    return None;
-                }
-                Some(json!({
-                    "uri": context.document.uri,
-                    "version": context.version.0,
-                    "language": context.language_id,
-                    "selection": context.selection,
-                    "text": truncate_bytes(text, 32 * 1024),
-                }))
-            })
-            .collect::<Vec<_>>();
-        if contexts.is_empty() {
-            return Ok(None);
-        }
-
-        let prompt = serde_json::to_string(&json!({
-            "intent": request.intent,
-            "targets": targets,
-            "documents": contexts,
-            "constraints": {
-                "allow_multi_file": request.allow_multi_file,
-                "maximum_edits": 16,
-                "maximum_total_new_text_bytes": 64 * 1024,
-            }
-        }))
-        .map_err(|error| AgentError::invalid_input(error.to_string()))?;
-        let generate = ModelGenerateRequest {
-            request: AgentModelGenerateRequest {
-                model: self.model.clone(),
-                messages: vec![
-                    AgentMessage::system(
-                        "Return only strict JSON for the next concrete editor edit. Shape: {\"reason\":string,\"confidence\":number,\"edits\":[{\"uri\":string,\"start\":{\"line\":number,\"character\":number},\"end\":{\"line\":number,\"character\":number},\"new_text\":string}]}. Use only supplied target URIs. Do not call tools.",
-                    ),
-                    AgentMessage::user(prompt),
-                ],
-                temperature: Some(0.0),
-                max_output_tokens: Some(1_024),
-                provider_hint: Some(self.provider.provider_id.clone()),
-                metadata: Some(json!({
-                    "mode": "next_edit",
-                    "request_id": request.request_id,
-                    "generation": request.generation,
-                })),
-                result_protocol_id: None,
-                result_context: None,
-                session_id: None,
-            },
-            tools: Vec::new(),
-            structured_output: None,
-            reasoning: None,
-        };
-
-        let started = Instant::now();
-        let result = block_on_adapter(self.adapter.generate(self.provider.clone(), generate))
-            .map_err(|error| {
-                AgentError::new(
-                    error.code,
-                    format!("next edit protocol adapter failed: {}", error.message),
-                )
-            })?;
-        if let Some(deadline) = request.deadline_unix_ms {
-            let remaining = deadline.saturating_sub(request.now_unix_ms);
-            if started.elapsed() > Duration::from_millis(remaining) {
-                return Ok(None);
-            }
-        }
-        if !result.tool_calls.is_empty() {
-            return Err(AgentError::new(
-                "agent.next_edit.tool_forbidden",
-                "next edit planner must not emit tool calls",
-            ));
-        }
-
-        let raw = extract_json_object(&result.message.content).ok_or_else(|| {
-            AgentError::new(
-                "agent.next_edit.invalid_model_output",
-                "next edit model did not return a JSON object",
-            )
-        })?;
-        let model_plan: ModelPlan = serde_json::from_str(raw).map_err(|_| {
-            AgentError::new(
-                "agent.next_edit.invalid_model_output",
-                "next edit model returned an invalid edit payload",
-            )
-        })?;
-        if !model_plan.confidence.is_finite()
-            || !(0.0..=1.0).contains(&model_plan.confidence)
-            || model_plan.edits.is_empty()
-            || model_plan.edits.len() > 16
-        {
-            return Ok(None);
-        }
-
-        let mut total_bytes = 0usize;
-        let mut edits = Vec::with_capacity(model_plan.edits.len());
-        for edit in model_plan.edits {
-            let Some(document) = targets
-                .iter()
-                .find(|target| target.document.uri == edit.uri)
-                .map(|target| target.document.clone())
-            else {
-                return Ok(None);
-            };
-            if position_after(edit.start, edit.end) {
-                return Ok(None);
-            }
-            total_bytes = total_bytes.saturating_add(edit.new_text.len());
-            if total_bytes > 64 * 1024 {
-                return Ok(None);
-            }
-            edits.push(PlannedNextEdit {
-                document,
-                edit: WorkspaceTextEdit {
-                    range: TextSelection {
-                        start: edit.start,
-                        end: edit.end,
-                    },
-                    new_text: edit.new_text,
-                },
-            });
-        }
-        Ok(Some(NextEditPlan {
-            reason: truncate(&model_plan.reason, 160),
-            confidence: model_plan.confidence,
-            edits,
-        }))
+        Err(AgentError::new(
+            "agent.model.effect_runner_required",
+            "ProtocolNextEditPlanner cannot inline-generate; submit mutsuki.agent.model/generate@1 through TaskPool",
+        ))
     }
 }
 
-fn block_on_adapter<T>(future: impl Future<Output = T>) -> T {
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        return tokio::task::block_in_place(|| handle.block_on(future));
+/// TaskPool-backed planner. Submits `mutsuki.agent.model/generate@1` and waits
+/// for the typed generate result.
+pub struct RuntimeClientNextEditPlanner {
+    client: mutsuki_runtime_sdk::RuntimeClientRef,
+    model: String,
+    provider_hint: Option<String>,
+}
+
+impl RuntimeClientNextEditPlanner {
+    pub fn new(
+        client: mutsuki_runtime_sdk::RuntimeClientRef,
+        model: impl Into<String>,
+        provider_hint: Option<String>,
+    ) -> Result<Self, AgentError> {
+        let model = model.into();
+        if model.trim().is_empty() {
+            return Err(AgentError::invalid_input(
+                "next edit planner model is required",
+            ));
+        }
+        Ok(Self {
+            client,
+            model,
+            provider_hint,
+        })
     }
-    tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(1)
-        .enable_all()
-        .build()
-        .expect("next edit runtime")
-        .block_on(future)
+}
+
+impl NextEditPlanner for RuntimeClientNextEditPlanner {
+    fn plan(
+        &self,
+        request: &NextEditRequest,
+        targets: &[NextEditTarget],
+    ) -> Result<Option<NextEditPlan>, AgentError> {
+        let generate = next_edit_generate_request(
+            &self.model,
+            self.provider_hint.as_deref(),
+            request,
+            targets,
+        )?;
+        let Some(generate) = generate else {
+            return Ok(None);
+        };
+        let task_id = format!("next-edit:{}", request.request_id);
+        let handles = self
+            .client
+            .submit_batch(mutsuki_runtime_sdk::contracts::TaskBatch::one(
+                format!("{task_id}:batch"),
+                mutsuki_runtime_sdk::contracts::Task::new(
+                    task_id,
+                    mutsuki_agent_contracts::AGENT_MODEL_GENERATE_PROTOCOL,
+                    serde_json::to_value(&generate)
+                        .map_err(|error| AgentError::invalid_input(error.to_string()))?,
+                ),
+            ))
+            .map_err(runtime_client_agent_error)?;
+        let handle = handles.into_iter().next().ok_or_else(|| {
+            AgentError::new(
+                "agent.next_edit.submit_failed",
+                "TaskPool did not return a next-edit generate handle",
+            )
+        })?;
+        let result = loop {
+            match self
+                .client
+                .task_outcome(&handle)
+                .map_err(runtime_client_agent_error)?
+            {
+                Some(mutsuki_runtime_sdk::contracts::TaskOutcome::Completed {
+                    output: Some(output),
+                    ..
+                }) => {
+                    break serde_json::from_value::<AgentModelGenerateResult>(output).map_err(
+                        |error| {
+                            AgentError::new(
+                                "agent.next_edit.invalid_model_output",
+                                error.to_string(),
+                            )
+                        },
+                    )?;
+                }
+                Some(mutsuki_runtime_sdk::contracts::TaskOutcome::Failed { error, .. }) => {
+                    return Err(AgentError::new(error.code, error.route));
+                }
+                Some(_) => {
+                    return Err(AgentError::new(
+                        "agent.next_edit.incomplete",
+                        "next edit generate did not complete",
+                    ));
+                }
+                None => std::thread::yield_now(),
+            }
+        };
+        parse_next_edit_plan(request, targets, result)
+    }
+}
+
+fn next_edit_generate_request(
+    model: &str,
+    provider_hint: Option<&str>,
+    request: &NextEditRequest,
+    targets: &[NextEditTarget],
+) -> Result<Option<AgentModelGenerateRequest>, AgentError> {
+    let allowed = targets
+        .iter()
+        .map(|target| target.document.uri.as_str())
+        .collect::<Vec<_>>();
+    let contexts = request
+        .document_contexts
+        .iter()
+        .filter_map(|context| {
+            let text = context.inline_text.as_deref()?;
+            if !allowed.contains(&context.document.uri.as_str()) {
+                return None;
+            }
+            Some(json!({
+                "uri": context.document.uri,
+                "version": context.version.0,
+                "language": context.language_id,
+                "selection": context.selection,
+                "text": truncate_bytes(text, 32 * 1024),
+            }))
+        })
+        .collect::<Vec<_>>();
+    if contexts.is_empty() {
+        return Ok(None);
+    }
+    let prompt = serde_json::to_string(&json!({
+        "intent": request.intent,
+        "targets": targets,
+        "documents": contexts,
+        "constraints": {
+            "allow_multi_file": request.allow_multi_file,
+            "maximum_edits": 16,
+            "maximum_total_new_text_bytes": 64 * 1024,
+        }
+    }))
+    .map_err(|error| AgentError::invalid_input(error.to_string()))?;
+    Ok(Some(AgentModelGenerateRequest {
+        model: model.to_owned(),
+        messages: vec![
+            AgentMessage::system(
+                "Return only strict JSON for the next concrete editor edit. Shape: {\"reason\":string,\"confidence\":number,\"edits\":[{\"uri\":string,\"start\":{\"line\":number,\"character\":number},\"end\":{\"line\":number,\"character\":number},\"new_text\":string}]}. Use only supplied target URIs. Do not call tools.",
+            ),
+            AgentMessage::user(prompt),
+        ],
+        temperature: Some(0.0),
+        max_output_tokens: Some(1_024),
+        provider_hint: provider_hint.map(str::to_owned),
+        metadata: Some(json!({
+            "mode": "next_edit",
+            "request_id": request.request_id,
+            "generation": request.generation,
+        })),
+        result_protocol_id: None,
+        result_context: None,
+        session_id: None,
+    }))
+}
+
+fn parse_next_edit_plan(
+    request: &NextEditRequest,
+    targets: &[NextEditTarget],
+    result: AgentModelGenerateResult,
+) -> Result<Option<NextEditPlan>, AgentError> {
+    if let Some(deadline) = request.deadline_unix_ms
+        && request.now_unix_ms > deadline
+    {
+        return Ok(None);
+    }
+    if !result.tool_calls.is_empty() {
+        return Err(AgentError::new(
+            "agent.next_edit.tool_forbidden",
+            "next edit planner must not emit tool calls",
+        ));
+    }
+    let raw = extract_json_object(&result.message.content).ok_or_else(|| {
+        AgentError::new(
+            "agent.next_edit.invalid_model_output",
+            "next edit model did not return a JSON object",
+        )
+    })?;
+    let model_plan: ModelPlan = serde_json::from_str(raw).map_err(|_| {
+        AgentError::new(
+            "agent.next_edit.invalid_model_output",
+            "next edit model returned an invalid edit payload",
+        )
+    })?;
+    if !model_plan.confidence.is_finite()
+        || !(0.0..=1.0).contains(&model_plan.confidence)
+        || model_plan.edits.is_empty()
+        || model_plan.edits.len() > 16
+    {
+        return Ok(None);
+    }
+    let mut total_bytes = 0usize;
+    let mut edits = Vec::with_capacity(model_plan.edits.len());
+    for edit in model_plan.edits {
+        let Some(document) = targets
+            .iter()
+            .find(|target| target.document.uri == edit.uri)
+            .map(|target| target.document.clone())
+        else {
+            return Ok(None);
+        };
+        if position_after(edit.start, edit.end) {
+            return Ok(None);
+        }
+        total_bytes = total_bytes.saturating_add(edit.new_text.len());
+        if total_bytes > 64 * 1024 {
+            return Ok(None);
+        }
+        edits.push(PlannedNextEdit {
+            document,
+            edit: WorkspaceTextEdit {
+                range: TextSelection {
+                    start: edit.start,
+                    end: edit.end,
+                },
+                new_text: edit.new_text,
+            },
+        });
+    }
+    Ok(Some(NextEditPlan {
+        reason: truncate(&model_plan.reason, 160),
+        confidence: model_plan.confidence,
+        edits,
+    }))
+}
+
+fn runtime_client_agent_error(error: mutsuki_runtime_sdk::RuntimeFailure) -> AgentError {
+    let error = error.error();
+    AgentError::new(error.code.clone(), error.route.clone())
 }
 
 fn extract_json_object(value: &str) -> Option<&str> {
@@ -1074,9 +1155,9 @@ mod tests {
     use super::*;
     use mutsuki_agent_contracts::{
         AgentModelGenerateResult, AgentModelStopReason, AgentUsage, CredentialRef, LspDiagnostic,
-        LspPosition, LspRange, ModelCapability, ModelProtocolAdapterDescriptor,
-        NextEditDiagnosticHint, NextEditDiffHint, NextEditDocumentContext, TextPosition,
-        TextSelection,
+        LspPosition, LspRange, ModelCapability, ModelGenerateRequest,
+        ModelProtocolAdapterDescriptor, NextEditDiagnosticHint, NextEditDiffHint,
+        NextEditDocumentContext, TextPosition, TextSelection,
     };
     use mutsuki_agent_testkit::FakeEditorContextService;
 
@@ -1279,17 +1360,49 @@ mod tests {
 
     #[test]
     fn protocol_model_returns_concrete_versioned_workspace_edit() {
-        let service = SharedNextEditService::with_protocol_model(
+        struct StaticEditPlanner;
+
+        impl NextEditPlanner for StaticEditPlanner {
+            fn plan(
+                &self,
+                _request: &NextEditRequest,
+                targets: &[NextEditTarget],
+            ) -> Result<Option<NextEditPlan>, AgentError> {
+                let document = targets
+                    .first()
+                    .map(|target| target.document.clone())
+                    .ok_or_else(|| AgentError::invalid_input("target required"))?;
+                Ok(Some(NextEditPlan {
+                    reason: "complete the function".into(),
+                    confidence: 0.91,
+                    edits: vec![PlannedNextEdit {
+                        document,
+                        edit: WorkspaceTextEdit {
+                            range: TextSelection {
+                                start: TextPosition {
+                                    line: 0,
+                                    character: 11,
+                                },
+                                end: TextPosition {
+                                    line: 0,
+                                    character: 11,
+                                },
+                            },
+                            new_text: " println!(\"hi\");".into(),
+                        },
+                    }],
+                }))
+            }
+        }
+
+        let service = SharedNextEditService::with_planner(
             AgentResourceStore::default(),
             NextEditServiceConfig {
                 debounce_ms: 0,
                 ..NextEditServiceConfig::default()
             },
-            Arc::new(ConcreteEditAdapter::new()),
-            model_provider(),
-            "next-edit-model",
-        )
-        .unwrap();
+            Arc::new(StaticEditPlanner),
+        );
         let mut request = base_request();
         request.recent_edits = vec![RecentEditEvent {
             event_id: "edit-model".into(),
@@ -1341,6 +1454,20 @@ mod tests {
             candidate.proposal.changes[0].edits[0].new_text,
             " println!(\"hi\");"
         );
+    }
+
+    #[test]
+    fn protocol_planner_refuses_inline_model_generate() {
+        let planner = ProtocolNextEditPlanner::new(
+            Arc::new(ConcreteEditAdapter::new()),
+            model_provider(),
+            "next-edit-model",
+        )
+        .unwrap();
+        let error = planner
+            .plan(&base_request(), &[])
+            .expect_err("inline generate is forbidden");
+        assert_eq!(error.code, "agent.model.effect_runner_required");
     }
 
     #[test]

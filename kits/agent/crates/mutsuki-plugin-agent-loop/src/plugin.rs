@@ -136,9 +136,10 @@ async fn execute(
         .turn_id
         .clone()
         .unwrap_or_else(|| format!("turn:ephemeral:{}", event_sequence.saturating_add(1)));
-    let compaction = agent_loop
-        .context_policy(&request.profile_id)?
-        .and_then(|policy| policy.compaction_service)
+    let profile = agent_loop.profile(&request.profile_id)?;
+    let compaction = profile
+        .as_ref()
+        .and_then(|profile| profile.context.compaction_service.clone())
         .filter(|service_id| !service_id.trim().is_empty())
         .map(|service_id| AgentContextCompactionConfig {
             service_id,
@@ -147,19 +148,17 @@ async fn execute(
         });
 
     let outcome = ctx
-        .call::<AgentContextBuildProtocol>(AgentContextBuildRequest {
-            profile_id: request.profile_id.clone(),
-            messages: request.messages.clone(),
-            session_id: request.session_id.clone(),
-            turn_id: Some(turn_id.clone()),
-            max_context_tokens: request.budget.max_context_tokens,
-            compaction: if resuming_existing_turn {
+        .call::<AgentContextBuildProtocol>(context_build_request(
+            &request,
+            request.messages.clone(),
+            turn_id.clone(),
+            if resuming_existing_turn {
                 None
             } else {
                 compaction.clone()
             },
-            metadata: request.metadata.clone(),
-        })
+            profile.as_ref(),
+        ))
         .await
         .map_err(runtime_agent_error)?;
     let context: AgentContext =
@@ -218,6 +217,7 @@ async fn execute(
             compaction,
             preparation_usage,
             preparation_cost_microunits,
+            profile,
         },
         &ctx,
         &request,
@@ -322,6 +322,7 @@ struct ModelContextRouting {
     compaction: Option<AgentContextCompactionConfig>,
     preparation_usage: AgentUsage,
     preparation_cost_microunits: u64,
+    profile: Option<AgentRuntimeProfile>,
 }
 
 async fn execute_run(
@@ -339,7 +340,12 @@ async fn execute_run(
         compaction,
         preparation_usage,
         preparation_cost_microunits,
+        profile,
     } = routing;
+    let permission_policy = profile
+        .as_ref()
+        .map(|profile| profile.permissions.clone())
+        .unwrap_or_default();
     let mut messages = request.messages.clone();
     let mut model_synced_message_count = if resuming_existing_turn {
         0
@@ -578,6 +584,7 @@ async fn execute_run(
                     ));
                 }
                 ApprovalResolution::Ready { approvals, blocked } => {
+                    queue_full_mode_approvals(events, request.permission_mode, &approvals);
                     if let Some(pending) = execute_tool_batch_recoverably(
                         ctx,
                         request,
@@ -628,6 +635,7 @@ async fn execute_run(
                 events.turn_id(),
                 compaction.clone(),
                 &messages,
+                profile.as_ref(),
             )
             .await?;
             model_messages = rebuilt.messages;
@@ -682,7 +690,7 @@ async fn execute_run(
                 detail: Some(serde_json::json!({"stream": streamed.stream.clone()})),
             });
             AgentModelGenerateResult {
-                message: AgentMessage::assistant(""),
+                message: streamed.message,
                 stop_reason: streamed.stop_reason,
                 tool_calls: streamed.tool_calls,
                 usage: streamed.usage,
@@ -816,14 +824,22 @@ async fn execute_run(
                 pending_interactions,
             ));
         }
-        let pending = approval_requests(ctx, request, &messages, &tool_calls).await?;
+        let plan = approval_requests(
+            ctx,
+            request,
+            &messages,
+            &tool_calls,
+            &permission_policy,
+            request.permission_mode,
+        )
+        .await?;
         match resolve_approvals(
-            &pending,
+            &plan.pending,
             &request.permission_decisions,
             request.permission_mode,
         )? {
             ApprovalResolution::Waiting => {
-                attach_pending_approvals(&mut messages, &pending)?;
+                attach_pending_approvals(&mut messages, &plan.pending)?;
                 attach_run_continuation(
                     &mut messages,
                     &PendingRunContinuation {
@@ -839,7 +855,7 @@ async fn execute_run(
                     step_index,
                     kind: "approval_requested".into(),
                     detail: Some(serde_json::json!({
-                        "actions": pending.iter().map(|request| &request.action_id).collect::<Vec<_>>()
+                        "actions": plan.pending.iter().map(|request| &request.action_id).collect::<Vec<_>>()
                     })),
                 });
                 return Ok(waiting_approval_result(
@@ -848,7 +864,7 @@ async fn execute_run(
                     usage,
                     cost_microunits,
                     output_resource,
-                    pending,
+                    plan.pending,
                 ));
             }
             ApprovalResolution::Stopped(status) => {
@@ -862,6 +878,9 @@ async fn execute_run(
                 ));
             }
             ApprovalResolution::Ready { approvals, blocked } => {
+                queue_full_mode_approvals(events, request.permission_mode, &approvals);
+                let mut blocked = blocked;
+                blocked.extend(plan.blocked);
                 let continuation = PendingRunContinuation {
                     next_step_index: step_index.saturating_add(1),
                     max_steps,
@@ -1121,7 +1140,9 @@ async fn approval_requests(
     request: &AgentRunRequest,
     messages: &[AgentMessage],
     tool_calls: &[AgentToolCall],
-) -> AgentResult<Vec<PermissionRequest>> {
+    policy: &AgentPermissionPolicy,
+    permission_mode: AgentPermissionMode,
+) -> AgentResult<PermissionPlan> {
     let outcome = ctx
         .call::<AgentToolListProtocol>(AgentToolListRequest {
             profile_id: Some(request.profile_id.clone()),
@@ -1138,32 +1159,152 @@ async fn approval_requests(
     let session_id = request.session_id.as_deref();
     let transcript_version = messages.len() as u64;
     let mut pending = Vec::new();
+    let mut blocked = std::collections::BTreeSet::new();
     for call in tool_calls {
         let descriptor = descriptors
             .get(&call.name)
             .ok_or_else(|| AgentError::not_found(format!("tool `{}` not registered", call.name)))?;
-        if descriptor.requires_approval {
-            let session_id = session_id.ok_or_else(|| {
-                AgentError::new(
-                    "agent.approval.session_required",
-                    "approval-bound tools require a durable session",
-                )
-            })?;
-            pending.push(PermissionRequest {
-                session_id: session_id.into(),
-                turn_id: request
-                    .turn_id
-                    .clone()
-                    .unwrap_or_else(|| format!("turn:{session_id}:{transcript_version}")),
-                action_id: call.call_id.clone(),
-                tool: call.name.clone(),
-                side_effect: descriptor.side_effect.clone(),
-                summary: format!("Allow `{}` for this coding action", descriptor.name),
-                version: transcript_version,
-            });
+        match classify_tool_permission(descriptor, policy, permission_mode) {
+            ToolPermissionGate::Allow => {}
+            ToolPermissionGate::BlockReadOnly | ToolPermissionGate::DenyPermission => {
+                blocked.insert(call.call_id.clone());
+            }
+            ToolPermissionGate::RequireApproval => {
+                let session_id = session_id.ok_or_else(|| {
+                    AgentError::new(
+                        "agent.approval.session_required",
+                        "approval-bound tools require a durable session",
+                    )
+                })?;
+                pending.push(PermissionRequest {
+                    session_id: session_id.into(),
+                    turn_id: request
+                        .turn_id
+                        .clone()
+                        .unwrap_or_else(|| format!("turn:{session_id}:{transcript_version}")),
+                    action_id: call.call_id.clone(),
+                    tool: call.name.clone(),
+                    side_effect: descriptor.side_effect,
+                    summary: format!("Allow `{}` for this coding action", descriptor.name),
+                    version: transcript_version,
+                });
+            }
         }
     }
-    Ok(pending)
+    Ok(PermissionPlan { pending, blocked })
+}
+
+struct PermissionPlan {
+    pending: Vec<PermissionRequest>,
+    blocked: std::collections::BTreeSet<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ToolPermissionGate {
+    Allow,
+    RequireApproval,
+    BlockReadOnly,
+    DenyPermission,
+}
+
+fn classify_tool_permission(
+    descriptor: &AgentToolDescriptor,
+    policy: &AgentPermissionPolicy,
+    mode: AgentPermissionMode,
+) -> ToolPermissionGate {
+    if !policy.allowed_permissions.is_empty()
+        && !descriptor.permissions.is_empty()
+        && !descriptor
+            .permissions
+            .iter()
+            .any(|permission| policy.allowed_permissions.contains(permission))
+    {
+        return ToolPermissionGate::DenyPermission;
+    }
+    if mode == AgentPermissionMode::ReadOnly && descriptor.side_effect.is_write() {
+        return ToolPermissionGate::BlockReadOnly;
+    }
+    let policy_requires_approval = policy.require_approval.contains(&descriptor.side_effect)
+        && !policy.auto_allow.contains(&descriptor.side_effect);
+    if descriptor.requires_approval || policy_requires_approval {
+        ToolPermissionGate::RequireApproval
+    } else {
+        ToolPermissionGate::Allow
+    }
+}
+
+fn queue_full_mode_approvals(
+    events: &mut RunEventPublisher<'_>,
+    permission_mode: AgentPermissionMode,
+    approvals: &std::collections::BTreeMap<String, AgentToolApproval>,
+) {
+    if permission_mode != AgentPermissionMode::Full {
+        return;
+    }
+    for approval in approvals.values() {
+        events.queue(
+            AgentEvent::ApprovalRequest {
+                request: approval.request.clone(),
+            },
+            "approval requested",
+        );
+    }
+}
+
+fn context_build_request(
+    request: &AgentRunRequest,
+    messages: Vec<AgentMessage>,
+    turn_id: String,
+    compaction: Option<AgentContextCompactionConfig>,
+    profile: Option<&AgentRuntimeProfile>,
+) -> AgentContextBuildRequest {
+    let last_user = messages
+        .iter()
+        .rev()
+        .find(|message| message.role == AgentRole::User)
+        .map(|message| message.content.clone())
+        .filter(|content| !content.trim().is_empty());
+    let mut build = AgentContextBuildRequest::new(request.profile_id.clone(), messages);
+    build.session_id = request.session_id.clone();
+    build.turn_id = Some(turn_id);
+    build.max_context_tokens = request.budget.max_context_tokens;
+    build.compaction = compaction;
+    build.metadata = request.metadata.clone();
+    let Some(profile) = profile else {
+        return build;
+    };
+    build.system_instructions = profile.system_instructions.clone();
+    build.prompt_fragments = profile.prompt_fragments.clone();
+    build.memory_query = last_user.clone();
+    build.providers = profile
+        .context
+        .provider_ids
+        .iter()
+        .map(|provider_id| ContextProviderSpec {
+            provider_id: provider_id.clone(),
+            priority: ContextPriority::Normal,
+            required: false,
+            input: profile.context.provider_options.clone(),
+        })
+        .collect();
+    if let (Some(tenant_id), Some(workspace_id), Some(query)) = (
+        profile.knowledge.tenant_id.clone(),
+        profile.knowledge.workspace_id.clone(),
+        last_user,
+    ) {
+        build.knowledge = Some(RetrievalQuery {
+            query,
+            tenant_id,
+            workspace_id,
+            collection_ids: profile.knowledge.collection_allowlist.clone(),
+            top_k: 8,
+            hybrid: false,
+            rerank: false,
+            max_excerpt_chars: Some(512),
+        });
+    }
+    build.discover_skills = profile.skill.enabled;
+    build
 }
 
 fn resolve_approvals(
@@ -1886,6 +2027,7 @@ async fn execute_tool_batch(
                 session_id: request.session_id.clone(),
                 approval: approvals.remove(&tool_call.call_id),
                 context: request.metadata.clone(),
+                permission_mode: request.permission_mode,
             }
         }))
         .await
@@ -2058,17 +2200,16 @@ async fn rebuild_model_context(
     turn_id: &str,
     compaction: Option<AgentContextCompactionConfig>,
     messages: &[AgentMessage],
+    profile: Option<&AgentRuntimeProfile>,
 ) -> AgentResult<PreparedModelContext> {
     let outcome = ctx
-        .call::<AgentContextBuildProtocol>(AgentContextBuildRequest {
-            profile_id: request.profile_id.clone(),
-            messages: messages.to_vec(),
-            session_id: request.session_id.clone(),
-            turn_id: Some(turn_id.to_owned()),
-            max_context_tokens: request.budget.max_context_tokens,
+        .call::<AgentContextBuildProtocol>(context_build_request(
+            request,
+            messages.to_vec(),
+            turn_id.to_owned(),
             compaction,
-            metadata: request.metadata.clone(),
-        })
+            profile,
+        ))
         .await
         .map_err(runtime_agent_error)?;
     let context: AgentContext =
@@ -2545,5 +2686,51 @@ mod tests {
                 resolution
             } if turn_id == "turn" && resolution == &resolved
         ));
+    }
+
+    #[test]
+    fn read_only_blocks_write_tools_that_do_not_require_approval() {
+        let mut descriptor = AgentToolDescriptor::new("workspace.write", "test.write@1", "write");
+        descriptor.side_effect = ToolSideEffect::WorkspaceWrite;
+        descriptor.requires_approval = false;
+        assert_eq!(
+            classify_tool_permission(
+                &descriptor,
+                &AgentPermissionPolicy::default(),
+                AgentPermissionMode::ReadOnly,
+            ),
+            ToolPermissionGate::BlockReadOnly
+        );
+        descriptor.side_effect = ToolSideEffect::WorkspaceRead;
+        assert_eq!(
+            classify_tool_permission(
+                &descriptor,
+                &AgentPermissionPolicy::default(),
+                AgentPermissionMode::ReadOnly,
+            ),
+            ToolPermissionGate::Allow
+        );
+    }
+
+    #[test]
+    fn permission_policy_require_approval_gates_writes_without_descriptor_flag() {
+        let mut descriptor = AgentToolDescriptor::new("workspace.write", "test.write@1", "write");
+        descriptor.side_effect = ToolSideEffect::WorkspaceWrite;
+        let policy = AgentPermissionPolicy {
+            auto_allow: vec![ToolSideEffect::None, ToolSideEffect::WorkspaceRead],
+            require_approval: vec![ToolSideEffect::WorkspaceWrite],
+            allowed_permissions: Vec::new(),
+        };
+        assert_eq!(
+            classify_tool_permission(&descriptor, &policy, AgentPermissionMode::Ask),
+            ToolPermissionGate::RequireApproval
+        );
+        descriptor.permissions = vec!["network".into()];
+        let mut restricted = policy.clone();
+        restricted.allowed_permissions = vec!["workspace.write".into()];
+        assert_eq!(
+            classify_tool_permission(&descriptor, &restricted, AgentPermissionMode::Ask),
+            ToolPermissionGate::DenyPermission
+        );
     }
 }

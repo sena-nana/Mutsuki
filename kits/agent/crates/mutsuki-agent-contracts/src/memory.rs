@@ -167,6 +167,14 @@ pub struct AgentMemoryDeleteRequest {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AgentMemoryOpportunityRequest {
+    pub session_id: String,
+    pub turn_id: String,
+    pub query: MemoryQuery,
+    pub mode: MemoryOpportunityMode,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AgentMemoryReviseRequest {
     pub memory_id: String,
     pub text: String,
