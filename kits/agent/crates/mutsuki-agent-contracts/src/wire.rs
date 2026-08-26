@@ -219,6 +219,11 @@ pub enum AgentEvent {
     ApprovalRequest {
         request: crate::PermissionRequest,
     },
+    ContextInjected {
+        turn_id: String,
+        text: String,
+        provenance: crate::ContextProvenance,
+    },
     ContextStatus {
         turn_id: String,
         status: String,

@@ -31,6 +31,10 @@ protocol_marker!(
     AGENT_SESSION_SNAPSHOT_PROTOCOL
 );
 protocol_marker!(AgentSessionForkProtocol, AGENT_SESSION_FORK_PROTOCOL);
+protocol_marker!(
+    AgentSessionTrajectoryProtocol,
+    AGENT_SESSION_TRAJECTORY_PROTOCOL
+);
 protocol_marker!(AgentMemoryQueryProtocol, AGENT_MEMORY_QUERY_PROTOCOL);
 protocol_marker!(AgentMemoryWriteProtocol, AGENT_MEMORY_WRITE_PROTOCOL);
 protocol_marker!(AgentMemoryActivateProtocol, AGENT_MEMORY_ACTIVATE_PROTOCOL);

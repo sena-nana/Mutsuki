@@ -8,4 +8,5 @@ provides = [
   "mutsuki.agent.session/append@1",
   "mutsuki.agent.session/snapshot@1",
   "mutsuki.agent.session/fork@1",
+  "mutsuki.agent.session/trajectory@1",
 ]

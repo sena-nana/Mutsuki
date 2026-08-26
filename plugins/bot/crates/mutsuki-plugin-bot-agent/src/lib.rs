@@ -19,8 +19,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use mutsuki_agent_client::{AgentClient, AgentClientBackend};
 use mutsuki_agent_contracts::{
-    AgentContentPart, AgentEvent, AgentEventPage, AgentMessage, AgentSession,
-    AgentSessionCreateRequest, AgentWireError, SessionSnapshotRef, SessionVersion,
+    AGENT_MESSAGE_CONTEXT_INJECTIONS_META, AgentContentPart, AgentEvent, AgentEventPage,
+    AgentMessage, AgentMessageContextInjection, AgentSession, AgentSessionCreateRequest,
+    AgentWireError, CONTEXT_SOURCE_ICL, CONTEXT_SOURCE_IDENTIFIERS, CONTEXT_SOURCE_PERSONA,
+    SessionSnapshotRef, SessionVersion,
 };
 use mutsuki_bot_conversation::{
     AgentEventClaim, ConversationError, ConversationService, qq_conversation_from_event,
@@ -1756,14 +1758,17 @@ fn event_message(
         "trace_id": trace.and_then(|trace| trace.trace_id.as_deref()),
         "correlation_id": trace.and_then(|trace| trace.correlation_id.as_deref()),
     });
+    let mut injections = Vec::new();
     if let Some(icl) = event.ext.get(BOT_EXT_CONVERSATION_ICL) {
         metadata["icl"] = icl.clone();
         if let Ok(entries) = serde_json::from_value::<Vec<ConversationIclEntry>>(icl.clone()) {
             let summary = format_icl_summary(&entries);
             if !summary.is_empty() {
-                agent_message
-                    .parts
-                    .insert(0, AgentContentPart::Text { text: summary });
+                injections.push(AgentMessageContextInjection {
+                    source_kind: CONTEXT_SOURCE_ICL.into(),
+                    text: summary,
+                    source_id: resolved_origin_key(event),
+                });
             }
         }
     }
@@ -1773,9 +1778,11 @@ fn event_message(
             serde_json::from_value::<ConversationIdentifiers>(identifiers.clone())
             && let Some(text) = identifiers.prompt_text()
         {
-            agent_message
-                .parts
-                .insert(0, AgentContentPart::Text { text });
+            injections.push(AgentMessageContextInjection {
+                source_kind: CONTEXT_SOURCE_IDENTIFIERS.into(),
+                text,
+                source_id: resolved_origin_key(event),
+            });
         }
     }
     if let Some(prompt) = event
@@ -1785,15 +1792,24 @@ fn event_message(
         .filter(|value| !value.is_empty())
     {
         metadata["persona_prompt"] = serde_json::Value::String(prompt.to_owned());
-        agent_message.parts.insert(
-            0,
-            AgentContentPart::Text {
-                text: prompt.to_owned(),
-            },
-        );
+        injections.push(AgentMessageContextInjection {
+            source_kind: CONTEXT_SOURCE_PERSONA.into(),
+            text: prompt.to_owned(),
+            source_id: "persona".into(),
+        });
+    }
+    if !injections.is_empty() {
+        metadata[AGENT_MESSAGE_CONTEXT_INJECTIONS_META] = serde_json::to_value(&injections)
+            .unwrap_or_else(|_| serde_json::Value::Array(Vec::new()));
     }
     agent_message.metadata = Some(metadata);
     Ok(agent_message)
+}
+
+fn resolved_origin_key(event: &BotEvent) -> String {
+    qq_conversation_from_event(event)
+        .map(|conversation| conversation.origin_key())
+        .unwrap_or_else(|_| event.event_id.clone())
 }
 
 fn validate_agent_media(
@@ -2767,6 +2783,55 @@ mod tests {
             event_message(&event, None),
             Err(BotAgentError::MediaResourceUnvalidated)
         ));
+    }
+
+    #[test]
+    fn conversation_injections_stay_in_metadata_not_user_text() {
+        let mut event = event(
+            "icl",
+            BotTarget::Group {
+                group_id: "group".into(),
+            },
+        );
+        event.ext.insert(
+            BOT_EXT_CONVERSATION_ICL.into(),
+            serde_json::to_value([ConversationIclEntry {
+                actor_id: "alice".into(),
+                display_name: Some("Alice".into()),
+                text: "hello group".into(),
+                time_ms: 1,
+            }])
+            .unwrap(),
+        );
+        event.ext.insert(
+            BOT_EXT_PERSONA_PROMPT.into(),
+            serde_json::Value::String("you are a helper".into()),
+        );
+        let message = event_message(&event, None).unwrap();
+        assert_eq!(
+            message.content,
+            event.message.as_ref().unwrap().plain_text()
+        );
+        assert!(message.parts.iter().all(|part| !matches!(
+            part,
+            AgentContentPart::Text { text } if text.contains("hello group") || text.contains("you are a helper")
+        )));
+        let injections: Vec<AgentMessageContextInjection> = serde_json::from_value(
+            message.metadata.as_ref().unwrap()[AGENT_MESSAGE_CONTEXT_INJECTIONS_META].clone(),
+        )
+        .unwrap();
+        assert!(
+            injections
+                .iter()
+                .any(|injection| injection.source_kind == CONTEXT_SOURCE_ICL
+                    && injection.text.contains("hello group"))
+        );
+        assert!(
+            injections
+                .iter()
+                .any(|injection| injection.source_kind == CONTEXT_SOURCE_PERSONA
+                    && injection.text == "you are a helper")
+        );
     }
 
     fn bind_profile_event(source: &BotEvent, config: serde_json::Value) -> BotEvent {

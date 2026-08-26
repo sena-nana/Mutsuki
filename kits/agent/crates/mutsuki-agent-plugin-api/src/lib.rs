@@ -11,15 +11,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 pub use mutsuki_agent_contracts::{
-    AgentCommandRequest, AgentCommandResult, AgentError, AgentKitPluginDescriptor,
-    AgentServiceDescriptor, AgentToolDescriptor, ContextProviderRequest, ContextProviderResult,
-    PermissionDecision, PermissionRequest,
+    AGENT_CONTEXT_PROVIDER_COLLECT_PROTOCOL, AgentCommandRequest, AgentCommandResult, AgentError,
+    AgentKitPluginDescriptor, AgentServiceDescriptor, AgentToolDescriptor, ContextProviderRequest,
+    ContextProviderResult, PermissionDecision, PermissionRequest,
 };
 use mutsuki_runtime_contracts::{
     CompletionBatch, PluginId, RunnerContext, RunnerDescriptor, WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RuntimeFailure, RuntimeResult};
-use mutsuki_runtime_sdk::{RunnerDescriptorBuilder, map_work_batch_entries};
+use mutsuki_runtime_sdk::{
+    PluginBuilder, ProtocolDescriptorBuilder, RunnerDescriptorBuilder, map_work_batch_entries,
+};
 use serde_json::Value;
 
 pub trait ToolProvider: Send + Sync {
@@ -66,6 +68,146 @@ pub struct AgentServiceRunner {
     service_id: String,
     service: Arc<dyn AgentService>,
     disposed: bool,
+}
+
+/// Routes collect to a ContextProvider. Runner id is the provider id so Context
+/// can target it with `runner_hint`. Hosts inject the provider; no Fake here.
+pub struct ContextProviderCollectRunner {
+    descriptor: RunnerDescriptor,
+    provider: Arc<dyn ContextProvider>,
+}
+
+impl ContextProviderCollectRunner {
+    pub fn new(
+        plugin_id: impl Into<PluginId>,
+        plugin_generation: u64,
+        provider: Arc<dyn ContextProvider>,
+    ) -> Result<Self, AgentError> {
+        if plugin_generation == 0 {
+            return Err(AgentError::invalid_input(
+                "context provider collect runner requires a non-zero plugin generation",
+            ));
+        }
+        let provider_id = provider.provider_id().to_owned();
+        if provider_id.trim().is_empty() {
+            return Err(AgentError::invalid_input(
+                "context provider collect runner requires a non-empty provider id",
+            ));
+        }
+        Ok(Self {
+            descriptor: RunnerDescriptorBuilder::new(provider_id, plugin_id)
+                .plugin_generation(plugin_generation)
+                .accepted_protocol(AGENT_CONTEXT_PROVIDER_COLLECT_PROTOCOL)
+                .build(),
+            provider,
+        })
+    }
+}
+
+impl Runner for ContextProviderCollectRunner {
+    fn descriptor(&self) -> &RunnerDescriptor {
+        &self.descriptor
+    }
+
+    fn run_batch(
+        &mut self,
+        _ctx: RunnerContext,
+        batch: WorkBatch,
+    ) -> RuntimeResult<CompletionBatch> {
+        let provider = self.provider.clone();
+        map_work_batch_entries(&batch, move |task| {
+            if task.protocol_id != AGENT_CONTEXT_PROVIDER_COLLECT_PROTOCOL {
+                return Err(agent_runtime_error(AgentError::invalid_input(format!(
+                    "context provider `{}` cannot handle protocol `{}`",
+                    provider.provider_id(),
+                    task.protocol_id
+                ))));
+            }
+            let request: ContextProviderRequest =
+                serde_json::from_value(task.payload.clone().into()).map_err(|error| {
+                    agent_runtime_error(AgentError::invalid_input(error.to_string()))
+                })?;
+            if request.provider_id != provider.provider_id() {
+                return Err(agent_runtime_error(AgentError::invalid_input(format!(
+                    "context provider `{}` received collect for `{}`",
+                    provider.provider_id(),
+                    request.provider_id
+                ))));
+            }
+            let output = provider.collect(request).map_err(agent_runtime_error)?;
+            let payload = serde_json::to_value(&output).map_err(|error| {
+                agent_runtime_error(AgentError::invalid_input(error.to_string()))
+            })?;
+            let mut result =
+                mutsuki_runtime_contracts::RunnerResult::completed(task.task_id.clone());
+            result.output = Some(payload);
+            Ok(result)
+        })
+    }
+}
+
+/// Fail-loud collect provider used when a profile lists a provider the Host
+/// has not injected.
+pub struct UnavailableContextProvider {
+    provider_id: String,
+}
+
+impl UnavailableContextProvider {
+    pub fn new(provider_id: impl Into<String>) -> Self {
+        Self {
+            provider_id: provider_id.into(),
+        }
+    }
+}
+
+impl ContextProvider for UnavailableContextProvider {
+    fn provider_id(&self) -> &str {
+        &self.provider_id
+    }
+
+    fn collect(
+        &self,
+        _request: ContextProviderRequest,
+    ) -> Result<ContextProviderResult, AgentError> {
+        Err(AgentError::provider_unavailable(format!(
+            "context provider `{}` is not injected; production assemblies must supply a real provider",
+            self.provider_id
+        )))
+    }
+}
+
+pub const UNINJECTED_CONTEXT_COLLECT_PLUGIN_ID: &str =
+    "mutsuki.plugin.agent.context.collect.uninjected";
+pub const UNINJECTED_CONTEXT_PROVIDER_ID: &str = "mutsuki.agent.context.uninjected";
+
+pub fn context_collect_plugin(
+    plugin_id: impl Into<PluginId>,
+    generation: u64,
+    provider: Arc<dyn ContextProvider>,
+) -> Result<PluginBuilder, AgentError> {
+    let plugin_id = plugin_id.into();
+    let runner = ContextProviderCollectRunner::new(plugin_id.clone(), generation, provider)?;
+    Ok(PluginBuilder::new(plugin_id)
+        .protocol_descriptor(
+            ProtocolDescriptorBuilder::new(AGENT_CONTEXT_PROVIDER_COLLECT_PROTOCOL)
+                .input_schema(serde_json::json!({"type": "object"}))
+                .output_schema(serde_json::json!({"type": "object"}))
+                .error_schema(serde_json::json!({"type": "object"}))
+                .build(),
+        )
+        .runner(Box::new(runner)))
+}
+
+/// LoadPlan seam used when a Host has not injected coding/search providers.
+/// Collect still fail-loud at runtime for the uninjected provider id.
+pub fn uninjected_context_collect_plugin(generation: u64) -> Result<PluginBuilder, AgentError> {
+    context_collect_plugin(
+        UNINJECTED_CONTEXT_COLLECT_PLUGIN_ID,
+        generation,
+        Arc::new(UnavailableContextProvider::new(
+            UNINJECTED_CONTEXT_PROVIDER_ID,
+        )),
+    )
 }
 
 impl AgentServiceRunner {
@@ -327,6 +469,24 @@ mod tests {
         assert_eq!(
             pinned.validate(&reloaded).unwrap_err().code,
             "agent.plugin.generation_changed"
+        );
+    }
+
+    #[test]
+    fn collect_runner_uses_provider_id_as_runner_id() {
+        let provider = Arc::new(UnavailableContextProvider::new("mutsuki.agent.context.git"));
+        let runner =
+            ContextProviderCollectRunner::new("mutsuki.plugin.agent.git", 1, provider).unwrap();
+        assert_eq!(
+            runner.descriptor().runner_id.as_str(),
+            "mutsuki.agent.context.git"
+        );
+        assert!(
+            runner
+                .descriptor()
+                .accepted_protocol_ids
+                .iter()
+                .any(|protocol| protocol.as_str() == AGENT_CONTEXT_PROVIDER_COLLECT_PROTOCOL)
         );
     }
 }

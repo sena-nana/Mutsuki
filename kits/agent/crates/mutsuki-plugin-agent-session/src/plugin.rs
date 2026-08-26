@@ -1,8 +1,8 @@
 use mutsuki_agent_contracts::*;
 use mutsuki_agent_sdk::{
     AgentSessionAppendProtocol, AgentSessionCreateProtocol, AgentSessionForkProtocol,
-    AgentSessionGetProtocol, AgentSessionSnapshotProtocol, orchestration_runner,
-    service_result_event, unsupported_protocol,
+    AgentSessionGetProtocol, AgentSessionSnapshotProtocol, AgentSessionTrajectoryProtocol,
+    orchestration_runner, service_result_event, unsupported_protocol,
 };
 use mutsuki_runtime_sdk::contracts::{RunnerResult, Task};
 use mutsuki_runtime_sdk::{PluginBuilder, RuntimeClientRef, RuntimeResult, TaskAwaitRunnerAdapter};
@@ -19,6 +19,7 @@ pub fn plugin(client: RuntimeClientRef, store: SessionStore) -> PluginBuilder {
         .protocol::<AgentSessionAppendProtocol>()
         .protocol::<AgentSessionSnapshotProtocol>()
         .protocol::<AgentSessionForkProtocol>()
+        .protocol::<AgentSessionTrajectoryProtocol>()
         .runner(Box::new(runner(client, store)))
 }
 
@@ -29,6 +30,7 @@ pub fn runner(client: RuntimeClientRef, store: SessionStore) -> TaskAwaitRunnerA
         .accepts::<AgentSessionAppendProtocol>()
         .accepts::<AgentSessionSnapshotProtocol>()
         .accepts::<AgentSessionForkProtocol>()
+        .accepts::<AgentSessionTrajectoryProtocol>()
         .build();
     TaskAwaitRunnerAdapter::new(
         descriptor,
@@ -71,6 +73,18 @@ async fn run_task(store: SessionStore, task: Task) -> RuntimeResult<RunnerResult
             &task,
             "mutsuki.agent.session.forked",
             |request: AgentSessionForkRequest| store.fork(request),
+        ),
+        AGENT_SESSION_TRAJECTORY_PROTOCOL => service_result_event(
+            PLUGIN_ID,
+            &task,
+            "mutsuki.agent.session.trajectory",
+            |request: AgentSessionTrajectoryRequest| {
+                store
+                    .get(AgentSessionGetRequest {
+                        session_id: request.session_id,
+                    })
+                    .map(|session| session.trajectory())
+            },
         ),
         _ => Err(unsupported_protocol(PLUGIN_ID, &task)),
     }

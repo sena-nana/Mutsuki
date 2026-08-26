@@ -25,7 +25,11 @@ selections. It is deliberately marked test-only and is never a production defaul
 
 `NativeCodingAgentBundle` (`mutsuki-agent-bundle`) wires those shared services as single-instance
 `Arc` handles for Agent tools and product UI. Hosts inject process/LSP/MCP backends and credentials;
-the bundle never starts Claude Code / Codex official Agent Server processes.
+the bundle never starts Claude Code / Codex official Agent Server processes. Default
+`NativeCodingBackends` leave process and browser unset so missing Host injection fails loud;
+tests that exec shell must call `with_fake_process_and_browser()`. Hosts register
+`context_collect_plugins` so `profile.context.provider_ids` hit live collect. Web search
+is optional: inject a real HTTP transport, never a Fake.
 
 ## Product compilation
 

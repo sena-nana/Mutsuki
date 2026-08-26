@@ -93,7 +93,7 @@ async fn execute(
         })
         .transpose()?;
     let advances_turn = !request.messages.is_empty();
-    let (mut persisted_message_count, event_sequence, ambiguous_tool_calls) =
+    let (mut persisted_message_count, event_sequence, ambiguous_tool_calls, session_version) =
         if let Some(session_id) = &request.session_id {
             let outcome = ctx
                 .call::<AgentSessionGetProtocol>(AgentSessionGetRequest {
@@ -113,6 +113,7 @@ async fn execute(
                 unresolved_started_tool_calls(&session.events, request.turn_id.as_deref());
             validate_resume_request(&session.messages, &request, &ambiguous_tool_calls)?;
             let persisted_message_count = session.messages.len();
+            let session_version = SessionVersion(session.next_event_sequence);
             let mut messages = session.messages;
             messages.append(&mut request.messages);
             request.messages = messages;
@@ -120,10 +121,11 @@ async fn execute(
                 persisted_message_count,
                 session.next_event_sequence,
                 ambiguous_tool_calls,
+                Some(session_version),
             )
         } else {
             validate_resume_request(&[], &request, &[])?;
-            (0, 0, Vec::new())
+            (0, 0, Vec::new(), None)
         };
 
     let new_user_messages = request.messages[persisted_message_count..]
@@ -158,6 +160,7 @@ async fn execute(
                 compaction.clone()
             },
             profile.as_ref(),
+            session_version,
         ))
         .await
         .map_err(runtime_agent_error)?;
@@ -165,24 +168,8 @@ async fn execute(
         completed_output(PLUGIN_ID, ctx.task_id(), outcome).map_err(runtime_agent_error)?;
     let preparation_usage = context.preparation_usage.clone();
     let preparation_cost_microunits = context.preparation_cost_microunits;
-    let mut model_messages = context.messages;
-    if let Some(prompt) = context.rendered_prompt {
-        if !request
-            .messages
-            .iter()
-            .any(|message| message.role == AgentRole::System && message.content == prompt)
-        {
-            request
-                .messages
-                .insert(0, AgentMessage::system(prompt.clone()));
-        }
-        if !model_messages
-            .iter()
-            .any(|message| message.role == AgentRole::System && message.content == prompt)
-        {
-            model_messages.insert(0, AgentMessage::system(prompt));
-        }
-    }
+    let model_messages = context.model_messages();
+    let injections = context.injections;
 
     let mut events = RunEventPublisher::new(
         &ctx,
@@ -199,6 +186,18 @@ async fn execute(
             "turn started",
         )
         .await?;
+    for injection in injections {
+        events
+            .emit(
+                AgentEvent::ContextInjected {
+                    turn_id: turn_id.clone(),
+                    text: injection.text,
+                    provenance: injection.provenance,
+                },
+                "context injected",
+            )
+            .await?;
+    }
     for message in new_user_messages {
         events
             .emit(
@@ -1257,6 +1256,7 @@ fn context_build_request(
     turn_id: String,
     compaction: Option<AgentContextCompactionConfig>,
     profile: Option<&AgentRuntimeProfile>,
+    session_version: Option<SessionVersion>,
 ) -> AgentContextBuildRequest {
     let last_user = messages
         .iter()
@@ -1270,6 +1270,7 @@ fn context_build_request(
     build.max_context_tokens = request.budget.max_context_tokens;
     build.compaction = compaction;
     build.metadata = request.metadata.clone();
+    build.session_version = session_version;
     let Some(profile) = profile else {
         return build;
     };
@@ -2209,21 +2210,14 @@ async fn rebuild_model_context(
             turn_id.to_owned(),
             compaction,
             profile,
+            None,
         ))
         .await
         .map_err(runtime_agent_error)?;
     let context: AgentContext =
         completed_output(PLUGIN_ID, ctx.task_id(), outcome).map_err(runtime_agent_error)?;
-    let mut model_messages = context.messages;
-    if let Some(prompt) = context.rendered_prompt
-        && !model_messages
-            .iter()
-            .any(|message| message.role == AgentRole::System && message.content == prompt)
-    {
-        model_messages.insert(0, AgentMessage::system(prompt));
-    }
     Ok(PreparedModelContext {
-        messages: model_messages,
+        messages: context.model_messages(),
         usage: context.preparation_usage,
         cost_microunits: context.preparation_cost_microunits,
     })

@@ -415,6 +415,8 @@ impl ContextBuilder {
             tools: parts.tools,
             memories: parts.memories,
             rendered_prompt: parts.rendered_prompt,
+            injections: Vec::new(),
+            context_plan: None,
             preparation_usage: parts.preparation_usage,
             preparation_cost_microunits: parts.preparation_cost_microunits,
         }
@@ -555,6 +557,7 @@ mod tests {
             providers: Vec::new(),
             knowledge: None,
             discover_skills: false,
+            session_version: None,
         }
     }
 

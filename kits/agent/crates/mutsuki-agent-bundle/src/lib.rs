@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 mod native_coding;
 
+use mutsuki_agent_plugin_api::uninjected_context_collect_plugin;
 pub use mutsuki_agent_runtime::{CredentialBrokerService, KnowledgeService, SkillRegistry};
 pub use mutsuki_agent_runtime::{
     EchoChildExecutor, RequiredChildExecutor, RuntimeClientChildExecutor,
@@ -65,6 +66,7 @@ pub struct AgentPluginBundle {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentRuntimeRunner {
     Context,
+    ContextCollect,
     Knowledge,
     Loop,
     Memory,
@@ -76,8 +78,9 @@ pub enum AgentRuntimeRunner {
 }
 
 impl AgentRuntimeRunner {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Context,
+        Self::ContextCollect,
         Self::Knowledge,
         Self::Loop,
         Self::Memory,
@@ -123,6 +126,10 @@ impl AgentPluginBundle {
             mutsuki_plugin_agent_credential::plugin(client.clone(), self.credential.clone())
                 .build()
                 .manifest,
+            uninjected_context_collect_plugin(1)
+                .expect("uninjected context collect plugin")
+                .build()
+                .manifest,
         ];
         if let Some(proactive) = &self.proactive {
             manifests.push(
@@ -144,6 +151,9 @@ impl AgentPluginBundle {
                 client,
                 self.context.clone(),
             )),
+            AgentRuntimeRunner::ContextCollect => take_runner(
+                uninjected_context_collect_plugin(1).expect("uninjected context collect plugin"),
+            ),
             AgentRuntimeRunner::Knowledge => take_runner(mutsuki_plugin_agent_knowledge::plugin(
                 client,
                 self.knowledge.clone(),
@@ -268,12 +278,13 @@ mod tests {
     #[test]
     fn standard_bundle_has_unique_batch_first_manifests() {
         let manifests = AgentPluginBundle::default().manifests();
-        assert_eq!(manifests.len(), 10);
+        assert_eq!(manifests.len(), 11);
         let ids = manifests
             .iter()
             .map(|manifest| manifest.plugin_id.as_str())
             .collect::<BTreeSet<_>>();
         assert_eq!(ids.len(), manifests.len());
+        assert!(ids.contains(mutsuki_agent_plugin_api::UNINJECTED_CONTEXT_COLLECT_PLUGIN_ID));
         assert!(manifests.iter().all(|manifest| {
             !manifest.provides.runners.is_empty()
                 && manifest

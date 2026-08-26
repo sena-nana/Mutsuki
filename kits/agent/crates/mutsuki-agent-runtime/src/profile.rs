@@ -390,14 +390,11 @@ pub fn reference_coding_agent_test_profile() -> AgentRuntimeProfile {
         })
         .context_policy(AgentContextPolicy {
             provider_ids: vec![
-                "workspace".into(),
-                "git".into(),
-                "lsp".into(),
+                "mutsuki.agent.context.git".into(),
+                "mutsuki.agent.context.lsp".into(),
                 "mutsuki.agent.context.code-index".into(),
-                "mutsuki.agent.context.next-edit".into(),
                 "mutsuki.agent.context.computer-use".into(),
                 "mutsuki.agent.context.mcp".into(),
-                "editor".into(),
             ],
             budget: mutsuki_agent_contracts::ContextBudget {
                 max_tokens: Some(32_000),
@@ -598,6 +595,16 @@ mod tests {
                 .plugins
                 .iter()
                 .any(|plugin| plugin.plugin_id == "mutsuki.plugin.agent.computer-use")
+        );
+        assert_eq!(
+            profile.context.provider_ids,
+            vec![
+                "mutsuki.agent.context.git".to_string(),
+                "mutsuki.agent.context.lsp".to_string(),
+                "mutsuki.agent.context.code-index".to_string(),
+                "mutsuki.agent.context.computer-use".to_string(),
+                "mutsuki.agent.context.mcp".to_string(),
+            ]
         );
     }
 }
