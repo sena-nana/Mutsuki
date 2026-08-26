@@ -8,6 +8,7 @@ use mutsuki_agent_service_host_integration::{
     LOCAL_AGENT_API_KEY_FIELD, LOCAL_AGENT_CONFIG_PROVIDER_ID, LOCAL_AGENT_PLUGIN_ID,
     LocalAgentConfig, local_agent_config_descriptor, local_agent_config_value,
 };
+use mutsuki_bot_service_host_integration::SANDBOX_SERVICE_ID;
 use mutsuki_config_service::{
     ConfigApplyMode, ConfigConstraints, ConfigContext, ConfigDescriptor, ConfigError, ConfigExpr,
     ConfigLifecycle, ConfigMutability, ConfigNode, ConfigPersistSink, ConfigPersistTransaction,
@@ -352,6 +353,11 @@ pub(crate) fn configured_product_selections(
             enabled: workspace_enabled,
             config: serde_json::json!({}),
         },
+        ConfiguredPluginSelection {
+            id: SANDBOX_SERVICE_ID.into(),
+            enabled: workspace_enabled,
+            config: serde_json::json!({}),
+        },
     ]);
     selections.extend(owner_selections);
     Ok(selections)
@@ -391,6 +397,7 @@ pub(crate) fn is_product_owner_plugin(id: &str) -> bool {
         id,
         AGENT_CONNECTIONS_PLUGIN_ID
             | BOT_FLOW_ROUTER_PLUGIN_ID
+            | SANDBOX_SERVICE_ID
             | QQBOT_ADAPTER_PLUGIN_ID
             | LOCAL_AGENT_PLUGIN_ID
             | BOT_AGENT_BRIDGE_PLUGIN_ID

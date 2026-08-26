@@ -70,6 +70,7 @@ pub struct QqBotPluginBundle {
     media_factory: Option<MediaFactory>,
     media_provider_id: Option<String>,
     id_factory: IdFactory,
+    workspace_sandbox: Option<Arc<SandboxService>>,
 }
 
 impl QqBotPluginBundle {
@@ -92,6 +93,7 @@ impl QqBotPluginBundle {
             media_factory: None,
             media_provider_id: None,
             id_factory: Arc::new(|| Box::new(SystemQqIdSource::new())),
+            workspace_sandbox: None,
         })
     }
 
@@ -120,6 +122,11 @@ impl QqBotPluginBundle {
         F: Fn() -> Box<dyn QqIdSource> + Send + Sync + 'static,
     {
         self.id_factory = Arc::new(factory);
+        self
+    }
+
+    pub(crate) fn with_workspace_sandbox(mut self, sandbox: Arc<SandboxService>) -> Self {
+        self.workspace_sandbox = Some(sandbox);
         self
     }
 
@@ -153,6 +160,7 @@ impl QqBotPluginBundle {
         let management_config = self.config.clone();
         let management_health = self.health.clone();
         let management_credentials = self.credentials.clone();
+        let workspace_sandbox = self.workspace_sandbox.clone();
         let state_dir = builder.data_dir().join("bot");
         std::fs::create_dir_all(&state_dir).map_err(|error| {
             QqOpenApiError::InvalidPayload(format!(
@@ -165,7 +173,6 @@ impl QqBotPluginBundle {
             .provides
             .services
             .push(QQ_MANAGEMENT_SERVICE_ID.into());
-        manifest.provides.services.push(SANDBOX_SERVICE_ID.into());
         manifest
             .provides
             .services
@@ -174,8 +181,11 @@ impl QqBotPluginBundle {
             .provides
             .capabilities
             .push("bot.qq.management".into());
-        manifest.provides.capabilities.push("bot.sandbox".into());
         manifest.provides.capabilities.push("bot.state".into());
+        if workspace_sandbox.is_none() {
+            manifest.provides.services.push(SANDBOX_SERVICE_ID.into());
+            manifest.provides.capabilities.push("bot.sandbox".into());
+        }
         if let Some(provider_id) = media_provider_id {
             manifest.requires.push(SurfaceRequirement::new(
                 ContractSurfaceKind::ResourceProvider,
@@ -220,13 +230,16 @@ impl QqBotPluginBundle {
                 });
                 let management =
                     Arc::new(QqBotManagementService::with_state_store(provider, state));
-                let sandbox = Arc::new(
-                    SandboxService::with_history(
-                        management_config.account_id.clone(),
-                        repository.clone(),
-                    )
-                    .map_err(|error| error.to_string())?,
-                );
+                let sandbox = match &workspace_sandbox {
+                    Some(sandbox) => sandbox.clone(),
+                    None => Arc::new(
+                        SandboxService::with_history(
+                            management_config.account_id.clone(),
+                            repository.clone(),
+                        )
+                        .map_err(|error| error.to_string())?,
+                    ),
+                };
                 sandbox.set_runtime(Arc::new(HostSandboxRuntime {
                     runtime,
                     delivery,
@@ -241,14 +254,18 @@ impl QqBotPluginBundle {
                 inbound.set_title_sink(Arc::new(move |group_id, title| {
                     observed.apply_live_title(&group_id, &title);
                 }));
-                let mut host_services = vec![
-                    RuntimeBootstrapperService::new(
-                        QQ_MANAGEMENT_SERVICE_ID,
-                        management,
-                        "bot.qq.management",
-                    ),
-                    RuntimeBootstrapperService::new(SANDBOX_SERVICE_ID, sandbox, "bot.sandbox"),
-                ];
+                let mut host_services = vec![RuntimeBootstrapperService::new(
+                    QQ_MANAGEMENT_SERVICE_ID,
+                    management,
+                    "bot.qq.management",
+                )];
+                if workspace_sandbox.is_none() {
+                    host_services.push(RuntimeBootstrapperService::new(
+                        SANDBOX_SERVICE_ID,
+                        sandbox,
+                        "bot.sandbox",
+                    ));
+                }
                 host_services.push(bot_state_db_host_service(repository));
                 Ok::<LoadedPlugin, String>(LoadedPlugin {
                     manifest: loaded_manifest.clone(),
