@@ -1,10 +1,11 @@
 use std::collections::BTreeMap;
 
 use mutsuki_bot_protocol::{
-    BOT_FLOW_BOT_EVENT_TYPE, BOT_FLOW_EMPTY_MENTION_PROTOCOL_ID, BOT_FLOW_PROBABILITY_PROTOCOL_ID,
-    BotEvent, BotEventKind, BotFlowTypeRef, BotNodeBinding, BotNodeCatalogFragment,
-    BotNodeDescriptor, BotNodeInvocation, BotNodeOutput, BotNodePortDescriptor,
-    BotNodePortDirection, BotNodeResult, BotNodeRole, BotTarget, MessageSegment,
+    BOT_EXT_LINK_URL, BOT_FLOW_BOT_EVENT_TYPE, BOT_FLOW_EMPTY_MENTION_PROTOCOL_ID,
+    BOT_FLOW_LINK_PROTOCOL_ID, BOT_FLOW_PROBABILITY_PROTOCOL_ID, BotEvent, BotEventKind,
+    BotFlowTypeRef, BotNodeBinding, BotNodeCatalogFragment, BotNodeDescriptor, BotNodeInvocation,
+    BotNodeOutput, BotNodePortDescriptor, BotNodePortDirection, BotNodeResult, BotNodeRole,
+    BotTarget, MessageSegment,
 };
 use mutsuki_runtime_contracts::{
     CompletionBatch, ExecutionClass, RunnerDescriptor, RunnerResult, Task, WorkBatch,
@@ -32,6 +33,7 @@ pub const MATCH_PROTOCOL_IDS: &[&str] = &[
     BOT_FLOW_ROLE_PROTOCOL_ID,
     BOT_FLOW_PREFIX_PROTOCOL_ID,
     BOT_FLOW_KEYWORD_PROTOCOL_ID,
+    BOT_FLOW_LINK_PROTOCOL_ID,
     BOT_FLOW_MENTION_PROTOCOL_ID,
     BOT_FLOW_RATE_LIMIT_PROTOCOL_ID,
     BOT_FLOW_QQ_EVENT_PROTOCOL_ID,
@@ -69,6 +71,12 @@ struct PrefixConfig {
 struct KeywordConfig {
     keywords: Vec<String>,
     mode: String,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct LinkConfig {
+    hosts: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -134,12 +142,17 @@ impl Runner for BotFlowMatchRunner {
                 .map_err(|error| runtime_error(task, "event", error))?;
             let matched = match_event(self, &event, task.protocol_id.as_str(), &invocation.config)
                 .map_err(|error| runtime_error(task, "config", error))?;
+            let mut output_event = invocation.input.clone();
+            if matched && task.protocol_id == BOT_FLOW_LINK_PROTOCOL_ID {
+                attach_matched_urls(&mut output_event, &event, &invocation.config)
+                    .map_err(|error| runtime_error(task, "link", error))?;
+            }
             let mut result = RunnerResult::completed(task.task_id.clone());
             result.output = Some(
                 serde_json::to_value(BotNodeResult {
                     outputs: vec![BotNodeOutput {
                         port_id: if matched { "matched" } else { "unmatched" }.into(),
-                        event: invocation.input.clone(),
+                        event: output_event,
                     }],
                     metadata: Default::default(),
                 })
@@ -192,6 +205,10 @@ fn match_event(
         BOT_FLOW_KEYWORD_PROTOCOL_ID => {
             let config: KeywordConfig = decode_config(config)?;
             keyword_matches(event, &config)
+        }
+        BOT_FLOW_LINK_PROTOCOL_ID => {
+            let config: LinkConfig = decode_config(config)?;
+            !matching_link_urls(event, &config).is_empty()
         }
         BOT_FLOW_MENTION_PROTOCOL_ID => mentioned_bot(event),
         BOT_FLOW_RATE_LIMIT_PROTOCOL_ID => {
@@ -426,6 +443,40 @@ fn keyword_matches(event: &BotEvent, config: &KeywordConfig) -> bool {
     }
 }
 
+fn matching_link_urls(event: &BotEvent, config: &LinkConfig) -> Vec<String> {
+    let hosts = config
+        .hosts
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if hosts.is_empty() {
+        return Vec::new();
+    }
+    mutsuki_bot_link_parser::urls_from_event(event)
+        .into_iter()
+        .filter(|url| mutsuki_bot_link_parser::host_matches(url, &hosts))
+        .map(|url| url.to_string())
+        .collect()
+}
+
+fn attach_matched_urls(
+    envelope: &mut mutsuki_bot_protocol::BotFlowEventEnvelope,
+    event: &BotEvent,
+    config: &Value,
+) -> Result<(), String> {
+    let config: LinkConfig = decode_config(config)?;
+    let urls = matching_link_urls(event, &config);
+    let Some(first) = urls.first() else {
+        return Ok(());
+    };
+    let mut event = event.clone();
+    event.ext.insert(BOT_EXT_LINK_URL.into(), json!(first));
+    envelope.payload.value = serde_json::to_value(&event).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 pub fn source_kinds_for_node(node_type_id: &str) -> &'static [&'static str] {
     match node_type_id {
         "mutsuki.bot.qq.message.created" => &["message_created"],
@@ -567,6 +618,24 @@ pub fn match_node_catalog() -> BotNodeCatalogFragment {
                             "enum": ["any", "all"],
                             "enumTitles": ["包含任一", "包含全部"],
                             "default": "any"
+                        }
+                    }
+                }),
+            ),
+            match_node(
+                "mutsuki.bot.match.link",
+                "链接匹配",
+                BOT_FLOW_LINK_PROTOCOL_ID,
+                json!({
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["hosts"],
+                    "properties": {
+                        "hosts": {
+                            "type": "array",
+                            "title": "域名",
+                            "minItems": 1,
+                            "items": {"type": "string", "minLength": 1, "title": "域名"}
                         }
                     }
                 }),
@@ -846,6 +915,31 @@ mod tests {
     }
 
     #[test]
+    fn link_node_matches_card_json_and_plain_urls() {
+        let card = event_with_segments(vec![MessageSegment::platform_specific(
+            "qqbot",
+            "ark_data",
+            json!({"meta": {"jumpUrl": "https://b23.tv/abc"}}),
+        )]);
+        let bili = LinkConfig {
+            hosts: vec!["b23.tv".into(), "bilibili.com".into()],
+        };
+        let mihuashi = LinkConfig {
+            hosts: vec!["mihuashi.com".into()],
+        };
+        assert_eq!(
+            matching_link_urls(&card, &bili),
+            vec!["https://b23.tv/abc".to_owned()]
+        );
+        assert!(matching_link_urls(&card, &mihuashi).is_empty());
+        let text = event("https://www.mihuashi.com/profiles/1");
+        assert_eq!(
+            matching_link_urls(&text, &mihuashi),
+            vec!["https://www.mihuashi.com/profiles/1".to_owned()]
+        );
+    }
+
+    #[test]
     fn catalog_is_a_business_match_series() {
         let catalog = match_node_catalog();
         // The node type ids are what a stored flow references, so the series is pinned by id.
@@ -863,6 +957,7 @@ mod tests {
                 "mutsuki.bot.match.role",
                 "mutsuki.bot.match.prefix",
                 "mutsuki.bot.match.keyword",
+                "mutsuki.bot.match.link",
                 "mutsuki.bot.match.mention",
                 "mutsuki.bot.match.rate_limit",
                 "mutsuki.bot.match.qq_event",

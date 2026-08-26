@@ -34,7 +34,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
-use mutsuki_bot_link_parser::{MAX_LINK_CARD_MEDIA_BYTES, ResolvedLinkCard};
+use mutsuki_bot_link_parser::{MAX_LINK_CARD_MEDIA_BYTES, ResolvedLinkCard, preferred_event_url};
 #[cfg(test)]
 use mutsuki_bot_management::BilibiliCredentialSecretState;
 use mutsuki_bot_management::{
@@ -42,10 +42,10 @@ use mutsuki_bot_management::{
     BilibiliNotificationKind,
 };
 use mutsuki_bot_protocol::{
-    BOT_MESSAGE_SEND_PROTOCOL_ID, BotCommandEvent, BotExtMap, BotFlowEventEnvelope, BotFlowPayload,
-    BotFlowTypeRef, BotMessage, BotNodeBinding, BotNodeCatalogFragment, BotNodeDescriptor,
-    BotNodeInvocation, BotNodeOutput, BotNodePortDescriptor, BotNodePortDirection, BotNodeResult,
-    BotNodeRole, BotTarget, MessageSegment,
+    BOT_MESSAGE_SEND_PROTOCOL_ID, BotCommandEvent, BotEvent, BotExtMap, BotFlowEventEnvelope,
+    BotFlowPayload, BotFlowTypeRef, BotMessage, BotNodeBinding, BotNodeCatalogFragment,
+    BotNodeDescriptor, BotNodeInvocation, BotNodeOutput, BotNodePortDescriptor,
+    BotNodePortDirection, BotNodeResult, BotNodeRole, BotTarget, MessageSegment,
 };
 use mutsuki_protocol_browser::{
     BrowserSnapshot, BrowserSnapshotRequest, BrowserWaitMode, SNAPSHOT, SNAPSHOT_SCHEMA,
@@ -1462,9 +1462,18 @@ async fn run_task_async(
         };
     }
     if task.protocol_id == LINK_RESOLVE {
+        let payload: Value = task.payload.clone().into();
+        let invocation = serde_json::from_value::<BotNodeInvocation>(payload).ok();
+        let request = match &invocation {
+            Some(invocation) => {
+                link_resolve_request_from_invocation(invocation).map_err(|error| {
+                    RuntimeFailure::new(bili_error(&task, BilibiliError::InvalidResponse(error)))
+                })?
+            }
+            None => decode(&task).map_err(RuntimeFailure::new)?,
+        };
         let prepared = {
             let mut runner = state.lock().expect("Bilibili runner mutex");
-            let request: LinkResolveRequest = decode(&task).map_err(RuntimeFailure::new)?;
             let cooldown_key = format!("{}:{}", request.account_id, request.url);
             if !runner
                 .repository
@@ -1502,9 +1511,14 @@ async fn run_task_async(
                 })
             }
         };
-        return match prepared {
-            Some(prepared) => render_cards(&ctx, &task, prepared).await,
-            None => Ok(RunnerResult::completed(task.task_id)),
+        let result = match prepared {
+            Some(prepared) => render_cards(&ctx, &task, prepared).await?,
+            None => RunnerResult::completed(task.task_id.clone()),
+        };
+        return if let Some(invocation) = invocation {
+            wrap_management_node_result(result, invocation)
+        } else {
+            Ok(result)
         };
     }
     let request: PollRequest = decode(&task).map_err(RuntimeFailure::new)?;
@@ -1542,6 +1556,43 @@ async fn run_task_async(
         }
         Err(error) => Err(RuntimeFailure::new(bili_error(&task, error))),
     }
+}
+
+const BILIBILI_LINK_HOSTS: &[&str] = &["b23.tv", "bilibili.com", "hdslb.com"];
+
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct BilibiliLinkFlowConfig {
+    url: Option<String>,
+    outbound_binding: Option<String>,
+    cooldown_ms: Option<u64>,
+}
+
+fn link_resolve_request_from_invocation(
+    invocation: &BotNodeInvocation,
+) -> Result<LinkResolveRequest, String> {
+    let flow: BilibiliLinkFlowConfig =
+        serde_json::from_value(invocation.config.clone()).map_err(|error| error.to_string())?;
+    let event: BotEvent = serde_json::from_value(invocation.input.payload.value.clone())
+        .map_err(|error| error.to_string())?;
+    let url = flow
+        .url
+        .filter(|value| !value.is_empty())
+        .or_else(|| preferred_event_url(&event, BILIBILI_LINK_HOSTS))
+        .ok_or_else(|| "bilibili url is missing".to_string())?;
+    let outbound_binding = flow
+        .outbound_binding
+        .filter(|value| !value.is_empty())
+        .unwrap_or_default();
+    let cooldown_ms = flow.cooldown_ms.unwrap_or(1_000);
+    Ok(LinkResolveRequest {
+        url,
+        target: event.target,
+        outbound_binding,
+        account_id: event.bot.account_id,
+        now_ms: event.time_ms.max(0).cast_unsigned(),
+        cooldown_ms,
+    })
 }
 
 fn wrap_management_node_result(
@@ -1934,44 +1985,89 @@ fn manifest_for_backend(
             .protocol_handler(protocol(POLL_DYNAMIC), RUNNER_ID, "orchestration")
             .protocol_handler(protocol(LINK_RESOLVE), RUNNER_ID, "orchestration");
     }
-    if management_enabled {
-        builder = builder
-            .protocol_handler(protocol(MANAGEMENT_COMMAND), RUNNER_ID, "orchestration")
-            .extension(
-                BotNodeCatalogFragment {
-                    nodes: vec![BotNodeDescriptor {
-                        node_type_id: "mutsuki.bot.bilibili.management".into(),
-                        version: 1,
-                        title: "Bilibili 管理".into(),
-                        category: "Bilibili".into(),
-                        role: BotNodeRole::Processor,
-                        binding: Some(BotNodeBinding {
-                            binding_id: format!("binding:{MANAGEMENT_COMMAND}"),
-                            protocol_id: MANAGEMENT_COMMAND.into(),
-                            runner_hint: Some(RUNNER_ID.into()),
-                        }),
-                        ports: vec![
-                            BotNodePortDescriptor {
-                                port_id: "command".into(),
-                                title: "管理请求".into(),
-                                direction: BotNodePortDirection::Input,
-                                event_type: BotFlowTypeRef::new("mutsuki.bot.command.event", 1),
-                                required: true,
-                            },
-                            BotNodePortDescriptor {
-                                port_id: "message".into(),
-                                title: "回复消息".into(),
-                                direction: BotNodePortDirection::Output,
-                                event_type: BotFlowTypeRef::new("mutsuki.bot.message.send", 1),
-                                required: false,
-                            },
-                        ],
-                        config_schema: json!({"type": "object", "additionalProperties": false}),
-                    }],
+    let mut nodes = Vec::new();
+    if backend_kind == BilibiliBackendKind::WebCookie {
+        nodes.push(BotNodeDescriptor {
+            node_type_id: "mutsuki.bot.bilibili.resolve".into(),
+            version: 1,
+            title: "Bilibili 链接".into(),
+            category: "链接".into(),
+            role: BotNodeRole::Processor,
+            binding: Some(BotNodeBinding {
+                binding_id: format!("binding:{LINK_RESOLVE}"),
+                protocol_id: LINK_RESOLVE.into(),
+                runner_hint: Some(RUNNER_ID.into()),
+            }),
+            ports: vec![
+                BotNodePortDescriptor {
+                    port_id: "event".into(),
+                    title: "事件".into(),
+                    direction: BotNodePortDirection::Input,
+                    event_type: BotFlowTypeRef::new("mutsuki.bot.event", 1),
+                    required: true,
+                },
+                BotNodePortDescriptor {
+                    port_id: "message".into(),
+                    title: "发送消息".into(),
+                    direction: BotNodePortDirection::Output,
+                    event_type: BotFlowTypeRef::new("mutsuki.bot.message.send", 1),
+                    required: false,
+                },
+            ],
+            config_schema: json!({
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "url": {"type": "string", "title": "Bilibili 链接"},
+                    "outbound_binding": {"type": "string", "title": "出站绑定"},
+                    "cooldown_ms": {
+                        "type": "integer",
+                        "title": "冷却（毫秒）",
+                        "minimum": 0
+                    }
                 }
+            }),
+        });
+    }
+    if management_enabled {
+        builder =
+            builder.protocol_handler(protocol(MANAGEMENT_COMMAND), RUNNER_ID, "orchestration");
+        nodes.push(BotNodeDescriptor {
+            node_type_id: "mutsuki.bot.bilibili.management".into(),
+            version: 1,
+            title: "Bilibili 管理".into(),
+            category: "Bilibili".into(),
+            role: BotNodeRole::Processor,
+            binding: Some(BotNodeBinding {
+                binding_id: format!("binding:{MANAGEMENT_COMMAND}"),
+                protocol_id: MANAGEMENT_COMMAND.into(),
+                runner_hint: Some(RUNNER_ID.into()),
+            }),
+            ports: vec![
+                BotNodePortDescriptor {
+                    port_id: "command".into(),
+                    title: "管理请求".into(),
+                    direction: BotNodePortDirection::Input,
+                    event_type: BotFlowTypeRef::new("mutsuki.bot.command.event", 1),
+                    required: true,
+                },
+                BotNodePortDescriptor {
+                    port_id: "message".into(),
+                    title: "回复消息".into(),
+                    direction: BotNodePortDirection::Output,
+                    event_type: BotFlowTypeRef::new("mutsuki.bot.message.send", 1),
+                    required: false,
+                },
+            ],
+            config_schema: json!({"type": "object", "additionalProperties": false}),
+        });
+    }
+    if !nodes.is_empty() {
+        builder = builder.extension(
+            BotNodeCatalogFragment { nodes }
                 .into_plugin_extension()
                 .expect("Bilibili node catalog serializes"),
-            );
+        );
     }
     let mut manifest = builder.build().manifest;
     for protocol_id in manifest.provides.runners[0]
@@ -3001,7 +3097,15 @@ mod tests {
                 .requires
                 .contains(&SurfaceRequirement::task_protocol(QR_RENDER))
         );
-        assert!(base.provides.extensions.is_empty());
+        let base_nodes = BotNodeCatalogFragment::from_plugin_extension(
+            base.provides.extensions.first().unwrap(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            base_nodes.nodes[0].node_type_id,
+            "mutsuki.bot.bilibili.resolve"
+        );
 
         let mut config = managed_config();
         let managed = manifest_for_config(&config);
@@ -3021,11 +3125,18 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(
-            nodes.nodes[0].node_type_id,
-            "mutsuki.bot.bilibili.management"
+            nodes
+                .nodes
+                .iter()
+                .map(|node| node.node_type_id.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "mutsuki.bot.bilibili.resolve",
+                "mutsuki.bot.bilibili.management"
+            ]
         );
         assert_eq!(
-            nodes.nodes[0].binding.as_ref().unwrap().protocol_id,
+            nodes.nodes[1].binding.as_ref().unwrap().protocol_id,
             MANAGEMENT_COMMAND
         );
         assert!(
@@ -3218,6 +3329,86 @@ mod tests {
                 )
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn link_resolution_from_flow_invocation_reads_event_url() {
+        let repository = Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap());
+        let mut runner = BilibiliRunner::new(
+            Box::new(LinkTransport),
+            repository,
+            Arc::new(UnusedResources),
+            "memory",
+        )
+        .into_runtime_runner(Arc::new(RenderedChildClient), None);
+        let event = BotEvent {
+            event_id: "e1".into(),
+            platform: BotPlatform::QqBot,
+            bot: BotAccountRef {
+                account_id: "account".into(),
+                platform: BotPlatform::QqBot,
+            },
+            kind: BotEventKind::MessageCreated,
+            time_ms: 1_000,
+            target: BotTarget::Group {
+                group_id: "group".into(),
+            },
+            actor: None,
+            message: Some(BotMessage::text(
+                BotTarget::Group {
+                    group_id: "group".into(),
+                },
+                "https://www.bilibili.com/video/BV1Visual",
+            )),
+            raw: None,
+            ext: Default::default(),
+        };
+        let invocation = BotNodeInvocation {
+            flow_id: "link".into(),
+            graph_revision: 1,
+            execution_id: "exec".into(),
+            node_id: "bili".into(),
+            input_port_id: "event".into(),
+            config: json!({"outbound_binding": "qq-main", "cooldown_ms": 60_000}),
+            input: BotFlowEventEnvelope {
+                event_id: "e1".into(),
+                protocol_id: mutsuki_bot_protocol::BOT_EVENT_INGEST_PROTOCOL_ID.into(),
+                payload: BotFlowPayload {
+                    event_type: BotFlowTypeRef::new("mutsuki.bot.event", 1),
+                    value: serde_json::to_value(&event).unwrap(),
+                },
+                context: mutsuki_bot_protocol::BotFlowContext {
+                    bot: Some(event.bot.clone()),
+                    target: Some(event.target.clone()),
+                    actor: None,
+                    ext: Default::default(),
+                },
+                trace_id: None,
+                correlation_id: None,
+            },
+        };
+        let task = Task::new(
+            "link-flow",
+            LINK_RESOLVE,
+            serde_json::to_value(invocation).unwrap(),
+        );
+        let batch = command_batch(vec![task]);
+        let context =
+            RunnerContext::new(1, 1, "executor", None::<&str>, "invocation").with_batch("batch", 1);
+        let waiting = runner.run_batch(context.clone(), batch.clone()).unwrap();
+        assert_eq!(
+            waiting.results[0].result.as_ref().unwrap().tasks[0].protocol_id,
+            CARD_RENDER
+        );
+        let completed = runner.run_batch(context, batch).unwrap();
+        let completed = completed.results[0].result.as_ref().unwrap();
+        assert!(completed.tasks.is_empty());
+        let node: BotNodeResult =
+            serde_json::from_value(completed.output.clone().unwrap()).unwrap();
+        assert_eq!(node.outputs[0].port_id, "message");
+        let message: BotMessage =
+            serde_json::from_value(node.outputs[0].event.payload.value.clone()).unwrap();
+        assert!(matches!(message.segments[0], MessageSegment::Image { .. }));
     }
 
     #[test]
@@ -3779,6 +3970,7 @@ mod tests {
         assert!(protocols.contains(&POLL_VIDEO));
         assert!(!protocols.contains(&POLL_DYNAMIC));
         assert!(!protocols.contains(&LINK_RESOLVE));
+        assert!(manifest.provides.extensions.is_empty());
         assert_eq!(
             manifest.provides.runners[0]
                 .accepted_protocol_ids

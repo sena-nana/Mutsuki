@@ -9,7 +9,7 @@ the adapter through the configured plugin catalog.
 | Area | Support |
 | --- | --- |
 | Gateway | HTTPS discovery, WSS, Hello, Identify, Ready, heartbeat/ACK, Resume and reconnect |
-| Inbound | Group @, C2C, guild/channel @ and direct messages; available delete, member and reaction events. Content `<@id>` / `@all` is inlined as mention segments. `<faceType>` tags are stripped so image placeholders do not appear as text. Attachments (CDN URL) map to `PlatformSpecific`. Custom markdown `content` maps to `MessageSegment::Markdown`; template markdown plus `ark` / `embed` / `keyboard` map to `PlatformSpecific`. A media provider may additionally add `Image`/`File`/`Audio`/`Video` ResourceRef segments. Group/C2C actors without `author.avatar` receive `https://q.qlogo.cn/qqapp/{app_id}/{user_openid}/640`; `group_openid` is not used. Guild `author.avatar` is kept as-is. QQ CDN `http://` avatar and attachment URLs are stored and fetched as `https://`. Gateway payloads that include `group_name` (or `name` on `GROUP_*` events) copy it to `qqbot.group_name`. Official `GROUP_AT_MESSAGE_CREATE` is @-bot only (QQ strips the bot from `content`/`mentions`), so `qqbot.mentioned_bot` follows that event type plus `mentions[].is_you` or a mention whose user id equals this bot; `@all` is not a bot mention. Passive ICL listen needs `GROUP_MESSAGE_CREATE` after enabling QQ full group-message receive; AT-only `GROUP_AND_C2C` has no non-@ group data source. |
+| Inbound | Group @, C2C, guild/channel @ and direct messages; available delete, member and reaction events. Content `<@id>` / `@all` is inlined as mention segments. `<faceType>` tags are stripped so image placeholders do not appear as text. Attachments (CDN URL) map to `PlatformSpecific`. Custom markdown `content` maps to `MessageSegment::Markdown`; template markdown plus `ark` / `ark_data` / `msg_elements` / `embed` / `keyboard` map to `PlatformSpecific`. A media provider may additionally add `Image`/`File`/`Audio`/`Video` ResourceRef segments. Group/C2C actors without `author.avatar` receive `https://q.qlogo.cn/qqapp/{app_id}/{user_openid}/640`; `group_openid` is not used. Guild `author.avatar` is kept as-is. QQ CDN `http://` avatar and attachment URLs are stored and fetched as `https://`. Gateway payloads that include `group_name` (or `name` on `GROUP_*` events) copy it to `qqbot.group_name`. Official `GROUP_AT_MESSAGE_CREATE` is @-bot only (QQ strips the bot from `content`/`mentions`), so `qqbot.mentioned_bot` follows that event type plus `mentions[].is_you` or a mention whose user id equals this bot; `@all` is not a bot mention. Passive ICL listen needs `GROUP_MESSAGE_CREATE` after enabling QQ full group-message receive; AT-only `GROUP_AND_C2C` has no non-@ group data source. |
 | Standard effects | Group/C2C text, mention, reply, custom Markdown (optional keyboard on the same payload) and message recall |
 | QQ-specific effects | Account query (mapped `user` plus raw `openapi_user`), Gateway query and relative-path raw call |
 | Media | Validated image/audio/video/file `ResourceRef` input and Group/C2C upload/send, only when the product injects a real provider |
@@ -42,11 +42,13 @@ audit, forum, audio and `GUILD_MEMBER_UPDATE`. They are not promoted to first-cl
 `PUT /interactions/{id}` is not provided. Gateway session end emits `BotDisconnected` so
 `mutsuki.bot.qq.bot.disconnected` can start a chain.
 
-Inbound gaps: Group/C2C cards use `ark_data` (only `ark` is read); `message_type` 3/101/102/103
-and `msg_elements` are ignored; face/attachment/keyboard/embed stay `PlatformSpecific`;
-`message_scene` is not copied. `author.member_role` is mapped into `qqbot.actor_role` (`owner` /
-`administrator` / `member`) together with `member.roles`. Outbound gaps: no Ark, Embed,
-`msg_type=6`, channel send, or `event_id` replies to non-message events.
+Inbound gaps: Group/C2C cards keep `ark`, `ark_data` and `msg_elements` as `PlatformSpecific` so
+Flow link matching can extract URLs; they are not promoted to first-class text. Face/attachment/
+keyboard/embed stay `PlatformSpecific`; `message_scene` is not copied. `author.member_role` is
+mapped into `qqbot.actor_role` (`owner` / `administrator` / `member`) together with `member.roles`.
+Outbound gaps: no Ark, Embed, `msg_type=6`, channel send, or `event_id` replies to non-message
+events. Mini-program auto-parse needs full group receive (`GROUP_MESSAGE_CREATE`); AT-only
+`GROUP_AND_C2C` will not see unmentioned shares.
 
 ## Configuration
 

@@ -12,9 +12,15 @@ Mutsuki-native 迁移提供以下 builtin Rust 协议：
 - `mutsuki.bot.mihuashi.link/resolve@1`
 
 `mutsuki-bot-link-parser` 是共享库而非 Host 插件，负责卡片 JSON 展开、URL 提取去重
-与冷却辅助。Bilibili 状态固定写入 ServiceHost `data_dir/bilibili/state.sqlite3`；首次
-轮询只建立 cursor，不补发历史。产品必须显式选择 `backend.type = "web_cookie"` 或
-`backend.type = "open_platform"`。Web backend 的 Cookie 只通过
+与冷却辅助。Text/Markdown/`ark`/`ark_data`/`msg_elements` 走同一套抽链。
+Flow 用 `mutsuki.bot.match.link` 按域名白名单匹配，matched 口写入 `bot.link.url`。
+Bilibili `web_cookie` 贡献 `mutsuki.bot.bilibili.resolve`，米画师贡献
+`mutsuki.bot.mihuashi.resolve`。示例图 `qq_link_resolve_flow()` 为 Source → link match →
+resolve → `qq.send`。B 站小程序自动解析需要 `web_cookie` 和全量群消息
+（`GROUP_MESSAGE_CREATE`）；AT-only 收不到未 @ 的分享，`open_platform` 没有 `link/resolve`。
+Bilibili 状态固定写入 ServiceHost
+`data_dir/bilibili/state.sqlite3`；首次轮询只建立 cursor，不补发历史。产品必须显式选择
+`backend.type = "web_cookie"` 或 `backend.type = "open_platform"`。Web backend 的 Cookie 只通过
 `backend.cookie_secret_key` 进入共享 credential boundary，WBI 请求使用运行时获取的
 mixin key 和注入式签名函数。
 

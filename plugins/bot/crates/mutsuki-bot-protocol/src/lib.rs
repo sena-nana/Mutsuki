@@ -87,6 +87,7 @@ pub const BOT_FLOW_NODE_EXECUTE_PROTOCOL_ID: &str = "mutsuki.bot.flow.node/execu
 pub const BOT_FLOW_NODE_INVOKE_PROTOCOL_ID: &str = "mutsuki.bot.flow.node/invoke@1";
 pub const BOT_FLOW_EMPTY_MENTION_PROTOCOL_ID: &str = "mutsuki.bot.flow.match/empty-mention@1";
 pub const BOT_FLOW_PROBABILITY_PROTOCOL_ID: &str = "mutsuki.bot.flow.match/probability@1";
+pub const BOT_FLOW_LINK_PROTOCOL_ID: &str = "mutsuki.bot.flow.match/link@1";
 
 pub const BOT_EXT_AGENT_PROFILE_ID: &str = "bot.agent.runtime_profile_id";
 pub const BOT_EXT_PERSONA_PROMPT: &str = "bot.agent.persona_prompt";
@@ -94,6 +95,7 @@ pub const BOT_EXT_CONVERSATION_ICL: &str = "bot.conversation.icl";
 pub const BOT_EXT_CONVERSATION_IDENTIFIERS: &str = "bot.conversation.identifiers";
 pub const BOT_EXT_REPLY_SOURCE_MESSAGE_ID: &str = "bot.reply.source_message_id";
 pub const BOT_EXT_REPLY_SOURCE_USER_ID: &str = "bot.reply.source_user_id";
+pub const BOT_EXT_LINK_URL: &str = "bot.link.url";
 
 pub const QQBOT_RAW_CALL_PROTOCOL_ID: &str = "mutsuki.bot.qqbot.raw/call@1";
 pub const QQBOT_ACCOUNT_GET_PROTOCOL_ID: &str = "mutsuki.bot.qqbot.account/get@1";
