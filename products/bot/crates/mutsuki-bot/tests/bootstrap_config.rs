@@ -36,7 +36,11 @@ async fn empty_single_instance_is_seeded_once_and_restored() {
         first_product.value.to_json()["workspace_enabled"],
         serde_json::Value::Bool(true)
     );
-    for id in ["mutsuki.agent.connections", "mutsuki.bot.router.flow"] {
+    for id in [
+        "mutsuki.agent.connections",
+        "mutsuki.bot.router.flow",
+        "mutsuki.bot.sandbox",
+    ] {
         assert!(
             first
                 .service

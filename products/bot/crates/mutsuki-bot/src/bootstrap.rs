@@ -486,6 +486,7 @@ mod tests {
         local_agent_config_value,
     };
     use mutsuki_bot_flow::BotFlowRegistry;
+    use mutsuki_bot_service_host_integration::SANDBOX_SERVICE_ID;
     use mutsuki_config_service::{ConfigApplyRequest, SecretState, SecretValue};
     use mutsuki_plugin_bot_adapter_qqbot::QQBOT_ADAPTER_PLUGIN_ID;
     use mutsuki_plugin_bot_event_router::BOT_FLOW_REGISTRY_SERVICE_ID;
@@ -589,7 +590,11 @@ mod tests {
     async fn first_run_creates_single_instance_workspace_and_private_console_secret() {
         let root = tempfile::tempdir().unwrap();
         let product = load_test_product(root.path()).await;
-        for id in [AGENT_CONNECTIONS_PLUGIN_ID, "mutsuki.bot.router.flow"] {
+        for id in [
+            AGENT_CONNECTIONS_PLUGIN_ID,
+            "mutsuki.bot.router.flow",
+            SANDBOX_SERVICE_ID,
+        ] {
             assert!(
                 product
                     .service

@@ -10,6 +10,7 @@ use mutsuki_bot_flow::{
 };
 use mutsuki_bot_management::{BilibiliCredentialSecretState, BilibiliManagementApi};
 use mutsuki_bot_protocol::ConversationPolicy;
+use mutsuki_bot_sandbox::{SANDBOX_SERVICE_ID, SandboxService};
 use mutsuki_bot_state_db::BotStateDbRepository;
 use mutsuki_config_service::{
     ConfigApplyMode, ConfigApplyRequest, ConfigConstraints, ConfigContext, ConfigDescriptor,
@@ -66,7 +67,7 @@ use mutsuki_plugin_bot_bilibili_workshop::{
     PLUGIN_ID as WORKSHOP_PLUGIN_ID, ReqwestWorkshopTransport, WorkshopRunner,
 };
 use mutsuki_plugin_bot_mihuashi::PLUGIN_ID as MIHUASHI_PLUGIN_ID;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 #[derive(Debug, Deserialize)]
@@ -469,7 +470,73 @@ fn execution_product_policy(config: &BotAgentConfig) -> Result<ConversationPolic
     })
 }
 
-pub struct QqBotConfiguredPlugin;
+type SharedSandboxSlot = Arc<OnceLock<Arc<SandboxService>>>;
+
+struct SandboxConfiguredPlugin {
+    slot: SharedSandboxSlot,
+}
+
+impl ConfiguredPluginFactory for SandboxConfiguredPlugin {
+    fn plugin_id(&self) -> &str {
+        SANDBOX_SERVICE_ID
+    }
+
+    fn prepare(
+        &self,
+        config: &Value,
+        builder: ServiceRuntimeBuilder,
+    ) -> Result<ServiceRuntimeBuilder, String> {
+        let config = if config.is_null() {
+            Value::Object(Default::default())
+        } else {
+            config.clone()
+        };
+        let _config: FlowRouterConfig =
+            serde_json::from_value(config).map_err(|error| error.to_string())?;
+        let state_dir = builder.data_dir().join("bot");
+        std::fs::create_dir_all(&state_dir).map_err(|error| {
+            format!(
+                "failed to create Bot sandbox state directory {}: {error}",
+                state_dir.display()
+            )
+        })?;
+        let repository = Arc::new(
+            BotStateDbRepository::open(state_dir.join("state.sqlite3"))
+                .map_err(|error| error.to_string())?,
+        );
+        let sandbox = Arc::new(
+            SandboxService::with_history("local", repository).map_err(|error| error.to_string())?,
+        );
+        self.slot
+            .set(sandbox.clone())
+            .map_err(|_| "sandbox service already prepared".to_string())?;
+        let mut manifest = PluginBuilder::new(SANDBOX_SERVICE_ID).build().manifest;
+        manifest.provides.services.push(SANDBOX_SERVICE_ID.into());
+        manifest.provides.capabilities.push("bot.sandbox".into());
+        let loaded_manifest = manifest.clone();
+        Ok(
+            builder.register_builtin_loaded_plugin_factory(manifest, move || {
+                Ok::<LoadedPlugin, String>(LoadedPlugin {
+                    manifest: loaded_manifest.clone(),
+                    runners: Vec::new(),
+                    async_handlers: Vec::new(),
+                    host_services: vec![RuntimeBootstrapperService::new(
+                        SANDBOX_SERVICE_ID,
+                        sandbox.clone(),
+                        "bot.sandbox",
+                    )],
+                    resource_providers: Vec::new(),
+                    async_resource_providers: Vec::new(),
+                    host_effects: Vec::new(),
+                })
+            }),
+        )
+    }
+}
+
+pub struct QqBotConfiguredPlugin {
+    slot: SharedSandboxSlot,
+}
 
 impl ConfiguredPluginFactory for QqBotConfiguredPlugin {
     fn plugin_id(&self) -> &str {
@@ -488,6 +555,15 @@ impl ConfiguredPluginFactory for QqBotConfiguredPlugin {
             QqBotPluginBundle::new(config).map_err(|error| error.redacted_message())?;
         if let Some(provider_id) = media_provider_id {
             bundle = bundle.with_resource_media_provider(provider_id);
+        }
+        if builder
+            .configured_plugin_selection(SANDBOX_SERVICE_ID)
+            .is_some()
+        {
+            let sandbox = self.slot.get().cloned().ok_or_else(|| {
+                "sandbox plugin must be prepared before the QQ adapter".to_string()
+            })?;
+            bundle = bundle.with_workspace_sandbox(sandbox);
         }
         bundle
             .install(builder)
@@ -949,9 +1025,11 @@ fn configured_bot_plugin_catalog_inner(
     config: Option<Arc<ConfigService>>,
 ) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
     let mut catalog = ConfiguredPluginCatalog::new();
+    let slot: SharedSandboxSlot = Arc::new(OnceLock::new());
     catalog.register(LegacyBotEventRouterConfiguredPlugin)?;
     catalog.register(BotCommandConfiguredPlugin)?;
-    catalog.register(QqBotConfiguredPlugin)?;
+    catalog.register(SandboxConfiguredPlugin { slot: slot.clone() })?;
+    catalog.register(QqBotConfiguredPlugin { slot })?;
     catalog.register(BilibiliConfiguredPlugin::new(config))?;
     catalog.register(WorkshopConfiguredPlugin)?;
     catalog.register(MihuashiConfiguredPlugin)?;
