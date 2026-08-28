@@ -18,12 +18,12 @@ Rust crates 禁止依赖 Python、PyO3、产品协议 SDK、外部服务 provide
 ```text
 Mutsuki/
   Cargo.toml / Cargo.lock
-  crates/                       # runtime crates and Link
+  crates/                       # runtime crates, plugin ABI contracts/loader and Link
   hosts/                        # CLI, service, Tauri, Web, distributed
   kits/                         # AgentKit and Python Runner Kit
   plugins/                      # Bot and standard plugins
   products/bot/                # first-party Bot runtime, assembly and thin external-product scaffold
-  plans/ / docs/ / performance/
+  plans/ / docs/ / performance/ / skills/
 ```
 
 ## 3. Crate 边界
@@ -52,6 +52,10 @@ Mutsuki/
 - `mutsuki-runtime-sdk-macros`：只为 Rust 插件作者生成 `SdkProtocol`、
   `ResourceKind` / descriptor 和 async runner adapter glue；宏展开不得引入本地直调、
   workflow runtime、隐式调度或绕过 `TaskPool` 的执行路径。
+- `mutsuki-plugin-api`：只定义领域中立 ABI v2 guest 侧契约（FFI-safe 类型、entry 符号、
+  host gateway）；不得包含 task pool、executor、runtime actor 或产品语义。
+- `mutsuki-plugin-host`：只负责单个已校验动态库连接的 ABI v2 加载与生命周期；
+  package discovery、staging、配置选择和持久化归产品 Host，不得反灌进本 crate。
 - `kits/python-runner`：镜像协议，提供 Python runner backend、stdio runner
   server、Python ResourceManager 测试实现、runner-side async adapter 和 typed public API；
   本仓库不包含该 Python 包源码。

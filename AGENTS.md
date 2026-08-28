@@ -25,13 +25,16 @@ Issue 是需求线索，不是当前 API 的事实源。存在 `.codegraph/` 时
   contribution projection 与 staged reload。
 - `skills/sdk-runner-host/SKILL.md`：Rust SDK、宏、Runner host helper 与通用 ABI。
 
-跨 package 或目录移动先读 monorepo-maintenance；跨协议边界同时读 contracts。
+跨 package 或目录移动先读 monorepo-maintenance；跨协议边界同时读 contracts。新增或重命名
+crate/module/type/trait、审计组件命名与职责边界时，先读
+`.agents/skills/mutsuki-naming-guard/SKILL.md`。
 
 ## 目录与职责
 
 | 路径 | 职责 |
 | --- | --- |
-| `crates/mutsuki-runtime-*` | 领域中立 contracts、wire、Core、Host helper、Rust SDK 与基准 |
+| `crates/mutsuki-runtime-*` | 领域中立 contracts、wire、Core、Host helper、Rust SDK、宏与基准 |
+| `crates/mutsuki-plugin-api`、`crates/mutsuki-plugin-host` | 领域中立插件 ABI v2 契约（FFI-safe 类型、host gateway）与动态库加载/生命周期宿主 |
 | `crates/link/` | Link 协议、传输、发现、配对和 runtime adapter |
 | `hosts/cli/` | ServiceHost 控制 API 的 CLI/TUI 客户端 |
 | `hosts/service/` | 常驻服务生命周期、配置/secret、插件加载、Runner 监督、控制面和 health |
@@ -40,8 +43,8 @@ Issue 是需求线索，不是当前 API 的事实源。存在 `.codegraph/` 时
 | `hosts/distributed/` | 可选分布式 sidecar、持久化、恢复、控制和基准 |
 | `kits/agent/` | Agent 协议、SDK、插件、testkit 与 bundle |
 | `kits/python-runner/` | Python Runner SDK、wire mirror、transport 与 conformance |
-| `plugins/bot/` | Bot 协议、SDK、路由、平台 Adapter、Host integration 与 testkit |
-| `plugins/std/` | 通用协议、资源/provider、effect、workflow 与 observe 插件 |
+| `plugins/bot/` | Bot 协议、SDK、库面 store/service（`mutsuki-bot-*`）、可加载插件层（`mutsuki-plugin-bot-*`）、平台 Adapter、Host integration 与 testkit |
+| `plugins/std/` | `protocols/` 的 `mutsuki-protocol-*`、`plugins/` 的 `mutsuki-plugin-*`（资源/provider、effect、workflow、observe）与 `crates/` 支撑 crate |
 | `products/bot/` | 第一方 Bot 产品入口、配置、运行装配与跨 package 验收 |
 
 ## Hard Rules
@@ -62,6 +65,9 @@ Issue 是需求线索，不是当前 API 的事实源。存在 `.codegraph/` 时
 10. 修复根因并在 owner package 落地；禁止因同仓而跨层打补丁、隐式耦合或假能力。
 11. 新测试断言行为和协议，不硬匹配日志/文案；无功能变化不添加低价值测试。
 12. 禁止临时分支工作树修改。默认在用户当前分支工作；除非用户明确要求，不创建 PR。
+13. 目录结构、package 增删改名、公共契约、协议 ID、验证门禁或组件命名发生变更时，必须在
+    同一次变更中更新所属 scoped `AGENTS.md` 与对应 `skills/*/SKILL.md`（含 `references/`）；
+    文档与技能同步是变更验收的一部分，不得拆到后续提交。
 
 ## Git 与验证
 

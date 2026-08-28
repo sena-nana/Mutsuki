@@ -821,6 +821,10 @@ Runner 永远不会收发它们。镜像它们等于在 Python 侧复制一份 C
 - `crates/mutsuki-runtime-contracts`：本文件协议对象。
 - `crates/mutsuki-runtime-core`：CoreRuntime、TaskPool、RunnerRegistry、ResourceManager。
 - `crates/mutsuki-runtime-host`：runtime bootstrapper、load-plan resolver、binary runner client。
+- `crates/mutsuki-plugin-api`：领域中立 ABI v2 guest 侧契约——FFI-safe 类型、entry 符号、
+  host gateway；只依赖 contracts + wire。
+- `crates/mutsuki-plugin-host`：ABI v2 动态库加载与生命周期宿主；只消费 `mutsuki-plugin-api`
+  与 contracts，不拥有 package discovery、配置选择或持久化。
 - `crates/mutsuki-runtime-sdk`：Rust SDK async/task/resource helper，以及 host/plugin
   扩展基础 trait；本次没有新增 wire protocol object。
 - `kits/python-runner`：Python mirror、runner backend、stdio bridge、resource manager。

@@ -12,6 +12,8 @@ runtime ownership remain separate.
 Mutsuki/
 ├── crates/
 │   ├── mutsuki-runtime-*/
+│   ├── mutsuki-plugin-api/       # domain-neutral plugin ABI v2 contracts
+│   ├── mutsuki-plugin-host/      # ABI v2 dynamic-library loader/lifecycle host
 │   └── link/
 ├── hosts/{cli,service,tauri,web,distributed}/
 ├── kits/{agent,python-runner}/
@@ -19,7 +21,7 @@ Mutsuki/
 ├── products/bot/
 ├── integration-tests/
 ├── performance/
-└── docs/{architecture,contracts,decisions,compatibility,migration}/
+└── docs/{architecture,decisions,compatibility,migration}/
 ```
 
 Each imported repository remains visible as an architecture group so its history, scoped
@@ -46,6 +48,8 @@ first-party and external products
 The diagram is ownership-oriented, not permission to add every downward dependency:
 
 - Core never depends on Link, a concrete Host, AgentKit, Bot packages or standard plugins.
+- `mutsuki-plugin-api` and `mutsuki-plugin-host` stay domain-neutral beside the kernel; they never
+  gain product, business-protocol or host-specific semantics.
 - Link never depends on a concrete Host or business package.
 - AgentKit, Bot packages and standard plugins remain Host-neutral.
 - Host-specific integration lives in an explicitly named integration package.
@@ -73,7 +77,7 @@ Workspace locks and remain scoped to their JavaScript build boundaries.
 
 `products/bot` is the repository's runnable Bot product. It owns external bootstrap configuration,
 owner catalog aggregation, ServiceRuntime startup, the thin external-product `create-bot` scaffold
-and cross-package product acceptance. Runtime Core remains domain-neutral, ServiceHost keeps process
+and cross-package product acceptance. Runtime Core remains domain-neutral, MutsukiServiceHost keeps process
 lifecycle ownership, and Bot, Agent and Std packages keep their protocol and implementation
 ownership. The product does not introduce a `BotHost`, duplicate owner implementations or an
 all-capability facade crate. Generated projects pin one immutable Mutsuki revision and call the

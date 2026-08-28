@@ -10,6 +10,9 @@ description: Change Bot Flow graph validation/execution, node catalogs, command 
   ingress is `mutsuki.bot.flow/ingress@1`.
 - Plugins declare `mutsuki.bot.flow.nodes@1` node descriptors, typed ports, config schema and exact
   Handler binding; they never declare commands, subscriptions, priority, propagation or hooks.
+- Keep graph execution mechanics in the library-surface crate (`mutsuki-bot-flow`); the matching
+  `mutsuki-plugin-bot-*` crate owns the PluginBuilder manifest and node catalog. Library-surface
+  crates never depend back on plugin crates.
 - Consume typed `BotFlowEventEnvelope` values and emit named `BotNodeOutput` values; never call a
   platform API outside the node's declared binding.
 - Execute every matching Source chain independently on the one live graph. Multiple outgoing edges
