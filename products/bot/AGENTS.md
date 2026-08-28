@@ -29,7 +29,7 @@ Issue 是需求线索，不是当前 API 的事实源。存在 `.codegraph/` 时
 | `plugins/std` | 领域中立标准协议，以及 config/db/fs/http/observe/resource/workflow 插件 |
 | `kits/python-runner` | Runner Link 的 Python contract mirror、Runner backend、transport 和测试工具 |
 | `hosts/service` | 服务生命周期、配置/secret、插件加载、EventSource、控制面和 health |
-| `plugins/bot` | `mutsuki.bot.*` 协议、Bot SDK、标准 Runner、平台 Adapter/Gateway 和显式 Host integration crate |
+| `plugins/bot` | `mutsuki.bot.*` 协议、Bot SDK、标准 Runner、平台 Adapter/Gateway 和显式 Host integration crate。库面 crate 持有 trait/service；可加载 plugin 面使用 `mutsuki-plugin-*` 名。`mutsuki-bot-state-db` 实现 conversation/persona/delivery/interaction/sandbox 库面 store，不依赖 plugin crate |
 | `kits/agent` | Agent 协议、SDK、模型、工具和记忆能力 |
 | `hosts/cli` | ServiceHost 公开控制 API 的 CLI/TUI 客户端 |
 | `hosts/tauri` | 内嵌 Core 的桌面 Host、Tauri/WebView bridge 和前端 SDK |
@@ -44,7 +44,7 @@ Issue 是需求线索，不是当前 API 的事实源。存在 `.codegraph/` 时
 2. 产品使用根 Workspace path 和唯一根 `Cargo.lock`；禁止仓库内 Mutsuki Git 依赖、仓库外 `path` 或本地 `[patch]`。
 3. 配置只声明 capability、插件和部署选择。产品不按平台、Agent、Provider 或 backend 硬编码替代路径。
 4. 产品只支持可执行文件旁 `.mutsuki-bot` 单实例目录；Host 边界与 SQLite repository 由产品内建，产品和 owner 配置进入 `ConfigRepository`，只保存 secret key 引用。
-5. 产品不得拥有业务 Runner、命令、回复或 Agent 流程；这些能力由 owner package 实现，并遵守 batch-first、`TaskHandle` 和通用协议契约。
+5. 产品不得拥有业务 Runner、命令、回复或 Agent 流程；这些能力由 owner package 实现，并遵守 batch-first、`TaskHandle` 和通用协议契约。编译期依赖 owner 插件的配置 schema 是允许的，不等于硬编码 backend 替代路径。`mutsuki-bot-runtime-reference` 只做域拓扑 bench，不是生产入口。
 6. RuntimeProfile/RuntimeLoadPlan 是装配权威；registry freeze 后不得动态越权注册。
 7. 缺失 capability、配置、secret、artifact 或 revision 必须结构化失败，禁止假成功和吞错。
 8. 生产入口不接受配置路径、profile 或 namespace；产品显式选择固定 SQLite 配置仓库，但框架不假设路径或存储实现。空仓库只写一次版本化种子，直接启用 Agent Connections、Flow Router 与对应管理页；QQ、Local Agent、Bot Agent 和业务 Flow 仍由保存后的 owner 配置显式启用。Mock 仅限测试。

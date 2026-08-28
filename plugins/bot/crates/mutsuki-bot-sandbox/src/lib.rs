@@ -1434,8 +1434,72 @@ mod tests {
         }
 
         fn save(&self, snapshot: &SandboxHistorySnapshot) -> Result<(), SandboxError> {
-            *self.inner.lock().expect("history") = snapshot.clone();
+            let mut inner = self.inner.lock().expect("history");
+            let mut next = snapshot.clone();
+            retain_existing_blobs(&inner, &mut next);
+            *inner = next;
             Ok(())
+        }
+
+        fn load_media_blob(
+            &self,
+            media_id: &str,
+        ) -> Result<Option<SandboxMediaBlob>, SandboxError> {
+            Ok(self
+                .inner
+                .lock()
+                .expect("history")
+                .media
+                .iter()
+                .find(|item| item.content_hash == media_id && !item.bytes.is_empty())
+                .map(|item| SandboxMediaBlob {
+                    media_id: item.content_hash.clone(),
+                    mime: item.mime.clone(),
+                    name: item.name.clone(),
+                    bytes: item.bytes.clone(),
+                }))
+        }
+
+        fn load_sticker_blob(
+            &self,
+            sticker_id: &str,
+        ) -> Result<Option<SandboxMediaBlob>, SandboxError> {
+            Ok(self
+                .inner
+                .lock()
+                .expect("history")
+                .stickers
+                .iter()
+                .find(|item| item.content_hash == sticker_id && !item.bytes.is_empty())
+                .map(|item| SandboxMediaBlob {
+                    media_id: item.content_hash.clone(),
+                    mime: item.mime.clone(),
+                    name: item.name.clone(),
+                    bytes: item.bytes.clone(),
+                }))
+        }
+    }
+
+    fn retain_existing_blobs(previous: &SandboxHistorySnapshot, next: &mut SandboxHistorySnapshot) {
+        for asset in &mut next.media {
+            if asset.bytes.is_empty()
+                && let Some(existing) = previous
+                    .media
+                    .iter()
+                    .find(|item| item.content_hash == asset.content_hash)
+            {
+                asset.bytes.clone_from(&existing.bytes);
+            }
+        }
+        for sticker in &mut next.stickers {
+            if sticker.bytes.is_empty()
+                && let Some(existing) = previous
+                    .stickers
+                    .iter()
+                    .find(|item| item.content_hash == sticker.content_hash)
+            {
+                sticker.bytes.clone_from(&existing.bytes);
+            }
         }
     }
 

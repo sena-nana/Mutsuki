@@ -10,7 +10,7 @@ use mutsuki_runtime_contracts::{
 use mutsuki_runtime_core::{AsyncBatchHandler, AsyncCompletionFuture, RunnerContext};
 use mutsuki_runtime_sdk::{ResourceRegistryGateway, RunnerDescriptorBuilder};
 use reqwest::{Client, Url};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::adapter::{qq_gateway_frame_to_bot_event, upgrade_qq_cdn_https};
 use crate::tasks::{QQBOT_ADAPTER_PLUGIN_ID, QQBOT_GATEWAY_RUNNER_ID, flow_envelope};
@@ -126,6 +126,9 @@ pub fn gateway_media_descriptor(
     RunnerDescriptorBuilder::new(QQBOT_GATEWAY_RUNNER_ID, QQBOT_ADAPTER_PLUGIN_ID)
         .plugin_generation(plugin_generation)
         .accepted_protocol(QQBOT_GATEWAY_FRAME_PROTOCOL_ID)
+        .output_schema(json!({
+            "tasks": [BOT_FLOW_INGRESS_PROTOCOL_ID]
+        }))
         .execution_class(ExecutionClass::Io)
         .invocation_mode(InvocationMode::AsyncReentrant)
         .concurrency(RunnerConcurrency::Reentrant {
@@ -157,8 +160,12 @@ async fn map_task_with_media(
     resources: &dyn ResourceRegistryGateway,
     max_bytes_by_kind: &BTreeMap<BotMediaKind, u64>,
 ) -> Result<RunnerResult, RuntimeError> {
-    let frame: GatewayFrame = serde_json::from_value(task.payload.clone().into())
-        .map_err(|error| failure("gateway.decode", error))?;
+    let frame = if let Some(frame) = task.payload.as_local::<GatewayFrame>() {
+        (*frame).clone()
+    } else {
+        serde_json::from_value(task.payload.clone().into())
+            .map_err(|error| failure("gateway.decode", error))?
+    };
     let attachments = attachments(&frame.d)?;
     let mut event = qq_gateway_frame_to_bot_event(account_id, app_id, frame)
         .map_err(|error| failure("gateway.map", error))?;

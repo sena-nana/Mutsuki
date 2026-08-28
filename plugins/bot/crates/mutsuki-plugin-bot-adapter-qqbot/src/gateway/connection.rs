@@ -2,7 +2,7 @@ use std::collections::{HashSet, VecDeque, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use mutsuki_runtime_contracts::Task;
+use mutsuki_runtime_contracts::{Task, TaskPayload};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -163,107 +163,21 @@ impl QqGatewayPump {
         raw: Value,
         registry_generation: u64,
     ) -> Result<Option<Task>, String> {
-        let object = raw
-            .as_object()
-            .ok_or_else(|| "invalid_gateway_frame:expected object".to_string())?;
-        let op = object
-            .get("op")
-            .and_then(Value::as_u64)
-            .ok_or_else(|| "invalid_gateway_frame:op must be an unsigned integer".to_string())?;
-        let sequence = optional_u64(object.get("s"), "s")?;
-        if let Some(sequence) = sequence {
-            self.last_sequence = Some(sequence);
-        }
-        match op {
-            0 => {
-                let event_type = optional_str(object.get("t"), "t")?.unwrap_or("UNKNOWN");
-                let event_id = optional_str(object.get("id"), "id")?;
-                let data = object.get("d").unwrap_or(&Value::Null);
-                if event_type == "READY" {
-                    self.session_id = data
-                        .get("session_id")
-                        .and_then(Value::as_str)
-                        .map(str::to_owned);
-                    self.resume_url = data
-                        .get("resume_gateway_url")
-                        .or_else(|| data.get("resume_url"))
-                        .and_then(Value::as_str)
-                        .map(str::to_owned);
-                    let session_digest =
-                        digest(self.session_id.as_deref().unwrap_or("unidentified"));
-                    self.task_id_prefix =
-                        build_task_id_prefix(&self.task_account_id, session_digest);
-                }
-                if !known_event_type(event_type) {
-                    self.actions
-                        .push_back(GatewayAction::UnknownEvent(event_type.to_owned()));
-                    return Ok(None);
-                }
-                let key = dedup_key_parts(op, event_type, sequence, event_id, data);
-                let key: Arc<str> = key.into();
-                if !self.remember_dedup_key(key.clone()) {
-                    return Ok(None);
-                }
-                let task_id = self.task_id(&key);
-                let correlation_id = event_id
-                    .map(str::to_owned)
-                    .or_else(|| Some(key.to_string()));
-                self.actions
-                    .push_back(GatewayAction::DispatchTask(task_id.clone()));
-                let mut task = Task::new(task_id, QQBOT_GATEWAY_FRAME_PROTOCOL_ID, raw);
-                task.registry_generation = registry_generation;
-                task.correlation_id = correlation_id;
-                Ok(Some(task))
-            }
-            7 => {
-                self.actions.push_back(GatewayAction::Reconnect);
-                Ok(None)
-            }
-            9 => {
-                let resumable = object.get("d").and_then(Value::as_bool).unwrap_or(false);
-                if resumable && self.session_id.is_some() {
-                    self.actions.push_back(GatewayAction::Resume);
-                } else {
-                    self.clear_session();
-                    self.actions.push_back(GatewayAction::Identify);
-                }
-                Ok(None)
-            }
-            10 => {
-                self.actions.push_back(if self.session_id.is_some() {
-                    GatewayAction::Resume
-                } else {
-                    GatewayAction::Identify
-                });
-                Ok(None)
-            }
-            11 => {
-                self.actions.push_back(GatewayAction::AckHeartbeat);
-                Ok(None)
-            }
-            1 => {
-                self.actions
-                    .push_back(GatewayAction::Heartbeat(self.last_sequence));
-                Ok(None)
-            }
-            opcode => {
-                self.actions.push_back(GatewayAction::UnknownOpcode(opcode));
-                Ok(None)
-            }
-        }
+        let frame: GatewayFrame = serde_json::from_value(raw)
+            .map_err(|error| format!("invalid_gateway_frame:{error}"))?;
+        self.handle_frame(frame, registry_generation)
     }
 
     pub fn handle_frame(
         &mut self,
         frame: GatewayFrame,
-        raw: Value,
         registry_generation: u64,
     ) -> Result<Option<Task>, String> {
         if let Some(sequence) = frame.s {
             self.last_sequence = Some(sequence);
         }
         match frame.op {
-            0 => self.handle_dispatch(frame, raw, registry_generation),
+            0 => self.handle_dispatch(frame, registry_generation),
             7 => {
                 self.actions.push_back(GatewayAction::Reconnect);
                 Ok(None)
@@ -304,7 +218,6 @@ impl QqGatewayPump {
     fn handle_dispatch(
         &mut self,
         frame: GatewayFrame,
-        raw: Value,
         registry_generation: u64,
     ) -> Result<Option<Task>, String> {
         let event_type = frame.t.as_deref().unwrap_or("UNKNOWN");
@@ -336,7 +249,11 @@ impl QqGatewayPump {
         let correlation_id = frame.id.clone().or_else(|| Some(key.to_string()));
         self.actions
             .push_back(GatewayAction::DispatchTask(task_id.clone()));
-        let mut task = Task::new(task_id, QQBOT_GATEWAY_FRAME_PROTOCOL_ID, raw);
+        let mut task = Task::new(
+            task_id,
+            QQBOT_GATEWAY_FRAME_PROTOCOL_ID,
+            TaskPayload::from_local(frame),
+        );
         task.registry_generation = registry_generation;
         task.correlation_id = correlation_id;
         Ok(Some(task))
@@ -371,26 +288,6 @@ fn append_hex_u64(output: &mut String, value: u64) {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     for shift in (0..16).rev() {
         output.push(HEX[((value >> (shift * 4)) & 0x0f) as usize] as char);
-    }
-}
-
-fn optional_u64(value: Option<&Value>, field: &str) -> Result<Option<u64>, String> {
-    match value {
-        None | Some(Value::Null) => Ok(None),
-        Some(value) => value
-            .as_u64()
-            .map(Some)
-            .ok_or_else(|| format!("invalid_gateway_frame:{field} must be an unsigned integer")),
-    }
-}
-
-fn optional_str<'a>(value: Option<&'a Value>, field: &str) -> Result<Option<&'a str>, String> {
-    match value {
-        None | Some(Value::Null) => Ok(None),
-        Some(value) => value
-            .as_str()
-            .map(Some)
-            .ok_or_else(|| format!("invalid_gateway_frame:{field} must be a string")),
     }
 }
 

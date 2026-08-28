@@ -17,7 +17,7 @@ pub const PLUGIN_VERSION: &str = "0.1.0";
 pub const CAPABILITY_BOT_READ: &str = "bot.read";
 pub const CAPABILITY_BOT_CONFIG_WRITE: &str = "bot.config.write";
 pub const CAPABILITY_BOT_DELIVERY_WRITE: &str = "bot.delivery.write";
-pub const CAPABILITY_BOT_SESSION_WRITE: &str = "bot.session.write";
+pub const CAPABILITY_BOT_INTERACTION_WRITE: &str = "bot.interaction.write";
 pub const CAPABILITY_BOT_SECRET_STATUS: &str = "bot.secret.status";
 
 pub const EXTRA_IMG_SRC: &[&str] = &[
@@ -211,7 +211,7 @@ fn manifest(assets: Vec<AssetEntry>) -> ExtensionManifest {
             CAPABILITY_BOT_READ.into(),
             CAPABILITY_BOT_CONFIG_WRITE.into(),
             CAPABILITY_BOT_DELIVERY_WRITE.into(),
-            CAPABILITY_BOT_SESSION_WRITE.into(),
+            CAPABILITY_BOT_INTERACTION_WRITE.into(),
             CAPABILITY_BOT_SECRET_STATUS.into(),
         ],
         permissions: vec!["pages".into(), "navigation".into()],
@@ -239,7 +239,7 @@ fn required_capability(action: &QqManagementAction) -> &'static str {
         | QqManagementAction::AccountHealthCheck { .. }
         | QqManagementAction::AccountReconnect { .. }
         | QqManagementAction::AccountSendTest { .. } => CAPABILITY_BOT_CONFIG_WRITE,
-        QqManagementAction::InteractionCancel { .. } => CAPABILITY_BOT_SESSION_WRITE,
+        QqManagementAction::InteractionCancel { .. } => CAPABILITY_BOT_INTERACTION_WRITE,
         QqManagementAction::DeliveryRetry { .. }
         | QqManagementAction::DeliveryCancel { .. }
         | QqManagementAction::DeliveryPreview { .. } => CAPABILITY_BOT_DELIVERY_WRITE,

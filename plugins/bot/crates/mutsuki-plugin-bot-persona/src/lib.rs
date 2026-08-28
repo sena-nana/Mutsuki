@@ -15,7 +15,7 @@ use mutsuki_bot_protocol::{
     BOT_COMMAND_REPLY_PROTOCOL_ID, BOT_EXT_AGENT_PROFILE_ID, BOT_EXT_PERSONA_PROMPT,
     BOT_FLOW_BOT_EVENT_TYPE, BotCommandEvent, BotEvent, BotFlowTypeRef, BotMessage, BotNodeBinding,
     BotNodeCatalogFragment, BotNodeDescriptor, BotNodeInvocation, BotNodeOutput,
-    BotNodePortDescriptor, BotNodePortDirection, BotNodeResult, BotNodeRole, BotPersona,
+    BotNodePortDescriptor, BotNodePortDirection, BotNodeResult, BotNodeRole,
 };
 use mutsuki_runtime_contracts::{
     CompletionBatch, ExecutionClass, PluginManifest, RunnerDescriptor, RunnerResult, Task,
@@ -25,58 +25,14 @@ use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
 use mutsuki_runtime_sdk::{
     PluginBuilder, ProtocolDescriptorBuilder, RunnerDescriptorBuilder, map_work_batch_entries,
 };
-use parking_lot::Mutex;
 use serde_json::json;
+
+pub use mutsuki_bot_persona::{MemoryPersonaStore, PersonaStore};
 
 pub const BOT_PERSONA_PLUGIN_ID: &str = "mutsuki.plugin.bot.persona";
 pub const BOT_PERSONA_RUNNER_ID: &str = "mutsuki.bot.persona";
 pub const BOT_PERSONA_COMMAND_NODE_TYPE: &str = "mutsuki.bot.agent.persona";
 pub const BOT_PERSONA_ATTACH_NODE_TYPE: &str = "mutsuki.bot.agent.attach_bound_persona";
-
-pub trait PersonaStore: Send + Sync {
-    fn upsert(&self, persona: BotPersona) -> Result<(), String>;
-    fn list(&self) -> Result<Vec<BotPersona>, String>;
-    fn get(&self, persona_id: &str) -> Result<Option<BotPersona>, String>;
-    fn bind_conversation(&self, origin_key: &str, persona_id: &str) -> Result<(), String>;
-    fn conversation_persona(&self, origin_key: &str) -> Result<Option<String>, String>;
-}
-
-#[derive(Default)]
-pub struct MemoryPersonaStore {
-    personas: Mutex<BTreeMap<String, BotPersona>>,
-    bindings: Mutex<BTreeMap<String, String>>,
-}
-
-impl PersonaStore for MemoryPersonaStore {
-    fn upsert(&self, persona: BotPersona) -> Result<(), String> {
-        self.personas
-            .lock()
-            .insert(persona.persona_id.clone(), persona);
-        Ok(())
-    }
-
-    fn list(&self) -> Result<Vec<BotPersona>, String> {
-        Ok(self.personas.lock().values().cloned().collect())
-    }
-
-    fn get(&self, persona_id: &str) -> Result<Option<BotPersona>, String> {
-        Ok(self.personas.lock().get(persona_id).cloned())
-    }
-
-    fn bind_conversation(&self, origin_key: &str, persona_id: &str) -> Result<(), String> {
-        if self.get(persona_id)?.is_none() {
-            return Err(format!("unknown persona {persona_id}"));
-        }
-        self.bindings
-            .lock()
-            .insert(origin_key.to_owned(), persona_id.to_owned());
-        Ok(())
-    }
-
-    fn conversation_persona(&self, origin_key: &str) -> Result<Option<String>, String> {
-        Ok(self.bindings.lock().get(origin_key).cloned())
-    }
-}
 
 #[must_use]
 pub fn bot_persona_manifest() -> PluginManifest {
@@ -374,7 +330,7 @@ fn runtime_error(
 
 #[cfg(test)]
 mod tests {
-    use mutsuki_bot_protocol::BotTarget;
+    use mutsuki_bot_protocol::{BotPersona, BotTarget};
 
     use super::*;
 

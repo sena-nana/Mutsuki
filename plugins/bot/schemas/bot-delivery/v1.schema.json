@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Mutsuki BotActiveDeliveryRequest v1",
+  "type": "object",
+  "required": ["delivery_id", "idempotency_key", "conversation", "content", "policy"],
+  "additionalProperties": true
+}

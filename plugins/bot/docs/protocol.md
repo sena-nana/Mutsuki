@@ -2,16 +2,37 @@
 
 Protocol IDs use `namespace.domain/op@major`.
 
-Standard Bot protocols:
+Envelope IDs tag a `BotFlowEventEnvelope.protocol_id`. They are not runner protocols: a plugin
+promises a runner only when its manifest and `RunnerDescriptor` list that ID.
 
-- `mutsuki.bot.event/ingest@1`
+- `mutsuki.bot.event/ingest@1` — Gateway-mapped Bot event envelope. Adapter runners submit
+  `mutsuki.bot.flow/ingress@1` tasks that carry this envelope.
+- `mutsuki.bot.command/handle@1` — Command Match `matched` output envelope (`BotCommandEvent`).
+
+Standard Bot runner protocols:
+
 - `mutsuki.bot.flow/ingress@1`
 - `mutsuki.bot.flow.node/execute@1`
+- `mutsuki.bot.flow.match/conversation@1`
+- `mutsuki.bot.flow.match/user@1`
+- `mutsuki.bot.flow.match/role@1`
+- `mutsuki.bot.flow.match/prefix@1`
+- `mutsuki.bot.flow.match/keyword@1`
+- `mutsuki.bot.flow.match/mention@1`
 - `mutsuki.bot.flow.match/empty-mention@1`
+- `mutsuki.bot.flow.match/rate-limit@1`
+- `mutsuki.bot.flow.match/qq-event@1`
 - `mutsuki.bot.flow.match/interaction@1`
 - `mutsuki.bot.flow.interaction/create@1`
 - `mutsuki.bot.flow.match/probability@1`
 - `mutsuki.bot.flow.match/link@1`
+- `mutsuki.bot.interaction/handle@1`
+- `mutsuki.bot.agent/submit@1`
+- `mutsuki.bot.agent/cancel@1`
+- `mutsuki.bot.agent/reset@1`
+- `mutsuki.bot.agent/fork@1`
+- `mutsuki.bot.agent/status@1`
+- `mutsuki.bot.agent/regenerate@1`
 - `mutsuki.bot.agent/bind-profile@1`
 - `mutsuki.bot.agent/persona@1`
 - `mutsuki.bot.agent/attach-bound-persona@1`
@@ -24,7 +45,11 @@ Standard Bot protocols:
 - `mutsuki.bot.message/send@1`
 - `mutsuki.bot.message/recall@1`
 - `mutsuki.bot.media/upload@1`
+- `mutsuki.bot.media/transcribe@1`
+- `mutsuki.bot.media/synthesize@1`
 - `mutsuki.bot.command/parse@1`
+- `mutsuki.bot.command/reply@1`
+- `mutsuki.bot.delivery/submit@1`
 - `mutsuki.bot.delivery/reply@1`
 
 `mutsuki.bot.flow.match/link@1` matches extracted URLs against a host allowlist and writes
@@ -49,6 +74,9 @@ is custom markdown content. QQ keyboard and template markdown stay `PlatformSpec
 `PluginProvides.extensions` carries versioned domain-neutral extension payloads. Bot plugins use
 `mutsuki.bot.flow.nodes@1` for their node catalog. `BotFlowEventEnvelope`, `BotNodeInvocation` and
 `BotNodeResult` preserve typed ports plus Bot/trace/correlation context across graph execution.
+
+`mutsuki.bot.delivery/submit@1` owns active (non-Agent) durable send: persist request, CAS-claim
+due receipts, retry, and `mutsuki.bot.message/send@1` at the side-effect boundary.
 
 `mutsuki.bot.delivery/reply@1` owns durable Bot reply delivery. `Reserve` persists one stable reply
 id plus its ordered message parts without sending. Agent Flow occupancy sets `occupancy_only` so
@@ -80,9 +108,15 @@ message types are first-class versus `PlatformSpecific` or unsupported is record
 
 Business plugins should prefer the standard protocols. Adapter-specific protocols are escape hatches.
 
-Reserved standard protocol IDs:
+JSON schemas under `schemas/` cover landed DTO families only. Reserved IDs have no schema.
 
-- `mutsuki.bot.message/edit@1`
-- `mutsuki.bot.media/download@1`
+Reserved IDs live in `mutsuki_bot_protocol::reserved` and have no runners:
 
-Reserved IDs are protocol crate constants, but a plugin only promises support when its manifest and runner descriptor list the protocol. The QQBot adapter does not provide message edit or media download until there is a concrete QQBot endpoint and resource-writer contract for those behaviors.
+- `mutsuki.bot.message/edit@1`, `mutsuki.bot.media/download@1` — no QQ endpoint yet
+- `mutsuki.bot.session/get@1`, `mutsuki.bot.session/set@1`, `mutsuki.bot.permission/check@1` —
+  session/permission plugins deferred; no public `BotPermission` DTO
+- `mutsuki.bot.agent/handle@1` — superseded by `agent/submit@1` and the other Agent admin protocols
+- `mutsuki.bot.flow.node/invoke@1` — superseded by `flow.node/execute@1`
+
+Rate-limit matching is `mutsuki.bot.flow.match/rate-limit@1`; there is no parallel
+`rate_limit/check` protocol.

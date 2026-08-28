@@ -16,6 +16,7 @@ mutsuki-bot-state-db.workspace = true
 mutsuki-bot-interaction.workspace = true
 mutsuki-bot-link-parser.workspace = true
 mutsuki-bot-protocol.workspace = true
+mutsuki-bot-sandbox.workspace = true
 mutsuki-bot-service-host-integration.workspace = true
 mutsuki-bot-testkit.workspace = true
 mutsuki-config-service.workspace = true

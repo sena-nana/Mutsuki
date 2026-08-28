@@ -377,8 +377,12 @@ impl Runner for QqGatewayMapRunner {
         batch: WorkBatch,
     ) -> RuntimeResult<CompletionBatch> {
         map_work_batch_entries(&batch, |task| {
-            let frame: GatewayFrame = serde_json::from_value(task.payload.clone().into())
-                .map_err(|error| failure("mutsuki.bot.qqbot.gateway.decode", error))?;
+            let frame = if let Some(frame) = task.payload.as_local::<GatewayFrame>() {
+                (*frame).clone()
+            } else {
+                serde_json::from_value(task.payload.clone().into())
+                    .map_err(|error| failure("mutsuki.bot.qqbot.gateway.decode", error))?
+            };
             let event = qq_gateway_frame_to_bot_event(&self.account_id, &self.app_id, frame)
                 .map_err(|error| failure("mutsuki.bot.qqbot.gateway.map", error))?;
             tracing::info!(
@@ -694,7 +698,7 @@ pub fn gateway_descriptor(plugin_generation: u64) -> RunnerDescriptor {
             "required": ["op"]
         }),
         output_schema: json!({
-            "tasks": [BOT_EVENT_INGEST_PROTOCOL_ID]
+            "tasks": [BOT_FLOW_INGRESS_PROTOCOL_ID]
         }),
         batch: native_batch_capability(RunnerSideEffect::None, 16, 64),
         payload: RunnerPayloadCapability::default(),

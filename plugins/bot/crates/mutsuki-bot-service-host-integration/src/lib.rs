@@ -52,6 +52,11 @@ pub use event_source::{
     QQBOT_GATEWAY_SOURCE_ID, QqGatewayControlHandle, QqGatewayEventSource, QqGatewayHealthHandle,
     QqGatewayHealthSnapshot, QqInboundObserveHandle,
 };
+pub use mutsuki_plugin_bot_delivery::{
+    bot_delivery_manifest, bot_reply_delivery_manifest, bot_reply_delivery_manifest_for,
+    bot_scheduled_delivery_manifest,
+};
+pub use mutsuki_plugin_bot_interaction::bot_interaction_manifest;
 pub use orchestrated_flow::{
     QQ_AI_PRESENTATION_FAILURE_TEXT, qq_ai_orchestrated_flow, qq_ai_orchestrated_flow_with_source,
     qq_link_resolve_flow,

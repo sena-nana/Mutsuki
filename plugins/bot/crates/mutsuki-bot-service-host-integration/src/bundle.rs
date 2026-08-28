@@ -3,16 +3,16 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use mutsuki_bot_delivery::{
-    ActiveDeliveryService, DeliveryPolicyResolver, QqDeliveryFailure, QqDeliveryGateway,
-    QqDeliverySuccess,
+    ActiveDeliveryService, DeliveryFailure, DeliveryGateway, DeliveryPolicyResolver,
+    DeliverySuccess,
 };
 use mutsuki_bot_interaction::{InteractionConditionMatcher, InteractionError, InteractionService};
 use mutsuki_bot_protocol::{
     BOT_EVENT_INGEST_PROTOCOL_ID, BOT_FLOW_BOT_EVENT_TYPE, BOT_FLOW_INGRESS_PROTOCOL_ID,
     BOT_MESSAGE_SEND_PROTOCOL_ID, BotActiveDeliveryRequest, BotDeliveryContent,
     BotDeliveryPartReceipt, BotEvent, BotFlowContext, BotFlowEventEnvelope, BotFlowPayload,
-    BotFlowTypeRef, BotMessage, DeliveryPartStatus, DeliveryPolicy, DeliveryStatus, MessageSegment,
-    QqConversationRef,
+    BotFlowTypeRef, BotMessage, BotTarget, DeliveryPartStatus, DeliveryPolicy, DeliveryStatus,
+    MessageSegment, QqConversationRef,
 };
 use mutsuki_bot_sandbox::{
     SANDBOX_SERVICE_ID, SandboxApi, SandboxError, SandboxRuntime, SandboxService,
@@ -199,11 +199,11 @@ impl QqBotPluginBundle {
                     BotStateDbRepository::open(&state_path).map_err(|error| error.to_string())?,
                 );
                 let gateway = Arc::new(SandboxAwareDeliveryGateway::new(
-                    Arc::new(RuntimeQqDeliveryGateway {
+                    Arc::new(RuntimeDeliveryGateway {
                         runtime: runtime.clone(),
-                        account_id: management_config.account_id.clone(),
                     }),
                     intercept_for_factory.clone(),
+                    management_config.account_id.clone(),
                 ));
                 let delivery = ActiveDeliveryService::new(
                     repository.clone(),
@@ -703,30 +703,19 @@ fn management_audit(record: BotManagementAuditRecord) -> QqManagementAuditEntry 
     }
 }
 
-struct RuntimeQqDeliveryGateway {
+struct RuntimeDeliveryGateway {
     runtime: RuntimeClientRef,
-    account_id: String,
 }
 
-impl QqDeliveryGateway for RuntimeQqDeliveryGateway {
+impl DeliveryGateway for RuntimeDeliveryGateway {
     fn send(
         &self,
-        conversation: &QqConversationRef,
+        target: &BotTarget,
         content: &BotDeliveryContent,
-    ) -> Result<QqDeliverySuccess, QqDeliveryFailure> {
-        if conversation.account_id != self.account_id {
-            return Err(qq_delivery_failure(
-                "qq.account_mismatch",
-                false,
-                Vec::new(),
-            ));
-        }
-        let target = conversation
-            .target()
-            .ok_or_else(|| qq_delivery_failure("qq.conversation.invalid", false, Vec::new()))?;
+    ) -> Result<DeliverySuccess, DeliveryFailure> {
         let message = BotMessage {
             message_id: None,
-            target,
+            target: target.clone(),
             sender: None,
             segments: content.segments.clone(),
             reply_to: content.reply_to.clone(),
@@ -767,7 +756,7 @@ impl QqDeliveryGateway for RuntimeQqDeliveryGateway {
                             error_code: None,
                         })
                         .collect();
-                    return Ok(QqDeliverySuccess {
+                    return Ok(DeliverySuccess {
                         platform_message_ids: message_ids,
                         part_receipts,
                     });
@@ -885,8 +874,8 @@ fn qq_delivery_failure(
     code: &str,
     transient: bool,
     sent_message_ids: Vec<String>,
-) -> QqDeliveryFailure {
-    QqDeliveryFailure {
+) -> DeliveryFailure {
+    DeliveryFailure {
         code: code.into(),
         transient,
         retry_after_ms: None,
@@ -1054,7 +1043,6 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
-    use mutsuki_bot_protocol::{BotConversationKind, QQ_CONVERSATION_REF_VERSION};
     use mutsuki_runtime_contracts::{CancelPolicy, TaskBatch, TaskHandle};
 
     struct CompletedRuntime {
@@ -1106,23 +1094,15 @@ mod tests {
     #[test]
     fn management_delivery_uses_the_real_qq_typed_task_and_platform_receipt() {
         let submitted = Arc::new(Mutex::new(Vec::new()));
-        let gateway = RuntimeQqDeliveryGateway {
+        let gateway = RuntimeDeliveryGateway {
             runtime: Arc::new(CompletedRuntime {
                 submitted: submitted.clone(),
             }),
-            account_id: "main".into(),
         };
         let success = gateway
             .send(
-                &QqConversationRef {
-                    version: QQ_CONVERSATION_REF_VERSION,
-                    account_id: "main".into(),
-                    kind: BotConversationKind::Private,
-                    user_id: Some("user-openid".into()),
-                    group_id: None,
-                    guild_id: None,
-                    channel_id: None,
-                    thread_id: None,
+                &BotTarget::User {
+                    user_id: "user-openid".into(),
                 },
                 &BotDeliveryContent {
                     segments: vec![MessageSegment::text("hello")],

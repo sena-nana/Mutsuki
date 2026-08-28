@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -121,6 +121,20 @@ pub trait SandboxApi: Send + Sync {
 pub trait SandboxHistoryStore: Send + Sync {
     fn load(&self) -> Result<SandboxHistorySnapshot, SandboxError>;
     fn save(&self, snapshot: &SandboxHistorySnapshot) -> Result<(), SandboxError>;
+    /// Loads image/file bytes by content hash. Default stores keep blobs in `save`.
+    fn load_media_blob(&self, media_id: &str) -> Result<Option<SandboxMediaBlob>, SandboxError> {
+        let _ = media_id;
+        Ok(None)
+    }
+
+    /// Loads sticker bytes by content hash. Default stores keep blobs in `save`.
+    fn load_sticker_blob(
+        &self,
+        sticker_id: &str,
+    ) -> Result<Option<SandboxMediaBlob>, SandboxError> {
+        let _ = sticker_id;
+        Ok(None)
+    }
 }
 
 #[derive(Clone)]
@@ -144,6 +158,8 @@ struct Inner {
     media: HashMap<String, SandboxAsset>,
     stickers: HashMap<String, SandboxSticker>,
     faces: HashMap<String, SandboxFace>,
+    persisted_media: HashSet<String>,
+    persisted_stickers: HashSet<String>,
     bot: Option<BotUser>,
 }
 
@@ -197,6 +213,16 @@ impl SandboxService {
         if simulate.conversations.is_empty() {
             seed_simulate(&mut simulate, &account_id);
         }
+        let persisted_media = snapshot
+            .media
+            .iter()
+            .map(|item| item.content_hash.clone())
+            .collect();
+        let persisted_stickers = snapshot
+            .stickers
+            .iter()
+            .map(|item| item.content_hash.clone())
+            .collect();
         let service = Self {
             write_lock: tokio::sync::Mutex::new(()),
             inner: Mutex::new(Inner {
@@ -208,6 +234,8 @@ impl SandboxService {
                 media: by_hash(snapshot.media, |item| item.content_hash.clone()),
                 stickers: by_hash(snapshot.stickers, |item| item.content_hash.clone()),
                 faces: by_hash(snapshot.faces, |item| item.face_key.clone()),
+                persisted_media,
+                persisted_stickers,
                 bot: None,
             }),
             runtime: Mutex::new(None),
@@ -276,7 +304,10 @@ impl SandboxService {
             let inner = self.lock_inner();
             snapshot_from_inner(&inner)
         };
-        history.save(&snapshot)
+        history.save(&snapshot)?;
+        let mut inner = self.lock_inner();
+        mark_blobs_persisted(&mut inner);
+        Ok(())
     }
 
     fn persist_best_effort(&self) {
@@ -1134,6 +1165,11 @@ impl SandboxApi for SandboxService {
                 });
             }
         }
+        if let Some(history) = &self.history
+            && let Some(blob) = history.load_media_blob(media_id)?
+        {
+            return Ok(blob);
+        }
         Err(SandboxError::new(
             "not_found",
             format!("媒体 `{media_id}` 不存在"),
@@ -1229,17 +1265,30 @@ impl SandboxApi for SandboxService {
         if sticker_id.is_empty() {
             return Err(SandboxError::new("invalid_argument", "表情包 ID 无效"));
         }
-        self.lock_inner()
-            .stickers
-            .get(sticker_id)
-            .filter(|item| !item.bytes.is_empty())
-            .map(|item| SandboxMediaBlob {
-                media_id: item.content_hash.clone(),
-                mime: item.mime.clone(),
-                name: item.name.clone(),
-                bytes: item.bytes.clone(),
-            })
-            .ok_or_else(|| SandboxError::new("not_found", format!("表情包 `{sticker_id}` 不存在")))
+        {
+            let inner = self.lock_inner();
+            if let Some(item) = inner
+                .stickers
+                .get(sticker_id)
+                .filter(|item| !item.bytes.is_empty())
+            {
+                return Ok(SandboxMediaBlob {
+                    media_id: item.content_hash.clone(),
+                    mime: item.mime.clone(),
+                    name: item.name.clone(),
+                    bytes: item.bytes.clone(),
+                });
+            }
+        }
+        if let Some(history) = &self.history
+            && let Some(blob) = history.load_sticker_blob(sticker_id)?
+        {
+            return Ok(blob);
+        }
+        Err(SandboxError::new(
+            "not_found",
+            format!("表情包 `{sticker_id}` 不存在"),
+        ))
     }
 }
 
@@ -1259,9 +1308,49 @@ fn snapshot_from_inner(inner: &Inner) -> SandboxHistorySnapshot {
             .values()
             .map(history_conversation)
             .collect(),
-        media: inner.media.values().cloned().collect(),
-        stickers: inner.stickers.values().cloned().collect(),
+        media: inner
+            .media
+            .values()
+            .map(|asset| strip_persisted_media(asset, &inner.persisted_media))
+            .collect(),
+        stickers: inner
+            .stickers
+            .values()
+            .map(|sticker| strip_persisted_sticker(sticker, &inner.persisted_stickers))
+            .collect(),
         faces: inner.faces.values().cloned().collect(),
+    }
+}
+
+fn strip_persisted_media(asset: &SandboxAsset, persisted: &HashSet<String>) -> SandboxAsset {
+    let mut cloned = asset.clone();
+    if persisted.contains(&asset.content_hash) {
+        cloned.bytes.clear();
+    }
+    cloned
+}
+
+fn strip_persisted_sticker(
+    sticker: &SandboxSticker,
+    persisted: &HashSet<String>,
+) -> SandboxSticker {
+    let mut cloned = sticker.clone();
+    if persisted.contains(&sticker.content_hash) {
+        cloned.bytes.clear();
+    }
+    cloned
+}
+
+fn mark_blobs_persisted(inner: &mut Inner) {
+    let media_hashes = inner.media.keys().cloned().collect::<Vec<_>>();
+    inner.persisted_media.extend(media_hashes);
+    for asset in inner.media.values_mut() {
+        asset.bytes.clear();
+    }
+    let sticker_hashes = inner.stickers.keys().cloned().collect::<Vec<_>>();
+    inner.persisted_stickers.extend(sticker_hashes);
+    for sticker in inner.stickers.values_mut() {
+        sticker.bytes.clear();
     }
 }
 

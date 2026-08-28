@@ -4,7 +4,6 @@ use mutsuki_agent_contracts::{
 };
 use mutsuki_agent_service_host_integration::AgentConnectionRegistry;
 use mutsuki_bot_conversation::ConversationService;
-use mutsuki_bot_delivery::{bot_reply_delivery_manifest_for, reply_delivery_runner_for};
 use mutsuki_bot_flow::{
     BOT_FLOW_CONFIG_PROVIDER_ID, BotFlowConfigProvider, BotFlowRegistry, BotNodeCatalog,
 };
@@ -31,6 +30,7 @@ use mutsuki_plugin_bot_command::{
 use mutsuki_plugin_bot_conversation_context::{
     ConversationContextRunner, ConversationContextStore, bot_conversation_context_manifest,
 };
+use mutsuki_plugin_bot_delivery::{bot_reply_delivery_manifest_for, reply_delivery_runner_for};
 use mutsuki_plugin_bot_event_router::{
     BOT_FLOW_REGISTRY_SERVICE_ID, BOT_FLOW_ROUTER_PLUGIN_ID, BotFlowMatchRunner,
     flow_ingress_runner, flow_node_runner,

@@ -13,24 +13,14 @@
 use async_trait::async_trait;
 use mutsuki_agent_contracts::{ScheduleExecutionStatus, ScheduledRunResult};
 use mutsuki_bot_protocol::{
-    BOT_ACTIVE_DELIVERY_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID, BOT_REPLY_DELIVERY_PROTOCOL_ID,
-    BotActiveDeliveryCommand, BotActiveDeliveryRequest, BotDeliveryAttempt, BotDeliveryContent,
-    BotDeliveryPartReceipt, BotDeliveryReceipt, BotFlowTypeRef, BotMessage, BotNodeBinding,
-    BotNodeCatalogFragment, BotNodeDescriptor, BotNodeInvocation, BotNodePortDescriptor,
-    BotNodePortDirection, BotNodeResult, BotNodeRole, BotReplyDeliveryCommand,
-    BotReplyDeliveryPart, BotReplyDeliveryReceipt, BotReplyDeliveryRequest, DeliveryPartStatus,
+    BOT_MESSAGE_SEND_PROTOCOL_ID, BotActiveDeliveryRequest, BotDeliveryAttempt, BotDeliveryContent,
+    BotDeliveryPartReceipt, BotDeliveryReceipt, BotMessage, BotReplyDeliveryPart,
+    BotReplyDeliveryReceipt, BotReplyDeliveryRequest, BotTarget, DeliveryPartStatus,
     DeliveryPolicy, DeliveryStatus, MessageSegment, QqConversationRef,
 };
-use mutsuki_runtime_contracts::{
-    ExecutionClass, InvocationMode, PluginManifest, RunnerBatchCapability, RunnerConcurrency,
-    RunnerControlCapability, RunnerMode, RunnerResult, RunnerSideEffect, ScalarValue, Task,
-    TaskOutcome, TimeoutGranularity,
-};
-use mutsuki_runtime_core::{Runner, RuntimeFailure, RuntimeResult};
-use mutsuki_runtime_sdk::{
-    AsyncRunnerContext, PluginBuilder, ProtocolDescriptorBuilder, RunnerDescriptorBuilder,
-    RuntimeClientRef, TaskAwaitRunnerAdapter,
-};
+use mutsuki_runtime_contracts::{ScalarValue, TaskOutcome};
+use mutsuki_runtime_core::RuntimeFailure;
+use mutsuki_runtime_sdk::AsyncRunnerContext;
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -87,25 +77,15 @@ pub trait ReplyDeliveryRepository: DeliveryRepository {
 
 pub const DELIVERY_SEND_LEASE_MS: u64 = 30_000;
 
-pub trait QqDeliveryGateway: Send + Sync {
-    /// Sends one logical delivery to QQ.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed partial-delivery failure with retry evidence when QQ rejects the send.
+pub trait DeliveryGateway: Send + Sync {
     fn send(
         &self,
-        conversation: &QqConversationRef,
+        target: &BotTarget,
         content: &BotDeliveryContent,
-    ) -> Result<QqDeliverySuccess, QqDeliveryFailure>;
+    ) -> Result<DeliverySuccess, DeliveryFailure>;
 }
 
 pub trait DeliveryPolicyResolver: Send + Sync {
-    /// Resolves whether active delivery is allowed for the conversation.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the policy owner cannot resolve the conversation.
     fn active_delivery_allowed(
         &self,
         conversation: &QqConversationRef,
@@ -187,7 +167,7 @@ impl DeliveryAttemptService {
         mut receipt: BotDeliveryReceipt,
         attempt_number: u32,
         now_unix_ms: u64,
-        failure: QqDeliveryFailure,
+        failure: DeliveryFailure,
     ) -> Result<BotDeliveryReceipt, DeliveryError> {
         if failure.transient && attempt_number < request.policy.max_attempts.max(1) {
             let exponential = request
@@ -308,14 +288,14 @@ impl DeliveryAttemptService {
 #[derive(Clone)]
 pub struct ActiveDeliveryService {
     attempts: DeliveryAttemptService,
-    gateway: Arc<dyn QqDeliveryGateway>,
+    gateway: Arc<dyn DeliveryGateway>,
     policy: Arc<dyn DeliveryPolicyResolver>,
 }
 
 impl ActiveDeliveryService {
     pub fn new(
         repository: Arc<dyn DeliveryRepository>,
-        gateway: Arc<dyn QqDeliveryGateway>,
+        gateway: Arc<dyn DeliveryGateway>,
         policy: Arc<dyn DeliveryPolicyResolver>,
     ) -> Self {
         Self {
@@ -483,7 +463,11 @@ impl ActiveDeliveryService {
             AttemptStart::Finished(receipt) => return Ok(receipt),
             AttemptStart::Sending(receipt) => receipt,
         };
-        match self.gateway.send(&request.conversation, &request.content) {
+        let target = request
+            .conversation
+            .target()
+            .ok_or(DeliveryError::InvalidRequest)?;
+        match self.gateway.send(&target, &request.content) {
             Ok(success) => {
                 self.attempts
                     .succeed(
@@ -505,20 +489,26 @@ impl ActiveDeliveryService {
 }
 
 #[derive(Clone)]
-struct ReplyDeliveryService {
+pub struct ReplyDeliveryService {
     attempts: DeliveryAttemptService,
     repository: Arc<dyn ReplyDeliveryRepository>,
 }
 
 impl ReplyDeliveryService {
-    fn new(repository: Arc<dyn ReplyDeliveryRepository>) -> Self {
+    #[must_use]
+    pub fn new(repository: Arc<dyn ReplyDeliveryRepository>) -> Self {
         Self {
             attempts: DeliveryAttemptService::new(repository.clone()),
             repository,
         }
     }
 
-    async fn reserve(
+    /// Reserves a reply bundle without sending.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the request is invalid or persistence fails.
+    pub async fn reserve(
         &self,
         request: &BotReplyDeliveryRequest,
     ) -> Result<BotReplyDeliveryReceipt, DeliveryError> {
@@ -529,7 +519,12 @@ impl ReplyDeliveryService {
         self.receipt_for(request).await
     }
 
-    async fn submit(
+    /// Submits a reply bundle and sends due parts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when reservation, send, or persistence fails.
+    pub async fn submit(
         &self,
         ctx: &AsyncRunnerContext,
         request: &BotReplyDeliveryRequest,
@@ -564,11 +559,21 @@ impl ReplyDeliveryService {
         self.receipt_for(&request).await
     }
 
-    async fn inspect(&self, reply_id: &str) -> Result<BotReplyDeliveryReceipt, DeliveryError> {
+    /// Inspects a persisted reply bundle.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the reply is missing or persistence fails.
+    pub async fn inspect(&self, reply_id: &str) -> Result<BotReplyDeliveryReceipt, DeliveryError> {
         self.repository.reply_receipt(reply_id).await
     }
 
-    async fn resume_due(
+    /// Claims and sends the next due reply part.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when claim or send fails.
+    pub async fn resume_due(
         &self,
         ctx: &AsyncRunnerContext,
         now_unix_ms: u64,
@@ -589,7 +594,12 @@ impl ReplyDeliveryService {
             .map(Some)
     }
 
-    async fn retry_part(
+    /// Retries one reply part.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the part is missing, not retryable, or send fails.
+    pub async fn retry_part(
         &self,
         ctx: &AsyncRunnerContext,
         delivery_id: &str,
@@ -617,7 +627,15 @@ impl ReplyDeliveryService {
         .await
     }
 
-    async fn cancel_part(&self, delivery_id: &str) -> Result<BotDeliveryReceipt, DeliveryError> {
+    /// Cancels one reply part.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the part is missing or not cancellable.
+    pub async fn cancel_part(
+        &self,
+        delivery_id: &str,
+    ) -> Result<BotDeliveryReceipt, DeliveryError> {
         if !self.repository.is_reply_part(delivery_id).await? {
             return Err(DeliveryError::NotFound);
         }
@@ -819,8 +837,8 @@ fn runtime_send_failure(
     code: String,
     transient: bool,
     retry_after_ms: Option<u64>,
-) -> QqDeliveryFailure {
-    QqDeliveryFailure {
+) -> DeliveryFailure {
+    DeliveryFailure {
         part_receipts: failed_part(&code),
         code,
         transient,
@@ -849,6 +867,37 @@ pub fn reply_part_request(
         dry_run: false,
         source_execution_id: Some(reply.source_turn_id.clone()),
     }
+}
+
+fn validate_request(request: &BotActiveDeliveryRequest) -> Result<(), DeliveryError> {
+    if request.delivery_id.trim().is_empty()
+        || request.idempotency_key.trim().is_empty()
+        || request.content.segments.is_empty()
+        || request.conversation.target().is_none()
+        || request.policy.max_attempts == 0
+        || request.policy.initial_backoff_ms == 0
+        || request.policy.max_backoff_ms < request.policy.initial_backoff_ms
+    {
+        return Err(DeliveryError::InvalidRequest);
+    }
+    for segment in &request.content.segments {
+        let resource = match segment {
+            MessageSegment::Image { resource }
+            | MessageSegment::Audio { resource }
+            | MessageSegment::Video { resource }
+            | MessageSegment::File { resource, .. } => Some(resource),
+            _ => None,
+        };
+        if resource.is_some_and(|resource| {
+            resource.provider_id.trim().is_empty()
+                || resource.schema.trim().is_empty()
+                || resource.size_hint.is_none()
+                || resource.content_hash.as_deref().is_none_or(str::is_empty)
+        }) {
+            return Err(DeliveryError::InvalidRequest);
+        }
+    }
+    Ok(())
 }
 
 fn validate_reply_request(request: &BotReplyDeliveryRequest) -> Result<(), DeliveryError> {
@@ -895,8 +944,6 @@ fn platform_message_ids(value: &serde_json::Value) -> Vec<String> {
 
 pub const SCHEDULE_TARGET_KIND_BOT_CONVERSATION_BINDING: &str = "mutsuki.bot.conversation_binding";
 pub const BOT_SCHEDULED_DELIVERY_PROTOCOL_ID: &str = "mutsuki.bot.delivery/scheduled-result@1";
-pub const BOT_SCHEDULED_DELIVERY_PLUGIN_ID: &str = "mutsuki.plugin.bot.delivery.scheduled";
-pub const BOT_SCHEDULED_DELIVERY_RUNNER_ID: &str = "mutsuki.bot.delivery.scheduled.runner";
 
 pub trait ScheduledDeliveryTargetResolver: Send + Sync {
     /// Resolves an owner-persisted opaque target binding.
@@ -999,475 +1046,6 @@ impl ScheduledAgentDeliveryBridge {
     }
 }
 
-#[must_use]
-pub fn bot_scheduled_delivery_manifest() -> PluginManifest {
-    PluginBuilder::new(BOT_SCHEDULED_DELIVERY_PLUGIN_ID)
-        .runner_descriptor(scheduled_delivery_descriptor())
-        .protocol_handler(
-            delivery_protocol_descriptor(
-                BOT_SCHEDULED_DELIVERY_PROTOCOL_ID,
-                &["execution_id", "summary"],
-                &["delivery_id", "status"],
-            ),
-            BOT_SCHEDULED_DELIVERY_RUNNER_ID,
-            "bot-scheduled-delivery",
-        )
-        .extension(
-            scheduled_delivery_node_catalog()
-                .into_plugin_extension()
-                .expect("scheduled delivery node catalog serializes"),
-        )
-        .build()
-        .manifest
-}
-
-#[must_use]
-pub fn scheduled_delivery_runner(
-    client: RuntimeClientRef,
-    bridge: ScheduledAgentDeliveryBridge,
-) -> Box<dyn Runner> {
-    let factory = Box::new(move |_ctx, task: Task| {
-        let bridge = bridge.clone();
-        Box::pin(async move { scheduled_delivery_result(&bridge, &task).await })
-            as std::pin::Pin<
-                Box<dyn std::future::Future<Output = RuntimeResult<RunnerResult>> + Send>,
-            >
-    });
-    Box::new(
-        TaskAwaitRunnerAdapter::new(scheduled_delivery_descriptor(), client, factory)
-            .with_self_call_policy(false),
-    )
-}
-
-async fn scheduled_delivery_result(
-    bridge: &ScheduledAgentDeliveryBridge,
-    task: &Task,
-) -> RuntimeResult<RunnerResult> {
-    let payload = task.payload.to_value();
-    let request: ScheduledDeliveryRequest =
-        if let Ok(invocation) = serde_json::from_value::<BotNodeInvocation>(payload.clone()) {
-            serde_json::from_value(invocation.input.payload.value)
-                .map_err(|error| runtime_error(task, error))?
-        } else {
-            serde_json::from_value(payload).map_err(|error| runtime_error(task, error))?
-        };
-    let receipt = bridge
-        .deliver(request.result, request.now_unix_ms)
-        .await
-        .map_err(|error| runtime_error(task, error))?;
-    let mut completed = RunnerResult::completed(task.task_id.clone());
-    completed.output =
-        Some(serde_json::to_value(receipt).map_err(|error| runtime_error(task, error))?);
-    Ok(completed)
-}
-
-fn scheduled_delivery_descriptor() -> mutsuki_runtime_contracts::RunnerDescriptor {
-    RunnerDescriptorBuilder::new(
-        BOT_SCHEDULED_DELIVERY_RUNNER_ID,
-        BOT_SCHEDULED_DELIVERY_PLUGIN_ID,
-    )
-    .accepted_protocol(BOT_SCHEDULED_DELIVERY_PROTOCOL_ID)
-    .execution_class(ExecutionClass::Blocking)
-    .build()
-}
-
-fn scheduled_delivery_node_catalog() -> BotNodeCatalogFragment {
-    BotNodeCatalogFragment {
-        nodes: vec![BotNodeDescriptor {
-            node_type_id: "mutsuki.bot.delivery.scheduled".into(),
-            version: 1,
-            title: "定时投递".into(),
-            category: "投递".into(),
-            role: BotNodeRole::Sink,
-            binding: Some(BotNodeBinding {
-                binding_id: format!("binding:{BOT_SCHEDULED_DELIVERY_PROTOCOL_ID}"),
-                protocol_id: BOT_SCHEDULED_DELIVERY_PROTOCOL_ID.into(),
-                runner_hint: Some(BOT_SCHEDULED_DELIVERY_RUNNER_ID.into()),
-            }),
-            ports: vec![BotNodePortDescriptor {
-                port_id: "result".into(),
-                title: "定时结果".into(),
-                direction: BotNodePortDirection::Input,
-                event_type: BotFlowTypeRef::new("mutsuki.bot.delivery.scheduled", 1),
-                required: true,
-            }],
-            config_schema: serde_json::json!({"type": "object", "additionalProperties": false}),
-        }],
-    }
-}
-
-fn validate_request(request: &BotActiveDeliveryRequest) -> Result<(), DeliveryError> {
-    if request.delivery_id.trim().is_empty()
-        || request.idempotency_key.trim().is_empty()
-        || request.content.segments.is_empty()
-        || request.conversation.target().is_none()
-        || request.policy.max_attempts == 0
-        || request.policy.initial_backoff_ms == 0
-        || request.policy.max_backoff_ms < request.policy.initial_backoff_ms
-    {
-        return Err(DeliveryError::InvalidRequest);
-    }
-    for segment in &request.content.segments {
-        let resource = match segment {
-            MessageSegment::Image { resource }
-            | MessageSegment::Audio { resource }
-            | MessageSegment::Video { resource }
-            | MessageSegment::File { resource, .. } => Some(resource),
-            _ => None,
-        };
-        if resource.is_some_and(|resource| {
-            resource.provider_id.trim().is_empty()
-                || resource.schema.trim().is_empty()
-                || resource.size_hint.is_none()
-                || resource.content_hash.as_deref().is_none_or(str::is_empty)
-        }) {
-            return Err(DeliveryError::InvalidRequest);
-        }
-    }
-    Ok(())
-}
-
-pub const BOT_DELIVERY_PLUGIN_ID: &str = "mutsuki.plugin.bot.delivery";
-pub const BOT_DELIVERY_RUNNER_ID: &str = "mutsuki.bot.delivery.runner";
-pub const BOT_REPLY_DELIVERY_PLUGIN_ID: &str = "mutsuki.plugin.bot.delivery.reply";
-pub const BOT_REPLY_DELIVERY_RUNNER_ID: &str = "mutsuki.bot.delivery.reply.runner";
-
-#[must_use]
-pub fn bot_delivery_manifest() -> PluginManifest {
-    PluginBuilder::new(BOT_DELIVERY_PLUGIN_ID)
-        .runner_descriptor(delivery_descriptor())
-        .protocol_handler(
-            delivery_protocol_descriptor(
-                BOT_ACTIVE_DELIVERY_PROTOCOL_ID,
-                &["action"],
-                &["delivery_id", "status"],
-            ),
-            BOT_DELIVERY_RUNNER_ID,
-            "bot-delivery",
-        )
-        .build()
-        .manifest
-}
-
-#[must_use]
-pub fn delivery_runner(
-    client: RuntimeClientRef,
-    service: ActiveDeliveryService,
-) -> Box<dyn Runner> {
-    let factory = Box::new(move |_ctx, task: Task| {
-        let service = service.clone();
-        Box::pin(async move { delivery_result(&service, &task).await })
-            as std::pin::Pin<
-                Box<dyn std::future::Future<Output = RuntimeResult<RunnerResult>> + Send>,
-            >
-    });
-    Box::new(
-        TaskAwaitRunnerAdapter::new(delivery_descriptor(), client, factory)
-            .with_self_call_policy(false),
-    )
-}
-
-fn delivery_descriptor() -> mutsuki_runtime_contracts::RunnerDescriptor {
-    RunnerDescriptorBuilder::new(BOT_DELIVERY_RUNNER_ID, BOT_DELIVERY_PLUGIN_ID)
-        .accepted_protocol(BOT_ACTIVE_DELIVERY_PROTOCOL_ID)
-        .execution_class(ExecutionClass::Blocking)
-        .build()
-}
-
-#[must_use]
-pub fn bot_reply_delivery_manifest() -> PluginManifest {
-    bot_reply_delivery_manifest_for(BOT_REPLY_DELIVERY_PLUGIN_ID, BOT_REPLY_DELIVERY_RUNNER_ID)
-}
-
-#[must_use]
-pub fn bot_reply_delivery_manifest_for(plugin_id: &str, runner_id: &str) -> PluginManifest {
-    PluginBuilder::new(plugin_id)
-        .runner_descriptor(reply_delivery_descriptor(plugin_id, runner_id))
-        .protocol_handler(
-            delivery_protocol_descriptor(
-                BOT_REPLY_DELIVERY_PROTOCOL_ID,
-                &["action"],
-                &["reply_id", "part_receipts"],
-            ),
-            runner_id,
-            "bot-reply-delivery",
-        )
-        .extension(
-            BotNodeCatalogFragment {
-                nodes: vec![BotNodeDescriptor {
-                    node_type_id: "mutsuki.bot.delivery.reply".into(),
-                    version: 1,
-                    title: "可靠回复投递".into(),
-                    category: "投递".into(),
-                    role: BotNodeRole::Sink,
-                    binding: Some(BotNodeBinding {
-                        binding_id: format!("binding:{BOT_REPLY_DELIVERY_PROTOCOL_ID}"),
-                        protocol_id: BOT_REPLY_DELIVERY_PROTOCOL_ID.into(),
-                        runner_hint: Some(runner_id.into()),
-                    }),
-                    ports: vec![BotNodePortDescriptor {
-                        port_id: "reply".into(),
-                        title: "回复".into(),
-                        direction: BotNodePortDirection::Input,
-                        event_type: BotFlowTypeRef::new("mutsuki.bot.delivery.reply", 1),
-                        required: true,
-                    }],
-                    config_schema: serde_json::json!({"type": "object", "additionalProperties": false}),
-                }],
-            }
-            .into_plugin_extension()
-            .expect("delivery node catalog serializes"),
-        )
-        .build()
-        .manifest
-}
-
-fn delivery_protocol_descriptor(
-    protocol_id: &str,
-    request_required: &[&str],
-    response_required: &[&str],
-) -> mutsuki_runtime_contracts::ProtocolDescriptor {
-    ProtocolDescriptorBuilder::new(protocol_id)
-        .input_schema(serde_json::json!({
-            "type": "object",
-            "required": request_required
-        }))
-        .output_schema(serde_json::json!({
-            "type": "object",
-            "required": response_required
-        }))
-        .error_schema(serde_json::json!({
-            "type": "object",
-            "required": ["code", "source", "route"]
-        }))
-        .build()
-}
-
-#[must_use]
-pub fn reply_delivery_runner(
-    client: RuntimeClientRef,
-    repository: Arc<dyn ReplyDeliveryRepository>,
-) -> Box<dyn Runner> {
-    reply_delivery_runner_for(
-        client,
-        repository,
-        BOT_REPLY_DELIVERY_PLUGIN_ID,
-        BOT_REPLY_DELIVERY_RUNNER_ID,
-    )
-}
-
-#[must_use]
-pub fn reply_delivery_runner_for(
-    client: RuntimeClientRef,
-    repository: Arc<dyn ReplyDeliveryRepository>,
-    plugin_id: &str,
-    runner_id: &str,
-) -> Box<dyn Runner> {
-    let service = ReplyDeliveryService::new(repository);
-    let descriptor = reply_delivery_descriptor(plugin_id, runner_id);
-    let factory = Box::new(move |ctx, task: Task| {
-        let service = service.clone();
-        Box::pin(async move { reply_delivery_result(&service, &ctx, &task).await })
-            as std::pin::Pin<
-                Box<dyn std::future::Future<Output = RuntimeResult<RunnerResult>> + Send>,
-            >
-    });
-    Box::new(TaskAwaitRunnerAdapter::new(descriptor, client, factory).with_self_call_policy(false))
-}
-
-fn reply_delivery_descriptor(
-    plugin_id: &str,
-    runner_id: &str,
-) -> mutsuki_runtime_contracts::RunnerDescriptor {
-    RunnerDescriptorBuilder::new(runner_id, plugin_id)
-        .accepted_protocol(BOT_REPLY_DELIVERY_PROTOCOL_ID)
-        .requires_protocol(BOT_MESSAGE_SEND_PROTOCOL_ID)
-        .execution_class(ExecutionClass::Orchestration)
-        .invocation_mode(InvocationMode::AsyncReentrant)
-        .concurrency(RunnerConcurrency::Reentrant {
-            max_inflight_batches: 128,
-            max_inflight_entries: 128,
-        })
-        .batch_capability(RunnerBatchCapability {
-            mode: RunnerMode::NativeBatch,
-            preferred_batch_size: 1,
-            max_batch_entries: 1,
-            max_entry_concurrency: 1,
-            max_inflight_batches: 128,
-            side_effect: RunnerSideEffect::External,
-            ..RunnerBatchCapability::default()
-        })
-        .control_capability(RunnerControlCapability {
-            entry_cancel: true,
-            batch_cancel: true,
-            timeout_granularity: TimeoutGranularity::Entry,
-        })
-        .build()
-}
-
-async fn delivery_result(
-    service: &ActiveDeliveryService,
-    task: &Task,
-) -> RuntimeResult<RunnerResult> {
-    let command: BotActiveDeliveryCommand = serde_json::from_value(task.payload.to_value())
-        .map_err(|error| runtime_error(task, error))?;
-    let output = match command {
-        BotActiveDeliveryCommand::Submit {
-            request,
-            now_unix_ms,
-        } => serde_json::to_value(
-            service
-                .submit(&request, now_unix_ms)
-                .await
-                .map_err(|error| runtime_error(task, error))?,
-        ),
-        BotActiveDeliveryCommand::ResumeDue { now_unix_ms } => serde_json::to_value(
-            service
-                .resume_due(now_unix_ms)
-                .await
-                .map_err(|error| runtime_error(task, error))?,
-        ),
-        BotActiveDeliveryCommand::Inspect { delivery_id } => serde_json::to_value(
-            service
-                .inspect(&delivery_id)
-                .await
-                .map_err(|error| runtime_error(task, error))?,
-        ),
-        BotActiveDeliveryCommand::Preview { delivery_id } => serde_json::to_value(
-            service
-                .preview(&delivery_id)
-                .await
-                .map_err(|error| runtime_error(task, error))?,
-        ),
-        BotActiveDeliveryCommand::Retry {
-            delivery_id,
-            now_unix_ms,
-        } => serde_json::to_value(
-            service
-                .retry(&delivery_id, now_unix_ms)
-                .await
-                .map_err(|error| runtime_error(task, error))?,
-        ),
-        BotActiveDeliveryCommand::Cancel { delivery_id } => serde_json::to_value(
-            service
-                .cancel(&delivery_id)
-                .await
-                .map_err(|error| runtime_error(task, error))?,
-        ),
-    }
-    .map_err(|error| runtime_error(task, error))?;
-    let mut result = RunnerResult::completed(task.task_id.clone());
-    result.output = Some(output);
-    Ok(result)
-}
-
-async fn reply_delivery_result(
-    service: &ReplyDeliveryService,
-    ctx: &AsyncRunnerContext,
-    task: &Task,
-) -> RuntimeResult<RunnerResult> {
-    let (command, node_invocation) =
-        match serde_json::from_value::<BotNodeInvocation>(task.payload.to_value()) {
-            Ok(invocation) => {
-                let request = serde_json::from_value::<BotReplyDeliveryRequest>(
-                    invocation.input.payload.value.clone(),
-                )
-                .map_err(|error| runtime_error(task, error))?;
-                (
-                    BotReplyDeliveryCommand::Submit {
-                        request: Box::new(request),
-                        now_unix_ms: unix_ms(),
-                    },
-                    true,
-                )
-            }
-            Err(_) => (
-                serde_json::from_value(task.payload.to_value())
-                    .map_err(|error| runtime_error(task, error))?,
-                false,
-            ),
-        };
-    let output = match command {
-        BotReplyDeliveryCommand::Reserve { request } => serde_json::to_value(
-            service
-                .reserve(&request)
-                .await
-                .map_err(|error| runtime_delivery_error(task, error))?,
-        ),
-        BotReplyDeliveryCommand::Submit {
-            request,
-            now_unix_ms,
-        } => serde_json::to_value(
-            service
-                .submit(ctx, &request, now_unix_ms)
-                .await
-                .map_err(|error| runtime_delivery_error(task, error))?,
-        ),
-        BotReplyDeliveryCommand::ResumeDue { now_unix_ms } => serde_json::to_value(
-            service
-                .resume_due(ctx, now_unix_ms)
-                .await
-                .map_err(|error| runtime_delivery_error(task, error))?,
-        ),
-        BotReplyDeliveryCommand::Inspect { reply_id } => serde_json::to_value(
-            service
-                .inspect(&reply_id)
-                .await
-                .map_err(|error| runtime_delivery_error(task, error))?,
-        ),
-        BotReplyDeliveryCommand::RetryPart {
-            delivery_id,
-            now_unix_ms,
-        } => serde_json::to_value(
-            service
-                .retry_part(ctx, &delivery_id, now_unix_ms)
-                .await
-                .map_err(|error| runtime_delivery_error(task, error))?,
-        ),
-        BotReplyDeliveryCommand::CancelPart { delivery_id } => serde_json::to_value(
-            service
-                .cancel_part(&delivery_id)
-                .await
-                .map_err(|error| runtime_delivery_error(task, error))?,
-        ),
-    }
-    .map_err(|error| runtime_error(task, error))?;
-    let mut result = RunnerResult::completed(task.task_id.clone());
-    result.output = Some(if node_invocation {
-        serde_json::to_value(BotNodeResult {
-            outputs: Vec::new(),
-            metadata: std::collections::BTreeMap::from([("receipt".into(), output)]),
-        })
-        .map_err(|error| runtime_error(task, error))?
-    } else {
-        output
-    });
-    Ok(result)
-}
-
-fn unix_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
-        .unwrap_or(0)
-}
-
-fn runtime_error(task: &Task, error: impl std::fmt::Display) -> RuntimeFailure {
-    RuntimeFailure::new(mutsuki_runtime_contracts::RuntimeError::new(
-        mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
-        BOT_DELIVERY_PLUGIN_ID,
-        format!("{}.{}", task.task_id, error),
-    ))
-}
-
-fn runtime_delivery_error(task: &Task, error: DeliveryError) -> RuntimeFailure {
-    RuntimeFailure::new(mutsuki_runtime_contracts::RuntimeError::new(
-        error.code(),
-        BOT_REPLY_DELIVERY_PLUGIN_ID,
-        format!("{}.{}", task.task_id, error),
-    ))
-}
-
 fn receipt(
     request: &BotActiveDeliveryRequest,
     status: DeliveryStatus,
@@ -1492,7 +1070,7 @@ fn receipt(
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct QqDeliveryFailure {
+pub struct DeliveryFailure {
     pub code: String,
     pub transient: bool,
     pub retry_after_ms: Option<u64>,
@@ -1501,7 +1079,7 @@ pub struct QqDeliveryFailure {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct QqDeliverySuccess {
+pub struct DeliverySuccess {
     pub platform_message_ids: Vec<String>,
     pub part_receipts: Vec<BotDeliveryPartReceipt>,
 }
@@ -1528,7 +1106,7 @@ pub enum DeliveryError {
 
 impl DeliveryError {
     #[must_use]
-    fn code(&self) -> &'static str {
+    pub fn code(&self) -> &'static str {
         match self {
             Self::InvalidRequest => "delivery.invalid_request",
             Self::PolicyDenied => "delivery.policy_denied",
@@ -1774,7 +1352,7 @@ mod tests {
     }
 
     struct Gateway {
-        results: Mutex<VecDeque<Result<QqDeliverySuccess, QqDeliveryFailure>>>,
+        results: Mutex<VecDeque<Result<DeliverySuccess, DeliveryFailure>>>,
         calls: Mutex<u32>,
     }
 
@@ -1789,12 +1367,12 @@ mod tests {
         }
     }
 
-    impl QqDeliveryGateway for Gateway {
+    impl DeliveryGateway for Gateway {
         fn send(
             &self,
-            _conversation: &QqConversationRef,
+            _target: &BotTarget,
             _content: &BotDeliveryContent,
-        ) -> Result<QqDeliverySuccess, QqDeliveryFailure> {
+        ) -> Result<DeliverySuccess, DeliveryFailure> {
             *self.calls.lock().unwrap() += 1;
             self.results.lock().unwrap().pop_front().unwrap()
         }
@@ -1806,11 +1384,11 @@ mod tests {
             let repository = Arc::new(Repository::default());
             let gateway = Arc::new(Gateway {
                 results: Mutex::new(VecDeque::from([
-                    Ok(QqDeliverySuccess {
+                    Ok(DeliverySuccess {
                         platform_message_ids: vec!["recovered".into()],
                         part_receipts: Vec::new(),
                     }),
-                    Ok(QqDeliverySuccess {
+                    Ok(DeliverySuccess {
                         platform_message_ids: vec!["reconciled".into()],
                         part_receipts: Vec::new(),
                     }),
@@ -1876,14 +1454,14 @@ mod tests {
             let repository = Arc::new(Repository::default());
             let gateway = Arc::new(Gateway {
                 results: Mutex::new(VecDeque::from([
-                    Err(QqDeliveryFailure {
+                    Err(DeliveryFailure {
                         code: "qq.rate_limited".into(),
                         transient: true,
                         retry_after_ms: Some(50),
                         sent_message_ids: Vec::new(),
                         part_receipts: Vec::new(),
                     }),
-                    Ok(QqDeliverySuccess {
+                    Ok(DeliverySuccess {
                         platform_message_ids: vec!["message".into()],
                         part_receipts: vec![BotDeliveryPartReceipt {
                             part_index: 0,
@@ -1941,21 +1519,21 @@ mod tests {
             let repository = Arc::new(Repository::default());
             let gateway = Arc::new(Gateway {
                 results: Mutex::new(VecDeque::from([
-                    Err(QqDeliveryFailure {
+                    Err(DeliveryFailure {
                         code: "qq.rate_limited".into(),
                         transient: true,
                         retry_after_ms: Some(50),
                         sent_message_ids: Vec::new(),
                         part_receipts: Vec::new(),
                     }),
-                    Err(QqDeliveryFailure {
+                    Err(DeliveryFailure {
                         code: "qq.rejected".into(),
                         transient: false,
                         retry_after_ms: None,
                         sent_message_ids: Vec::new(),
                         part_receipts: Vec::new(),
                     }),
-                    Ok(QqDeliverySuccess {
+                    Ok(DeliverySuccess {
                         platform_message_ids: vec!["manual-retry".into()],
                         part_receipts: Vec::new(),
                     }),
@@ -2022,7 +1600,7 @@ mod tests {
         futures::executor::block_on(async {
             let repository = Arc::new(Repository::default());
             let gateway = Arc::new(Gateway {
-                results: Mutex::new(VecDeque::from([Ok(QqDeliverySuccess {
+                results: Mutex::new(VecDeque::from([Ok(DeliverySuccess {
                     platform_message_ids: vec!["scheduled-message".into()],
                     part_receipts: Vec::new(),
                 })])),

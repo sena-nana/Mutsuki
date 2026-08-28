@@ -14,15 +14,13 @@ use mutsuki_agent_contracts::{
     AgentSessionCreateRequest, AgentWireError, MediaService, ResourceCellRef, SessionVersion,
 };
 use mutsuki_bot_delivery::{
-    DeliveryError, DeliveryPolicyResolver, QqDeliveryFailure, QqDeliveryGateway, QqDeliverySuccess,
-    ReplyDeliveryRepository, bot_reply_delivery_manifest,
+    DeliveryError, DeliveryFailure, DeliveryGateway, DeliveryPolicyResolver, DeliverySuccess,
+    ReplyDeliveryRepository,
 };
 use mutsuki_bot_flow::{
     BOT_FLOW_CONFIG_PROVIDER_ID, BotFlowConfigProvider, BotFlowRegistry, BotNodeCatalog,
 };
-use mutsuki_bot_interaction::{
-    InteractionConditionMatcher, InteractionError, bot_interaction_manifest,
-};
+use mutsuki_bot_interaction::{InteractionConditionMatcher, InteractionError};
 use mutsuki_bot_protocol::{
     AgentSessionScope, BOT_AGENT_SUBMIT_PROTOCOL_ID, BOT_EVENT_INGEST_PROTOCOL_ID,
     BOT_FLOW_BOT_EVENT_TYPE, BOT_FLOW_INGRESS_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID,
@@ -46,10 +44,14 @@ use mutsuki_plugin_bot_agent::{
 use mutsuki_plugin_bot_conversation_context::{
     MemoryConversationContextStore, bot_conversation_context_manifest,
 };
+use mutsuki_plugin_bot_delivery::{
+    BOT_DELIVERY_PLUGIN_ID, BOT_REPLY_DELIVERY_PLUGIN_ID, bot_reply_delivery_manifest,
+};
 use mutsuki_plugin_bot_event_router::{
     BOT_FLOW_REGISTRY_SERVICE_ID, BOT_FLOW_ROUTER_PLUGIN_ID, BotFlowMatchRunner,
     flow_ingress_runner, flow_node_runner, flow_router_manifest,
 };
+use mutsuki_plugin_bot_interaction::{BOT_INTERACTION_PLUGIN_ID, bot_interaction_manifest};
 use mutsuki_plugin_bot_persona::bot_persona_manifest;
 use mutsuki_plugin_bot_reply::bot_reply_manifest;
 use mutsuki_plugin_config_sqlite::SqliteConfigRepository;
@@ -602,9 +604,9 @@ async fn start_runtime_with_flow(
         mutsuki_plugin_bot_media::BOT_MEDIA_BRIDGE_PLUGIN_ID,
         mutsuki_plugin_bot_persona::BOT_PERSONA_PLUGIN_ID,
         mutsuki_plugin_bot_reply::BOT_REPLY_PLUGIN_ID,
-        mutsuki_bot_delivery::BOT_DELIVERY_PLUGIN_ID,
-        mutsuki_bot_delivery::BOT_REPLY_DELIVERY_PLUGIN_ID,
-        mutsuki_bot_interaction::BOT_INTERACTION_PLUGIN_ID,
+        BOT_DELIVERY_PLUGIN_ID,
+        BOT_REPLY_DELIVERY_PLUGIN_ID,
+        BOT_INTERACTION_PLUGIN_ID,
         TEST_SEND_PLUGIN_ID,
         TEST_MEDIA_PLUGIN_ID,
         TEST_FORWARD_FOLD_PLUGIN_ID,
@@ -1535,13 +1537,13 @@ impl MediaService for TestMedia {
 
 struct TestDeliveryGateway;
 
-impl QqDeliveryGateway for TestDeliveryGateway {
+impl DeliveryGateway for TestDeliveryGateway {
     fn send(
         &self,
-        _conversation: &QqConversationRef,
+        _target: &BotTarget,
         _content: &BotDeliveryContent,
-    ) -> Result<QqDeliverySuccess, QqDeliveryFailure> {
-        Ok(QqDeliverySuccess {
+    ) -> Result<DeliverySuccess, DeliveryFailure> {
+        Ok(DeliverySuccess {
             platform_message_ids: vec!["qq-message".into()],
             part_receipts: Vec::new(),
         })

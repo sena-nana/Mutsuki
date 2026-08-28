@@ -6,6 +6,8 @@ description: Change generic mutsuki.bot protocol DTOs, protocol identifiers, mes
 # Bot Protocol And SDK
 
 - Keep `mutsuki.bot.*` platform-neutral and serializable; platform extensions stay namespaced and optional.
+- Envelope IDs (`event/ingest`, `command/handle`) are not runner protocols. Do not reintroduce
+  `EventHandlerSpec` or a permission/session plugin without a concrete behavior path.
 - Put wire DTOs in the protocol crate and authoring ergonomics in the SDK crate.
 - Submit operations through RuntimeClient/TaskSubmitter and return `TaskHandle` semantics.
 - Preserve trace, correlation, target binding, cancel policy and registry generation.

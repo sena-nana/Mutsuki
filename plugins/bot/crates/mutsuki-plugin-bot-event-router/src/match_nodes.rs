@@ -18,14 +18,11 @@ use serde_json::{Value, json};
 use crate::BOT_FLOW_ROUTER_PLUGIN_ID;
 
 pub const BOT_FLOW_MATCH_RUNNER_ID: &str = "mutsuki.bot.router.flow.match";
-pub const BOT_FLOW_CONVERSATION_PROTOCOL_ID: &str = "mutsuki.bot.flow.match/conversation@1";
-pub const BOT_FLOW_USER_PROTOCOL_ID: &str = "mutsuki.bot.flow.match/user@1";
-pub const BOT_FLOW_ROLE_PROTOCOL_ID: &str = "mutsuki.bot.flow.match/role@1";
-pub const BOT_FLOW_PREFIX_PROTOCOL_ID: &str = "mutsuki.bot.flow.match/prefix@1";
-pub const BOT_FLOW_KEYWORD_PROTOCOL_ID: &str = "mutsuki.bot.flow.match/keyword@1";
-pub const BOT_FLOW_MENTION_PROTOCOL_ID: &str = "mutsuki.bot.flow.match/mention@1";
-pub const BOT_FLOW_RATE_LIMIT_PROTOCOL_ID: &str = "mutsuki.bot.flow.match/rate-limit@1";
-pub const BOT_FLOW_QQ_EVENT_PROTOCOL_ID: &str = "mutsuki.bot.flow.match/qq-event@1";
+pub use mutsuki_bot_protocol::{
+    BOT_FLOW_CONVERSATION_PROTOCOL_ID, BOT_FLOW_KEYWORD_PROTOCOL_ID, BOT_FLOW_MENTION_PROTOCOL_ID,
+    BOT_FLOW_PREFIX_PROTOCOL_ID, BOT_FLOW_QQ_EVENT_PROTOCOL_ID, BOT_FLOW_RATE_LIMIT_PROTOCOL_ID,
+    BOT_FLOW_ROLE_PROTOCOL_ID, BOT_FLOW_USER_PROTOCOL_ID,
+};
 
 pub const MATCH_PROTOCOL_IDS: &[&str] = &[
     BOT_FLOW_CONVERSATION_PROTOCOL_ID,

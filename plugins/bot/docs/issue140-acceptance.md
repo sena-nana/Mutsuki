@@ -7,7 +7,7 @@ continuations, repositories, media bridge, Agent bridge, and delivery logic rema
 | Issue | Required result | Owner evidence | Functional evidence |
 | --- | --- | --- | --- |
 | #141 | private/group/channel, quote/mention/media, truthful capabilities and reconnect | `mutsuki-plugin-bot-adapter-qqbot` | adapter tests, inbound-media loopback E2E, service-host fake QQ E2E |
-| #142 | typed Command Match nodes, graph-owned permission/rate-limit matching and explicit branch isolation | protocol, command, Flow and event-router crates | graph validation, command hit/miss, fan-out/error behavior and ServiceRuntime smoke |
+| #142 | typed Command Match nodes, graph-owned role/rate-limit matching and explicit branch isolation | protocol, command, Flow and event-router crates | graph validation, command hit/miss, fan-out/error behavior and ServiceRuntime smoke. Permission matching is deferred; there is no `flow.match/permission` node. |
 | #143 | stable/versioned ConversationRef, execution-only conversation settings, expiry/reset/fork and durable fenced Agent binding | protocol, conversation and state-db crates | ref key/target round-trip, session fence tests and SQLite reopen/CAS test |
 | #144 | public Agent client bridge, two-turn reuse, stream/final, cancel/reset/fork/regenerate, replay suppression, and live admin configuration | `mutsuki-plugin-bot-agent`, `mutsuki-bot-web-console` | bridge/config behavior tests and ServiceRuntime QQ AI E2E |
 | #145 | validated ResourceRef media, STT/TTS and generic MediaService transcode | QQ adapter, Bot media bridge and Agent bridge | inbound-media fake server tests and ServiceRuntime audio→STT→Agent→TTS→QQ E2E |

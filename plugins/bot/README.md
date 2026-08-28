@@ -60,6 +60,8 @@ MutsukiBotPlugins is the batch-first Bot domain plugin collection for Mutsuki. I
 
 The repository owns Bot protocol objects, Bot authoring helpers, Bot event routing, Bot command parsing, and platform adapter plugins such as QQBot. Runtime scheduling, runner lifecycle, host startup, Python runner execution, plugin marketplace behavior, and product-specific business bots stay outside this repository.
 
+Complete crate table and Host-assembly boundaries: `docs/architecture.md`.
+
 ## MVP Crates
 
 - `mutsuki-config-service` / `mutsuki-config-derive`: Schema-first ConfigDescriptor + `#[derive(MutsukiConfig)]`
@@ -99,7 +101,8 @@ Console 的库依赖。
 The substantive native plugin crates generate current `PluginManifest` values from their runner
 descriptors through the Mutsuki SDK `PluginBuilder`:
 
-- `mutsuki-plugin-bot-event-router`: provides Flow ingress/execution plus event/rate-limit nodes.
+- `mutsuki-plugin-bot-event-router`: provides `flow/ingress@1` DAG execution plus graph-owned
+  match nodes (including rate-limit).
 - `mutsuki-plugin-bot-command`: provides a typed command Match node.
 - `mutsuki-plugin-bot-agent`: provides submit/cancel/reset/fork/status/regenerate nodes; its
   AgentClient and product state are injected by an explicit product bundle.

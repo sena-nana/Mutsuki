@@ -1,7 +1,3 @@
-use mutsuki_bot_interaction::{
-    BOT_INTERACTION_CREATE_NODE_TYPE, BOT_INTERACTION_MATCH_NODE_TYPE,
-    DEFAULT_INTERACTION_WAITER_TIMEOUT_MS,
-};
 use mutsuki_bot_protocol::{
     BOT_EVENT_INGEST_PROTOCOL_ID, BOT_FLOW_BOT_EVENT_TYPE, BotFlowDocument, BotFlowEdge,
     BotFlowEdgeKind, BotFlowNode, BotFlowNodePosition, BotFlowSourceSelector, BotFlowTypeRef,
@@ -11,6 +7,10 @@ use mutsuki_plugin_bot_command::{BOT_COMMAND_MATCH_NODE_TYPE_ID, BOT_COMMAND_REP
 use mutsuki_plugin_bot_conversation_context::{
     BOT_CONVERSATION_ATTACH_ICL_NODE_TYPE, BOT_CONVERSATION_ATTACH_IDENTIFIERS_NODE_TYPE,
     BOT_CONVERSATION_RECORD_ICL_NODE_TYPE,
+};
+use mutsuki_plugin_bot_interaction::{
+    BOT_INTERACTION_CREATE_NODE_TYPE, BOT_INTERACTION_MATCH_NODE_TYPE,
+    DEFAULT_INTERACTION_WAITER_TIMEOUT_MS,
 };
 use mutsuki_plugin_bot_persona::{BOT_PERSONA_ATTACH_NODE_TYPE, BOT_PERSONA_COMMAND_NODE_TYPE};
 use mutsuki_plugin_bot_reply::{
@@ -394,14 +394,14 @@ fn flow_error_edge(edge_id: &str, from_node_id: &str, to_node_id: &str) -> BotFl
 
 #[cfg(test)]
 mod tests {
-    use mutsuki_bot_delivery::bot_reply_delivery_manifest;
     use mutsuki_bot_flow::{BotNodeCatalog, validate_flow};
-    use mutsuki_bot_interaction::bot_interaction_manifest;
     use mutsuki_plugin_bot_adapter_qqbot::qqbot_adapter_manifest;
     use mutsuki_plugin_bot_agent::bot_agent_bridge_manifest;
     use mutsuki_plugin_bot_command::bot_command_manifest;
     use mutsuki_plugin_bot_conversation_context::bot_conversation_context_manifest;
+    use mutsuki_plugin_bot_delivery::bot_reply_delivery_manifest;
     use mutsuki_plugin_bot_event_router::flow_router_manifest;
+    use mutsuki_plugin_bot_interaction::bot_interaction_manifest;
     use mutsuki_plugin_bot_persona::bot_persona_manifest;
     use mutsuki_plugin_bot_reply::bot_reply_manifest;
 

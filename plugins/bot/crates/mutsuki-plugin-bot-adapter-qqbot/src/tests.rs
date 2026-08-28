@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use mutsuki_bot_protocol::{
-    BOT_FLOW_BOT_EVENT_TYPE, BOT_FLOW_DELIVERY_REPLY_TYPE, BOT_MEDIA_UPLOAD_PROTOCOL_ID,
-    BOT_MESSAGE_RECALL_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID,
+    BOT_FLOW_BOT_EVENT_TYPE, BOT_FLOW_DELIVERY_REPLY_TYPE, BOT_FLOW_INGRESS_PROTOCOL_ID,
+    BOT_MEDIA_UPLOAD_PROTOCOL_ID, BOT_MESSAGE_RECALL_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID,
     BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID, BotConversationKind, BotDeliveryContent, BotEvent,
     BotEventKind, BotFlowContext, BotFlowEventEnvelope, BotFlowPayload, BotFlowTypeRef,
     BotMediaKind, BotMessage, BotMessageRecallRequest, BotNodeInvocation, BotNodeResult,
@@ -27,9 +27,10 @@ use crate::api::{
 };
 use crate::config::{DEFAULT_QQBOT_INTENTS, QqBotConfig};
 use crate::gateway::{GatewayAction, QqGatewayPump};
+use crate::inbound_media::gateway_media_descriptor;
 use crate::tasks::{
     QQBOT_GATEWAY_FRAME_PROTOCOL_ID, QQBOT_OPENAPI_RUNNER_ID, QqGatewayMapRunner, QqOpenApiRunner,
-    apply_forward_fold, openapi_descriptor, qqbot_adapter_manifest,
+    apply_forward_fold, gateway_descriptor, openapi_descriptor, qqbot_adapter_manifest,
 };
 use crate::{
     QqBotClients, QqHttpClient, QqHttpRequest, QqHttpResponse, QqIdSource, StaticQqCredentials,
@@ -42,6 +43,13 @@ fn decode_ingress_event(task: &Task) -> BotEvent {
         .unwrap();
     assert_eq!(envelope.payload.event_type.type_id, BOT_FLOW_BOT_EVENT_TYPE);
     serde_json::from_value(envelope.payload.value.clone()).unwrap()
+}
+
+#[test]
+fn gateway_descriptors_declare_flow_ingress_child_tasks() {
+    let expected = json!({ "tasks": [BOT_FLOW_INGRESS_PROTOCOL_ID] });
+    assert_eq!(gateway_descriptor(1).output_schema, expected);
+    assert_eq!(gateway_media_descriptor(1).output_schema, expected);
 }
 
 #[test]

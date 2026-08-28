@@ -6,7 +6,8 @@ description: Change Bot Flow graph validation/execution, node catalogs, command 
 # Bot Flow And Command Nodes
 
 - Treat the single active Bot Flow configuration revision as the only matching, ordering and
-  branching source.
+  branching source. `event/ingest` and `command/handle` are envelope IDs, not runner protocols;
+  ingress is `mutsuki.bot.flow/ingress@1`.
 - Plugins declare `mutsuki.bot.flow.nodes@1` node descriptors, typed ports, config schema and exact
   Handler binding; they never declare commands, subscriptions, priority, propagation or hooks.
 - Consume typed `BotFlowEventEnvelope` values and emit named `BotNodeOutput` values; never call a

@@ -8,7 +8,7 @@ use mutsuki_bot_sandbox::{
     SandboxSpeakerRole, SandboxSticker, SandboxUserView, hash_bytes, normalize_segments,
     parse_face_id, remap_sandbox_media_ids,
 };
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 
 use super::{BotStateDbError, BotStateDbRepository, decode, encode, immediate, sqlite_integer};
 
@@ -150,6 +150,27 @@ pub(super) fn load_media_by_id(
         .query_row(
             "SELECT content_hash, mime, name, bytes FROM bot_sandbox_asset WHERE content_hash=?1",
             params![media_id],
+            |row| {
+                Ok(SandboxMediaBlob {
+                    media_id: row.get(0)?,
+                    mime: row.get(1)?,
+                    name: row.get(2)?,
+                    bytes: row.get(3)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(BotStateDbError::from)
+}
+
+pub(super) fn load_sticker_by_id(
+    connection: &Connection,
+    sticker_id: &str,
+) -> Result<Option<SandboxMediaBlob>, BotStateDbError> {
+    connection
+        .query_row(
+            "SELECT content_hash, mime, name, bytes FROM bot_sandbox_sticker WHERE content_hash=?1",
+            params![sticker_id],
             |row| {
                 Ok(SandboxMediaBlob {
                     media_id: row.get(0)?,
@@ -357,7 +378,7 @@ fn load_messages(
 
 fn load_media(connection: &Connection) -> Result<Vec<SandboxAsset>, BotStateDbError> {
     let mut statement = connection.prepare(
-        "SELECT content_hash, kind, mime, name, bytes, url, created_at_unix_ms
+        "SELECT content_hash, kind, mime, name, url, created_at_unix_ms
          FROM bot_sandbox_asset
          ORDER BY created_at_unix_ms ASC, content_hash ASC",
     )?;
@@ -368,21 +389,20 @@ fn load_media(connection: &Connection) -> Result<Vec<SandboxAsset>, BotStateDbEr
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
-                row.get::<_, Vec<u8>>(4)?,
-                row.get::<_, Option<String>>(5)?,
-                row.get::<_, i64>(6)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, i64>(5)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     rows.into_iter()
         .map(
-            |(content_hash, kind, mime, name, bytes, url, created_at_unix_ms)| {
+            |(content_hash, kind, mime, name, url, created_at_unix_ms)| {
                 Ok(SandboxAsset {
                     content_hash,
                     kind,
                     mime,
                     name,
-                    bytes,
+                    bytes: Vec::new(),
                     url,
                     created_at_unix_ms: super::sqlite_unsigned(
                         created_at_unix_ms,
@@ -399,7 +419,7 @@ fn load_stickers(connection: &Connection) -> Result<Vec<SandboxSticker>, BotStat
         return Ok(Vec::new());
     }
     let mut statement = connection.prepare(
-        "SELECT content_hash, mime, name, bytes, created_at_unix_ms
+        "SELECT content_hash, mime, name, created_at_unix_ms
          FROM bot_sandbox_sticker
          ORDER BY created_at_unix_ms ASC, content_hash ASC",
     )?;
@@ -409,18 +429,17 @@ fn load_stickers(connection: &Connection) -> Result<Vec<SandboxSticker>, BotStat
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
-                row.get::<_, Vec<u8>>(3)?,
-                row.get::<_, i64>(4)?,
+                row.get::<_, i64>(3)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     rows.into_iter()
-        .map(|(content_hash, mime, name, bytes, created_at_unix_ms)| {
+        .map(|(content_hash, mime, name, created_at_unix_ms)| {
             Ok(SandboxSticker {
                 content_hash,
                 mime,
                 name,
-                bytes,
+                bytes: Vec::new(),
                 created_at_unix_ms: super::sqlite_unsigned(
                     created_at_unix_ms,
                     "created_at_unix_ms",
@@ -471,85 +490,104 @@ pub(super) fn save(
          ON CONFLICT(singleton) DO UPDATE SET mode=excluded.mode, account_id=excluded.account_id",
         params![mode_name(snapshot.mode), snapshot.account_id],
     )?;
-    transaction.execute("DELETE FROM bot_sandbox_message", [])?;
-    transaction.execute("DELETE FROM bot_sandbox_user", [])?;
-    transaction.execute("DELETE FROM bot_sandbox_conversation", [])?;
-    transaction.execute("DELETE FROM bot_sandbox_asset", [])?;
-    transaction.execute("DELETE FROM bot_sandbox_sticker", [])?;
-    transaction.execute("DELETE FROM bot_sandbox_face", [])?;
-    write_conversations(
+    upsert_conversations(
         &transaction,
         SandboxHistoryKind::Simulate,
         &snapshot.simulate,
     )?;
-    write_conversations(&transaction, SandboxHistoryKind::Live, &snapshot.live)?;
-    for media in &snapshot.media {
-        transaction.execute(
-            "INSERT INTO bot_sandbox_asset(content_hash, kind, mime, name, bytes, url, created_at_unix_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![
-                media.content_hash,
-                media.kind,
-                media.mime,
-                media.name,
-                media.bytes,
-                media.url,
-                sqlite_integer(media.created_at_unix_ms)?,
-            ],
-        )?;
-    }
-    for sticker in &snapshot.stickers {
-        transaction.execute(
-            "INSERT INTO bot_sandbox_sticker(content_hash, mime, name, bytes, created_at_unix_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![
-                sticker.content_hash,
-                sticker.mime,
-                sticker.name,
-                sticker.bytes,
-                sqlite_integer(sticker.created_at_unix_ms)?,
-            ],
-        )?;
-    }
-    for face in &snapshot.faces {
-        transaction.execute(
-            "INSERT INTO bot_sandbox_face(face_key, face_type, face_id, last_seen_unix_ms)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![
-                face.face_key,
-                face.face_type,
-                face.face_id,
-                sqlite_integer(face.last_seen_unix_ms)?,
-            ],
-        )?;
-    }
+    upsert_conversations(&transaction, SandboxHistoryKind::Live, &snapshot.live)?;
+    prune_conversations(
+        &transaction,
+        SandboxHistoryKind::Simulate,
+        snapshot
+            .simulate
+            .iter()
+            .map(|item| item.view.conversation_id.as_str()),
+    )?;
+    prune_conversations(
+        &transaction,
+        SandboxHistoryKind::Live,
+        snapshot
+            .live
+            .iter()
+            .map(|item| item.view.conversation_id.as_str()),
+    )?;
+    upsert_assets(&transaction, &snapshot.media)?;
+    upsert_stickers(&transaction, &snapshot.stickers)?;
+    upsert_faces(&transaction, &snapshot.faces)?;
+    prune_by_key(
+        &transaction,
+        "bot_sandbox_asset",
+        "content_hash",
+        snapshot.media.iter().map(|item| item.content_hash.as_str()),
+    )?;
+    prune_by_key(
+        &transaction,
+        "bot_sandbox_sticker",
+        "content_hash",
+        snapshot
+            .stickers
+            .iter()
+            .map(|item| item.content_hash.as_str()),
+    )?;
+    prune_by_key(
+        &transaction,
+        "bot_sandbox_face",
+        "face_key",
+        snapshot.faces.iter().map(|item| item.face_key.as_str()),
+    )?;
     transaction.commit()?;
     Ok(())
 }
 
-fn write_conversations(
+fn upsert_conversations(
     connection: &Connection,
     kind: SandboxHistoryKind,
     items: &[SandboxHistoryConversation],
 ) -> Result<(), BotStateDbError> {
     for conversation in items {
-        insert_conversation_row(connection, kind, &conversation.view)?;
+        upsert_conversation_row(connection, kind, &conversation.view)?;
+        let user_ids = conversation
+            .users
+            .iter()
+            .map(|user| user.user_id.as_str())
+            .collect::<Vec<_>>();
         for user in &conversation.users {
-            insert_user(connection, kind, &conversation.view.conversation_id, user)?;
+            upsert_user(connection, kind, &conversation.view.conversation_id, user)?;
         }
+        prune_children(
+            connection,
+            "bot_sandbox_user",
+            "user_id",
+            kind,
+            &conversation.view.conversation_id,
+            &user_ids,
+        )?;
         let messages = if conversation.messages.len() > SANDBOX_MAX_MESSAGES {
             &conversation.messages[conversation.messages.len() - SANDBOX_MAX_MESSAGES..]
         } else {
             conversation.messages.as_slice()
         };
+        let message_ids = messages
+            .iter()
+            .map(|message| message.message_id.as_str())
+            .collect::<Vec<_>>();
         for message in messages {
-            insert_message(connection, kind, message)?;
+            upsert_message(connection, kind, message)?;
         }
+        prune_children(
+            connection,
+            "bot_sandbox_message",
+            "message_id",
+            kind,
+            &conversation.view.conversation_id,
+            &message_ids,
+        )?;
     }
     Ok(())
 }
 
-fn insert_conversation_row(
+fn upsert_conversation_row(
     connection: &Connection,
     kind: SandboxHistoryKind,
     conversation: &SandboxConversationView,
@@ -558,7 +596,17 @@ fn insert_conversation_row(
         "INSERT INTO bot_sandbox_conversation(
              store, conversation_id, account_id, kind, title, avatar_url, conversation_json,
              last_preview, last_activity_unix_ms, message_count, active_message
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+         ON CONFLICT(store, conversation_id) DO UPDATE SET
+             account_id=excluded.account_id,
+             kind=excluded.kind,
+             title=excluded.title,
+             avatar_url=excluded.avatar_url,
+             conversation_json=excluded.conversation_json,
+             last_preview=excluded.last_preview,
+             last_activity_unix_ms=excluded.last_activity_unix_ms,
+             message_count=excluded.message_count,
+             active_message=excluded.active_message",
         params![
             kind.as_str(),
             conversation.conversation_id,
@@ -576,7 +624,7 @@ fn insert_conversation_row(
     Ok(())
 }
 
-fn insert_user(
+fn upsert_user(
     connection: &Connection,
     kind: SandboxHistoryKind,
     conversation_id: &str,
@@ -585,7 +633,12 @@ fn insert_user(
     connection.execute(
         "INSERT INTO bot_sandbox_user(
              store, conversation_id, user_id, display_name, avatar_url, last_seen_unix_ms, message_count
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+         ON CONFLICT(store, conversation_id, user_id) DO UPDATE SET
+             display_name=excluded.display_name,
+             avatar_url=excluded.avatar_url,
+             last_seen_unix_ms=excluded.last_seen_unix_ms,
+             message_count=excluded.message_count",
         params![
             kind.as_str(),
             conversation_id,
@@ -599,7 +652,7 @@ fn insert_user(
     Ok(())
 }
 
-fn insert_message(
+fn upsert_message(
     connection: &Connection,
     kind: SandboxHistoryKind,
     message: &SandboxMessageView,
@@ -607,7 +660,16 @@ fn insert_message(
     connection.execute(
         "INSERT INTO bot_sandbox_message(
              store, message_id, conversation_id, sender_id, sender_name, role, text, refs_json, reply_to, time_ms
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+         ON CONFLICT(store, message_id) DO UPDATE SET
+             conversation_id=excluded.conversation_id,
+             sender_id=excluded.sender_id,
+             sender_name=excluded.sender_name,
+             role=excluded.role,
+             text=excluded.text,
+             refs_json=excluded.refs_json,
+             reply_to=excluded.reply_to,
+             time_ms=excluded.time_ms",
         params![
             kind.as_str(),
             message.message_id,
@@ -620,6 +682,155 @@ fn insert_message(
             message.reply_to,
             message.time_ms,
         ],
+    )?;
+    Ok(())
+}
+
+fn upsert_assets(connection: &Connection, media: &[SandboxAsset]) -> Result<(), BotStateDbError> {
+    for media in media {
+        connection.execute(
+            "INSERT INTO bot_sandbox_asset(content_hash, kind, mime, name, bytes, url, created_at_unix_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(content_hash) DO UPDATE SET
+                 kind=excluded.kind,
+                 mime=excluded.mime,
+                 name=excluded.name,
+                 url=excluded.url,
+                 bytes=CASE WHEN length(excluded.bytes)=0 THEN bot_sandbox_asset.bytes ELSE excluded.bytes END",
+            params![
+                media.content_hash,
+                media.kind,
+                media.mime,
+                media.name,
+                media.bytes,
+                media.url,
+                sqlite_integer(media.created_at_unix_ms)?,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+fn upsert_stickers(
+    connection: &Connection,
+    stickers: &[SandboxSticker],
+) -> Result<(), BotStateDbError> {
+    for sticker in stickers {
+        connection.execute(
+            "INSERT INTO bot_sandbox_sticker(content_hash, mime, name, bytes, created_at_unix_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(content_hash) DO UPDATE SET
+                 mime=excluded.mime,
+                 name=excluded.name,
+                 bytes=CASE WHEN length(excluded.bytes)=0 THEN bot_sandbox_sticker.bytes ELSE excluded.bytes END",
+            params![
+                sticker.content_hash,
+                sticker.mime,
+                sticker.name,
+                sticker.bytes,
+                sqlite_integer(sticker.created_at_unix_ms)?,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+fn upsert_faces(connection: &Connection, faces: &[SandboxFace]) -> Result<(), BotStateDbError> {
+    for face in faces {
+        connection.execute(
+            "INSERT INTO bot_sandbox_face(face_key, face_type, face_id, last_seen_unix_ms)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(face_key) DO UPDATE SET
+                 face_type=excluded.face_type,
+                 face_id=excluded.face_id,
+                 last_seen_unix_ms=excluded.last_seen_unix_ms",
+            params![
+                face.face_key,
+                face.face_type,
+                face.face_id,
+                sqlite_integer(face.last_seen_unix_ms)?,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+fn prune_conversations<'a>(
+    connection: &Connection,
+    kind: SandboxHistoryKind,
+    keep: impl IntoIterator<Item = &'a str>,
+) -> Result<(), BotStateDbError> {
+    let keep = keep.into_iter().collect::<Vec<_>>();
+    if keep.is_empty() {
+        connection.execute(
+            "DELETE FROM bot_sandbox_conversation WHERE store=?1",
+            params![kind.as_str()],
+        )?;
+        return Ok(());
+    }
+    let placeholders = std::iter::repeat_n("?", keep.len())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut values = Vec::with_capacity(keep.len() + 1);
+    values.push(kind.as_str());
+    values.extend(keep);
+    connection.execute(
+        &format!(
+            "DELETE FROM bot_sandbox_conversation WHERE store=? AND conversation_id NOT IN ({placeholders})"
+        ),
+        params_from_iter(values),
+    )?;
+    Ok(())
+}
+
+fn prune_children(
+    connection: &Connection,
+    table: &str,
+    id_column: &str,
+    kind: SandboxHistoryKind,
+    conversation_id: &str,
+    keep: &[&str],
+) -> Result<(), BotStateDbError> {
+    if keep.is_empty() {
+        connection.execute(
+            &format!("DELETE FROM {table} WHERE store=?1 AND conversation_id=?2"),
+            params![kind.as_str(), conversation_id],
+        )?;
+        return Ok(());
+    }
+    let placeholders = std::iter::repeat_n("?", keep.len())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut values = Vec::with_capacity(keep.len() + 2);
+    values.push(kind.as_str());
+    values.push(conversation_id);
+    values.extend(keep.iter().copied());
+    connection.execute(
+        &format!(
+            "DELETE FROM {table} WHERE store=? AND conversation_id=? AND {id_column} NOT IN ({placeholders})"
+        ),
+        params_from_iter(values),
+    )?;
+    Ok(())
+}
+
+fn prune_by_key<'a>(
+    connection: &Connection,
+    table: &str,
+    key: &str,
+    keep: impl IntoIterator<Item = &'a str>,
+) -> Result<(), BotStateDbError> {
+    let keep = keep.into_iter().collect::<Vec<_>>();
+    if keep.is_empty() {
+        connection.execute(&format!("DELETE FROM {table}"), [])?;
+        return Ok(());
+    }
+    let placeholders = std::iter::repeat_n("?", keep.len())
+        .collect::<Vec<_>>()
+        .join(", ");
+    connection.execute(
+        &format!("DELETE FROM {table} WHERE {key} NOT IN ({placeholders})"),
+        params_from_iter(keep),
     )?;
     Ok(())
 }
@@ -932,6 +1143,19 @@ impl BotStateDbRepository {
         let media_id = media_id.to_owned();
         self.call_sync(|reply| super::DbJob::SandboxMedia { media_id, reply })
     }
+
+    /// Loads sticker bytes by content hash.
+    ///
+    /// # Errors
+    ///
+    /// Returns a repository error when the actor job fails.
+    pub fn sandbox_sticker(
+        &self,
+        sticker_id: &str,
+    ) -> Result<Option<SandboxMediaBlob>, BotStateDbError> {
+        let sticker_id = sticker_id.to_owned();
+        self.call_sync(|reply| super::DbJob::SandboxSticker { sticker_id, reply })
+    }
 }
 
 impl SandboxHistoryStore for BotStateDbRepository {
@@ -944,5 +1168,16 @@ impl SandboxHistoryStore for BotStateDbRepository {
         let snapshot = snapshot.clone();
         self.call_sync(|reply| super::DbJob::SandboxSave { snapshot, reply })
             .map_err(sandbox_error)
+    }
+
+    fn load_media_blob(&self, media_id: &str) -> Result<Option<SandboxMediaBlob>, SandboxError> {
+        self.sandbox_media(media_id).map_err(sandbox_error)
+    }
+
+    fn load_sticker_blob(
+        &self,
+        sticker_id: &str,
+    ) -> Result<Option<SandboxMediaBlob>, SandboxError> {
+        self.sandbox_sticker(sticker_id).map_err(sandbox_error)
     }
 }

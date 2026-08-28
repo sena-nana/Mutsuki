@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use mutsuki_bot_flow::BotFlowRegistry;
@@ -130,6 +131,29 @@ pub fn flow_node_runner(
 pub struct BotFlowIngressRunner {
     descriptor: mutsuki_runtime_contracts::RunnerDescriptor,
     registry: Arc<BotFlowRegistry>,
+    source_index: Option<(u64, Arc<SourceIndex>)>,
+}
+
+struct SourceIndex {
+    by_selector: HashMap<(String, Option<(String, u32)>), Vec<usize>>,
+}
+
+fn source_index_for(flow: &mutsuki_bot_protocol::BotFlowDocument) -> SourceIndex {
+    let mut by_selector = HashMap::<(String, Option<(String, u32)>), Vec<usize>>::new();
+    for (index, node) in flow.nodes.iter().enumerate() {
+        let Some(selector) = node.source.as_ref() else {
+            continue;
+        };
+        let event_type = selector
+            .event_type
+            .as_ref()
+            .map(|event_type| (event_type.type_id.clone(), event_type.version));
+        by_selector
+            .entry((selector.protocol_id.clone(), event_type))
+            .or_default()
+            .push(index);
+    }
+    SourceIndex { by_selector }
 }
 
 /// Shares the immutable flow for native router tasks while preserving the
@@ -180,7 +204,23 @@ impl BotFlowIngressRunner {
         Self {
             descriptor: ingress_descriptor(),
             registry,
+            source_index: None,
         }
+    }
+
+    fn source_index(
+        &mut self,
+        revision: u64,
+        flow: &mutsuki_bot_protocol::BotFlowDocument,
+    ) -> Arc<SourceIndex> {
+        if let Some((cached_revision, index)) = &self.source_index
+            && *cached_revision == revision
+        {
+            return index.clone();
+        }
+        let index = Arc::new(source_index_for(flow));
+        self.source_index = Some((revision, index.clone()));
+        index
     }
 }
 
@@ -197,23 +237,32 @@ impl Runner for BotFlowIngressRunner {
         let snapshot = self.registry.active();
         let graph_revision = snapshot.revision;
         let flow = Arc::new(snapshot.flow.clone());
+        let index = self.source_index(graph_revision, flow.as_ref());
         map_work_batch_entries(&batch, |task| {
             let envelope = task
                 .payload
                 .decode_shared::<BotFlowEventEnvelope>()
                 .map_err(|error| runtime_error(task, "ingress.decode", error))?;
+            let event = serde_json::from_value::<BotEvent>(envelope.payload.value.clone()).ok();
+            let mut source_indexes = Vec::new();
+            if let Some(exact) = index.by_selector.get(&(
+                envelope.protocol_id.clone(),
+                Some((
+                    envelope.payload.event_type.type_id.clone(),
+                    envelope.payload.event_type.version,
+                )),
+            )) {
+                source_indexes.extend(exact.iter().copied());
+            }
+            if let Some(wildcard) = index.by_selector.get(&(envelope.protocol_id.clone(), None)) {
+                source_indexes.extend(wildcard.iter().copied());
+            }
+            source_indexes.sort_unstable();
+            source_indexes.dedup();
             let mut tasks = Vec::new();
-            for source in &flow.nodes {
-                let Some(selector) = source.source.as_ref() else {
-                    continue;
-                };
-                if selector.protocol_id != envelope.protocol_id
-                    || selector
-                        .event_type
-                        .as_ref()
-                        .is_some_and(|event_type| event_type != &envelope.payload.event_type)
-                    || !source_accepts_envelope(source, &envelope)
-                {
+            for source_index in source_indexes {
+                let source = &flow.nodes[source_index];
+                if !source_accepts_event(source, event.as_ref()) {
                     continue;
                 }
                 let execution_id = format!(
@@ -258,15 +307,21 @@ impl Runner for BotFlowIngressRunner {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn source_accepts_envelope(
     source: &BotFlowNode,
     envelope: &BotFlowEventEnvelope,
 ) -> bool {
+    let event = serde_json::from_value::<BotEvent>(envelope.payload.value.clone()).ok();
+    source_accepts_event(source, event.as_ref())
+}
+
+fn source_accepts_event(source: &BotFlowNode, event: Option<&BotEvent>) -> bool {
     let types = source_kinds_for_node(&source.node_type_id);
-    match serde_json::from_value::<BotEvent>(envelope.payload.value.clone()) {
-        Ok(event) if event.is_self_sent_message() => false,
-        Ok(event) => types.is_empty() || event_matches_source_types(&event, types),
-        Err(_) => types.is_empty(),
+    match event {
+        Some(event) if event.is_self_sent_message() => false,
+        Some(event) => types.is_empty() || event_matches_source_types(event, types),
+        None => types.is_empty(),
     }
 }
 
@@ -533,7 +588,7 @@ mod tests {
     use mutsuki_runtime_contracts::{InvocationMode, RunnerConcurrency, Task};
     use serde_json::{Value, json};
 
-    use super::{downstream_task, node_descriptor, source_accepts_envelope};
+    use super::{downstream_task, node_descriptor, source_accepts_envelope, source_index_for};
 
     fn message_envelope(actor_id: &str, self_sent: bool) -> BotFlowEventEnvelope {
         let mut ext = mutsuki_bot_protocol::BotExtMap::new();
@@ -577,6 +632,71 @@ mod tests {
             trace_id: None,
             correlation_id: None,
         }
+    }
+
+    #[test]
+    fn source_index_selects_exact_and_protocol_wildcard_without_unrelated_nodes() {
+        let ingest = mutsuki_bot_protocol::BOT_EVENT_INGEST_PROTOCOL_ID;
+        let command = mutsuki_bot_protocol::BOT_COMMAND_HANDLE_PROTOCOL_ID;
+        let flow = mutsuki_bot_protocol::BotFlowDocument {
+            flow_id: "indexed".into(),
+            name: "indexed".into(),
+            nodes: vec![
+                BotFlowNode {
+                    node_id: "exact".into(),
+                    node_type_id: "mutsuki.bot.qq.message.created".into(),
+                    node_type_version: 1,
+                    config: json!({}),
+                    source: Some(BotFlowSourceSelector {
+                        protocol_id: ingest.into(),
+                        event_type: Some(BotFlowTypeRef::new("mutsuki.bot.event", 1)),
+                    }),
+                    position: BotFlowNodePosition::default(),
+                },
+                BotFlowNode {
+                    node_id: "wildcard".into(),
+                    node_type_id: "mutsuki.bot.qq.message.created".into(),
+                    node_type_version: 1,
+                    config: json!({}),
+                    source: Some(BotFlowSourceSelector {
+                        protocol_id: ingest.into(),
+                        event_type: None,
+                    }),
+                    position: BotFlowNodePosition::default(),
+                },
+                BotFlowNode {
+                    node_id: "command".into(),
+                    node_type_id: "mutsuki.bot.command.parse".into(),
+                    node_type_version: 1,
+                    config: json!({}),
+                    source: Some(BotFlowSourceSelector {
+                        protocol_id: command.into(),
+                        event_type: None,
+                    }),
+                    position: BotFlowNodePosition::default(),
+                },
+            ],
+            edges: vec![],
+        };
+        let index = source_index_for(&flow);
+        let exact = index
+            .by_selector
+            .get(&(ingest.into(), Some(("mutsuki.bot.event".into(), 1))))
+            .cloned()
+            .unwrap_or_default();
+        let wildcard = index
+            .by_selector
+            .get(&(ingest.into(), None))
+            .cloned()
+            .unwrap_or_default();
+        let command_nodes = index
+            .by_selector
+            .get(&(command.into(), None))
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(exact, vec![0]);
+        assert_eq!(wildcard, vec![1]);
+        assert_eq!(command_nodes, vec![2]);
     }
 
     #[test]
