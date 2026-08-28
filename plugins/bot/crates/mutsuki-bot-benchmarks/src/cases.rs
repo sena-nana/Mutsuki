@@ -7,8 +7,8 @@ use std::{
 use async_trait::async_trait;
 use mutsuki_bot_conversation::{ConversationError, ConversationRepository, ConversationService};
 use mutsuki_bot_delivery::{
-    ActiveDeliveryService, DeliveryError, DeliveryPolicyResolver, DeliveryRepository,
-    QqDeliveryFailure, QqDeliveryGateway, QqDeliverySuccess,
+    ActiveDeliveryService, DeliveryError, DeliveryFailure, DeliveryGateway, DeliveryPolicyResolver,
+    DeliveryRepository, DeliverySuccess,
 };
 use mutsuki_bot_flow::{BotFlowRegistry, BotNodeCatalog};
 use mutsuki_bot_interaction::{
@@ -16,13 +16,16 @@ use mutsuki_bot_interaction::{
 };
 use mutsuki_bot_link_parser::{expand_card_payload, extract_urls};
 use mutsuki_bot_protocol::*;
+use mutsuki_bot_sandbox::{SandboxApi, SandboxService};
+use mutsuki_bot_state_db::BotStateDbRepository;
 use mutsuki_bot_testkit::{
     BENCHMARK_FIXED_SEED, benchmark_card_payload, benchmark_event, benchmark_gateway_frame,
 };
 use mutsuki_plugin_bot_adapter_qqbot::tasks::qqbot_adapter_manifest;
 use mutsuki_plugin_bot_adapter_qqbot::{
-    GatewayAction, HttpMethod, QqBotConfig, QqGatewayPump, QqHttpClient, QqHttpRequest,
-    QqHttpResponse, QqOpenApiError, QqOpenApiTransport, StaticQqCredentials,
+    GatewayAction, GatewayFrame, HttpMethod, QQBOT_GATEWAY_FRAME_PROTOCOL_ID, QqBotConfig,
+    QqGatewayMapRunner, QqGatewayPump, QqHttpClient, QqHttpRequest, QqHttpResponse, QqOpenApiError,
+    QqOpenApiTransport, StaticQqCredentials,
 };
 use mutsuki_plugin_bot_command::{
     BOT_COMMAND_MATCH_NODE_TYPE_ID, BOT_COMMAND_RUNNER_ID, BotCommandNodeRunner,
@@ -480,6 +483,309 @@ pub fn interaction_transition_sample(session_count: usize) -> Sample {
     )
 }
 
+pub fn sandbox_persist_sample(message_count: usize) -> Sample {
+    let root = tempfile::tempdir().unwrap();
+    let repository = Arc::new(BotStateDbRepository::open(root.path().join("state.db")).unwrap());
+    let service = SandboxService::with_history("qq-main", repository).unwrap();
+    let events = (0..message_count)
+        .map(|index| benchmark_event(index, 1, false))
+        .collect::<Vec<_>>();
+    let allocation_start = allocation_snapshot();
+    let started = Instant::now();
+    for event in events {
+        service.observe_event(event);
+    }
+    let elapsed_ns = started.elapsed().as_nanos();
+    let (allocations, allocated_bytes) = allocation_delta(allocation_start);
+    compact_sample(
+        elapsed_ns,
+        message_count as u64,
+        json!({"messages": message_count, "persist": "incremental"}),
+        allocations,
+        allocated_bytes,
+    )
+}
+
+pub fn delivery_claim_due_sample(receipt_count: usize) -> Sample {
+    let root = tempfile::tempdir().unwrap();
+    let repository = Arc::new(BotStateDbRepository::open(root.path().join("state.db")).unwrap());
+    let conversation =
+        mutsuki_bot_conversation::qq_conversation_from_event(&benchmark_event(7, 1, true)).unwrap();
+    futures::executor::block_on(async {
+        for index in 0..receipt_count {
+            let request = BotActiveDeliveryRequest {
+                delivery_id: format!("claim-{index}"),
+                idempotency_key: format!("claim-key-{index}"),
+                conversation: conversation.clone(),
+                content: BotDeliveryContent {
+                    segments: vec![MessageSegment::text("benchmark")],
+                    summary: None,
+                    reply_to: None,
+                },
+                policy: DeliveryPolicy {
+                    max_attempts: 3,
+                    initial_backoff_ms: 10,
+                    max_backoff_ms: 1_000,
+                    not_before_unix_ms: None,
+                    expires_at_unix_ms: None,
+                },
+                dry_run: false,
+                source_execution_id: None,
+            };
+            repository.reserve(&request).await.unwrap();
+        }
+    });
+    let allocation_start = allocation_snapshot();
+    let started = Instant::now();
+    let claimed = futures::executor::block_on(async {
+        let mut claimed = 0_usize;
+        loop {
+            let batch = repository.claim_due_delivery_ids(1_000_000).await.unwrap();
+            if batch.is_empty() {
+                break;
+            }
+            claimed += batch.len();
+        }
+        claimed
+    });
+    let elapsed_ns = started.elapsed().as_nanos();
+    assert_eq!(claimed, receipt_count);
+    let (allocations, allocated_bytes) = allocation_delta(allocation_start);
+    compact_sample(
+        elapsed_ns,
+        receipt_count as u64,
+        json!({"receipts": receipt_count, "claimed": claimed}),
+        allocations,
+        allocated_bytes,
+    )
+}
+
+pub fn gateway_ingress_chain_sample(event_count: usize) -> Sample {
+    let registry = benchmark_chain_registry();
+    let mut mapper = QqGatewayMapRunner::new(1, "benchmark-adapter-00");
+    let mut ingress = BotFlowIngressRunner::new(registry);
+    let mut command = BotCommandNodeRunner::new(1);
+    let mut echo = bot_echo::echo_runner(1);
+    let frames = (0..event_count)
+        .map(|index| {
+            let frame: GatewayFrame =
+                serde_json::from_value(benchmark_gateway_frame(index, 1, true)).unwrap();
+            Task::new(
+                format!("gateway:{index}"),
+                QQBOT_GATEWAY_FRAME_PROTOCOL_ID,
+                TaskPayload::from_local(frame),
+            )
+        })
+        .collect::<Vec<_>>();
+    let allocation_start = allocation_snapshot();
+    let started = Instant::now();
+    let mut submitted = 0_usize;
+    let mut command_hits = 0_usize;
+    let mut echo_outputs = 0_usize;
+    for chunk in frames.chunks(64) {
+        let mapped = mapper
+            .run_batch(
+                context("gateway-map", chunk.len()),
+                batch(
+                    mutsuki_plugin_bot_adapter_qqbot::tasks::QQBOT_GATEWAY_RUNNER_ID,
+                    chunk,
+                ),
+            )
+            .unwrap();
+        let ingress_tasks = mapped
+            .results
+            .into_iter()
+            .flat_map(|entry| entry.result.expect("gateway map failed").tasks)
+            .collect::<Vec<_>>();
+        submitted += ingress_tasks.len();
+        if ingress_tasks.is_empty() {
+            continue;
+        }
+        let ingress_completion = ingress
+            .run_batch(
+                context("flow-ingress", ingress_tasks.len()),
+                batch(BOT_FLOW_INGRESS_RUNNER_ID, &ingress_tasks),
+            )
+            .unwrap();
+        let chain_children = ingress_completion
+            .results
+            .iter()
+            .map(|entry| entry.result.as_ref().expect("ingress failed").tasks.len())
+            .sum::<usize>();
+        assert_eq!(chain_children, ingress_tasks.len());
+        let events = ingress_tasks
+            .iter()
+            .map(|task| {
+                let envelope = task
+                    .payload
+                    .decode_shared::<BotFlowEventEnvelope>()
+                    .unwrap();
+                serde_json::from_value::<BotEvent>(envelope.payload.value.clone()).unwrap()
+            })
+            .collect::<Vec<_>>();
+        let command_tasks = events
+            .into_iter()
+            .map(|event| {
+                Task::new(
+                    format!("command:{}", event.event_id),
+                    BOT_COMMAND_PARSE_PROTOCOL_ID,
+                    TaskPayload::from_local(command_invocation(event)),
+                )
+            })
+            .collect::<Vec<_>>();
+        let completion = command
+            .run_batch(
+                context("command", command_tasks.len()),
+                batch(BOT_COMMAND_RUNNER_ID, &command_tasks),
+            )
+            .unwrap();
+        let echo_tasks = completion
+            .results
+            .into_iter()
+            .map(|entry| {
+                entry
+                    .result
+                    .unwrap_or_else(|| panic!("command node failed: {:?}", entry.error))
+            })
+            .filter_map(|result| result.output)
+            .map(|value| serde_json::from_value::<BotNodeResult>(value).unwrap())
+            .filter_map(|result| {
+                let output = result.outputs.into_iter().next().unwrap();
+                (output.port_id == "matched").then_some(output.event)
+            })
+            .enumerate()
+            .map(|(ordinal, event)| {
+                command_hits += 1;
+                Task::new(
+                    format!("echo:{ordinal}:{}", event.event_id),
+                    bot_echo::ECHO_PROTOCOL_ID,
+                    TaskPayload::from_local(BotNodeInvocation {
+                        flow_id: "benchmark.gateway-ingress-chain".into(),
+                        graph_revision: 1,
+                        execution_id: format!("benchmark:{}", event.event_id),
+                        node_id: "echo".into(),
+                        input_port_id: "command".into(),
+                        config: json!({}),
+                        input: event,
+                    }),
+                )
+            })
+            .collect::<Vec<_>>();
+        if !echo_tasks.is_empty() {
+            let completion = echo
+                .run_batch(
+                    context("echo", echo_tasks.len()),
+                    batch(bot_echo::ECHO_RUNNER_ID, &echo_tasks),
+                )
+                .unwrap();
+            echo_outputs += completion
+                .results
+                .into_iter()
+                .map(|entry| {
+                    entry
+                        .result
+                        .unwrap_or_else(|| panic!("echo node failed: {:?}", entry.error))
+                })
+                .filter_map(|result| result.output)
+                .map(|value| serde_json::from_value::<BotNodeResult>(value).unwrap())
+                .map(|result| result.outputs.len())
+                .sum::<usize>();
+        }
+    }
+    let elapsed_ns = started.elapsed().as_nanos();
+    assert_eq!(submitted, event_count);
+    assert_eq!(command_hits, event_count);
+    assert_eq!(echo_outputs, event_count);
+    let (allocations, allocated_bytes) = allocation_delta(allocation_start);
+    compact_sample(
+        elapsed_ns,
+        event_count as u64,
+        json!({
+            "events": event_count,
+            "nodes": 3,
+            "ingress_tasks": submitted,
+            "command_hits": command_hits,
+            "echo_outputs": echo_outputs
+        }),
+        allocations,
+        allocated_bytes,
+    )
+}
+
+fn benchmark_chain_registry() -> Arc<BotFlowRegistry> {
+    let manifests = vec![
+        qqbot_adapter_manifest(1, false),
+        flow_router_manifest(),
+        bot_command_manifest(1),
+        bot_echo::echo_manifest(1),
+    ];
+    let catalog = BotNodeCatalog::from_manifests(&manifests).unwrap();
+    Arc::new(
+        BotFlowRegistry::with_snapshot(
+            catalog,
+            BotFlowSnapshot {
+                revision: 1,
+                flow: BotFlowDocument {
+                    flow_id: "benchmark.gateway-ingress-chain".into(),
+                    name: "gateway ingress three-node chain".into(),
+                    nodes: vec![
+                        BotFlowNode {
+                            node_id: "source".into(),
+                            node_type_id:
+                                mutsuki_plugin_bot_adapter_qqbot::tasks::QQ_NODE_MESSAGE_CREATED
+                                    .into(),
+                            node_type_version: 1,
+                            config: json!({}),
+                            source: Some(BotFlowSourceSelector {
+                                protocol_id: BOT_EVENT_INGEST_PROTOCOL_ID.into(),
+                                event_type: Some(BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1)),
+                            }),
+                            position: BotFlowNodePosition::default(),
+                        },
+                        BotFlowNode {
+                            node_id: "command".into(),
+                            node_type_id: BOT_COMMAND_MATCH_NODE_TYPE_ID.into(),
+                            node_type_version: 1,
+                            config: json!({
+                                "prefixes": ["/"], "path": ["echo"], "aliases": [], "arguments": []
+                            }),
+                            source: None,
+                            position: BotFlowNodePosition::default(),
+                        },
+                        BotFlowNode {
+                            node_id: "echo".into(),
+                            node_type_id: "example.bot.echo".into(),
+                            node_type_version: 1,
+                            config: json!({}),
+                            source: None,
+                            position: BotFlowNodePosition::default(),
+                        },
+                    ],
+                    edges: vec![
+                        BotFlowEdge {
+                            edge_id: "source-command".into(),
+                            from_node_id: "source".into(),
+                            from_port_id: "event".into(),
+                            to_node_id: "command".into(),
+                            to_port_id: "event".into(),
+                            kind: BotFlowEdgeKind::Event,
+                        },
+                        BotFlowEdge {
+                            edge_id: "command-echo".into(),
+                            from_node_id: "command".into(),
+                            from_port_id: "matched".into(),
+                            to_node_id: "echo".into(),
+                            to_port_id: "command".into(),
+                            kind: BotFlowEdgeKind::Event,
+                        },
+                    ],
+                },
+            },
+        )
+        .unwrap(),
+    )
+}
+
 fn compact_sample(
     elapsed_ns: u128,
     events: u64,
@@ -694,15 +1000,15 @@ struct BenchmarkDeliveryGateway {
     calls: Mutex<u64>,
 }
 
-impl QqDeliveryGateway for BenchmarkDeliveryGateway {
+impl DeliveryGateway for BenchmarkDeliveryGateway {
     fn send(
         &self,
-        _conversation: &QqConversationRef,
+        _target: &BotTarget,
         _content: &BotDeliveryContent,
-    ) -> Result<QqDeliverySuccess, QqDeliveryFailure> {
+    ) -> Result<DeliverySuccess, DeliveryFailure> {
         let mut calls = self.calls.lock().unwrap();
         *calls += 1;
-        Ok(QqDeliverySuccess {
+        Ok(DeliverySuccess {
             platform_message_ids: vec![format!("message-{calls}")],
             part_receipts: Vec::new(),
         })

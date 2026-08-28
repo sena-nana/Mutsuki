@@ -46,7 +46,7 @@ factories.
 
 Only runners that publish `mutsuki.bot.flow.nodes@1` appear in the editor. Flow does not scan
 every `RunnerDescriptor`. Mihuashi, Bilibili resolve, Bilibili workshop and scheduled delivery opt in through that
-extension; internal ingest runners such as the QQ gateway stay off the canvas. Std workflow/io/db
+extension; internal Gateway frame-mapper runners (they emit `flow/ingress@1`) stay off the canvas. Std workflow/io/db
 and Agent loop/tool/session use a different orchestration surface.
 
 Processor/Match/Sink execution uses ordinary Task calls through `TaskAwaitRunnerAdapter`. A node is

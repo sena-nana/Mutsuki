@@ -66,18 +66,42 @@ Messages the bot itself sends are projected as bot bubbles and never start Flow 
 
 ## Crate Responsibilities
 
-- `mutsuki-bot-protocol`: pure Bot data contracts.
+Libraries (not host-loadable plugins):
+
+- `mutsuki-bot-protocol`: pure Bot data contracts. Envelope IDs (`event/ingest`, `command/handle`)
+  are not runner protocols.
 - `mutsuki-bot-sdk`: author helpers over Bot protocol tasks.
 - `mutsuki-bot-flow`: Bot-owned catalog validation and atomic active snapshot provider.
+- `mutsuki-bot-conversation`: conversation/session repository traits, binding keys, and
+  `ConversationContextStore` (ICL/identifier persistence contract).
+- `mutsuki-bot-persona`: `PersonaStore` persistence contract. Plugin runners live in
+  `mutsuki-plugin-bot-persona`.
+- `mutsuki-bot-link-parser`: shared URL/card extraction for link-match flows.
+- `mutsuki-bot-management`: headless QQ/Bilibili management API traits.
+- `mutsuki-bot-testkit`: fake QQ HTTP/WS boundary for E2E.
+- `mutsuki-bot-benchmarks`: owner performance workloads. Not a production plugin.
+- `mutsuki-plugin-catalog`: module upgrade catalog CLI. Not Bot protocol; lives under this
+  package only as a workspace member.
+
+Domain plugins and durable services:
+
 - `mutsuki-plugin-bot-event-router`: revision-pinned DAG execution and graph-owned match nodes.
-- `mutsuki-plugin-bot-command`: graph-configured command Match node.
+- `mutsuki-plugin-bot-command`: graph-configured command Match node (`command/parse@1`).
 - `mutsuki-plugin-bot-agent`: Agent turn/session bridge and durable reply request producer.
 - `mutsuki-plugin-bot-conversation-context`: record/attach group ICL and session identifiers.
 - `mutsuki-plugin-bot-persona`: persona command and attach-bound-persona processors.
 - `mutsuki-plugin-bot-reply`: quote/mention/segment presentation; QQ forward-fold stays in Adapter.
-- `mutsuki-bot-delivery`: attempt, receipt, retry, CAS claim and reply-part delivery behavior.
-- `mutsuki-bot-state-db`: durable session, delivery, interaction and sandbox history
-  repository; historical Flow tables are neither read nor destructively removed.
+- `mutsuki-plugin-bot-media`: Agent media transcribe/synthesize bridge node.
+- `mutsuki-bot-delivery`: attempt, receipt, retry, CAS claim and delivery services.
+  `DeliveryGateway` is platform-neutral (`BotTarget`); QQ OpenAPI mapping stays in Adapter/integration.
+- `mutsuki-plugin-bot-delivery`: `delivery/submit@1`, `delivery/reply@1` and scheduled-result plugin manifests.
+- `mutsuki-bot-interaction`: durable multi-step waiter service and repository traits.
+- `mutsuki-plugin-bot-interaction`: `interaction/handle@1` plus match/create node plugin manifests.
+- `mutsuki-plugin-bot-bilibili` / `mutsuki-plugin-bot-bilibili-workshop` / `mutsuki-plugin-bot-mihuashi`:
+  platform processors that consume `bot.link.url`.
+- `mutsuki-bot-state-db`: durable session, delivery, interaction, persona, conversation-context
+  and sandbox history repository; implements store traits from library crates rather than
+  depending on plugin packages. Historical Flow tables are neither read nor destructively removed.
   Sandbox live/simulate conversations, roster users, messages, content-addressed
   image assets, custom stickers and official face IDs persist in `bot_sandbox_*`
   tables. Other plugins query those tables through
@@ -118,14 +142,34 @@ Messages the bot itself sends are projected as bot bubbles and never start Flow 
   Unquoted live send is allowed by default. `GROUP_MSG_REJECT` / `C2C_MSG_REJECT`
   (or bot removal) turn it off; `GROUP_MSG_RECEIVE` / `C2C_MSG_RECEIVE` turn it
   back on. Failed receipts are surfaced instead of a local bubble.
-- `mutsuki-plugin-bot-sandbox-web`: WebExtension for the shared simulate/live conversation client
-  (Stapxs-style three-pane session / chat / member layout).
 - `mutsuki-plugin-bot-adapter-qqbot`: QQBot platform translation and OpenAPI side effects.
-- `mutsuki-bot-service-host-integration`: EventSource, health, ServiceRuntime assembly, and
-  sandbox outbound intercept for `sandbox:` conversations (Gateway / `message/send`). QQ Adapter
-  still only translates official protocol.
+
+WebExtensions and product-facing assembly:
+
+- `mutsuki-plugin-bot-sandbox-web`: simulate/live conversation client.
+- `mutsuki-plugin-bot-agent-web`: Agent connection management.
+- `mutsuki-plugin-bot-control-web`: ServiceHost control RPC.
+- `mutsuki-plugin-bot-overview-web`: overview dashboard.
+- `mutsuki-plugin-bot-database-web`: BotStateDb browser.
+- `mutsuki-plugin-bot-flow-web`: Flow node editor.
+- `mutsuki-plugin-bot-qq-web`: QQ management console.
+- `mutsuki-plugin-bot-bilibili-web`: Bilibili management console.
+- `mutsuki-plugin-bot-upgrade-web`: module upgrade UI.
+- `mutsuki-bot-web-console`: Bot-package WebHost assembly helper that embeds the admin
+  WebExtensions. Products may opt in; this crate is not a Host and not a product entry.
+- `mutsuki-bot-service-host-integration`: explicit ServiceHost assembly (EventSource, health,
+  catalog factories, sandbox outbound intercept). It may ship first-party default Flow graphs
+  (`qq_ai_orchestrated_flow`); user graphs live in ConfigService. Do not add business runners
+  here. QQ Adapter still only translates official protocol.
 - `examples/bot-echo`: platform-neutral example business plugin over `mutsuki.bot.*` only.
+
+First-party product (`products/bot`) may compile against owner plugin config schemas. That is
+schema ownership, not a hardcoded backend substitute path. `mutsuki-bot-runtime-reference` is a
+domain-topology bench with reference runners; it is not a production entry.
 
 ## Deferred Plugins
 
-Session and permission plugins are intentionally not part of the MVP workspace until a concrete behavior path needs them.
+Session and permission plugins are intentionally not part of the MVP workspace until a concrete
+behavior path needs them. Their protocol IDs stay reserved constants without runners. Rate-limit
+matching is the graph-owned `mutsuki.bot.flow.match/rate-limit@1` node, not a standalone
+`rate_limit/check` protocol.

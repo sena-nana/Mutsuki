@@ -26,9 +26,10 @@ use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
 use mutsuki_runtime_sdk::{
     PluginBuilder, ProtocolDescriptorBuilder, RunnerDescriptorBuilder, map_work_batch_entries,
 };
-use parking_lot::Mutex;
 use serde::Deserialize;
 use serde_json::{Value, json};
+
+pub use mutsuki_bot_conversation::{ConversationContextStore, MemoryConversationContextStore};
 
 pub const BOT_CONVERSATION_CONTEXT_PLUGIN_ID: &str = "mutsuki.plugin.bot.conversation.context";
 pub const BOT_CONVERSATION_CONTEXT_RUNNER_ID: &str = "mutsuki.bot.conversation.context";
@@ -36,57 +37,6 @@ pub const BOT_CONVERSATION_RECORD_ICL_NODE_TYPE: &str = "mutsuki.bot.conversatio
 pub const BOT_CONVERSATION_ATTACH_ICL_NODE_TYPE: &str = "mutsuki.bot.conversation.attach_icl";
 pub const BOT_CONVERSATION_ATTACH_IDENTIFIERS_NODE_TYPE: &str =
     "mutsuki.bot.conversation.attach_identifiers";
-
-pub trait ConversationContextStore: Send + Sync {
-    fn record_icl(
-        &self,
-        origin_key: &str,
-        entry: ConversationIclEntry,
-        max_count: usize,
-    ) -> Result<(), String>;
-    fn load_icl(
-        &self,
-        origin_key: &str,
-        max_count: usize,
-    ) -> Result<Vec<ConversationIclEntry>, String>;
-}
-
-#[derive(Default)]
-pub struct MemoryConversationContextStore {
-    entries: Mutex<BTreeMap<String, Vec<ConversationIclEntry>>>,
-}
-
-impl ConversationContextStore for MemoryConversationContextStore {
-    fn record_icl(
-        &self,
-        origin_key: &str,
-        entry: ConversationIclEntry,
-        max_count: usize,
-    ) -> Result<(), String> {
-        let mut entries = self.entries.lock();
-        let list = entries.entry(origin_key.to_owned()).or_default();
-        list.push(entry);
-        if max_count > 0 && list.len() > max_count {
-            let extra = list.len() - max_count;
-            list.drain(..extra);
-        }
-        Ok(())
-    }
-
-    fn load_icl(
-        &self,
-        origin_key: &str,
-        max_count: usize,
-    ) -> Result<Vec<ConversationIclEntry>, String> {
-        let entries = self.entries.lock();
-        let list = entries.get(origin_key).cloned().unwrap_or_default();
-        if max_count == 0 || list.len() <= max_count {
-            Ok(list)
-        } else {
-            Ok(list[list.len() - max_count..].to_vec())
-        }
-    }
-}
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]

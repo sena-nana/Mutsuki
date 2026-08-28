@@ -9,8 +9,9 @@ QQ Source -> Event/Command Match -> Agent Processor -> reliable Delivery Sink
 
 `QqConversationRef` is the stable private/group/channel identity. Its v1 origin key is length
 delimited and can be parsed back during state migration; persisted keys are validated before they
-are used to rebuild a target. The active Bot Flow configuration owns mention/wake-word, allow/deny,
-account/role/rate-limit and command matching. Agent conversation state keeps only profile,
+are used to rebuild a target. The active Bot Flow configuration owns mention/wake-word,
+account/role/rate-limit and command matching. Permission matching is deferred; there is no
+`flow.match/permission` node. Agent conversation state keeps only profile,
 session scope, STT/TTS and delivery execution settings. Session bindings and processed event
 claims are durable and generation-fenced. Reset and expiry create a new binding while preserving the old
 generation fence; fork invokes Agent `ForkSession` and only then commits the new binding with
@@ -33,8 +34,8 @@ shared config host service. The embedded Config Web backend registers the provid
 live service and a product selection are both present; schema, revision checks, validation,
 atomic product-file persistence, and plugin-reload lifecycle are then real control-plane paths.
 Without a live bridge, a selected Bot Agent configuration fails startup instead of rendering an
-unbound settings page. Session/profile execution settings remain in the Conversation owner; all
-permission and trigger policy remains in Flow Match nodes. The bridge only injects the opaque
+unbound settings page. Session/profile execution settings remain in the Conversation owner; trigger
+policy lives in Flow Match nodes. Permission matching is deferred. The bridge only injects the opaque
 profile ID into the public AgentKit session request. The product Host compiles its approved
 instructions and profile overrides into that `AgentRuntimeProfile`, so BotPlugins do not recreate a
 Persona or depend on AgentKit Runtime internals.

@@ -11,7 +11,7 @@ cargo run -p qqbot-echo
 ```text
 QQBot Gateway frame
   -> QQBot Adapter Gateway Runner
-  -> mutsuki.bot.event/ingest@1
+  -> mutsuki.bot.flow/ingress@1 (envelope protocol_id = mutsuki.bot.event/ingest@1)
   -> Bot Event Router
   -> mutsuki.bot.command/parse@1
   -> Bot Command Plugin

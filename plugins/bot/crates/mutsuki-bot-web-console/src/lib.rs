@@ -1,7 +1,7 @@
-//! Product-level Bot Web Console assembly (Embedded WebHost + extensions).
+//! Bot-package WebHost assembly helper (Embedded WebHost + admin WebExtensions).
 //!
-//! Console = WebApplication shell + control/overview/(optional) config WebExtensions.
-//! Does not embed business pages into WebHost Recovery.
+//! Products may opt in. Console = WebApplication shell + control/overview/(optional) config
+//! WebExtensions. Does not own Host lifecycle and does not embed business pages into Recovery.
 // Pedantic lints below are inherited from the workspace and still fire in this
 // package. They are listed explicitly so the remaining debt stays auditable and
 // every other pedantic lint keeps failing the build.

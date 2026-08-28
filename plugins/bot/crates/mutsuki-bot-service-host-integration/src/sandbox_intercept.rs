@@ -1,14 +1,13 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use mutsuki_bot_delivery::{QqDeliveryFailure, QqDeliveryGateway, QqDeliverySuccess};
+use mutsuki_bot_delivery::{DeliveryFailure, DeliveryGateway, DeliverySuccess};
 use mutsuki_bot_protocol::{
     BOT_MESSAGE_SEND_PROTOCOL_ID, BotDeliveryContent, BotDeliveryPartReceipt, BotEvent, BotMessage,
-    BotNodeInvocation, DeliveryPartStatus, QqConversationRef,
+    BotNodeInvocation, BotTarget, DeliveryPartStatus, QqConversationRef,
 };
 use mutsuki_bot_sandbox::{
-    SandboxApi, SandboxService, is_sandbox_conversation, is_sandbox_target,
-    qq_conversation_from_target,
+    SandboxApi, SandboxService, is_sandbox_target, qq_conversation_from_target,
 };
 use mutsuki_runtime_contracts::{
     BatchPayload, CompletionBatch, EntryCompletion, RunnerContext, RunnerDescriptor, RunnerResult,
@@ -49,14 +48,16 @@ impl SandboxInterceptHandle {
 
     pub fn intercept_delivery(
         &self,
-        conversation: &QqConversationRef,
+        account_id: &str,
+        target: &BotTarget,
         content: &BotDeliveryContent,
-    ) -> Option<QqDeliverySuccess> {
-        if !is_sandbox_conversation(conversation) {
+    ) -> Option<DeliverySuccess> {
+        if !is_sandbox_target(target) {
             return None;
         }
-        let message_id = self.record(conversation, content);
-        Some(QqDeliverySuccess {
+        let conversation = qq_conversation_from_target(account_id, target)?;
+        let message_id = self.record(&conversation, content);
+        Some(DeliverySuccess {
             platform_message_ids: vec![message_id.clone()],
             part_receipts: vec![BotDeliveryPartReceipt {
                 part_index: 0,
@@ -89,26 +90,38 @@ impl SandboxInterceptHandle {
 }
 
 pub struct SandboxAwareDeliveryGateway {
-    inner: Arc<dyn QqDeliveryGateway>,
+    inner: Arc<dyn DeliveryGateway>,
     intercept: SandboxInterceptHandle,
+    account_id: String,
 }
 
 impl SandboxAwareDeliveryGateway {
-    pub fn new(inner: Arc<dyn QqDeliveryGateway>, intercept: SandboxInterceptHandle) -> Self {
-        Self { inner, intercept }
+    pub fn new(
+        inner: Arc<dyn DeliveryGateway>,
+        intercept: SandboxInterceptHandle,
+        account_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            inner,
+            intercept,
+            account_id: account_id.into(),
+        }
     }
 }
 
-impl QqDeliveryGateway for SandboxAwareDeliveryGateway {
+impl DeliveryGateway for SandboxAwareDeliveryGateway {
     fn send(
         &self,
-        conversation: &QqConversationRef,
+        target: &BotTarget,
         content: &BotDeliveryContent,
-    ) -> Result<QqDeliverySuccess, QqDeliveryFailure> {
-        if let Some(success) = self.intercept.intercept_delivery(conversation, content) {
+    ) -> Result<DeliverySuccess, DeliveryFailure> {
+        if let Some(success) = self
+            .intercept
+            .intercept_delivery(&self.account_id, target, content)
+        {
             return Ok(success);
         }
-        self.inner.send(conversation, content)
+        self.inner.send(target, content)
     }
 }
 
@@ -239,17 +252,17 @@ mod tests {
         sent: Mutex<Vec<String>>,
     }
 
-    impl QqDeliveryGateway for RecordingGateway {
+    impl DeliveryGateway for RecordingGateway {
         fn send(
             &self,
-            conversation: &QqConversationRef,
+            target: &BotTarget,
             _content: &BotDeliveryContent,
-        ) -> Result<QqDeliverySuccess, QqDeliveryFailure> {
+        ) -> Result<DeliverySuccess, DeliveryFailure> {
             self.sent
                 .lock()
                 .expect("sent")
-                .push(conversation.origin_key());
-            Ok(QqDeliverySuccess {
+                .push(target.conversation_key());
+            Ok(DeliverySuccess {
                 platform_message_ids: vec!["qq-real".into()],
                 part_receipts: Vec::new(),
             })
@@ -354,14 +367,24 @@ mod tests {
         });
         let handle = SandboxInterceptHandle::default();
         handle.bind(Arc::new(SandboxService::with_account("qq-main")));
-        let gateway = SandboxAwareDeliveryGateway::new(inner.clone(), handle);
+        let gateway = SandboxAwareDeliveryGateway::new(inner.clone(), handle, "qq-main");
         let sandbox = gateway
-            .send(&conversation(SANDBOX_GROUP_ID), &content("pong"))
+            .send(
+                &BotTarget::Group {
+                    group_id: SANDBOX_GROUP_ID.into(),
+                },
+                &content("pong"),
+            )
             .unwrap();
         assert_eq!(sandbox.platform_message_ids.len(), 1);
         assert!(inner.sent.lock().expect("sent").is_empty());
         gateway
-            .send(&conversation("group-1"), &content("real"))
+            .send(
+                &BotTarget::Group {
+                    group_id: "group-1".into(),
+                },
+                &content("real"),
+            )
             .unwrap();
         assert_eq!(inner.sent.lock().expect("sent").len(), 1);
     }

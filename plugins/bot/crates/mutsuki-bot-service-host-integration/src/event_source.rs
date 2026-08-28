@@ -28,7 +28,7 @@ use mutsuki_plugin_bot_adapter_qqbot::{
     },
     flow_envelope, qq_group_info_path, session_summary, validate_gateway_url,
 };
-use mutsuki_runtime_contracts::Task;
+use mutsuki_runtime_contracts::{Task, TaskPayload};
 
 pub const QQBOT_GATEWAY_SOURCE_ID: &str = "mutsuki.bot.adapter.qqbot.gateway.source";
 
@@ -451,7 +451,7 @@ async fn run_connection(
         }
     };
     let hello = message_json(hello)?;
-    let hello_frame: GatewayFrame = serde_json::from_value(hello.clone())
+    let hello_frame: GatewayFrame = serde_json::from_value(hello)
         .map_err(|error| GatewayFailure::Fatal(format!("invalid HELLO: {error}")))?;
     if hello_frame.op != 10 {
         return Err(GatewayFailure::Fatal(format!(
@@ -465,7 +465,7 @@ async fn run_connection(
         .and_then(Value::as_u64)
         .filter(|value| *value > 0)
         .ok_or_else(|| GatewayFailure::Fatal("HELLO missing heartbeat_interval".into()))?;
-    pump.handle_frame(hello_frame, hello, 0)
+    pump.handle_frame(hello_frame, 0)
         .map_err(GatewayFailure::Fatal)?;
     send_auth_action(&mut websocket, config, pump, &access_token).await?;
     let identify_timeout = Duration::from_millis(config.gateway_hello_timeout_ms);
@@ -584,11 +584,11 @@ async fn run_connection(
                     }
                     Message::Text(_) | Message::Binary(_) => {
                         let raw = message_json(message)?;
-                        let frame: GatewayFrame = serde_json::from_value(raw.clone())
+                        let frame: GatewayFrame = serde_json::from_value(raw)
                             .map_err(|error| GatewayFailure::Recoverable(format!("invalid Gateway frame: {error}")))?;
                         let event_type = frame.t.clone().unwrap_or_else(|| "none".into());
                         let sequence = frame.s;
-                        let task = pump.handle_frame(frame.clone(), raw, 0)
+                        let task = pump.handle_frame(frame.clone(), 0)
                             .map_err(GatewayFailure::Recoverable)?;
                         if matches!(frame.t.as_deref(), Some("READY" | "RESUMED")) {
                             let mut snapshot = health.inner.lock().expect("QQBot health mutex");
@@ -718,16 +718,13 @@ fn submit_bot_disconnected_ingress(ctx: &HostEventSourceContext, config: &QqBotC
     else {
         return;
     };
-    let Ok(payload) = serde_json::to_value(&envelope) else {
-        return;
-    };
     let task = Task::new(
         format!(
             "mutsuki.bot.flow.ingress:disconnected:{}",
             config.account_id
         ),
         BOT_FLOW_INGRESS_PROTOCOL_ID,
-        payload,
+        TaskPayload::from_local(envelope),
     );
     if let Err(error) = ctx.task_submitter.submit_one(task) {
         ctx.events.log(

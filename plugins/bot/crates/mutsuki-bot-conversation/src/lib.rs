@@ -1,7 +1,11 @@
 // Pedantic lints below are inherited from the workspace and still fire in this
 // package. They are listed explicitly so the remaining debt stays auditable and
 // every other pedantic lint keeps failing the build.
-#![allow(clippy::missing_errors_doc)]
+#![allow(clippy::missing_errors_doc, clippy::must_use_candidate)]
+
+mod context_store;
+
+pub use context_store::{ConversationContextStore, MemoryConversationContextStore};
 
 use std::sync::Arc;
 

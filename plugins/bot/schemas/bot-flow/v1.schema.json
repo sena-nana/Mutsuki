@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Mutsuki BotFlowEventEnvelope v1",
+  "type": "object",
+  "required": ["event_id", "protocol_id", "payload", "context"],
+  "additionalProperties": true
+}

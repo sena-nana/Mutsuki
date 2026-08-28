@@ -19,9 +19,10 @@ mod reconnect;
 use std::{collections::BTreeMap, env, fs, path::PathBuf};
 
 use cases::{
-    command_sample, conversation_sample, delivery_idempotency_sample, duplicate_sample,
-    handler_filter_sample, interaction_transition_sample, link_parse_sample, long_run_sample,
-    pipeline_sample, rate_limit_sample, wait_resume_sample,
+    command_sample, conversation_sample, delivery_claim_due_sample, delivery_idempotency_sample,
+    duplicate_sample, gateway_ingress_chain_sample, handler_filter_sample,
+    interaction_transition_sample, link_parse_sample, long_run_sample, pipeline_sample,
+    rate_limit_sample, sandbox_persist_sample, wait_resume_sample,
 };
 use measurement::{CountingAllocator, RawCase, process_cpu_time_ns, raw_case};
 use mutsuki_bot_testkit::{BENCHMARK_FIXED_SEED, BENCHMARK_FIXTURE_VERSION};
@@ -117,6 +118,24 @@ fn main() {
             json!({"deliveries": 1_000, "duplicate_submissions": 1_000}),
             regular_samples,
             || delivery_idempotency_sample(1_000),
+        ),
+        repeated_case(
+            "bot.sandbox-persist-256",
+            json!({"messages": 256}),
+            regular_samples,
+            || sandbox_persist_sample(256),
+        ),
+        repeated_case(
+            "bot.delivery-claim-due-10k",
+            json!({"receipts": 10_000}),
+            regular_samples,
+            || delivery_claim_due_sample(10_000),
+        ),
+        repeated_case(
+            "bot.gateway-ingress-chain-100",
+            json!({"events": 100, "nodes": 3}),
+            regular_samples,
+            || gateway_ingress_chain_sample(100),
         ),
         repeated_case(
             "bot.interaction-transition-1k",

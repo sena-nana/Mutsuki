@@ -4,14 +4,11 @@ use std::time::Duration;
 use mutsuki_agent_contracts::MediaService;
 use mutsuki_bot_conversation::{ConversationRepository, ConversationService};
 use mutsuki_bot_delivery::{
-    ActiveDeliveryService, DeliveryPolicyResolver, QqDeliveryGateway, ReplyDeliveryRepository,
+    ActiveDeliveryService, DeliveryGateway, DeliveryPolicyResolver, ReplyDeliveryRepository,
     ScheduledAgentDeliveryBridge, ScheduledDeliveryPolicyProvider, ScheduledDeliveryTargetResolver,
-    bot_delivery_manifest, bot_reply_delivery_manifest, bot_scheduled_delivery_manifest,
-    delivery_runner, reply_delivery_runner, scheduled_delivery_runner,
 };
 use mutsuki_bot_interaction::{
-    InteractionConditionMatcher, InteractionCreateRunner, InteractionMatchRunner,
-    InteractionRepository, InteractionService, bot_interaction_manifest, interaction_runner,
+    InteractionConditionMatcher, InteractionRepository, InteractionService,
 };
 use mutsuki_bot_protocol::{ConversationPolicy, DeliveryPolicy, QqStreamingStrategy};
 use mutsuki_plugin_bot_agent::{
@@ -22,6 +19,13 @@ use mutsuki_plugin_bot_agent::{
 use mutsuki_plugin_bot_command::{BotCommandNodeRunner, bot_command_manifest};
 use mutsuki_plugin_bot_conversation_context::{
     ConversationContextRunner, ConversationContextStore, bot_conversation_context_manifest,
+};
+use mutsuki_plugin_bot_delivery::{
+    bot_delivery_manifest, bot_reply_delivery_manifest, bot_scheduled_delivery_manifest,
+    delivery_runner, reply_delivery_runner, scheduled_delivery_runner,
+};
+use mutsuki_plugin_bot_interaction::{
+    InteractionCreateRunner, InteractionMatchRunner, bot_interaction_manifest, interaction_runner,
 };
 use mutsuki_plugin_bot_media::{bot_media_bridge_manifest, media_bridge_runner};
 use mutsuki_plugin_bot_persona::{PersonaRunner, PersonaStore, bot_persona_manifest};
@@ -42,7 +46,7 @@ pub struct QqAiBotPluginBundle {
     default_policy: ConversationPolicy,
     agent: Box<dyn AgentBridgeClient>,
     media: Arc<dyn MediaService>,
-    delivery_gateway: Arc<dyn QqDeliveryGateway>,
+    delivery_gateway: Arc<dyn DeliveryGateway>,
     delivery_policy: Arc<dyn DeliveryPolicyResolver>,
     interaction_matcher: Arc<dyn InteractionConditionMatcher>,
     agent_config: BotAgentConfigHandle,
@@ -65,7 +69,7 @@ impl QqAiBotPluginBundle {
         default_policy: ConversationPolicy,
         agent: Box<dyn AgentBridgeClient>,
         media: Arc<dyn MediaService>,
-        delivery_gateway: Arc<dyn QqDeliveryGateway>,
+        delivery_gateway: Arc<dyn DeliveryGateway>,
         delivery_policy: Arc<dyn DeliveryPolicyResolver>,
         interaction_matcher: Arc<dyn InteractionConditionMatcher>,
         conversation_context: Arc<dyn ConversationContextStore>,

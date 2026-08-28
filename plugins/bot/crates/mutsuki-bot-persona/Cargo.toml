@@ -1,0 +1,11 @@
+[package]
+name = "mutsuki-bot-persona"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mutsuki-bot-protocol.workspace = true
+
+[lints]
+workspace = true

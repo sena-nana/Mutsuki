@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use mutsuki_bot_delivery::BOT_REPLY_DELIVERY_PLUGIN_ID;
 use mutsuki_bot_protocol::{BOT_REPLY_DELIVERY_PROTOCOL_ID, BotReplyDeliveryCommand};
+use mutsuki_plugin_bot_delivery::BOT_REPLY_DELIVERY_PLUGIN_ID;
 use mutsuki_runtime_contracts::{Task, TaskBatch, TaskHandle, TaskOutcome};
 use mutsuki_service_runtime::{
     HostEventSource, HostEventSourceContext, HostEventSourceDescriptor, HostEventSourceFuture,

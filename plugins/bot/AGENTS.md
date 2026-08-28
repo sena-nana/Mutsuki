@@ -31,6 +31,21 @@ Adapter/Gateway。它不拥有 Core 调度、Host 生命周期、Agent 能力或
 9. 平台 Adapter crate 不依赖具体 Host；`HostEventSource`、health 和 builder 安装只能位于显式 integration crate。
 10. 媒体等可选后端必须显式提供并与 manifest capability 一致，不注册 unavailable 生产替代。
 11. QQBot 文档必须区分单元、fake E2E 和真实账号 smoke，且与当前 manifest、配置和实现同步。
+12. 有 `PluginBuilder` 的可加载面必须使用 `mutsuki-plugin-*` 名；库面 crate 只持有 trait/service。
+    `mutsuki-bot-state-db` 实现 conversation/persona/delivery/interaction/sandbox 库面 store，
+    禁止反向依赖 plugin 包。
+
+完整 crate 表见 `docs/architecture.md`。关键边界：
+
+| crate | 职责 |
+| --- | --- |
+| `mutsuki-bot-protocol` | 纯契约。`event/ingest`、`command/handle` 是 envelope ID，不是 runner |
+| `mutsuki-bot-conversation` / `mutsuki-bot-persona` | 会话与 persona 的 store trait；plugin 包只做 Runner |
+| `mutsuki-bot-interaction` / `mutsuki-bot-delivery` | waiter / delivery 服务与 repository；`DeliveryGateway` 用 `BotTarget` |
+| `mutsuki-plugin-bot-interaction` / `mutsuki-plugin-bot-delivery` | 对应 PluginBuilder manifest 与节点 catalog |
+| `mutsuki-bot-state-db` | SQLite 实现上述库面 store |
+| `mutsuki-bot-service-host-integration` | 显式 Host 装配面；禁止再往里加业务 Runner |
+| `mutsuki-bot-web-console` | Bot 包提供的 WebHost 装配 helper，产品可选启用 |
 
 ## 验证
 

@@ -175,11 +175,14 @@ mutsuki-config-service = { path = "plugins/std/crates/mutsuki-config-service" }
 mutsuki-config-derive = { path = "plugins/std/crates/mutsuki-config-derive" }
 mutsuki-bot-conversation = { path = "plugins/bot/crates/mutsuki-bot-conversation" }
 mutsuki-bot-delivery = { path = "plugins/bot/crates/mutsuki-bot-delivery" }
+mutsuki-plugin-bot-delivery = { path = "plugins/bot/crates/mutsuki-plugin-bot-delivery" }
 mutsuki-bot-flow = { path = "plugins/bot/crates/mutsuki-bot-flow" }
 mutsuki-bot-management = { path = "plugins/bot/crates/mutsuki-bot-management" }
 mutsuki-bot-link-parser = { path = "plugins/bot/crates/mutsuki-bot-link-parser" }
 mutsuki-bot-interaction = { path = "plugins/bot/crates/mutsuki-bot-interaction" }
+mutsuki-plugin-bot-interaction = { path = "plugins/bot/crates/mutsuki-plugin-bot-interaction" }
 mutsuki-bot-state-db = { path = "plugins/bot/crates/mutsuki-bot-state-db" }
+mutsuki-bot-persona = { path = "plugins/bot/crates/mutsuki-bot-persona" }
 mutsuki-bot-protocol = { path = "plugins/bot/crates/mutsuki-bot-protocol" }
 mutsuki-bot-sandbox = { path = "plugins/bot/crates/mutsuki-bot-sandbox" }
 mutsuki-bot-sdk = { path = "plugins/bot/crates/mutsuki-bot-sdk" }

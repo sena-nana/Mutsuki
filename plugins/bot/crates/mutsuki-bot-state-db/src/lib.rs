@@ -20,20 +20,21 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use mutsuki_bot_conversation::{AgentEventClaim, ConversationError, ConversationRepository};
+use mutsuki_bot_conversation::{
+    AgentEventClaim, ConversationContextStore, ConversationError, ConversationRepository,
+};
 use mutsuki_bot_delivery::{
     DELIVERY_SEND_LEASE_MS, DeliveryError, DeliveryRepository, ReplyDeliveryRepository,
     reply_part_request,
 };
 use mutsuki_bot_interaction::{InteractionError, InteractionRepository};
 use mutsuki_bot_management::in_blocking_section;
+use mutsuki_bot_persona::PersonaStore;
 use mutsuki_bot_protocol::{
     AgentSessionBinding, BotActiveDeliveryRequest, BotDeliveryAttempt, BotDeliveryReceipt,
     BotInteractionSession, BotPersona, BotReplyDeliveryReceipt, BotReplyDeliveryRequest,
     ConversationIclEntry, DeliveryStatus, InteractionStatus,
 };
-use mutsuki_plugin_bot_conversation_context::ConversationContextStore;
-use mutsuki_plugin_bot_persona::PersonaStore;
 use rusqlite::types::ValueRef;
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use thiserror::Error;
@@ -610,6 +611,10 @@ enum DbJob {
         media_id: String,
         reply: DbReplyChannel<Option<mutsuki_bot_sandbox::SandboxMediaBlob>>,
     },
+    SandboxSticker {
+        sticker_id: String,
+        reply: DbReplyChannel<Option<mutsuki_bot_sandbox::SandboxMediaBlob>>,
+    },
 }
 
 /// Answers whichever kind of caller submitted a job.
@@ -922,6 +927,11 @@ impl DbJob {
                 sandbox_history::load_media_by_id(connection, &media_id),
                 metrics,
             ),
+            Self::SandboxSticker { sticker_id, reply } => send_reply(
+                reply,
+                sandbox_history::load_sticker_by_id(connection, &sticker_id),
+                metrics,
+            ),
         }
     }
 }
@@ -1122,6 +1132,11 @@ fn migrate_schema(connection: &Connection) -> Result<(), BotStateDbError> {
             )?;
         }
     }
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS bot_delivery_receipt_status
+         ON bot_delivery_receipt(status, delivery_id)",
+        [],
+    )?;
     connection.pragma_update(None, "user_version", 12)?;
     Ok(())
 }
@@ -1647,6 +1662,8 @@ fn claim_due_reply_parts(
     claim_due_deliveries_by_kind(connection, now_unix_ms, true)
 }
 
+const CLAIM_DUE_BATCH_LIMIT: i64 = 64;
+
 fn claim_due_deliveries_by_kind(
     connection: &mut Connection,
     now_unix_ms: u64,
@@ -1672,7 +1689,31 @@ fn claim_due_deliveries_by_kind(
                          'pending', 'retry_scheduled', 'sending', 'reconcile_required'
                      )
                )
-             ORDER BY p.reply_id, p.part_index"
+               AND (
+                   r.status = 'pending'
+                   OR (
+                       r.status = 'retry_scheduled'
+                       AND EXISTS (
+                           SELECT 1 FROM bot_delivery_attempt a
+                           WHERE a.delivery_id=r.delivery_id
+                             AND a.status='retry_scheduled'
+                             AND a.retry_at<=?1
+                             AND a.attempt=(
+                                 SELECT MAX(b.attempt) FROM bot_delivery_attempt b
+                                 WHERE b.delivery_id=r.delivery_id
+                             )
+                       )
+                   )
+                   OR (
+                       r.status = 'sending'
+                       AND (
+                           json_extract(r.body, '$.lease_expires_at_unix_ms') IS NULL
+                           OR json_extract(r.body, '$.lease_expires_at_unix_ms') <= ?1
+                       )
+                   )
+               )
+             ORDER BY p.reply_id, p.part_index
+             LIMIT ?2"
         } else {
             "SELECT r.delivery_id, r.status, r.body, NULL
              FROM bot_delivery_receipt r
@@ -1680,11 +1721,35 @@ fn claim_due_deliveries_by_kind(
                AND NOT EXISTS (
                    SELECT 1 FROM bot_reply_delivery_part p WHERE p.delivery_id=r.delivery_id
                )
-             ORDER BY r.delivery_id"
+               AND (
+                   r.status = 'pending'
+                   OR (
+                       r.status = 'retry_scheduled'
+                       AND EXISTS (
+                           SELECT 1 FROM bot_delivery_attempt a
+                           WHERE a.delivery_id=r.delivery_id
+                             AND a.status='retry_scheduled'
+                             AND a.retry_at<=?1
+                             AND a.attempt=(
+                                 SELECT MAX(b.attempt) FROM bot_delivery_attempt b
+                                 WHERE b.delivery_id=r.delivery_id
+                             )
+                       )
+                   )
+                   OR (
+                       r.status = 'sending'
+                       AND (
+                           json_extract(r.body, '$.lease_expires_at_unix_ms') IS NULL
+                           OR json_extract(r.body, '$.lease_expires_at_unix_ms') <= ?1
+                       )
+                   )
+               )
+             ORDER BY r.delivery_id
+             LIMIT ?2"
         };
         let mut statement = transaction.prepare(query)?;
         statement
-            .query_map([], |row| {
+            .query_map(params![now, CLAIM_DUE_BATCH_LIMIT], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
@@ -2829,15 +2894,93 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
 
     use mutsuki_bot_protocol::{
-        BotConversationKind, BotDeliveryContent, BotInteractionSession, BotReplyDeliveryPart,
-        DeliveryPolicy, InteractionScope, InteractionWaitSpec, MessageSegment,
-        QQ_CONVERSATION_REF_VERSION, QqConversationRef,
+        BotConversationKind, BotDeliveryContent, BotDeliveryReceipt, BotInteractionSession,
+        BotReplyDeliveryPart, DeliveryPolicy, DeliveryStatus, InteractionScope,
+        InteractionWaitSpec, MessageSegment, QQ_CONVERSATION_REF_VERSION, QqConversationRef,
     };
     use tokio::task::JoinSet;
 
     use super::*;
-    use mutsuki_plugin_bot_conversation_context::ConversationContextStore;
-    use mutsuki_plugin_bot_persona::PersonaStore;
+
+    #[test]
+    fn delivery_receipt_status_column_and_index_migrate_from_legacy_schema() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("legacy.db");
+        {
+            let connection = rusqlite::Connection::open(&path).unwrap();
+            connection
+                .execute_batch(
+                    "PRAGMA foreign_keys=ON;
+                     CREATE TABLE bot_delivery_request(
+                         delivery_id TEXT PRIMARY KEY,
+                         idempotency_key TEXT NOT NULL UNIQUE,
+                         body TEXT NOT NULL
+                     );
+                     CREATE TABLE bot_delivery_receipt(
+                         delivery_id TEXT PRIMARY KEY,
+                         idempotency_key TEXT NOT NULL UNIQUE,
+                         body TEXT NOT NULL,
+                         FOREIGN KEY(delivery_id) REFERENCES bot_delivery_request(delivery_id)
+                     );",
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO bot_delivery_request(delivery_id, idempotency_key, body)
+                     VALUES (?1, ?2, ?3)",
+                    rusqlite::params!["d1", "k1", "{}"],
+                )
+                .unwrap();
+            let body = serde_json::to_string(&BotDeliveryReceipt {
+                delivery_id: "d1".into(),
+                idempotency_key: "k1".into(),
+                status: DeliveryStatus::RetryScheduled,
+                attempt_count: 1,
+                platform_message_ids: vec![],
+                part_receipts: vec![],
+                delivered_at_unix_ms: None,
+                error_code: None,
+                generation: 0,
+                lease_expires_at_unix_ms: None,
+            })
+            .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO bot_delivery_receipt(delivery_id, idempotency_key, body)
+                     VALUES (?1, ?2, ?3)",
+                    rusqlite::params!["d1", "k1", body],
+                )
+                .unwrap();
+        }
+
+        let _repository = BotStateDbRepository::open(&path).unwrap();
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        let columns = connection
+            .prepare("PRAGMA table_info(bot_delivery_receipt)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(columns.iter().any(|column| column == "status"));
+        let status: String = connection
+            .query_row(
+                "SELECT status FROM bot_delivery_receipt WHERE delivery_id='d1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "retry_scheduled");
+        let index_sql: String = connection
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='index' AND name='bot_delivery_receipt_status'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(index_sql.contains("status"));
+        assert!(index_sql.contains("delivery_id"));
+    }
 
     #[test]
     fn icl_and_persona_persist_on_shared_repository() {
@@ -2877,6 +3020,35 @@ mod tests {
                 .as_deref(),
             Some("guide")
         );
+    }
+
+    #[tokio::test]
+    async fn claim_due_drains_beyond_batch_limit_without_starving_on_sending() {
+        let root = tempfile::tempdir().unwrap();
+        let repository =
+            Arc::new(BotStateDbRepository::open(root.path().join("state.db")).unwrap());
+        let conversation = conversation();
+        let count = 80_usize;
+        for index in 0..count {
+            let request = delivery(
+                &conversation,
+                &format!("batch-{index:03}"),
+                &format!("batch-key-{index:03}"),
+            );
+            assert!(repository.reserve(&request).await.unwrap().is_none());
+        }
+
+        let mut claimed = Vec::new();
+        loop {
+            let batch = repository.claim_due_delivery_ids(10).await.unwrap();
+            if batch.is_empty() {
+                break;
+            }
+            assert!(batch.len() <= super::CLAIM_DUE_BATCH_LIMIT as usize);
+            claimed.extend(batch);
+        }
+        assert_eq!(claimed.len(), count);
+        assert_eq!(claimed[0], "batch-000");
     }
 
     #[tokio::test]
@@ -3691,11 +3863,17 @@ mod tests {
                 .iter()
                 .any(|item| item.text == "persisted")
         );
-        assert!(
-            loaded
-                .stickers
-                .iter()
-                .any(|item| item.name == "pack.png" && item.bytes == b"sticker-bytes")
+        assert!(loaded.stickers.iter().any(|item| item.name == "pack.png"));
+        let sticker_id = loaded
+            .stickers
+            .iter()
+            .find(|item| item.name == "pack.png")
+            .expect("sticker")
+            .content_hash
+            .clone();
+        assert_eq!(
+            restored.sticker_blob(&sticker_id).await.unwrap().bytes,
+            b"sticker-bytes"
         );
         assert!(
             loaded
@@ -3703,6 +3881,43 @@ mod tests {
                 .iter()
                 .any(|item| item.face_key == "qq:6:0" && item.face_type == "6")
         );
+    }
+
+    #[tokio::test]
+    async fn sandbox_history_load_keeps_blobs_lazy_and_empty_upsert_does_not_clobber() {
+        use mutsuki_bot_sandbox::{SandboxApi, SandboxHistoryStore, SandboxService};
+
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("state.db");
+        let repository = Arc::new(BotStateDbRepository::open(&path).unwrap());
+        let first = SandboxService::with_history("qq-main", repository.clone()).unwrap();
+        first.set_runtime(Arc::new(NoopSandboxRuntime));
+        let uploaded = first
+            .upload_media("pic.png", "image/png", b"image-bytes".to_vec())
+            .await
+            .unwrap();
+        drop(first);
+        drop(repository);
+
+        let reopened = Arc::new(BotStateDbRepository::open(&path).unwrap());
+        let loaded = SandboxHistoryStore::load(reopened.as_ref()).unwrap();
+        let asset = loaded
+            .media
+            .iter()
+            .find(|item| item.content_hash == uploaded.media_id)
+            .expect("asset metadata");
+        assert!(asset.bytes.is_empty());
+        let blob = SandboxHistoryStore::load_media_blob(reopened.as_ref(), &uploaded.media_id)
+            .unwrap()
+            .expect("blob");
+        assert_eq!(blob.bytes, b"image-bytes");
+
+        SandboxHistoryStore::save(reopened.as_ref(), &loaded).unwrap();
+        let blob_after_empty_upsert =
+            SandboxHistoryStore::load_media_blob(reopened.as_ref(), &uploaded.media_id)
+                .unwrap()
+                .expect("blob after empty upsert");
+        assert_eq!(blob_after_empty_upsert.bytes, b"image-bytes");
     }
 
     #[test]
