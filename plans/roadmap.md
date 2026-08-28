@@ -36,10 +36,13 @@ Link、Host、AgentKit、Bot、StdPlugins 和第一方 Bot 产品的 package 组
 - 协议 ID 使用 `mutsuki.<domain>.<action>`，不带 `plugin`。
 
 标准协议与插件位于 `plugins/std`，包括
-`mutsuki-plugin-resource-memory`、shared-memory provider、`mutsuki-plugin-dev-mock`、
-`mutsuki-plugin-observe-log`、`mutsuki-plugin-config-permission`、
-`mutsuki-plugin-workflow-linear`、`mutsuki-plugin-workflow-broadcast`、
-`mutsuki-plugin-io-fs`、`mutsuki-plugin-io-http-client` 和 `mutsuki-plugin-db-sqlite`
+`mutsuki-plugin-resource-memory`、`mutsuki-plugin-resource-shared-memory`、
+`mutsuki-plugin-dev-mock`、`mutsuki-plugin-observe-log`、
+`mutsuki-plugin-config-permission`、`mutsuki-plugin-config-sqlite`、
+`mutsuki-plugin-config-web`、`mutsuki-plugin-workflow-linear`、
+`mutsuki-plugin-workflow-broadcast`、`mutsuki-plugin-io-fs`、
+`mutsuki-plugin-io-http-client`、`mutsuki-plugin-io-browser-chromium`、
+`mutsuki-plugin-image-render-takumi` 和 `mutsuki-plugin-db-sqlite`
 能力。`dev-mock` 当前提供 deterministic echo / sleep / fail / random-fail /
 resource lineage mock，用于验证标准插件加载、协议声明、handler binding 和 batch runner
 路径；`observe-log` 当前提供 `mutsuki.log.emit` 与最小 trace event 协议到 DomainEvent 的
@@ -52,7 +55,8 @@ broadcast；fs / http / sqlite 插件通过 public facade task 派生 `effect.*`
 
 `MutsukiStdPlugins` 当前包含 `mutsuki-protocol-workflow`、`mutsuki-protocol-resource`、
 `mutsuki-protocol-fs`、`mutsuki-protocol-http`、`mutsuki-protocol-db`、
-`mutsuki-protocol-observe`、`mutsuki-protocol-config` 和 `mutsuki-protocol-dev`。
+`mutsuki-protocol-observe`、`mutsuki-protocol-config`、`mutsuki-protocol-dev`、
+`mutsuki-protocol-browser` 和 `mutsuki-protocol-image`。
 这些协议包只暴露 protocol id 常量、`VERSION`、`ABI_CODEC`、稳定 protocol id 列表和
 input / output / error schema 函数，不提供 runner、executor、资源后端或默认执行策略。
 SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 细化时继续补齐。

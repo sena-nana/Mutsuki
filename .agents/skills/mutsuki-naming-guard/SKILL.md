@@ -11,7 +11,9 @@ description: Enforce Mutsuki/NanoBot component naming and responsibility boundar
 2. Classify each new or touched component by the question it answers, not by what it feels like.
 3. If a name does not match the component's answer, rename or split at the correct boundary instead of adding aliases.
 4. If responsibilities cross categories, split the component or move the behavior to the existing layer that owns it.
-5. For code changes, update docs/contracts first when the boundary is new or not yet described.
+5. For code changes, update the boundary's contract documentation first when it is new or not yet
+   described: `plans/contracts.md` for wire/protocol boundaries, the owning scoped `AGENTS.md` and
+   `skills/*/SKILL.md` for component boundaries.
 
 ## Decision Order
 
