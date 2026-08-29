@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub use mutsuki_bot_management::*;
-use mutsuki_web_extension::{
+use mutsuki_web_extension_api::{
     ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, content_hash,
     load_bundled_manifest,
 };
@@ -168,7 +168,7 @@ impl WebExtension for QqBotWebExtension {
 
     fn register_events(
         &self,
-        registry: &mut mutsuki_web_extension::EventRegistry,
+        registry: &mut mutsuki_web_extension_api::EventRegistry,
     ) -> Result<(), ExtensionError> {
         registry.register_topic("changed");
         Ok(())

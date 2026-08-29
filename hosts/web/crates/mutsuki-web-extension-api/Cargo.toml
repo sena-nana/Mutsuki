@@ -1,0 +1,20 @@
+[package]
+name = "mutsuki-web-extension-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Host-neutral WebExtension trait, RPC registry and bundled manifest helpers"
+
+[dependencies]
+mutsuki-web-protocol.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+
+[lints]
+workspace = true

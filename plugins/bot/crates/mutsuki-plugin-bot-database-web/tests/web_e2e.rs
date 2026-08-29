@@ -5,7 +5,7 @@ use mutsuki_bot_state_db::BotStateDbRepository;
 use mutsuki_plugin_bot_database_web::{
     DatabaseWebExtension, PLUGIN_ID, materialize_frontend_assets,
 };
-use mutsuki_web_extension::{WebExtension, content_hash};
+use mutsuki_web_extension_api::{WebExtension, content_hash};
 use mutsuki_web_host::{MinimalWebApplication, MutsukiWebHost, WebHost};
 use mutsuki_web_protocol::{
     DeploymentMode, RpcRequest, WEB_PROTOCOL_VERSION, WebApplicationDescriptor, WebShellAssets,

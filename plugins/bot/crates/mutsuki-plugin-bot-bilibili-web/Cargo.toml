@@ -8,7 +8,7 @@ description = "Bilibili push plugin WebExtension: login state and subscription m
 [dependencies]
 mutsuki-bot-management = { workspace = true }
 mutsuki-bot-protocol = { workspace = true }
-mutsuki-web-extension = { workspace = true }
+mutsuki-web-extension-api = { workspace = true }
 mutsuki-web-protocol = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

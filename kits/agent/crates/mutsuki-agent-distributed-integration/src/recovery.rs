@@ -1,7 +1,8 @@
 use std::sync::Mutex;
 
-use mutsuki_agent_contracts::{AgentError, AgentSessionCheckpoint, CoordinatorLease};
-use mutsuki_agent_runtime::CoordinatorFence;
+use mutsuki_agent_contracts::{AgentError, AgentSessionCheckpoint};
+
+use crate::{CoordinatorFence, CoordinatorLease};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AgentRecoveryMode {
@@ -47,6 +48,7 @@ impl AgentSessionRecoveryCoordinator {
     pub fn recover(
         &self,
         mut checkpoint: AgentSessionCheckpoint,
+        previous: Option<CoordinatorLease>,
         candidate: Option<CoordinatorLease>,
         durable_state_available: bool,
         now_unix_ms: u64,
@@ -81,7 +83,7 @@ impl AgentSessionRecoveryCoordinator {
         }
 
         let mut fence = self.fence.lock().expect("agent recovery fence mutex");
-        if let Some(previous) = checkpoint.coordinator.clone() {
+        if let Some(previous) = previous {
             fence.restore(previous)?;
         }
         fence.acquire(candidate.clone())?;
@@ -91,7 +93,6 @@ impl AgentSessionRecoveryCoordinator {
             &candidate.fencing_token,
             now_unix_ms,
         )?;
-        checkpoint.coordinator = Some(candidate.clone());
         checkpoint.degraded_reason = None;
         Ok(AgentRecoveredSession {
             checkpoint,
@@ -184,7 +185,6 @@ mod tests {
             pending_approvals: Vec::new(),
             plugin_generations: BTreeMap::new(),
             attempts: BTreeMap::new(),
-            coordinator: Some(lease(3, "old", 100)),
             degraded_reason: None,
         }
     }
@@ -192,8 +192,15 @@ mod tests {
     #[test]
     fn unavailable_durable_state_is_read_only_and_new_epoch_fences_old_owner() {
         let coordinator = AgentSessionRecoveryCoordinator::default();
+        let previous = Some(lease(3, "old", 100));
         let degraded = coordinator
-            .recover(checkpoint(), Some(lease(4, "new", 200)), false, 10)
+            .recover(
+                checkpoint(),
+                previous.clone(),
+                Some(lease(4, "new", 200)),
+                false,
+                10,
+            )
             .unwrap();
         assert!(matches!(
             degraded.mode,
@@ -206,13 +213,19 @@ mod tests {
 
         assert_eq!(
             coordinator
-                .recover(checkpoint(), Some(lease(3, "stale", 200)), true, 10)
+                .recover(
+                    checkpoint(),
+                    previous.clone(),
+                    Some(lease(3, "stale", 200)),
+                    true,
+                    10
+                )
                 .unwrap_err()
                 .code,
             "agent.coordinator.epoch_conflict"
         );
         let recovered = coordinator
-            .recover(checkpoint(), Some(lease(4, "new", 200)), true, 10)
+            .recover(checkpoint(), previous, Some(lease(4, "new", 200)), true, 10)
             .unwrap();
         recovered.authorize_side_effect(10).unwrap();
         coordinator.validate("session", 4, "new", 10).unwrap();

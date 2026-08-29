@@ -9,11 +9,9 @@ description = "Web control proxy: ServiceHost ControlMethod as control.* RPC wit
 mutsuki-runtime-contracts = { workspace = true }
 mutsuki-service-control = { workspace = true }
 mutsuki-web-protocol = { workspace = true }
-mutsuki-web-extension = { workspace = true }
+mutsuki-web-extension-api = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-futures-executor = "0.3"
-tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 
 [dev-dependencies]
 mutsuki-web-host = { workspace = true }

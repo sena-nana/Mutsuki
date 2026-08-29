@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use mutsuki_agent_contracts::{AgentError, CoordinatorLease};
+use mutsuki_agent_contracts::AgentError;
+
+use crate::CoordinatorLease;
 
 #[derive(Default)]
 pub struct CoordinatorFence {

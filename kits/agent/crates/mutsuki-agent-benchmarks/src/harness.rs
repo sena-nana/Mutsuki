@@ -1481,13 +1481,6 @@ pub fn checkpoint_codec_sample(roundtrips: usize) -> Sample {
                 committed_side_effects: vec!["edit-plan-41".into()],
             },
         )]),
-        coordinator: Some(CoordinatorLease {
-            session_id: "benchmark-session".into(),
-            node_id: "benchmark-worker".into(),
-            epoch: 4,
-            fencing_token: "benchmark-fence".into(),
-            expires_at_unix_ms: u64::MAX,
-        }),
         degraded_reason: None,
     };
     let encoded = serde_json::to_vec(&checkpoint).unwrap();

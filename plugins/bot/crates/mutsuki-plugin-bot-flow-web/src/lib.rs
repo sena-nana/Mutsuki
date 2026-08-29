@@ -20,7 +20,7 @@ use mutsuki_bot_protocol::BotFlowDocument;
 use mutsuki_config_service::{
     ConfigApplyRequest, ConfigContext, ConfigRevision, ConfigService, capability,
 };
-use mutsuki_web_extension::{
+use mutsuki_web_extension_api::{
     ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, content_hash,
     load_bundled_manifest,
 };
@@ -141,7 +141,7 @@ impl WebExtension for BotFlowEditorWebExtension {
 
     fn register_events(
         &self,
-        _registry: &mut mutsuki_web_extension::EventRegistry,
+        _registry: &mut mutsuki_web_extension_api::EventRegistry,
     ) -> Result<(), ExtensionError> {
         Ok(())
     }
@@ -225,7 +225,7 @@ mod tests {
     use super::*;
     use mutsuki_bot_flow::{BotFlowConfigProvider, BotNodeCatalog};
     use mutsuki_config_service::{ConfigProviderRegistry, InMemoryConfigRepository};
-    use mutsuki_web_extension::RpcCallContext;
+    use mutsuki_web_extension_api::RpcCallContext;
 
     fn editor() -> (BotFlowEditorWebExtension, Arc<BotFlowRegistry>) {
         let flow = Arc::new(BotFlowRegistry::new(BotNodeCatalog::default()));

@@ -32,7 +32,7 @@ use std::sync::Arc;
 use mutsuki_config_service::{
     ConfigApplyRequest, ConfigContext, ConfigProviderId, ConfigService, ConfigValue,
 };
-use mutsuki_web_extension::{
+use mutsuki_web_extension_api::{
     ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, content_hash,
 };
 use mutsuki_web_protocol::{
@@ -261,7 +261,7 @@ impl WebExtension for ConfigWebExtension {
 
     fn register_events(
         &self,
-        ctx: &mut mutsuki_web_extension::EventRegistry,
+        ctx: &mut mutsuki_web_extension_api::EventRegistry,
     ) -> Result<(), ExtensionError> {
         ctx.register_topic("revision_changed");
         Ok(())

@@ -6,9 +6,11 @@ use std::{
 };
 
 use mutsuki_agent_contracts::{
-    AGENT_RUN_PROTOCOL, AgentAffinity, AgentError, AgentMigrationPolicy,
-    AgentRemoteSubagentRequest, AgentRemoteTaskRequest, AgentSideEffectClass, AgentTaskPlacement,
+    AGENT_RUN_PROTOCOL, AgentAffinity, AgentError, AgentMigrationPolicy, AgentSideEffectClass,
+    AgentTaskPlacement,
 };
+
+use crate::{AgentRemoteSubagentRequest, AgentRemoteTaskRequest};
 use mutsuki_distributed_contracts::{
     DirectDataRef, GlobalTaskId, LocalTaskOutcome, RemoteResult, TaskPlacement,
 };

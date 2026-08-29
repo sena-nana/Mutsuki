@@ -8,7 +8,7 @@ description = "WebExtension for the QQ conversation sandbox console."
 [dependencies]
 async-trait.workspace = true
 mutsuki-bot-sandbox.workspace = true
-mutsuki-web-extension.workspace = true
+mutsuki-web-extension-api.workspace = true
 mutsuki-web-protocol.workspace = true
 serde_json.workspace = true
 uuid.workspace = true

@@ -217,8 +217,25 @@ fn read_mcp_frame(stdout: &mut BufReader<ChildStdout>) -> Result<Value, AgentErr
         .map_err(|error| AgentError::new("agent.mcp.encode_failed", error.to_string()))
 }
 
-#[derive(Default)]
-pub struct ReqwestMcpHttpClient;
+pub struct ReqwestMcpHttpClient {
+    client: reqwest::blocking::Client,
+}
+
+impl Default for ReqwestMcpHttpClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ReqwestMcpHttpClient {
+    pub fn new() -> Self {
+        mutsuki_agent_sdk::ensure_http_crypto_provider();
+        let client = reqwest::blocking::Client::builder()
+            .build()
+            .unwrap_or_else(|_| reqwest::blocking::Client::new());
+        Self { client }
+    }
+}
 
 impl McpHttpClient for ReqwestMcpHttpClient {
     fn post_json(
@@ -228,12 +245,10 @@ impl McpHttpClient for ReqwestMcpHttpClient {
         body: &Value,
         timeout: Duration,
     ) -> Result<Value, AgentError> {
-        mutsuki_agent_sdk::ensure_http_crypto_provider();
-        let mut request = reqwest::blocking::Client::builder()
-            .timeout(timeout)
-            .build()
-            .map_err(|error| AgentError::new("agent.mcp.request_failed", error.to_string()))?
+        let mut request = self
+            .client
             .post(url)
+            .timeout(timeout)
             .header("content-type", "application/json")
             .header("accept", "application/json, text/event-stream")
             .json(body);
@@ -708,14 +723,14 @@ impl McpTransportFactory for HttpMcpTransportFactory {
 }
 
 pub struct CompositeMcpTransportFactory {
-    stdio: StdioMcpTransportFactory,
+    stdio: Arc<dyn McpTransportFactory>,
     http: HttpMcpTransportFactory,
 }
 
 impl CompositeMcpTransportFactory {
-    pub fn new(http_client: Arc<dyn McpHttpClient>) -> Self {
+    pub fn new(stdio: Arc<dyn McpTransportFactory>, http_client: Arc<dyn McpHttpClient>) -> Self {
         Self {
-            stdio: StdioMcpTransportFactory,
+            stdio,
             http: HttpMcpTransportFactory::new(http_client),
         }
     }
@@ -2481,7 +2496,7 @@ while True:
         });
 
         let service = SharedMcpService::new(Arc::new(HttpMcpTransportFactory::new(Arc::new(
-            ReqwestMcpHttpClient,
+            ReqwestMcpHttpClient::default(),
         ))));
         service
             .connect(McpServerManifest {

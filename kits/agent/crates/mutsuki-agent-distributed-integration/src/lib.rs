@@ -20,11 +20,15 @@ use mutsuki_distributed_contracts::{
     QualityPolicy, TaskPlacementRequest, WorkOrigin,
 };
 
+mod coordinator_fence;
 mod database;
+mod lease;
 mod recovery;
 mod remote;
 
+pub use coordinator_fence::*;
 pub use database::*;
+pub use lease::*;
 pub use recovery::*;
 pub use remote::*;
 

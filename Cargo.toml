@@ -128,6 +128,7 @@ mutsuki-tauri-host = { path = "hosts/tauri/crates/mutsuki-tauri-host" }
 mutsuki-tauri-resource = { path = "hosts/tauri/crates/mutsuki-tauri-resource" }
 
 mutsuki-web-bridge = { path = "hosts/web/crates/mutsuki-web-bridge" }
+mutsuki-web-extension-api = { path = "hosts/web/crates/mutsuki-web-extension-api" }
 mutsuki-web-extension = { path = "hosts/web/crates/mutsuki-web-extension" }
 mutsuki-web-host = { path = "hosts/web/crates/mutsuki-web-host" }
 mutsuki-web-protocol = { path = "hosts/web/crates/mutsuki-web-protocol" }
