@@ -1477,6 +1477,14 @@ pub fn filtered_environment(
     extra: BTreeMap<String, String>,
 ) -> BTreeMap<String, String> {
     let mut envs = BTreeMap::new();
+    #[cfg(windows)]
+    for key in ["SystemRoot", "WINDIR", "ComSpec", "PATHEXT"] {
+        // Windows child processes (the .NET loader in particular) fail to initialize
+        // without these, so they pass through even without an allowlist entry.
+        if let Ok(value) = env::var(key) {
+            envs.insert(key.into(), value);
+        }
+    }
     for key in allowlist {
         if let Ok(value) = env::var(key) {
             envs.insert(key.clone(), value);
@@ -1509,6 +1517,22 @@ mod tests {
     fn remove_secret_env(key: &str) {
         // SAFETY: see `set_secret_env`; callers hold `ENV_LOCK`.
         unsafe { env::remove_var(key) };
+    }
+
+    /// Windows runners cannot boot without the OS loader variables, so an empty allowlist
+    /// must still pass them through instead of producing a process that dies on startup.
+    #[cfg(windows)]
+    #[test]
+    fn filtered_environment_keeps_windows_system_roots_without_allowlist() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_secret_env("SystemRoot", r"C:\WINDOWS");
+
+        let envs = filtered_environment(&[], BTreeMap::new());
+
+        assert_eq!(
+            envs.get("SystemRoot").map(String::as_str),
+            Some(r"C:\WINDOWS")
+        );
     }
 
     /// The control token grants full control-plane authority, so it must not be world-readable

@@ -700,7 +700,12 @@ mod tests {
             .expect("exit change")
             .expect("change channel");
         let snapshot = supervisor.list().await;
-        assert!(matches!(snapshot[0].state, RunnerProcessState::Exited(0)));
+        assert!(
+            matches!(snapshot[0].state, RunnerProcessState::Exited(0)),
+            "runner state was {:?} (last_error: {:?})",
+            snapshot[0].state,
+            snapshot[0].last_error,
+        );
         supervisor
             .remove("short-lived", Duration::from_millis(50))
             .await
