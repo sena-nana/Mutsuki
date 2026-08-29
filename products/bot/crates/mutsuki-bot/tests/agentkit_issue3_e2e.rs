@@ -327,7 +327,10 @@ async fn agentkit_issue3_runs_real_state_machine_through_service_host_and_core()
     let first =
         submit_and_wait::<AgentRunResult>(&client, "agent-first", AGENT_RUN_PROTOCOL, &first).await;
     assert_eq!(first.status, AgentRunStatus::Completed);
-    assert_eq!(first.messages[0].role, AgentRole::System);
+    // The session transcript is the model-visible fact source: the rendered system
+    // prompt only lives in model context, so the run result starts with the user turn.
+    assert_eq!(first.messages[0].role, AgentRole::User);
+    assert_eq!(first.messages[0].content, "first");
     assert_eq!(
         first.messages.last().unwrap().content,
         "final users=1 tool={\"value\":\"first\"}"
@@ -412,7 +415,8 @@ async fn agentkit_issue3_runs_real_state_machine_through_service_host_and_core()
             .await;
     let stream = streamed.output_resource.as_ref().unwrap();
     assert_eq!(streamed.status, AgentRunStatus::Completed);
-    assert_eq!(streamed.messages.last().unwrap().content, "");
+    // The streamed final text is persisted in the transcript like any other turn.
+    assert_eq!(streamed.messages.last().unwrap().content, "stream-final");
     assert_eq!(
         bundle.model.read_stream(stream).as_deref(),
         Some("stream-final")
@@ -614,6 +618,15 @@ id = "mutsuki.plugin.agent.context"
 id = "mutsuki.plugin.agent.loop"
 
 [[plugins.configured]]
+id = "mutsuki.plugin.agent.context.collect.uninjected"
+
+[[plugins.configured]]
+id = "mutsuki.plugin.agent.credential"
+
+[[plugins.configured]]
+id = "mutsuki.plugin.agent.knowledge"
+
+[[plugins.configured]]
 id = "mutsuki.plugin.agent.memory_router"
 
 [[plugins.configured]]
@@ -624,6 +637,9 @@ id = "mutsuki.plugin.agent.prompt"
 
 [[plugins.configured]]
 id = "mutsuki.plugin.agent.session"
+
+[[plugins.configured]]
+id = "mutsuki.plugin.agent.skills"
 
 [[plugins.configured]]
 id = "mutsuki.plugin.agent.tool_router"
