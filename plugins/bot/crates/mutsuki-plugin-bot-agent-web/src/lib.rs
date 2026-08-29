@@ -599,7 +599,10 @@ mod tests {
         assert!(root.path().join("trajectory-model.js").is_file());
         assert!(root.path().join("trajectory-view.js").is_file());
         assert!(root.path().join("manifest.json").is_file());
-        assert!(include_str!("../assets/index.js").contains("sessions.event_get"));
+        let index_js = include_str!("../assets/index.js");
+        assert!(index_js.contains("sessions.event_get"));
+        assert!(!index_js.contains("测试模型"));
+        assert!(!index_js.contains("provider.test"));
         assert!(include_str!("../assets/trajectory-model.js").contains("EVENT_WINDOW_LIMIT"));
     }
 
