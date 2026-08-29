@@ -680,7 +680,7 @@ pub(crate) fn materialize_console_shell(
     }
     let mut activities = vec![
         json!({"id": "home", "label": "概览", "icon": "home", "order": 0, "position": "top"}),
-        json!({"id": "system", "label": "诊断", "icon": "system", "order": 90, "position": "bottom"}),
+        json!({"id": "system", "label": "诊断", "icon": "system", "order": 50, "position": "top"}),
     ];
     if include_config {
         activities.push(json!({
