@@ -90,6 +90,8 @@ export interface NavigationRegistration {
   group?: string;
   order?: number;
   requiredCapability?: string;
+  /** Target page provides no content; the route renders disabled. */
+  disabled?: boolean;
 }
 
 export interface SlotRegistration {

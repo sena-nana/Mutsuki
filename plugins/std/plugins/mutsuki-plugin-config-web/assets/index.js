@@ -680,7 +680,7 @@ async function loadPluginInfo(rpc, pluginId) {
   return (await loadPluginList(rpc)).find((item) => item.plugin_id === pluginId) || null;
 }
 
-function registerPluginHub(ctx, { id, title, group, order, requiredCapability }) {
+function registerPluginHub(ctx, { id, title, group, order, requiredCapability, disabled = false }) {
   ctx.pages.register({
     id,
     path: `/plugins/${id}`,
@@ -688,6 +688,13 @@ function registerPluginHub(ctx, { id, title, group, order, requiredCapability })
     pluginId: id,
     component: {
       mount(el) {
+        if (disabled) {
+          const card = document.createElement("section");
+          card.className = "card";
+          card.textContent = "该插件未提供内容";
+          el.appendChild(card);
+          return;
+        }
         const panel = mountPluginHome(el, ctx, id, id);
         return { dispose: () => panel?.destroy?.() };
       },
@@ -702,7 +709,16 @@ function registerPluginHub(ctx, { id, title, group, order, requiredCapability })
     group,
     order,
     requiredCapability,
+    disabled: disabled || undefined,
   });
+}
+
+function pluginHasContent(ctx, pluginId) {
+  const owned = (item) => pluginIdsOf(item).includes(pluginId);
+  if ((ctx?.pages?.list?.() || []).some((page) => owned(page) && page.id !== pluginId)) return true;
+  return (ctx?.slots?.list?.() || []).some(
+    (slot) => slot.slot === "overview.cards" && owned(slot),
+  );
 }
 
 /** Embeddable config panel (no outer console shell). Used by the unified overview shell. */
@@ -1088,12 +1104,16 @@ export default {
       // Schema-less entries only exist when the plugin is actually loaded,
       // so product-declared ids that never load do not become dead entries.
       if (!schema && !loadedPlugins.has(providerId)) return;
+      // Schema-less plugins only keep an enabled route when their own web
+      // extension contributed pages or overview cards; otherwise the hub is
+      // an empty shell and the route renders disabled.
       registerPluginHub(ctx, {
         id: providerId,
-        title: item.label || schema?.title?.default || pluginId,
+        title: item.label || schema?.title?.default || providerId,
         group: group.label || undefined,
         order,
         requiredCapability: schema ? "config.schema.read" : "runtime.read",
+        disabled: !schema && !pluginHasContent(ctx, providerId),
       });
       covered.add(providerId);
     });
@@ -1107,6 +1127,7 @@ export default {
         group: "已加载",
         order,
         requiredCapability: "runtime.read",
+        disabled: !pluginHasContent(ctx, pluginId),
       });
       covered.add(pluginId);
       order += 1;
