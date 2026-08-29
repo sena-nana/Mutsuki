@@ -609,20 +609,17 @@ function extraPagesForPlugin(ctx, pluginId, homePageId) {
     .map((page) => ({ page, nav: navByPage.get(page.id) }));
 }
 
-function appendPluginInfo(parent, plugin) {
-  if (!plugin) return;
-  const card = document.createElement("section");
-  card.className = "card";
-  const heading = document.createElement("h2");
-  heading.textContent = plugin.plugin_id || "";
-  const meta = document.createElement("p");
-  meta.className = "muted";
+function appendPluginInfo(host, plugin) {
+  const title = host.closest(".console-main")?.querySelector(".console-page-header h1");
+  if (!title || !plugin) return null;
   const version = (plugin.candidates || []).find((item) => item.deployment === plugin.active_deployment)?.version
     || plugin.candidates?.[0]?.version
     || "—";
-  meta.textContent = `当前部署：${plugin.active_deployment || "—"} · ${version}`;
-  card.append(heading, meta);
-  parent.appendChild(card);
+  const meta = document.createElement("span");
+  meta.className = "console-page-header__meta";
+  meta.textContent = `${plugin.plugin_id || "—"} · ${version} · ${plugin.active_deployment || "—"}`;
+  title.after(meta);
+  return meta;
 }
 
 function mountPluginCards(parent, ctx, pluginId) {
@@ -725,6 +722,7 @@ export function mountConfigPanel(host, rpc, events, fixedProviderId = null, slot
     pluginInfo: null,
   };
   let cardPanels = [];
+  let headerMeta = null;
 
   const root = document.createElement("div");
   root.className = "config-panel settings-page";
@@ -789,6 +787,8 @@ export function mountConfigPanel(host, rpc, events, fixedProviderId = null, slot
 
   function render() {
     disposeCards();
+    headerMeta?.remove();
+    headerMeta = null;
     root.innerHTML = "";
     if (!state.selected) {
       const card = document.createElement("section");
@@ -812,7 +812,7 @@ export function mountConfigPanel(host, rpc, events, fixedProviderId = null, slot
     }
 
     if (ctx && ownerPluginId) {
-      appendPluginInfo(root, state.pluginInfo);
+      headerMeta = appendPluginInfo(host, state.pluginInfo);
       cardPanels = mountPluginCards(root, ctx, ownerPluginId);
       appendPluginPages(root, ctx, ownerPluginId, homePageId);
     }
@@ -971,6 +971,7 @@ export function mountConfigPanel(host, rpc, events, fixedProviderId = null, slot
   });
   root.destroy = () => {
     disposeCards();
+    headerMeta?.remove();
     revisionSubscription?.dispose();
   };
   return root;

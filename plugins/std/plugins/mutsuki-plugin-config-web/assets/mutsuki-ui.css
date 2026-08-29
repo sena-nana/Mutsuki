@@ -1547,6 +1547,12 @@ button:disabled {
   font-size: 18px;
 }
 
+.console-page-header__meta {
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .console-page-header__actions {
   display: inline-flex;
   align-items: center;
