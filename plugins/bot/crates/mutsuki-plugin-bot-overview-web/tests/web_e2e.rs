@@ -24,6 +24,9 @@ async fn start(fail_statistics: bool) -> MutsukiWebHost {
     let frontend = std::fs::read_to_string(assets.join("index.js")).unwrap();
     assert!(frontend.contains("overview.cards"));
     assert!(frontend.contains("overview-cards"));
+    assert!(frontend.contains("overviewCardSpan"));
+    assert!(frontend.contains("--overview-card-col-span"));
+    assert!(frontend.contains("--overview-card-row-span"));
     assert!(frontend.contains(r#"className = "card card--outlined""#));
     assert!(frontend.contains(r#"aria-label", "刷新""#));
     assert!(!frontend.contains("mountQqAccountCards"));

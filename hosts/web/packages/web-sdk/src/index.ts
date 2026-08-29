@@ -100,6 +100,9 @@ export interface SlotRegistration {
   /** Runtime plugin / config provider that owns this contribution. */
   pluginId?: string;
   pluginIds?: string[];
+  /** Homepage `overview.cards` occupancy. The host owns cell size. */
+  colSpan?: number;
+  rowSpan?: number;
 }
 
 export interface CommandRegistration {
