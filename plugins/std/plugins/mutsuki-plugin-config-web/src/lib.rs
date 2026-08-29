@@ -272,14 +272,10 @@ fn visible_navigation_groups(
     providers: &[ConfigProviderId],
     configured: &[ConfigNavigationGroup],
 ) -> Vec<ConfigNavigationGroup> {
-    if providers.is_empty() {
-        return Vec::new();
-    }
-    let available = providers
-        .iter()
-        .map(|provider| provider.as_str().to_owned())
-        .collect::<BTreeSet<_>>();
     if configured.is_empty() {
+        if providers.is_empty() {
+            return Vec::new();
+        }
         return vec![ConfigNavigationGroup {
             label: None,
             items: providers
@@ -292,6 +288,9 @@ fn visible_navigation_groups(
         }];
     }
 
+    // Items without a registered config provider are kept: they may name plugins
+    // that expose no schema (display-only hub entries). The frontend only renders
+    // those when the plugin id shows up in control.plugin_list.
     let mut included = BTreeSet::new();
     let mut groups = configured
         .iter()
@@ -299,10 +298,7 @@ fn visible_navigation_groups(
             let items = group
                 .items
                 .iter()
-                .filter(|item| {
-                    available.contains(item.provider_id.as_str())
-                        && included.insert(item.provider_id.clone())
-                })
+                .filter(|item| included.insert(item.provider_id.clone()))
                 .cloned()
                 .collect::<Vec<_>>();
             (!items.is_empty()).then(|| ConfigNavigationGroup {
@@ -484,7 +480,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn navigation_groups_keep_explicit_order_and_filter_missing_providers() {
+    fn navigation_groups_keep_explicit_order_and_schema_less_items() {
         let providers = vec![
             ConfigProviderId::new("mutsuki.product"),
             ConfigProviderId::new("plugin.qq"),
@@ -512,6 +508,25 @@ mod tests {
         assert_eq!(visible.len(), 2);
         assert_eq!(visible[0].items[0].label.as_deref(), Some("Mutsuki"));
         assert_eq!(visible[1].label.as_deref(), Some("插件"));
-        assert_eq!(visible[1].items[0].provider_id, "plugin.qq");
+        // Items without a schema are kept so products can name schema-less
+        // plugins; the frontend gates them on control.plugin_list.
+        assert_eq!(visible[1].items[0].provider_id, "plugin.missing");
+        assert_eq!(visible[1].items[1].provider_id, "plugin.qq");
+    }
+
+    #[test]
+    fn navigation_groups_name_schema_less_plugins_without_providers() {
+        let groups = vec![ConfigNavigationGroup {
+            label: Some("扩展".into()),
+            items: vec![ConfigNavigationItem {
+                provider_id: "mutsuki.bot.router.flow".into(),
+                label: Some("流程路由".into()),
+            }],
+        }];
+
+        let visible = visible_navigation_groups(&[], &groups);
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].label.as_deref(), Some("扩展"));
+        assert_eq!(visible[0].items[0].label.as_deref(), Some("流程路由"));
     }
 }

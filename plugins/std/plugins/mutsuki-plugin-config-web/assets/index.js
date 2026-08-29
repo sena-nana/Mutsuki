@@ -1064,11 +1064,20 @@ export default {
     const entries = (groups || []).flatMap((group) =>
       (group.items || []).map((item) => ({ group, item })),
     );
+    const pluginList = await loadPluginList(ctx.rpc);
+    const loadedPlugins = new Set(
+      pluginList
+        .filter((plugin) => plugin.configured || plugin.active_deployment)
+        .map((plugin) => String(plugin.plugin_id || "")),
+    );
     const providers = (await Promise.all(
       entries.map(async ({ group, item }) => {
-        const schema = await ctx.rpc.call("config", "schema.get", {
-          provider_id: item.provider_id,
-        });
+        let schema = null;
+        try {
+          schema = await ctx.rpc.call("config", "schema.get", {
+            provider_id: item.provider_id,
+          });
+        } catch {}
         return { group, item, schema };
       }),
     ));
@@ -1076,17 +1085,20 @@ export default {
     providers.forEach((provider, order) => {
       const { group, item, schema } = provider;
       const providerId = item.provider_id;
+      // Schema-less entries only exist when the plugin is actually loaded,
+      // so product-declared ids that never load do not become dead entries.
+      if (!schema && !loadedPlugins.has(providerId)) return;
       registerPluginHub(ctx, {
         id: providerId,
-        title: item.label || schema?.title?.default || "配置",
+        title: item.label || schema?.title?.default || pluginId,
         group: group.label || undefined,
         order,
-        requiredCapability: "config.schema.read",
+        requiredCapability: schema ? "config.schema.read" : "runtime.read",
       });
       covered.add(providerId);
     });
     let order = providers.length;
-    for (const plugin of await loadPluginList(ctx.rpc)) {
+    for (const plugin of pluginList) {
       const pluginId = String(plugin.plugin_id || "");
       if (!pluginId || covered.has(pluginId) || !(plugin.configured || plugin.active_deployment)) continue;
       registerPluginHub(ctx, {

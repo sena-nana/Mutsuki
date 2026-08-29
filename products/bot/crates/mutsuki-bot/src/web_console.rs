@@ -195,32 +195,70 @@ fn build_secret_monitor(
 }
 
 fn config_navigation_groups() -> Vec<ConfigNavigationGroup> {
+    // Formal display names for every plugin the product may load. Entries whose
+    // plugin is not loaded are dropped by the config-web frontend.
+    let item = |provider_id: &str, label: &str| ConfigNavigationItem {
+        provider_id: provider_id.into(),
+        label: Some(label.into()),
+    };
     vec![
         ConfigNavigationGroup {
             label: None,
-            items: vec![ConfigNavigationItem {
-                provider_id: PRODUCT_CONFIG_PROVIDER_ID.into(),
-                label: Some("工作区".into()),
-            }],
+            items: vec![item(PRODUCT_CONFIG_PROVIDER_ID, "工作区")],
         },
         ConfigNavigationGroup {
             label: Some("接入".into()),
-            items: vec![ConfigNavigationItem {
-                provider_id: QQBOT_ADAPTER_PLUGIN_ID.into(),
-                label: Some("QQ 登录".into()),
-            }],
+            items: vec![
+                item(QQBOT_ADAPTER_PLUGIN_ID, "QQ 登录"),
+                item("mutsuki.bot.mihuashi", "米画师"),
+                item("mutsuki.bot.bilibili", "B 站"),
+                item("mutsuki.bot.bilibili.workshop", "B 站工房"),
+            ],
         },
         ConfigNavigationGroup {
             label: Some("助手".into()),
             items: vec![
-                ConfigNavigationItem {
-                    provider_id: LOCAL_AGENT_CONFIG_PROVIDER_ID.into(),
-                    label: Some("模型".into()),
-                },
-                ConfigNavigationItem {
-                    provider_id: BOT_AGENT_BRIDGE_PLUGIN_ID.into(),
-                    label: Some("回复".into()),
-                },
+                item(LOCAL_AGENT_CONFIG_PROVIDER_ID, "模型"),
+                item("mutsuki.agent.connections", "助手连接"),
+                item(BOT_AGENT_BRIDGE_PLUGIN_ID, "回复"),
+                item("mutsuki.plugin.bot.persona", "人设"),
+                item("mutsuki.plugin.bot.conversation.context", "会话上下文"),
+                item("mutsuki.plugin.bot.interaction", "互动"),
+                item("mutsuki.plugin.bot.media", "媒体"),
+                item("mutsuki.bot.command", "指令"),
+                item("mutsuki.bot.router.flow", "流程路由"),
+                item("mutsuki.bot.flow", "流程编排"),
+            ],
+        },
+        ConfigNavigationGroup {
+            label: Some("投递".into()),
+            items: vec![
+                item("mutsuki.plugin.bot.reply", "自动回复"),
+                item("mutsuki.plugin.bot.delivery", "消息投递"),
+                item("mutsuki.plugin.bot.delivery.reply", "回复投递"),
+                item("mutsuki.plugin.bot.delivery.scheduled", "定时投递"),
+            ],
+        },
+        ConfigNavigationGroup {
+            label: Some("服务".into()),
+            items: vec![
+                item(crate::SERVICE_CONFIG_PROVIDER_ID, "服务运行时"),
+                item("mutsuki.std.image.render", "图像渲染"),
+            ],
+        },
+        ConfigNavigationGroup {
+            label: Some("扩展".into()),
+            items: vec![
+                item("overview", "总览"),
+                item("qq-bot", "QQ 机器人"),
+                item("bot-agent", "连接管理"),
+                item("bilibili", "B 站管理"),
+                item("bot-flow-editor", "流程编辑器"),
+                item("control", "运行控制"),
+                item("database", "数据库"),
+                item("sandbox", "沙盒"),
+                item("secret", "密钥"),
+                item("upgrade", "升级"),
             ],
         },
     ]
