@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use mutsuki_plugin_bot_control_web::{CAPABILITY_RUNTIME_READ, ControlRpcCaller};
 use mutsuki_service_control::ControlErrorCode;
-use mutsuki_web_extension::{
+use mutsuki_web_extension_api::{
     ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, content_hash,
     load_bundled_manifest,
 };
@@ -29,6 +29,7 @@ pub use mutsuki_plugin_bot_control_web::FixtureControlHandler;
 pub const PLUGIN_ID: &str = "overview";
 pub const PLUGIN_VERSION: &str = "0.1.0";
 
+#[derive(Clone)]
 pub struct OverviewWebExtension {
     control: ControlRpcCaller,
     assets_root: Option<PathBuf>,
@@ -47,16 +48,16 @@ impl OverviewWebExtension {
         self
     }
 
-    fn summary(&self) -> Result<Value, ExtensionError> {
-        let service = self.control.service_status()?;
-        let health = self.control.health()?;
-        let tasks = match self.control.runtime_statistics() {
+    async fn summary(&self) -> Result<Value, ExtensionError> {
+        let service = self.control.service_status().await?;
+        let health = self.control.health().await?;
+        let tasks = match self.control.runtime_statistics().await {
             Ok(stats) => Some(stats.tasks),
             Err(err) if err.code() == Some(ControlErrorCode::CoreUnavailable) => None,
             Err(err) => return Err(err.into()),
         };
-        let plugins = self.control.plugin_list()?;
-        let runners = self.control.runner_list()?;
+        let plugins = self.control.plugin_list().await?;
+        let runners = self.control.runner_list().await?;
 
         Ok(json!({
             "service": service,
@@ -75,7 +76,7 @@ impl OverviewWebExtension {
                 "tasks": tasks,
             },
             "uptime_ms": service.uptime_ms,
-            "host": match self.control.host_metrics() {
+            "host": match self.control.host_metrics().await {
                 Ok(metrics) => json!({
                     "pid": metrics.pid,
                     "uptime_ms": metrics.uptime_ms,
@@ -124,16 +125,19 @@ impl WebExtension for OverviewWebExtension {
             control: self.control.clone(),
             assets_root: None,
         };
-        ctx.register_contextual("summary", move |context, _params| {
-            context.require(CAPABILITY_RUNTIME_READ)?;
-            this.summary()
+        ctx.register_async_contextual("summary", move |context, _params| {
+            let this = this.clone();
+            async move {
+                context.require(CAPABILITY_RUNTIME_READ)?;
+                this.summary().await
+            }
         });
         Ok(())
     }
 
     fn register_events(
         &self,
-        _ctx: &mut mutsuki_web_extension::EventRegistry,
+        _ctx: &mut mutsuki_web_extension_api::EventRegistry,
     ) -> Result<(), ExtensionError> {
         Ok(())
     }

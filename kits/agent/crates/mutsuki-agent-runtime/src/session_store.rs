@@ -185,7 +185,6 @@ impl AgentSessionStore for InMemoryAgentSessionStore {
             pending_approvals: Vec::new(),
             plugin_generations: source_checkpoint.plugin_generations.clone(),
             attempts: BTreeMap::new(),
-            coordinator: None,
             degraded_reason: None,
         };
         sessions.insert(
@@ -295,7 +294,6 @@ mod tests {
             pending_approvals: Vec::new(),
             plugin_generations: BTreeMap::from([("plugin".into(), 7)]),
             attempts: BTreeMap::new(),
-            coordinator: None,
             degraded_reason: None,
         }
     }

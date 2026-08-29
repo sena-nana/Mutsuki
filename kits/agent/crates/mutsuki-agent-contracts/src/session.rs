@@ -2,8 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     AgentBudget, AgentEvent, AgentEventEnvelope, AgentMessage, ContextInjection, ContextProvenance,
-    CoordinatorLease, PermissionRequest, ResourceCellRef, ResourceRef, SessionVersion,
-    apply_injections_to_messages,
+    PermissionRequest, ResourceCellRef, ResourceRef, SessionVersion, apply_injections_to_messages,
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -76,8 +75,6 @@ pub struct AgentSessionCheckpoint {
     pub plugin_generations: std::collections::BTreeMap<String, u64>,
     #[serde(default)]
     pub attempts: std::collections::BTreeMap<String, AgentAttemptCheckpoint>,
-    #[serde(default)]
-    pub coordinator: Option<CoordinatorLease>,
     #[serde(default)]
     pub degraded_reason: Option<String>,
 }

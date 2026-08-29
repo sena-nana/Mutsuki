@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
 use mutsuki_plugin_bot_sandbox_web::*;
-use mutsuki_web_extension::{WebExtension, content_hash};
+use mutsuki_web_extension_api::{WebExtension, content_hash};
 use mutsuki_web_host::{MinimalWebApplication, MutsukiWebHost, WebHost};
 use mutsuki_web_protocol::{
     DeploymentMode, RpcRequest, WEB_PROTOCOL_VERSION, WebApplicationDescriptor, WebShellAssets,

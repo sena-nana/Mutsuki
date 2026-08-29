@@ -4428,7 +4428,7 @@ name = "mutsuki-plugin-bot-agent-web"
 version = "0.1.0"
 dependencies = [
  "mutsuki-agent-contracts",
- "mutsuki-web-extension",
+ "mutsuki-web-extension-api",
  "mutsuki-web-protocol",
  "serde",
  "serde_json",
@@ -4472,7 +4472,7 @@ dependencies = [
  "futures",
  "mutsuki-bot-management",
  "mutsuki-bot-protocol",
- "mutsuki-web-extension",
+ "mutsuki-web-extension-api",
  "mutsuki-web-host",
  "mutsuki-web-protocol",
  "serde",
@@ -4520,10 +4520,9 @@ name = "mutsuki-plugin-bot-control-web"
 version = "0.1.0"
 dependencies = [
  "futures",
- "futures-executor",
  "mutsuki-runtime-contracts",
  "mutsuki-service-control",
- "mutsuki-web-extension",
+ "mutsuki-web-extension-api",
  "mutsuki-web-host",
  "mutsuki-web-protocol",
  "serde",
@@ -4553,7 +4552,7 @@ version = "0.1.0"
 dependencies = [
  "futures",
  "mutsuki-bot-state-db",
- "mutsuki-web-extension",
+ "mutsuki-web-extension-api",
  "mutsuki-web-host",
  "mutsuki-web-protocol",
  "serde_json",
@@ -4598,7 +4597,7 @@ dependencies = [
  "mutsuki-bot-flow",
  "mutsuki-bot-protocol",
  "mutsuki-config-service",
- "mutsuki-web-extension",
+ "mutsuki-web-extension-api",
  "mutsuki-web-protocol",
  "serde",
  "serde_json",
@@ -4669,7 +4668,7 @@ dependencies = [
  "mutsuki-plugin-bot-control-web",
  "mutsuki-service-control",
  "mutsuki-web-bridge",
- "mutsuki-web-extension",
+ "mutsuki-web-extension-api",
  "mutsuki-web-host",
  "mutsuki-web-protocol",
  "serde",
@@ -4700,7 +4699,7 @@ dependencies = [
  "futures",
  "mutsuki-bot-management",
  "mutsuki-bot-protocol",
- "mutsuki-web-extension",
+ "mutsuki-web-extension-api",
  "mutsuki-web-host",
  "mutsuki-web-protocol",
  "serde_json",
@@ -4731,7 +4730,7 @@ dependencies = [
  "futures",
  "mutsuki-bot-protocol",
  "mutsuki-bot-sandbox",
- "mutsuki-web-extension",
+ "mutsuki-web-extension-api",
  "mutsuki-web-host",
  "mutsuki-web-protocol",
  "serde_json",
@@ -4748,7 +4747,7 @@ dependencies = [
  "futures",
  "mutsuki-plugin-bot-control-web",
  "mutsuki-plugin-catalog",
- "mutsuki-web-extension",
+ "mutsuki-web-extension-api",
  "mutsuki-web-host",
  "mutsuki-web-protocol",
  "serde_json",
@@ -4802,7 +4801,7 @@ dependencies = [
  "futures-executor",
  "mutsuki-config-service",
  "mutsuki-web-bridge",
- "mutsuki-web-extension",
+ "mutsuki-web-extension-api",
  "mutsuki-web-host",
  "mutsuki-web-protocol",
  "serde",
@@ -5497,7 +5496,20 @@ dependencies = [
 name = "mutsuki-web-extension"
 version = "0.1.0"
 dependencies = [
+ "mutsuki-web-extension-api",
  "mutsuki-web-protocol",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
+]
+
+[[package]]
+name = "mutsuki-web-extension-api"
+version = "0.1.0"
+dependencies = [
+ "mutsuki-web-protocol",
+ "serde",
  "serde_json",
  "sha2 0.11.0",
  "tempfile",

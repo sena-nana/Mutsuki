@@ -19,7 +19,7 @@ use mutsuki_bot_management::{
     BilibiliManagementApi, BilibiliManagementError, BilibiliNotificationKind,
 };
 use mutsuki_bot_protocol::BotTarget;
-use mutsuki_web_extension::{
+use mutsuki_web_extension_api::{
     BUNDLED_ENTRY_ASSET, ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor,
     content_hash, load_bundled_manifest,
 };
@@ -249,7 +249,7 @@ impl WebExtension for BilibiliWebExtension {
 
     fn register_events(
         &self,
-        ctx: &mut mutsuki_web_extension::EventRegistry,
+        ctx: &mut mutsuki_web_extension_api::EventRegistry,
     ) -> Result<(), ExtensionError> {
         ctx.register_topic("changed");
         Ok(())

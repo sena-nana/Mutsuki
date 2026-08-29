@@ -22,7 +22,7 @@ use mutsuki_plugin_catalog::{
     check_module_updates, execute_module_upgrade, format_execute_cli_command, load_release_set,
     plan_module_upgrade, upgrade_check_json,
 };
-use mutsuki_web_extension::{
+use mutsuki_web_extension_api::{
     ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, load_bundled_manifest,
 };
 use mutsuki_web_protocol::{
@@ -106,7 +106,7 @@ impl WebExtension for UpgradeWebExtension {
 
     fn register_events(
         &self,
-        _ctx: &mut mutsuki_web_extension::EventRegistry,
+        _ctx: &mut mutsuki_web_extension_api::EventRegistry,
     ) -> Result<(), ExtensionError> {
         Ok(())
     }

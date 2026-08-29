@@ -30,7 +30,8 @@ Issue 是需求线索，不是当前 API 的事实源。存在 `.codegraph/` 时
 | `mutsuki-web-host` | Host 生命周期、监听、应用装配、静态托管 |
 | `mutsuki-web-protocol` | 前后端 descriptor、RPC/Event 协议与版本 |
 | `mutsuki-web-bridge` | WebSocket/HTTP ↔ typed management protocol |
-| `mutsuki-web-extension` | Extension manifest、registry、资源校验 |
+| `mutsuki-web-extension-api` | 插件侧 WebExtension trait、RPC registry、bundled manifest |
+| `mutsuki-web-extension` | Host registry、budget、reactor 分发 |
 | `mutsuki-web-recovery` | 最小恢复与安全模式 Shell |
 | `@mutsuki/web-sdk` | Vue/WebExtension 前端 SDK |
 | `@mutsuki/web-shell` | 可复用 Shell 基础实现 |

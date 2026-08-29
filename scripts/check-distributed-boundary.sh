@@ -15,11 +15,17 @@ source_roots=(
   crates/mutsuki-runtime-core
   crates/mutsuki-runtime-sdk
   crates/mutsuki-runtime-sdk-macros
+  kits/agent/crates/mutsuki-agent-contracts
+  kits/agent/crates/mutsuki-agent-runtime
+  kits/agent/crates/mutsuki-agent-sdk
+  hosts/service
+  hosts/tauri
+  hosts/web
 )
 
-forbidden_types='\b(NodeId|ClusterId|ClusterContext|AssignmentLease|ExecutionGrant|GlobalTaskId|TrustLevel|Leader|Follower)\b'
+forbidden_types='\b(NodeId|ClusterId|ClusterContext|AssignmentLease|ExecutionGrant|GlobalTaskId|TrustLevel|Leader|Follower|CoordinatorLease)\b'
 if rg -n --glob '*.rs' --glob '*.h' "$forbidden_types" "${source_roots[@]}"; then
-  echo "distributed boundary violation: cluster-only type leaked into Core/contracts/SDK" >&2
+  echo "distributed boundary violation: cluster-only type leaked into Core/contracts/SDK/default Agent/ordinary Host" >&2
   exit 1
 fi
 

@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use mutsuki_bot_state_db::{BotStateDbError, BotStateDbRepository};
-use mutsuki_web_extension::{
+use mutsuki_web_extension_api::{
     ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, content_hash,
     load_bundled_manifest,
 };
@@ -104,7 +104,7 @@ impl WebExtension for DatabaseWebExtension {
 
     fn register_events(
         &self,
-        _registry: &mut mutsuki_web_extension::EventRegistry,
+        _registry: &mut mutsuki_web_extension_api::EventRegistry,
     ) -> Result<(), ExtensionError> {
         Ok(())
     }

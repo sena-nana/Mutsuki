@@ -376,7 +376,6 @@ impl<D: AgentDatabaseService> AgentSessionStore for AgentDatabaseSessionStore<D>
             pending_approvals: Vec::new(),
             plugin_generations: source.plugin_generations,
             attempts: Default::default(),
-            coordinator: None,
             degraded_reason: None,
         };
         self.save_checkpoint_insert_only(&checkpoint)
@@ -449,8 +448,8 @@ mod tests {
     use std::sync::Mutex;
 
     use mutsuki_agent_contracts::{
-        AgentAttemptCheckpoint, AgentBudget, CoordinatorLease, PermissionRequest, ResourceRef,
-        SessionVersion, ToolSideEffect,
+        AgentAttemptCheckpoint, AgentBudget, PermissionRequest, ResourceRef, SessionVersion,
+        ToolSideEffect,
     };
     use mutsuki_plugin_db_sqlite::{SqliteEffectRunner, SqliteFacadeRunner};
     use mutsuki_runtime_contracts::{
@@ -622,13 +621,6 @@ mod tests {
                     committed_side_effects: Vec::new(),
                 },
             )]),
-            coordinator: Some(CoordinatorLease {
-                session_id: session.into(),
-                node_id: "node-a".into(),
-                epoch: 3,
-                fencing_token: "token-3".into(),
-                expires_at_unix_ms: 10_000,
-            }),
             degraded_reason: None,
         }
     }
@@ -672,7 +664,6 @@ mod tests {
         assert_eq!(recovery.checkpoint.pending_approvals.len(), 1);
         assert_eq!(recovery.checkpoint.plugin_generations["lsp"], 7);
         assert_eq!(recovery.checkpoint.attempts["attempt"].step_index, 2);
-        assert_eq!(recovery.checkpoint.coordinator.unwrap().epoch, 3);
         assert_eq!(recovery.events_after_checkpoint.len(), 1);
         assert_eq!(recovery.events_after_checkpoint[0].0, 2);
 

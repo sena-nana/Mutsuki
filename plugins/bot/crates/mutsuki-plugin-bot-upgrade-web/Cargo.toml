@@ -8,7 +8,7 @@ description = "Bot auto-upgrade WebExtension: release set pin checks, Git fetch/
 [dependencies]
 mutsuki-plugin-bot-control-web = { workspace = true }
 mutsuki-plugin-catalog = { workspace = true }
-mutsuki-web-extension = { workspace = true }
+mutsuki-web-extension-api = { workspace = true }
 mutsuki-web-protocol = { workspace = true }
 serde_json = { workspace = true }
 

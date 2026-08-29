@@ -7,7 +7,7 @@ description = "WebExtension that browses the live Bot state database."
 
 [dependencies]
 mutsuki-bot-state-db.workspace = true
-mutsuki-web-extension.workspace = true
+mutsuki-web-extension-api.workspace = true
 mutsuki-web-protocol.workspace = true
 serde_json.workspace = true
 

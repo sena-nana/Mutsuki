@@ -24,7 +24,7 @@ use mutsuki_service_control::{
     RuntimeStatisticsView, ServiceStatus, TaskEventPage, TaskEventsAfterParam, TaskSnapshot,
     TaskSubmitBatchParam, TaskSubmitBatchResponse,
 };
-use mutsuki_web_extension::{
+use mutsuki_web_extension_api::{
     ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, load_bundled_manifest,
 };
 use mutsuki_web_protocol::{
@@ -98,6 +98,21 @@ macro_rules! unit_control_result {
     };
 }
 
+macro_rules! register_control_rpc {
+    ($ctx:expr, $caller:expr, $method:literal, $cap:expr, $params:ident, |$rpc:ident| $body:expr) => {
+        $ctx.register_async_contextual($method, {
+            let caller = $caller.clone();
+            move |context, $params| {
+                let $rpc = caller.clone();
+                async move {
+                    context.require($cap)?;
+                    $body
+                }
+            }
+        });
+    };
+}
+
 /// Shared in-process caller used by `control` RPC handlers and aggregating extensions.
 #[derive(Clone)]
 pub struct ControlRpcCaller {
@@ -113,128 +128,147 @@ impl ControlRpcCaller {
         }
     }
 
-    pub fn invoke(&self, command: ControlCommand) -> ControlRpcResult<ControlResult> {
-        let control = self.control.clone();
-        let token = self.token.clone();
-        let future = async move { control.handle(ControlRequest::new(token, command)).await };
-        unwrap_control(run_control_future(future))
+    pub async fn invoke(&self, command: ControlCommand) -> ControlRpcResult<ControlResult> {
+        unwrap_control(
+            self.control
+                .handle(ControlRequest::new(self.token.clone(), command))
+                .await,
+        )
     }
 
-    pub fn health(&self) -> ControlRpcResult<HealthReport> {
-        control_result!(self.invoke(ControlCommand::HealthCheck)?, HealthCheck)
+    pub async fn health(&self) -> ControlRpcResult<HealthReport> {
+        control_result!(self.invoke(ControlCommand::HealthCheck).await?, HealthCheck)
     }
 
-    pub fn service_status(&self) -> ControlRpcResult<ServiceStatus> {
-        control_result!(self.invoke(ControlCommand::ServiceStatus)?, ServiceStatus)
-    }
-
-    pub fn plugin_list(&self) -> ControlRpcResult<PluginListResponse> {
-        control_result!(self.invoke(ControlCommand::PluginList)?, PluginList)
-    }
-
-    pub fn runner_list(&self) -> ControlRpcResult<Vec<RunnerStatus>> {
-        control_result!(self.invoke(ControlCommand::RunnerList)?, RunnerList)
-    }
-
-    pub fn event_source_list(&self) -> ControlRpcResult<Vec<EventSourceStatus>> {
+    pub async fn service_status(&self) -> ControlRpcResult<ServiceStatus> {
         control_result!(
-            self.invoke(ControlCommand::EventSourceList)?,
+            self.invoke(ControlCommand::ServiceStatus).await?,
+            ServiceStatus
+        )
+    }
+
+    pub async fn plugin_list(&self) -> ControlRpcResult<PluginListResponse> {
+        control_result!(self.invoke(ControlCommand::PluginList).await?, PluginList)
+    }
+
+    pub async fn runner_list(&self) -> ControlRpcResult<Vec<RunnerStatus>> {
+        control_result!(self.invoke(ControlCommand::RunnerList).await?, RunnerList)
+    }
+
+    pub async fn event_source_list(&self) -> ControlRpcResult<Vec<EventSourceStatus>> {
+        control_result!(
+            self.invoke(ControlCommand::EventSourceList).await?,
             EventSourceList
         )
     }
 
-    pub fn runtime_statistics(&self) -> ControlRpcResult<RuntimeStatisticsView> {
+    pub async fn runtime_statistics(&self) -> ControlRpcResult<RuntimeStatisticsView> {
         control_result!(
-            self.invoke(ControlCommand::RuntimeStatistics)?,
+            self.invoke(ControlCommand::RuntimeStatistics).await?,
             RuntimeStatistics
         )
     }
 
-    pub fn host_metrics(&self) -> ControlRpcResult<HostMetrics> {
-        control_result!(self.invoke(ControlCommand::HostMetrics)?, HostMetrics)
+    pub async fn host_metrics(&self) -> ControlRpcResult<HostMetrics> {
+        control_result!(self.invoke(ControlCommand::HostMetrics).await?, HostMetrics)
     }
 
-    pub fn log_tail(&self, params: LogTailParams) -> ControlRpcResult<LogTailResponse> {
-        control_result!(self.invoke(ControlCommand::LogTail(params))?, LogTail)
+    pub async fn log_tail(&self, params: LogTailParams) -> ControlRpcResult<LogTailResponse> {
+        control_result!(self.invoke(ControlCommand::LogTail(params)).await?, LogTail)
     }
 
-    pub fn task_list(&self) -> ControlRpcResult<Vec<TaskSnapshot>> {
-        control_result!(self.invoke(ControlCommand::TaskList)?, TaskList)
+    pub async fn task_list(&self) -> ControlRpcResult<Vec<TaskSnapshot>> {
+        control_result!(self.invoke(ControlCommand::TaskList).await?, TaskList)
     }
 
-    pub fn task_events_after(
+    pub async fn task_events_after(
         &self,
         params: TaskEventsAfterParam,
     ) -> ControlRpcResult<TaskEventPage> {
         control_result!(
-            self.invoke(ControlCommand::TaskEventsAfter(params))?,
+            self.invoke(ControlCommand::TaskEventsAfter(params)).await?,
             TaskEventsAfter
         )
     }
 
-    pub fn task_submit_batch(
+    pub async fn task_submit_batch(
         &self,
         params: TaskSubmitBatchParam,
     ) -> ControlRpcResult<TaskSubmitBatchResponse> {
         control_result!(
-            self.invoke(ControlCommand::TaskSubmitBatch(params))?,
+            self.invoke(ControlCommand::TaskSubmitBatch(params)).await?,
             TaskSubmitBatch
         )
     }
 
-    pub fn task_cancel(&self, params: IdParam) -> ControlRpcResult<()> {
-        unit_control_result!(self.invoke(ControlCommand::TaskCancel(params))?, TaskCancel)
+    pub async fn task_cancel(&self, params: IdParam) -> ControlRpcResult<()> {
+        unit_control_result!(
+            self.invoke(ControlCommand::TaskCancel(params)).await?,
+            TaskCancel
+        )
     }
 
-    pub fn core_begin_drain(&self) -> ControlRpcResult<CoreDrainResponse> {
-        control_result!(self.invoke(ControlCommand::CoreBeginDrain)?, CoreBeginDrain)
+    pub async fn core_begin_drain(&self) -> ControlRpcResult<CoreDrainResponse> {
+        control_result!(
+            self.invoke(ControlCommand::CoreBeginDrain).await?,
+            CoreBeginDrain
+        )
     }
 
-    pub fn plugin_reload(&self) -> ControlRpcResult<PluginReloadResponse> {
-        control_result!(self.invoke(ControlCommand::PluginReload)?, PluginReload)
+    pub async fn plugin_reload(&self) -> ControlRpcResult<PluginReloadResponse> {
+        control_result!(
+            self.invoke(ControlCommand::PluginReload).await?,
+            PluginReload
+        )
     }
 
-    pub fn plugin_deployment_set(
+    pub async fn plugin_deployment_set(
         &self,
         params: PluginDeploymentParam,
     ) -> ControlRpcResult<PluginReloadResponse> {
         control_result!(
-            self.invoke(ControlCommand::PluginDeploymentSet(params))?,
+            self.invoke(ControlCommand::PluginDeploymentSet(params))
+                .await?,
             PluginDeploymentSet
         )
     }
 
-    pub fn plugin_deployment_clear(
+    pub async fn plugin_deployment_clear(
         &self,
         params: PluginDeploymentClearParam,
     ) -> ControlRpcResult<PluginReloadResponse> {
         control_result!(
-            self.invoke(ControlCommand::PluginDeploymentClear(params))?,
+            self.invoke(ControlCommand::PluginDeploymentClear(params))
+                .await?,
             PluginDeploymentClear
         )
     }
 
-    pub fn runner_restart(&self, params: IdParam) -> ControlRpcResult<()> {
+    pub async fn runner_restart(&self, params: IdParam) -> ControlRpcResult<()> {
         unit_control_result!(
-            self.invoke(ControlCommand::RunnerRestart(params))?,
+            self.invoke(ControlCommand::RunnerRestart(params)).await?,
             RunnerRestart
         )
     }
 
-    pub fn runner_stop(&self, params: IdParam) -> ControlRpcResult<()> {
-        unit_control_result!(self.invoke(ControlCommand::RunnerStop(params))?, RunnerStop)
+    pub async fn runner_stop(&self, params: IdParam) -> ControlRpcResult<()> {
+        unit_control_result!(
+            self.invoke(ControlCommand::RunnerStop(params)).await?,
+            RunnerStop
+        )
     }
 
-    pub fn event_source_restart(&self, params: IdParam) -> ControlRpcResult<()> {
+    pub async fn event_source_restart(&self, params: IdParam) -> ControlRpcResult<()> {
         unit_control_result!(
-            self.invoke(ControlCommand::EventSourceRestart(params))?,
+            self.invoke(ControlCommand::EventSourceRestart(params))
+                .await?,
             EventSourceRestart
         )
     }
 
-    pub fn service_shutdown(&self) -> ControlRpcResult<()> {
+    pub async fn service_shutdown(&self) -> ControlRpcResult<()> {
         unit_control_result!(
-            self.invoke(ControlCommand::ServiceShutdown)?,
+            self.invoke(ControlCommand::ServiceShutdown).await?,
             ServiceShutdown
         )
     }
@@ -283,159 +317,217 @@ impl WebExtension for ControlWebExtension {
 
     fn register_rpc(&self, ctx: &mut RpcRegistry) -> Result<(), ExtensionError> {
         let caller = self.caller.clone();
-        ctx.register_contextual("health", {
-            let caller = caller.clone();
-            move |context, _params| {
-                context.require(CAPABILITY_RUNTIME_READ)?;
-                encode_web(caller.health()?)
-            }
-        });
-        ctx.register_contextual("service_status", {
-            let caller = caller.clone();
-            move |context, _params| {
-                context.require(CAPABILITY_RUNTIME_READ)?;
-                encode_web(caller.service_status()?)
-            }
-        });
-        ctx.register_contextual("plugin_list", {
-            let caller = caller.clone();
-            move |context, _params| {
-                context.require(CAPABILITY_RUNTIME_READ)?;
-                encode_web(caller.plugin_list()?)
-            }
-        });
-        ctx.register_contextual("runner_list", {
-            let caller = caller.clone();
-            move |context, _params| {
-                context.require(CAPABILITY_RUNTIME_READ)?;
-                encode_web(caller.runner_list()?)
-            }
-        });
-        ctx.register_contextual("event_source_list", {
-            let caller = caller.clone();
-            move |context, _params| {
-                context.require(CAPABILITY_RUNTIME_READ)?;
-                encode_web(caller.event_source_list()?)
-            }
-        });
-        ctx.register_contextual("runtime_statistics", {
-            let caller = caller.clone();
-            move |context, _params| {
-                context.require(CAPABILITY_RUNTIME_READ)?;
-                encode_web(caller.runtime_statistics()?)
-            }
-        });
-        ctx.register_contextual("host_metrics", {
-            let caller = caller.clone();
-            move |context, _params| {
-                context.require(CAPABILITY_RUNTIME_READ)?;
-                encode_web(caller.host_metrics()?)
-            }
-        });
-        ctx.register_contextual("log_tail", {
-            let caller = caller.clone();
-            move |context, params| {
-                context.require(CAPABILITY_RUNTIME_READ)?;
-                let params = decode_control_params::<LogTailParams>(&params)?;
-                encode_web(caller.log_tail(params)?)
-            }
-        });
-        ctx.register_contextual("task_list", {
-            let caller = caller.clone();
-            move |context, _params| {
-                context.require(CAPABILITY_RUNTIME_READ)?;
-                encode_web(caller.task_list()?)
-            }
-        });
-        ctx.register_contextual("task_events_after", {
-            let caller = caller.clone();
-            move |context, params| {
-                context.require(CAPABILITY_RUNTIME_READ)?;
-                let params = decode_control_params::<TaskEventsAfterParam>(&params)?;
-                encode_web(caller.task_events_after(params)?)
-            }
-        });
-        ctx.register_contextual("plugin_reload", {
-            let caller = caller.clone();
-            move |context, _params| {
-                context.require(CAPABILITY_RUNTIME_WRITE)?;
-                encode_web(caller.plugin_reload()?)
-            }
-        });
-        ctx.register_contextual("plugin_deployment_set", {
-            let caller = caller.clone();
-            move |context, params| {
-                context.require(CAPABILITY_RUNTIME_WRITE)?;
-                let params = decode_control_params::<PluginDeploymentParam>(&params)?;
-                encode_web(caller.plugin_deployment_set(params)?)
-            }
-        });
-        ctx.register_contextual("plugin_deployment_clear", {
-            let caller = caller.clone();
-            move |context, params| {
-                context.require(CAPABILITY_RUNTIME_WRITE)?;
-                let params = decode_control_params::<PluginDeploymentClearParam>(&params)?;
-                encode_web(caller.plugin_deployment_clear(params)?)
-            }
-        });
-        ctx.register_contextual("runner_restart", {
-            let caller = caller.clone();
-            move |context, params| {
-                context.require(CAPABILITY_RUNTIME_WRITE)?;
-                caller.runner_restart(decode_control_params::<IdParam>(&params)?)?;
+        register_control_rpc!(
+            ctx,
+            caller,
+            "health",
+            CAPABILITY_RUNTIME_READ,
+            _params,
+            |caller| encode_web(caller.health().await?)
+        );
+        register_control_rpc!(
+            ctx,
+            caller,
+            "service_status",
+            CAPABILITY_RUNTIME_READ,
+            _params,
+            |caller| encode_web(caller.service_status().await?)
+        );
+        register_control_rpc!(
+            ctx,
+            caller,
+            "plugin_list",
+            CAPABILITY_RUNTIME_READ,
+            _params,
+            |caller| encode_web(caller.plugin_list().await?)
+        );
+        register_control_rpc!(
+            ctx,
+            caller,
+            "runner_list",
+            CAPABILITY_RUNTIME_READ,
+            _params,
+            |caller| encode_web(caller.runner_list().await?)
+        );
+        register_control_rpc!(
+            ctx,
+            caller,
+            "event_source_list",
+            CAPABILITY_RUNTIME_READ,
+            _params,
+            |caller| encode_web(caller.event_source_list().await?)
+        );
+        register_control_rpc!(
+            ctx,
+            caller,
+            "runtime_statistics",
+            CAPABILITY_RUNTIME_READ,
+            _params,
+            |caller| encode_web(caller.runtime_statistics().await?)
+        );
+        register_control_rpc!(
+            ctx,
+            caller,
+            "host_metrics",
+            CAPABILITY_RUNTIME_READ,
+            _params,
+            |caller| encode_web(caller.host_metrics().await?)
+        );
+        register_control_rpc!(
+            ctx,
+            caller,
+            "log_tail",
+            CAPABILITY_RUNTIME_READ,
+            params,
+            |caller| encode_web(
+                caller
+                    .log_tail(decode_control_params::<LogTailParams>(&params)?)
+                    .await?
+            )
+        );
+        register_control_rpc!(
+            ctx,
+            caller,
+            "task_list",
+            CAPABILITY_RUNTIME_READ,
+            _params,
+            |caller| encode_web(caller.task_list().await?)
+        );
+        register_control_rpc!(
+            ctx,
+            caller,
+            "task_events_after",
+            CAPABILITY_RUNTIME_READ,
+            params,
+            |caller| encode_web(
+                caller
+                    .task_events_after(decode_control_params::<TaskEventsAfterParam>(&params)?)
+                    .await?
+            )
+        );
+        register_control_rpc!(
+            ctx,
+            caller,
+            "plugin_reload",
+            CAPABILITY_RUNTIME_WRITE,
+            _params,
+            |caller| encode_web(caller.plugin_reload().await?)
+        );
+        register_control_rpc!(
+            ctx,
+            caller,
+            "plugin_deployment_set",
+            CAPABILITY_RUNTIME_WRITE,
+            params,
+            |caller| encode_web(
+                caller
+                    .plugin_deployment_set(decode_control_params::<PluginDeploymentParam>(&params)?)
+                    .await?
+            )
+        );
+        register_control_rpc!(
+            ctx,
+            caller,
+            "plugin_deployment_clear",
+            CAPABILITY_RUNTIME_WRITE,
+            params,
+            |caller| encode_web(
+                caller
+                    .plugin_deployment_clear(decode_control_params::<PluginDeploymentClearParam>(
+                        &params,
+                    )?)
+                    .await?
+            )
+        );
+        register_control_rpc!(
+            ctx,
+            caller,
+            "runner_restart",
+            CAPABILITY_RUNTIME_WRITE,
+            params,
+            |caller| {
+                caller
+                    .runner_restart(decode_control_params::<IdParam>(&params)?)
+                    .await?;
                 Ok(Value::Null)
             }
-        });
-        ctx.register_contextual("runner_stop", {
-            let caller = caller.clone();
-            move |context, params| {
-                context.require(CAPABILITY_RUNTIME_WRITE)?;
-                caller.runner_stop(decode_control_params::<IdParam>(&params)?)?;
+        );
+        register_control_rpc!(
+            ctx,
+            caller,
+            "runner_stop",
+            CAPABILITY_RUNTIME_WRITE,
+            params,
+            |caller| {
+                caller
+                    .runner_stop(decode_control_params::<IdParam>(&params)?)
+                    .await?;
                 Ok(Value::Null)
             }
-        });
-        ctx.register_contextual("event_source_restart", {
-            let caller = caller.clone();
-            move |context, params| {
-                context.require(CAPABILITY_RUNTIME_WRITE)?;
-                caller.event_source_restart(decode_control_params::<IdParam>(&params)?)?;
+        );
+        register_control_rpc!(
+            ctx,
+            caller,
+            "event_source_restart",
+            CAPABILITY_RUNTIME_WRITE,
+            params,
+            |caller| {
+                caller
+                    .event_source_restart(decode_control_params::<IdParam>(&params)?)
+                    .await?;
                 Ok(Value::Null)
             }
-        });
-        ctx.register_contextual("task_submit_batch", {
-            let caller = caller.clone();
-            move |context, params| {
-                context.require(CAPABILITY_RUNTIME_WRITE)?;
-                let params = decode_control_params::<TaskSubmitBatchParam>(&params)?;
-                encode_web(caller.task_submit_batch(params)?)
-            }
-        });
-        ctx.register_contextual("task_cancel", {
-            let caller = caller.clone();
-            move |context, params| {
-                context.require(CAPABILITY_RUNTIME_WRITE)?;
-                caller.task_cancel(decode_control_params::<IdParam>(&params)?)?;
+        );
+        register_control_rpc!(
+            ctx,
+            caller,
+            "task_submit_batch",
+            CAPABILITY_RUNTIME_WRITE,
+            params,
+            |caller| encode_web(
+                caller
+                    .task_submit_batch(decode_control_params::<TaskSubmitBatchParam>(&params)?)
+                    .await?
+            )
+        );
+        register_control_rpc!(
+            ctx,
+            caller,
+            "task_cancel",
+            CAPABILITY_RUNTIME_WRITE,
+            params,
+            |caller| {
+                caller
+                    .task_cancel(decode_control_params::<IdParam>(&params)?)
+                    .await?;
                 Ok(Value::Null)
             }
-        });
-        ctx.register_contextual("core_begin_drain", {
-            let caller = caller.clone();
-            move |context, _params| {
-                context.require(CAPABILITY_RUNTIME_WRITE)?;
-                encode_web(caller.core_begin_drain()?)
+        );
+        register_control_rpc!(
+            ctx,
+            caller,
+            "core_begin_drain",
+            CAPABILITY_RUNTIME_WRITE,
+            _params,
+            |caller| encode_web(caller.core_begin_drain().await?)
+        );
+        register_control_rpc!(
+            ctx,
+            caller,
+            "service_shutdown",
+            CAPABILITY_RUNTIME_WRITE,
+            _params,
+            |caller| {
+                caller.service_shutdown().await?;
+                Ok(Value::Null)
             }
-        });
-        ctx.register_contextual("service_shutdown", move |context, _params| {
-            context.require(CAPABILITY_RUNTIME_WRITE)?;
-            caller.service_shutdown()?;
-            Ok(Value::Null)
-        });
+        );
         Ok(())
     }
 
     fn register_events(
         &self,
-        ctx: &mut mutsuki_web_extension::EventRegistry,
+        ctx: &mut mutsuki_web_extension_api::EventRegistry,
     ) -> Result<(), ExtensionError> {
         ctx.register_topic("changed");
         Ok(())
@@ -472,32 +564,6 @@ pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::E
     std::fs::create_dir_all(out_dir)?;
     std::fs::write(out_dir.join("index.js"), include_str!("../assets/index.js"))?;
     Ok(out_dir.to_path_buf())
-}
-
-fn run_control_future<F>(future: F) -> ControlResponse
-where
-    F: std::future::Future<Output = ControlResponse> + Send + 'static,
-{
-    // WebHost RPC handlers are sync; Link control I/O is async.
-    match tokio::runtime::Handle::try_current() {
-        Ok(handle) => match handle.runtime_flavor() {
-            tokio::runtime::RuntimeFlavor::MultiThread => {
-                // Prefer the host reactor so local Link shares ServiceHost accept loop timing.
-                tokio::task::block_in_place(|| handle.block_on(future))
-            }
-            _ => std::thread::spawn(move || {
-                tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(2)
-                    .enable_all()
-                    .build()
-                    .expect("control bridge runtime")
-                    .block_on(future)
-            })
-            .join()
-            .expect("control bridge thread"),
-        },
-        Err(_) => futures_executor::block_on(future),
-    }
 }
 
 fn unwrap_control(response: ControlResponse) -> ControlRpcResult<ControlResult> {

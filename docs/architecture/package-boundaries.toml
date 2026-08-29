@@ -57,6 +57,7 @@ forbidden_target_packages = [
   "mutsuki-service-runtime",
   "mutsuki-tauri-host",
   "mutsuki-web-host",
+  "mutsuki-web-extension",
 ]
 allow_source_packages = [
   "config-demo",

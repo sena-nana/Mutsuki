@@ -20,7 +20,7 @@ use mutsuki_agent_contracts::{
     AgentEventPage, AgentManagementError, AgentSession, AgentSessionManagementApi,
     InteractionResolution, PermissionDecision, SessionVersion,
 };
-use mutsuki_web_extension::{
+use mutsuki_web_extension_api::{
     ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, content_hash,
     load_bundled_manifest,
 };
@@ -321,7 +321,7 @@ impl WebExtension for BotAgentWebExtension {
 
     fn register_events(
         &self,
-        _registry: &mut mutsuki_web_extension::EventRegistry,
+        _registry: &mut mutsuki_web_extension_api::EventRegistry,
     ) -> Result<(), ExtensionError> {
         Ok(())
     }
@@ -573,7 +573,7 @@ pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::E
 mod tests {
     use super::*;
     use mutsuki_agent_contracts::AgentEventMeta;
-    use mutsuki_web_extension::RpcCallContext;
+    use mutsuki_web_extension_api::RpcCallContext;
 
     #[test]
     fn trajectory_model_projects_agent_and_runtime_events() {
