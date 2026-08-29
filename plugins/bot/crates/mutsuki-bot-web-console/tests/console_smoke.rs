@@ -104,6 +104,11 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
             .iter()
             .any(|item| item["id"] == "settings" && item["position"] == "bottom")
     );
+    assert!(
+        activities
+            .iter()
+            .any(|item| item["id"] == "system" && item["position"] == "top")
+    );
     let extensions = options["extensions"].as_array().unwrap();
     for id in ["overview", "control", "database"] {
         let url = extensions
