@@ -629,7 +629,7 @@ pub fn agent_connections_config_descriptor() -> ConfigDescriptor {
         provider_id: ConfigProviderId::new(AGENT_CONNECTIONS_PLUGIN_ID),
         schema_version: 1,
         value_version: 1,
-        title: LocalizedText::new("Agent connections"),
+        title: LocalizedText::new("助手连接"),
         description: None,
         scopes: vec![ConfigScope::global()],
         root: ConfigNode {
@@ -638,7 +638,7 @@ pub fn agent_connections_config_descriptor() -> ConfigDescriptor {
                 key_strategy: MapKeyStrategy::FreeString,
                 value: Box::new(ConfigValueType::Object),
             },
-            title: LocalizedText::new("Agent connections"),
+            title: LocalizedText::new("助手连接"),
             description: None,
             default_value: None,
             constraints: ConfigConstraints::default(),
