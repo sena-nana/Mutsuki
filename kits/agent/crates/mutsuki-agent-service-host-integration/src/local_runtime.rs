@@ -23,10 +23,10 @@ use mutsuki_agent_contracts::{
     AGENT_RUN_PROTOCOL, AgentBudget, AgentEventEnvelope, AgentMessage, AgentModelGenerateRequest,
     AgentRunRequest, AgentRunResult, AgentRunStatus, AgentSession, AgentSessionCreateRequest,
     AgentSessionForkRequest, AgentSessionGetRequest, AgentSessionState, AgentSessionStatus,
-    AgentToolCall, AgentTurnState, AgentTurnStatus, AgentUsage, AgentWireError,
-    AgentWireNegotiation, AgentWireRequestEnvelope, AgentWireResponseEnvelope, CredentialRef,
-    InteractionResolution, ModelGenerateRequest, PendingApproval, PermissionDecision,
-    ProviderInstanceDescriptor, ResourceRef, SessionVersion,
+    AgentToolCall, AgentToolDescriptor, AgentToolListRequest, AgentTurnState, AgentTurnStatus,
+    AgentUsage, AgentWireError, AgentWireNegotiation, AgentWireRequestEnvelope,
+    AgentWireResponseEnvelope, CredentialRef, InteractionResolution, ModelGenerateRequest,
+    PendingApproval, PermissionDecision, ProviderInstanceDescriptor, ResourceRef, SessionVersion,
 };
 use mutsuki_agent_runtime::SessionPersistence;
 use mutsuki_config_service::{
@@ -35,10 +35,10 @@ use mutsuki_config_service::{
     RestartPolicy, SecretState,
 };
 use mutsuki_runtime_contracts::{
-    PluginDeploymentKind, RuntimeError, RuntimeProfile, RuntimeProfileMode, Task, TaskBatch,
-    TaskHandle, TaskOutcome,
+    PluginDeploymentKind, PluginManifest, RuntimeError, RuntimeProfile, RuntimeProfileMode, Task,
+    TaskBatch, TaskHandle, TaskOutcome,
 };
-use mutsuki_runtime_core::{RuntimeFailure, RuntimeResult};
+use mutsuki_runtime_core::{Runner, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_host::{
     HostRuntime, HostRuntimeConfig, RuntimeBootstrapper, TokioAsyncExecutor,
 };
@@ -517,6 +517,22 @@ impl RuntimeClient for DeferredAgentClient {
     }
 }
 
+/// Runner factory invoked with the embedded runtime client when the local
+/// Agent engine boots.
+pub type LocalAgentRunnerFactory = Arc<dyn Fn(RuntimeClientRef) -> Box<dyn Runner> + Send + Sync>;
+
+/// Bot-agnostic extension installed into the embedded local Agent runtime.
+/// `tools` become model-visible descriptors in the bundle tool registry, and
+/// `manifests` plus `runners` provide the target protocols those tools route
+/// to. Extensions grant no control-plane authority by themselves: write tools
+/// still pass the loop approval gate and the tool-router binding check.
+#[derive(Clone, Default)]
+pub struct LocalAgentRuntimeExtension {
+    pub manifests: Vec<PluginManifest>,
+    pub runners: Vec<LocalAgentRunnerFactory>,
+    pub tools: Vec<AgentToolDescriptor>,
+}
+
 #[derive(Clone)]
 struct LocalAgentEngine {
     runtime: Arc<HostRuntime>,
@@ -535,6 +551,7 @@ impl LocalAgentEngine {
         config: &LocalAgentConfig,
         secrets: HostSecretStore,
         state_path: &Path,
+        extensions: &[LocalAgentRuntimeExtension],
     ) -> Result<Self, String> {
         config.validate()?;
         let repository = SqliteAgentRepository::open(state_path)?;
@@ -565,6 +582,20 @@ impl LocalAgentEngine {
         bundle
             .context
             .set_system_prompt(config.assistant_instruction.clone());
+        for tool in extensions.iter().flat_map(|extension| &extension.tools) {
+            bundle
+                .tools
+                .register(tool.clone())
+                .map_err(|error| error.to_string())?;
+        }
+        if extensions
+            .iter()
+            .any(|extension| !extension.tools.is_empty())
+        {
+            bundle
+                .context
+                .set_tools(bundle.tools.list(AgentToolListRequest::default()).tools);
+        }
 
         let deferred = Arc::new(DeferredAgentClient::default());
         let client: RuntimeClientRef = deferred.clone();
@@ -573,14 +604,26 @@ impl LocalAgentEngine {
         for manifest in &manifests {
             bootstrapper.register_manifest(manifest.clone());
         }
+        for manifest in extensions.iter().flat_map(|extension| &extension.manifests) {
+            bootstrapper.register_manifest(manifest.clone());
+        }
         for kind in AgentRuntimeRunner::ALL {
             bootstrapper.register_builtin_runner(bundle.runtime_runner(kind, client.clone()));
         }
+        for runner in extensions.iter().flat_map(|extension| &extension.runners) {
+            bootstrapper.register_builtin_runner(runner(client.clone()));
+        }
         bootstrapper.register_async_handler(bundle.model_async_handler());
-        let enabled_plugins = manifests
+        let mut enabled_plugins = manifests
             .iter()
             .map(|manifest| manifest.plugin_id.clone())
             .collect::<Vec<_>>();
+        enabled_plugins.extend(
+            extensions
+                .iter()
+                .flat_map(|extension| &extension.manifests)
+                .map(|manifest| manifest.plugin_id.clone()),
+        );
         let runtime = bootstrapper
             .into_host_runtime_with_config(
                 RuntimeProfile {
@@ -1369,11 +1412,23 @@ impl LoadPlanLifecycleHook for LocalConnectionHook {
 
 pub struct ConfiguredLocalAgentPlugin {
     registry: AgentConnectionRegistry,
+    extensions: Vec<LocalAgentRuntimeExtension>,
 }
 
 impl ConfiguredLocalAgentPlugin {
     pub fn new(registry: AgentConnectionRegistry) -> Self {
-        Self { registry }
+        Self {
+            registry,
+            extensions: Vec::new(),
+        }
+    }
+
+    /// Installs bot-agnostic tool extensions into the embedded runtime; see
+    /// [`LocalAgentRuntimeExtension`].
+    #[must_use]
+    pub fn with_extensions(mut self, extensions: Vec<LocalAgentRuntimeExtension>) -> Self {
+        self.extensions = extensions;
+        self
     }
 }
 
@@ -1396,6 +1451,7 @@ impl ConfiguredPluginFactory for ConfiguredLocalAgentPlugin {
             &config,
             builder.host_secret_store(),
             &builder.data_dir().join("agent/local/state.sqlite3"),
+            &self.extensions,
         )?;
         let service = LocalAgentRuntimeService::new(engine)?;
         let management = Arc::new(LocalAgentManagementService::new(
@@ -1607,6 +1663,179 @@ mod tests {
         assert_eq!(AgentWireStateStore::load(&reopened).unwrap().len(), 1);
     }
 
+    /// The extension seam must make an added tool reachable from the loop
+    /// inside the embedded runtime: the scripted model answers with a tool
+    /// call, the tool router routes it to the extension runner, and the echoed
+    /// output feeds the final model turn without any approval round-trip for a
+    /// read-only tool.
+    #[test]
+    fn local_engine_boots_with_runtime_extensions_and_executes_their_tools() {
+        struct EchoProtocol;
+        impl mutsuki_runtime_sdk::SdkProtocol for EchoProtocol {
+            const PROTOCOL_ID: &'static str = "mutsuki.agent.local.test/echo@1";
+        }
+        impl mutsuki_runtime_sdk::ProtocolSpec for EchoProtocol {}
+
+        const PREFLIGHT_OK: &str = r#"{"choices":[{"message":{"role":"assistant","content":"OK"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#;
+        const TOOL_CALL: &str = r#"{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"call-1","type":"function","function":{"name":"test.echo","arguments":"{\"value\":\"ping\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#;
+        const FINAL: &str = r#"{"choices":[{"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#;
+
+        fn read_request_text(stream: &mut std::net::TcpStream) -> String {
+            let mut bytes = Vec::new();
+            let mut chunk = [0_u8; 4096];
+            loop {
+                let count = stream.read(&mut chunk).unwrap();
+                bytes.extend_from_slice(&chunk[..count]);
+                let text = String::from_utf8_lossy(&bytes).to_string();
+                if let Some(header_end) = text.find("\r\n\r\n") {
+                    let length = text
+                        .split("\r\n")
+                        .find_map(|line| {
+                            line.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .and_then(|value| value.trim().parse::<usize>().ok())
+                        })
+                        .unwrap_or(0);
+                    if bytes.len() >= header_end + 4 + length {
+                        return text;
+                    }
+                }
+                if count == 0 {
+                    return text;
+                }
+            }
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
+        let executions = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let boot_executions = executions.clone();
+        let runner_descriptor = mutsuki_agent_sdk::orchestration_runner(
+            "mutsuki.agent.local.test.runner",
+            "mutsuki.agent.local.test",
+        )
+        .accepts::<EchoProtocol>()
+        .build();
+        let extension = {
+            let manifest_descriptor = runner_descriptor.clone();
+            LocalAgentRuntimeExtension {
+                manifests: vec![
+                    PluginBuilder::new("mutsuki.agent.local.test")
+                        .protocol::<EchoProtocol>()
+                        .runner_descriptor(manifest_descriptor)
+                        .build()
+                        .manifest,
+                ],
+                runners: vec![{
+                    let boot_executions = boot_executions.clone();
+                    Arc::new(move |client: RuntimeClientRef| {
+                        let descriptor = runner_descriptor.clone();
+                        let executions = boot_executions.clone();
+                        Box::new(mutsuki_runtime_sdk::TaskAwaitRunnerAdapter::new(
+                            descriptor,
+                            client,
+                            Box::new(move |_ctx, task| {
+                                let executions = executions.clone();
+                                Box::pin(async move {
+                                    let request: mutsuki_agent_contracts::AgentToolExecuteRequest =
+                                        serde_json::from_value(task.payload.into()).unwrap();
+                                    executions.lock().push(request.input.clone());
+                                    let mut result =
+                                        mutsuki_runtime_sdk::contracts::RunnerResult::completed(
+                                            task.task_id,
+                                        );
+                                    result.output = Some(request.input);
+                                    Ok(result)
+                                })
+                            }),
+                        )) as Box<dyn Runner>
+                    }) as LocalAgentRunnerFactory
+                }],
+                tools: vec![{
+                    let mut tool = AgentToolDescriptor::new(
+                        "test.echo",
+                        "mutsuki.agent.local.test/echo@1",
+                        "Echoes its structured input",
+                    );
+                    tool.side_effect = mutsuki_agent_contracts::ToolSideEffect::ExternalRead;
+                    tool.target_payload_mode =
+                        mutsuki_agent_contracts::ToolTargetPayloadMode::ExecutionRequest;
+                    tool
+                }],
+            }
+        };
+
+        let root = tempdir().unwrap();
+        let config_path = root.path().join("local.toml");
+        std::fs::write(
+            &config_path,
+            "[security]\nsecret_file = \"local.secret.toml\"\n[ipc]\nenabled = false\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.path().join("local.secret.toml"),
+            "[secrets]\nOPENAI_API_KEY = \"test-secret\"\n",
+        )
+        .unwrap();
+        let secrets =
+            mutsuki_service_config::ServiceConfig::load(mutsuki_service_config::ConfigOverrides {
+                config_file: Some(config_path),
+                home_dir: Some(root.path().to_path_buf()),
+                ..Default::default()
+            })
+            .unwrap()
+            .host_secret_store();
+        let server = thread::spawn(move || {
+            for payload in [PREFLIGHT_OK, TOOL_CALL, FINAL] {
+                let (mut stream, _) = listener.accept().unwrap();
+                let _request = read_request_text(&mut stream);
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    payload.len(),
+                    payload
+                )
+                .unwrap();
+            }
+        });
+        let engine = LocalAgentEngine::new(
+            &LocalAgentConfig {
+                endpoint,
+                model: "test-model".into(),
+                ..Default::default()
+            },
+            secrets,
+            &root.path().join("agent.sqlite3"),
+            std::slice::from_ref(&extension),
+        )
+        .unwrap();
+
+        let service = LocalAgentRuntimeService::new(engine).unwrap();
+        let mut client = AgentClient::new(InProcessAgentClient::new(service));
+        client.negotiate().unwrap();
+        client
+            .start_session(AgentSessionCreateRequest {
+                session_id: Some("extension-session".into()),
+                profile_id: LOCAL_AGENT_PROFILE_ID.into(),
+                title: Some("extension".into()),
+            })
+            .unwrap();
+        let version = client
+            .submit_turn(
+                "extension-session",
+                SessionVersion(1),
+                "turn-1",
+                vec![AgentMessage::user("echo ping")],
+                "turn-1",
+            )
+            .unwrap();
+        assert_eq!(version, SessionVersion(2));
+        server.join().unwrap();
+        let executions = executions.lock();
+        assert_eq!(executions.len(), 1);
+        assert_eq!(executions[0]["value"], "ping");
+    }
+
     #[test]
     fn sqlite_run_results_migrate_and_preserve_multiple_turn_usage() {
         let root = tempdir().unwrap();
@@ -1788,6 +2017,7 @@ mod tests {
             },
             secrets,
             &root.path().join("agent.sqlite3"),
+            &[],
         )
         .unwrap();
         let service = LocalAgentRuntimeService::new(engine).unwrap();

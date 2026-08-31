@@ -1,0 +1,24 @@
+[package]
+name = "mutsuki-plugin-bot-flow-agent-tool"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Approval-gated Agent tools that read, validate and apply the Bot Flow document through ConfigService."
+
+[dependencies]
+mutsuki-agent-contracts.workspace = true
+mutsuki-agent-sdk.workspace = true
+mutsuki-bot-flow.workspace = true
+mutsuki-bot-protocol.workspace = true
+mutsuki-config-service.workspace = true
+mutsuki-runtime-contracts.workspace = true
+mutsuki-runtime-core.workspace = true
+mutsuki-runtime-sdk.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+futures-executor = "0.3"
+
+[lints]
+workspace = true

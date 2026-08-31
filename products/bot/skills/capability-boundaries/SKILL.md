@@ -22,6 +22,9 @@ description: Audit Mutsuki Bot product work and route missing runtime, host, Bot
 - ServiceHost：生命周期、配置/secret、插件加载、EventSource、控制面和 health。
 - BotPlugins/平台仓库：Bot 协议、SDK、路由、命令和 Adapter/Gateway。
 - AgentKit/Provider 仓库：Agent 协议、模型、工具和记忆。
+- Bot Flow 编辑工具（`mutsuki.bot.flow.tool/execute@1` 及其 runner）实现归 BotPlugins：复用
+  ConfigService 与 Flow provider 的既有校验/激活路径；AgentKit 只提供通用的工具注册与
+  引擎扩展缝，产品装配把两者接起来，不得在产品层实现工具逻辑。
 - CliHost：ServiceHost 控制 API 的终端客户端。
 - TauriHost：桌面内嵌生命周期、Tauri/WebView bridge 和前端 SDK。
 - WebHost：Web 运行宿主、HTTP/WS、静态资源、RPC/Event bridge、WebExtension 加载与 Recovery Shell。

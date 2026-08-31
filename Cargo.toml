@@ -199,6 +199,7 @@ mutsuki-plugin-bot-control-web = { path = "plugins/bot/crates/mutsuki-plugin-bot
 mutsuki-plugin-bot-database-web = { path = "plugins/bot/crates/mutsuki-plugin-bot-database-web" }
 mutsuki-plugin-bot-event-router = { path = "plugins/bot/crates/mutsuki-plugin-bot-event-router" }
 mutsuki-plugin-bot-flow-web = { path = "plugins/bot/crates/mutsuki-plugin-bot-flow-web" }
+mutsuki-plugin-bot-flow-agent-tool = { path = "plugins/bot/crates/mutsuki-plugin-bot-flow-agent-tool" }
 mutsuki-plugin-bot-media = { path = "plugins/bot/crates/mutsuki-plugin-bot-media" }
 mutsuki-plugin-bot-mihuashi = { path = "plugins/bot/crates/mutsuki-plugin-bot-mihuashi" }
 mutsuki-plugin-bot-overview-web = { path = "plugins/bot/crates/mutsuki-plugin-bot-overview-web" }

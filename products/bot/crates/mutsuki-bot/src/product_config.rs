@@ -360,6 +360,16 @@ pub(crate) fn configured_product_selections(
         },
     ]);
     selections.extend(owner_selections);
+    // The local engine rides on the workspace-provided Agent connections and
+    // flow router, so it cannot outlive `workspace_enabled` even when its own
+    // owner document says enabled.
+    if !workspace_enabled {
+        for selection in &mut selections {
+            if selection.id == LOCAL_AGENT_PLUGIN_ID {
+                selection.enabled = false;
+            }
+        }
+    }
     Ok(selections)
 }
 

@@ -1041,7 +1041,10 @@ pub fn configured_bot_plugin_catalog_with_config(
     config: Arc<ConfigService>,
 ) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
     let mut catalog = configured_bot_plugin_catalog_inner(Some(config.clone()))?;
-    catalog.register(BotFlowRouterConfiguredPlugin::new(config))?;
+    catalog.register(BotFlowRouterConfiguredPlugin::with_registry(
+        config,
+        Arc::new(BotFlowRegistry::new(BotNodeCatalog::default())),
+    ))?;
     Ok(catalog)
 }
 
@@ -1051,7 +1054,26 @@ pub fn configured_bot_plugin_catalog_with_agent(
     config: Arc<ConfigService>,
     connections: AgentConnectionRegistry,
 ) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
-    let mut catalog = configured_bot_plugin_catalog_with_config(config)?;
+    configured_bot_plugin_catalog_with_agent_and_flow(
+        config,
+        connections,
+        Arc::new(BotFlowRegistry::new(BotNodeCatalog::default())),
+    )
+}
+
+/// Same as [`configured_bot_plugin_catalog_with_agent`], but shares a
+/// caller-owned flow registry so co-located Agent tool runners observe the
+/// same active graph the router activates.
+pub fn configured_bot_plugin_catalog_with_agent_and_flow(
+    config: Arc<ConfigService>,
+    connections: AgentConnectionRegistry,
+    flow_registry: Arc<BotFlowRegistry>,
+) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
+    let mut catalog = configured_bot_plugin_catalog_inner(Some(config.clone()))?;
+    catalog.register(BotFlowRouterConfiguredPlugin::with_registry(
+        config,
+        flow_registry,
+    ))?;
     catalog.register(BotAgentConfiguredPlugin::new(connections))?;
     Ok(catalog)
 }

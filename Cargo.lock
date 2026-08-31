@@ -3638,6 +3638,7 @@ dependencies = [
  "mutsuki-agent-client",
  "mutsuki-agent-contracts",
  "mutsuki-agent-runtime",
+ "mutsuki-agent-sdk",
  "mutsuki-config-service",
  "mutsuki-link-core",
  "mutsuki-link-local",
@@ -3689,6 +3690,7 @@ dependencies = [
  "mutsuki-agent-sdk",
  "mutsuki-agent-service-host-integration",
  "mutsuki-bot-flow",
+ "mutsuki-bot-protocol",
  "mutsuki-bot-service-host-integration",
  "mutsuki-bot-testkit",
  "mutsuki-bot-web-console",
@@ -3701,6 +3703,7 @@ dependencies = [
  "mutsuki-plugin-bot-command",
  "mutsuki-plugin-bot-control-web",
  "mutsuki-plugin-bot-event-router",
+ "mutsuki-plugin-bot-flow-agent-tool",
  "mutsuki-plugin-config-sqlite",
  "mutsuki-protocol-browser",
  "mutsuki-runtime-contracts",
@@ -4587,6 +4590,23 @@ dependencies = [
  "serde",
  "serde_json",
  "tracing",
+]
+
+[[package]]
+name = "mutsuki-plugin-bot-flow-agent-tool"
+version = "0.1.0"
+dependencies = [
+ "futures-executor",
+ "mutsuki-agent-contracts",
+ "mutsuki-agent-sdk",
+ "mutsuki-bot-flow",
+ "mutsuki-bot-protocol",
+ "mutsuki-config-service",
+ "mutsuki-runtime-contracts",
+ "mutsuki-runtime-core",
+ "mutsuki-runtime-sdk",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
