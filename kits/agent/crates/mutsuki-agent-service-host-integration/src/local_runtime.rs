@@ -1739,7 +1739,7 @@ mod tests {
                                 Box::pin(async move {
                                     let request: mutsuki_agent_contracts::AgentToolExecuteRequest =
                                         serde_json::from_value(task.payload.into()).unwrap();
-                                    executions.lock().push(request.input.clone());
+                                    executions.lock().unwrap().push(request.input.clone());
                                     let mut result =
                                         mutsuki_runtime_sdk::contracts::RunnerResult::completed(
                                             task.task_id,
@@ -1831,7 +1831,7 @@ mod tests {
             .unwrap();
         assert_eq!(version, SessionVersion(2));
         server.join().unwrap();
-        let executions = executions.lock();
+        let executions = executions.lock().unwrap();
         assert_eq!(executions.len(), 1);
         assert_eq!(executions[0]["value"], "ping");
     }

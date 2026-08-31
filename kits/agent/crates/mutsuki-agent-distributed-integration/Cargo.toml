@@ -11,6 +11,7 @@ mutsuki-distributed-contracts.workspace = true
 mutsuki-distributed-runtime.workspace = true
 mutsuki-runtime-contracts.workspace = true
 mutsuki-protocol-db = { path = "../../../../plugins/std/protocols/mutsuki-protocol-db" }
+serde.workspace = true
 serde_json.workspace = true
 hex.workspace = true
 sha2.workspace = true
