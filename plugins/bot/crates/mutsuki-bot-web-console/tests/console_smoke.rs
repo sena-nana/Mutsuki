@@ -46,6 +46,9 @@ fn console_css_declares_two_column_workspace() {
     assert!(css.contains(".ctx-menu"));
     assert!(css.contains(".console-page-header__actions"));
     assert!(css.contains(".mutsuki-console .overview-cards"));
+    assert!(css.contains("--overview-card-row-height: 168px"));
+    assert!(css.contains("--overview-card-columns: 4"));
+    assert!(css.contains(".mutsuki-console .overview-dashboard .overview-cards"));
     assert!(css.contains(".is-context-hidden"));
 }
 
@@ -101,6 +104,11 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
             .iter()
             .any(|item| item["id"] == "settings" && item["position"] == "bottom")
     );
+    assert!(
+        activities
+            .iter()
+            .any(|item| item["id"] == "system" && item["position"] == "top")
+    );
     let extensions = options["extensions"].as_array().unwrap();
     for id in ["overview", "control", "database"] {
         let url = extensions
@@ -116,6 +124,8 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
     assert!(overview_js.contains("metric-grid"));
     assert!(overview_js.contains("overview.cards"));
     assert!(overview_js.contains("overview-cards"));
+    assert!(overview_js.contains("overviewCardSpan"));
+    assert!(overview_js.contains("--overview-card-col-span"));
     assert!(overview_js.contains(r#"aria-label", "刷新""#));
     assert!(!overview_js.contains("mountQqAccountCards"));
     assert!(!overview_js.contains("qq-bot/index.js"));
@@ -128,6 +138,9 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
     assert!(css.contains(".mutsuki-console .overview-dashboard"));
     assert!(css.contains(".mutsuki-console .metric-grid"));
     assert!(css.contains(".mutsuki-console .overview-cards"));
+    assert!(css.contains("--overview-card-row-height: 168px"));
+    assert!(css.contains("--overview-card-columns: 4"));
+    assert!(css.contains(".mutsuki-console .overview-dashboard .overview-cards"));
     assert!(css.contains(".console-page-header__actions"));
     assert!(
         http_get_body(&addr, "/trajectory-model.js")

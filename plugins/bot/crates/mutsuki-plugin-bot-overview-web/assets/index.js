@@ -1,3 +1,9 @@
+function overviewCardSpan(item) {
+  const colSpan = Number.isInteger(item?.colSpan) && item.colSpan >= 1 ? Math.min(4, item.colSpan) : 2;
+  const rowSpan = Number.isInteger(item?.rowSpan) && item.rowSpan >= 1 ? Math.min(8, item.rowSpan) : 1;
+  return { colSpan, rowSpan };
+}
+
 function formatDuration(ms) {
   if (ms == null || Number.isNaN(Number(ms))) return "—";
   const total = Math.max(0, Math.floor(Number(ms) / 1000));
@@ -138,6 +144,9 @@ function mountOverview(host, ctx) {
   for (const item of ctx.slots.list().filter((entry) => entry.slot === "overview.cards")) {
     const node = document.createElement("article");
     node.className = "card card--outlined";
+    const span = overviewCardSpan(item);
+    node.style.setProperty("--overview-card-col-span", String(span.colSpan));
+    node.style.setProperty("--overview-card-row-span", String(span.rowSpan));
     cardsHost.append(node);
     const mounted = item.component?.mount?.(node);
     if (mounted) cardPanels.push(mounted);

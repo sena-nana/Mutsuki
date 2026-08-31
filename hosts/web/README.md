@@ -47,7 +47,7 @@ Default listen is loopback. Non-loopback requires TLS or explicit remote auth to
 - `activities`: product baseline is `home`, `plugins` (or `settings`), and `system`. Extensions may register extra first-level activities; duplicate ids are reused.
 - `pages`: mountable components. Optional `pluginId` / `pluginIds` mark plugin-owned extra pages.
 - `navigation`: links an `activityId` to a `pageId`.
-- `slots`: `overview.cards`, `config.editor`, and `plugin.home`. Cards with `pluginId` also mount on that plugin's hub page. The slot host wraps each `overview.cards` contribution in `.card`; the contribution only fills the card interior.
+- `slots`: `overview.cards`, `config.editor`, and `plugin.home`. Cards with `pluginId` also mount on that plugin's hub page. The homepage overview host lays `overview.cards` on a 4-column grid with a fixed row height; contributions declare `colSpan` / `rowSpan` (default 2×1) and only fill the card interior. Plugin hub pages still wrap contributions in `.card` using the existing flow layout.
 
 After extensions load, the Shell fills missing `#/plugins/{pluginId}` hub pages. Extra pages stay off the plugin sidebar and are linked from the hub. Unavailable session entries are removed. Registrations that own effects must return a disposable.
 

@@ -6,6 +6,10 @@ on:
       - main
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -57,9 +61,7 @@ jobs:
       - name: Check distributed zero-intrusion boundary
         run: bash scripts/check-distributed-boundary.sh
 
-      - name: Check locked workspace
-        run: cargo check --workspace --all-targets --locked
-
+      # cargo test --all-targets already type-checks lib/bin/test/bench/example.
       - name: Test locked workspace
         run: cargo test --workspace --all-targets --locked
 

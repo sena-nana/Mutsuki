@@ -286,9 +286,53 @@ test("config extension lists loaded plugins that are not config providers", asyn
   const nav = Object.fromEntries(state.navigation.list().map((item) => [item.pageId, item]));
   assert.equal(nav["mutsuki.bot.adapter.qqbot"].label, "QQ 登录");
   assert.equal(nav["mutsuki.bot.adapter.qqbot"].group, "接入");
+  assert.equal(nav["mutsuki.bot.adapter.qqbot"].disabled, undefined);
   assert.equal(nav["mutsuki.bot.mihuashi"].group, "已加载");
+  assert.equal(nav["mutsuki.bot.mihuashi"].disabled, true);
   assert.equal(nav["mutsuki.plugin.resource.memory"].group, "已加载");
+  assert.equal(nav["mutsuki.plugin.resource.memory"].disabled, true);
   assert.equal(nav["mutsuki.catalog.only"], undefined);
+  validateShellState(state);
+});
+
+test("config extension keeps schema-less hubs enabled when the plugin provides content", async () => {
+  const state = createShellState();
+  state.activities.register({ id: "plugins", label: "插件", icon: "config" });
+  state.pages.register({
+    id: "mutsuki.bot.bilibili.page",
+    path: "/bilibili",
+    title: "B站推送",
+    pluginId: "mutsuki.bot.bilibili",
+    component: { mount() {} },
+  });
+  state.slots.register({
+    id: "mutsuki.bot.sandbox.card",
+    slot: "overview.cards",
+    pluginId: "mutsuki.bot.sandbox",
+    component: { mount() {} },
+  });
+  await loadExtensions(
+    state,
+    [{ id: "config", url: configExtensionUrl() }],
+    () =>
+      createExtensionContext(
+        state,
+        pluginRpc({
+          plugins: [
+            { plugin_id: "mutsuki.bot.bilibili", configured: true, active_deployment: "builtin" },
+            { plugin_id: "mutsuki.bot.sandbox", configured: true, active_deployment: "builtin" },
+            { plugin_id: "mutsuki.bot.empty", configured: true, active_deployment: "builtin" },
+          ],
+        }),
+        { subscribe() { return { dispose() {} }; } },
+      ),
+  );
+  assert.deepEqual(state.failures, []);
+  const nav = Object.fromEntries(state.navigation.list().map((item) => [item.pageId, item]));
+  assert.equal(nav["mutsuki.bot.bilibili"].group, "已加载");
+  assert.equal(nav["mutsuki.bot.bilibili"].disabled, undefined);
+  assert.equal(nav["mutsuki.bot.sandbox"].disabled, undefined);
+  assert.equal(nav["mutsuki.bot.empty"].disabled, true);
   validateShellState(state);
 });
 

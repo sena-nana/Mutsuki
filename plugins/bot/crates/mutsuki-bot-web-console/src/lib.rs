@@ -652,7 +652,6 @@ pub(crate) fn materialize_console_shell(
         }),
     ];
     for (id, path, enabled) in [
-        ("config", "extensions/config/index.js", include_config),
         ("upgrade", "extensions/upgrade/index.js", include_upgrade),
         ("bilibili", "extensions/bilibili/index.js", include_bilibili),
         ("qq-bot", "extensions/qq-bot/index.js", include_qq),
@@ -667,6 +666,9 @@ pub(crate) fn materialize_console_shell(
             "extensions/bot-flow/index.js",
             include_bot_flow,
         ),
+        // Config runs last so its plugin hubs can see pages and overview cards
+        // registered by the extensions above when deciding route availability.
+        ("config", "extensions/config/index.js", include_config),
     ] {
         if enabled {
             let bytes = std::fs::read(out_dir.join(path))?;
@@ -678,7 +680,7 @@ pub(crate) fn materialize_console_shell(
     }
     let mut activities = vec![
         json!({"id": "home", "label": "概览", "icon": "home", "order": 0, "position": "top"}),
-        json!({"id": "system", "label": "诊断", "icon": "system", "order": 90, "position": "bottom"}),
+        json!({"id": "system", "label": "诊断", "icon": "system", "order": 50, "position": "top"}),
     ];
     if include_config {
         activities.push(json!({

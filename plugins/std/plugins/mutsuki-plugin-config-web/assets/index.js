@@ -609,20 +609,17 @@ function extraPagesForPlugin(ctx, pluginId, homePageId) {
     .map((page) => ({ page, nav: navByPage.get(page.id) }));
 }
 
-function appendPluginInfo(parent, plugin) {
-  if (!plugin) return;
-  const card = document.createElement("section");
-  card.className = "card";
-  const heading = document.createElement("h2");
-  heading.textContent = plugin.plugin_id || "";
-  const meta = document.createElement("p");
-  meta.className = "muted";
+function appendPluginInfo(host, plugin) {
+  const title = host.closest(".console-main")?.querySelector(".console-page-header h1");
+  if (!title || !plugin) return null;
   const version = (plugin.candidates || []).find((item) => item.deployment === plugin.active_deployment)?.version
     || plugin.candidates?.[0]?.version
     || "—";
-  meta.textContent = `当前部署：${plugin.active_deployment || "—"} · ${version}`;
-  card.append(heading, meta);
-  parent.appendChild(card);
+  const meta = document.createElement("span");
+  meta.className = "console-page-header__meta";
+  meta.textContent = `${plugin.plugin_id || "—"} · ${version} · ${plugin.active_deployment || "—"}`;
+  title.after(meta);
+  return meta;
 }
 
 function mountPluginCards(parent, ctx, pluginId) {
@@ -683,7 +680,7 @@ async function loadPluginInfo(rpc, pluginId) {
   return (await loadPluginList(rpc)).find((item) => item.plugin_id === pluginId) || null;
 }
 
-function registerPluginHub(ctx, { id, title, group, order, requiredCapability }) {
+function registerPluginHub(ctx, { id, title, group, order, requiredCapability, disabled = false }) {
   ctx.pages.register({
     id,
     path: `/plugins/${id}`,
@@ -691,6 +688,13 @@ function registerPluginHub(ctx, { id, title, group, order, requiredCapability })
     pluginId: id,
     component: {
       mount(el) {
+        if (disabled) {
+          const card = document.createElement("section");
+          card.className = "card";
+          card.textContent = "该插件未提供内容";
+          el.appendChild(card);
+          return;
+        }
         const panel = mountPluginHome(el, ctx, id, id);
         return { dispose: () => panel?.destroy?.() };
       },
@@ -705,7 +709,16 @@ function registerPluginHub(ctx, { id, title, group, order, requiredCapability })
     group,
     order,
     requiredCapability,
+    disabled: disabled || undefined,
   });
+}
+
+function pluginHasContent(ctx, pluginId) {
+  const owned = (item) => pluginIdsOf(item).includes(pluginId);
+  if ((ctx?.pages?.list?.() || []).some((page) => owned(page) && page.id !== pluginId)) return true;
+  return (ctx?.slots?.list?.() || []).some(
+    (slot) => slot.slot === "overview.cards" && owned(slot),
+  );
 }
 
 /** Embeddable config panel (no outer console shell). Used by the unified overview shell. */
@@ -725,6 +738,7 @@ export function mountConfigPanel(host, rpc, events, fixedProviderId = null, slot
     pluginInfo: null,
   };
   let cardPanels = [];
+  let headerMeta = null;
 
   const root = document.createElement("div");
   root.className = "config-panel settings-page";
@@ -789,6 +803,8 @@ export function mountConfigPanel(host, rpc, events, fixedProviderId = null, slot
 
   function render() {
     disposeCards();
+    headerMeta?.remove();
+    headerMeta = null;
     root.innerHTML = "";
     if (!state.selected) {
       const card = document.createElement("section");
@@ -812,7 +828,7 @@ export function mountConfigPanel(host, rpc, events, fixedProviderId = null, slot
     }
 
     if (ctx && ownerPluginId) {
-      appendPluginInfo(root, state.pluginInfo);
+      headerMeta = appendPluginInfo(host, state.pluginInfo);
       cardPanels = mountPluginCards(root, ctx, ownerPluginId);
       appendPluginPages(root, ctx, ownerPluginId, homePageId);
     }
@@ -971,6 +987,7 @@ export function mountConfigPanel(host, rpc, events, fixedProviderId = null, slot
   });
   root.destroy = () => {
     disposeCards();
+    headerMeta?.remove();
     revisionSubscription?.dispose();
   };
   return root;
@@ -1063,11 +1080,20 @@ export default {
     const entries = (groups || []).flatMap((group) =>
       (group.items || []).map((item) => ({ group, item })),
     );
+    const pluginList = await loadPluginList(ctx.rpc);
+    const loadedPlugins = new Set(
+      pluginList
+        .filter((plugin) => plugin.configured || plugin.active_deployment)
+        .map((plugin) => String(plugin.plugin_id || "")),
+    );
     const providers = (await Promise.all(
       entries.map(async ({ group, item }) => {
-        const schema = await ctx.rpc.call("config", "schema.get", {
-          provider_id: item.provider_id,
-        });
+        let schema = null;
+        try {
+          schema = await ctx.rpc.call("config", "schema.get", {
+            provider_id: item.provider_id,
+          });
+        } catch {}
         return { group, item, schema };
       }),
     ));
@@ -1075,17 +1101,24 @@ export default {
     providers.forEach((provider, order) => {
       const { group, item, schema } = provider;
       const providerId = item.provider_id;
+      // Schema-less entries only exist when the plugin is actually loaded,
+      // so product-declared ids that never load do not become dead entries.
+      if (!schema && !loadedPlugins.has(providerId)) return;
+      // Schema-less plugins only keep an enabled route when their own web
+      // extension contributed pages or overview cards; otherwise the hub is
+      // an empty shell and the route renders disabled.
       registerPluginHub(ctx, {
         id: providerId,
-        title: item.label || schema?.title?.default || "配置",
+        title: item.label || schema?.title?.default || providerId,
         group: group.label || undefined,
         order,
-        requiredCapability: "config.schema.read",
+        requiredCapability: schema ? "config.schema.read" : "runtime.read",
+        disabled: !schema && !pluginHasContent(ctx, providerId),
       });
       covered.add(providerId);
     });
     let order = providers.length;
-    for (const plugin of await loadPluginList(ctx.rpc)) {
+    for (const plugin of pluginList) {
       const pluginId = String(plugin.plugin_id || "");
       if (!pluginId || covered.has(pluginId) || !(plugin.configured || plugin.active_deployment)) continue;
       registerPluginHub(ctx, {
@@ -1094,6 +1127,7 @@ export default {
         group: "已加载",
         order,
         requiredCapability: "runtime.read",
+        disabled: !pluginHasContent(ctx, pluginId),
       });
       covered.add(pluginId);
       order += 1;

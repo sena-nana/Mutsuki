@@ -403,9 +403,10 @@ export function mountWebShell(
   for (const list of navByActivity.values()) {
     list.sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.label.localeCompare(b.label));
   }
+  const isEnabled = (item: NavigationRegistration) => !item.disabled;
   const activities = state.activities
     .list()
-    .filter((item) => navByActivity.has(item.id))
+    .filter((item) => navByActivity.get(item.id)?.some(isEnabled))
     .sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.label.localeCompare(b.label));
   if (!activities.length) throw new Error("web shell has no accessible pages");
 
@@ -457,14 +458,21 @@ export function mountWebShell(
     return match ? { activityId: decodeURIComponent(match[1]), pageId: decodeURIComponent(match[2]) } : null;
   };
   const firstRoute = () => {
-    const preferred = options.homePageId && navItems.find((item) => item.pageId === options.homePageId);
-    const item = preferred ?? navByActivity.get(activities[0].id)?.[0];
+    const preferred =
+      options.homePageId &&
+      navItems.find((item) => item.pageId === options.homePageId && !item.disabled);
+    const item = preferred ?? navByActivity.get(activities[0].id)?.find(isEnabled);
     if (!item) throw new Error("web shell has no accessible navigation item");
     return { activityId: item.activityId, pageId: item.pageId };
   };
   const normalizeRoute = () => {
     const current = route();
-    if (current && navByActivity.get(current.activityId)?.some((item) => item.pageId === current.pageId)) {
+    if (
+      current &&
+      navByActivity
+        .get(current.activityId)
+        ?.some((item) => isEnabled(item) && item.pageId === current.pageId)
+    ) {
       return current;
     }
     const fallback = firstRoute();
@@ -484,7 +492,7 @@ export function mountWebShell(
       button.setAttribute("aria-pressed", activity.id === activeActivityId ? "true" : "false");
       button.innerHTML = iconMarkup(activity.icon, activity.label);
       button.onclick = () => {
-        const target = navByActivity.get(activity.id)?.[0];
+        const target = navByActivity.get(activity.id)?.find(isEnabled);
         if (target) location.hash = routeFor(activity.id, target.pageId).slice(1);
       };
       (activity.position === "bottom" ? activityBottom : activityTop).append(button);
@@ -510,13 +518,20 @@ export function mountWebShell(
       for (const item of section.items) {
         const button = document.createElement("button");
         button.type = "button";
-        button.className = `sb-tree__row lilia-interactive-item${item.pageId === activePageId ? " is-active" : ""}`;
+        button.className = `sb-tree__row lilia-interactive-item${item.pageId === activePageId ? " is-active" : ""}${
+          item.disabled ? " sb-tree__row--muted" : ""
+        }`;
         button.textContent = item.label;
         if (item.pageId === activePageId) button.setAttribute("aria-current", "page");
-        button.onclick = () => {
-          location.hash = routeFor(activeActivityId, item.pageId).slice(1);
-          closeContext();
-        };
+        if (item.disabled) {
+          button.disabled = true;
+          button.setAttribute("aria-disabled", "true");
+        } else {
+          button.onclick = () => {
+            location.hash = routeFor(activeActivityId, item.pageId).slice(1);
+            closeContext();
+          };
+        }
         contextNav.append(button);
       }
     }
@@ -557,7 +572,9 @@ export function mountWebShell(
 
   const legacyPage = new URLSearchParams(location.search).get("page");
   if (!location.hash && legacyPage) {
-    const legacy = navItems.find((item) => pageById.get(item.pageId)?.path.replace(/^\//, "") === legacyPage);
+    const legacy = navItems.find(
+      (item) => !item.disabled && pageById.get(item.pageId)?.path.replace(/^\//, "") === legacyPage,
+    );
     if (legacy) history.replaceState({}, "", routeFor(legacy.activityId, legacy.pageId));
   }
   const hashListener = () => void renderRoute();

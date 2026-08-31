@@ -45,21 +45,7 @@ export function mountAgentConnectionCards(host, rpc) {
       const rows = items.length
         ? items.map((item) => `<div class="tree-item row-item"><div><strong>${item.connection_id === "local" ? "本机模型" : esc(item.connection_id)}</strong></div><div class="row-actions"><span class="pill ${item.state === "healthy" ? "ok" : "warn"}">${item.state === "healthy" ? "运行中" : "不可用"}</span></div></div>`).join("")
         : `<div class="muted">尚未启用，请到配置里填写模型。</div>`;
-      host.innerHTML = `<div class="toolbar nested"><h2>模型</h2><button type="button" class="ghost" data-test>测试模型</button><span class="muted" data-test-result></span></div>${rows}`;
-      host.querySelector("[data-test]").onclick = async (event) => {
-        const button = event.currentTarget;
-        const result = host.querySelector("[data-test-result]");
-        button.disabled = true;
-        result.textContent = "正在测试…";
-        try {
-          await rpc.call("bot-agent", "provider.test", {});
-          result.textContent = "模型可用";
-        } catch (error) {
-          result.textContent = errorText(error);
-        } finally {
-          button.disabled = false;
-        }
-      };
+      host.innerHTML = `<div class="toolbar nested"><h2>模型</h2></div>${rows}`;
     } catch (error) {
       host.innerHTML = `<p class="muted">${esc(errorText(error))}</p>`;
     }

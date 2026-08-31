@@ -586,7 +586,7 @@ fn bilibili_config_descriptor() -> ConfigDescriptor {
         provider_id: ConfigProviderId::new(BILIBILI_PLUGIN_ID),
         schema_version: 1,
         value_version: 1,
-        title: LocalizedText::new("Bilibili"),
+        title: LocalizedText::new("B 站"),
         description: None,
         scopes: vec![ConfigScope::global()],
         root: ConfigNode {
@@ -595,7 +595,7 @@ fn bilibili_config_descriptor() -> ConfigDescriptor {
                 key_strategy: MapKeyStrategy::FreeString,
                 value: Box::new(ConfigValueType::Object),
             },
-            title: LocalizedText::new("Bilibili"),
+            title: LocalizedText::new("B 站"),
             description: None,
             default_value: None,
             constraints: ConfigConstraints::default(),

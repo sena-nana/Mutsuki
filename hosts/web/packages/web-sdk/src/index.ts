@@ -90,6 +90,8 @@ export interface NavigationRegistration {
   group?: string;
   order?: number;
   requiredCapability?: string;
+  /** Target page provides no content; the route renders disabled. */
+  disabled?: boolean;
 }
 
 export interface SlotRegistration {
@@ -100,6 +102,9 @@ export interface SlotRegistration {
   /** Runtime plugin / config provider that owns this contribution. */
   pluginId?: string;
   pluginIds?: string[];
+  /** Homepage `overview.cards` occupancy. The host owns cell size. */
+  colSpan?: number;
+  rowSpan?: number;
 }
 
 export interface CommandRegistration {
