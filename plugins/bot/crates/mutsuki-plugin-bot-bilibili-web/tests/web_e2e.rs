@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use futures_util::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt};
 use mutsuki_bot_management::{
     BilibiliBindChallengeResult, BilibiliBindVerifyResult, BilibiliCredentialSecretState,
     BilibiliLoginPollResult, BilibiliLoginSession, BilibiliLoginStartResult, BilibiliManagementApi,

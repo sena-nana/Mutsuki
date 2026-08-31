@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use futures_util::{Stream, StreamExt};
+use futures::{Stream, StreamExt};
 use mutsuki_protocol_http::{
     EFFECT_REQUEST, HttpErrorCode, HttpMethod, HttpRequest, HttpResponse, HttpResponseMetadata,
     REQUEST, RESPONSE_BODY_SCHEMA,
@@ -1015,7 +1015,7 @@ fn remove_body_headers(headers: &mut BTreeMap<String, String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures_util::stream;
+    use futures::stream;
     use std::collections::VecDeque;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

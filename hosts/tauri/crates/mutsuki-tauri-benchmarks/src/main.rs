@@ -8,6 +8,7 @@
     clippy::needless_pass_by_value,
     clippy::too_many_lines
 )]
+#![allow(unsafe_code)]
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -60,7 +61,7 @@ fn benchmark_bridge(host: &Arc<MutsukiTauriHost>, cases: &mut Vec<Value>) {
     for payload_bytes in [256_usize, 4 * 1024, 64 * 1024] {
         for concurrency in [1_usize, 16, 56] {
             let started = Instant::now();
-            let cpu = cpu_time::ProcessTime::now();
+            let cpu = process_cpu_time_ns();
             let mut request_bytes = 0_usize;
             let mut response_bytes = 0_usize;
             std::thread::scope(|scope| {
@@ -100,7 +101,7 @@ fn benchmark_bridge(host: &Arc<MutsukiTauriHost>, cases: &mut Vec<Value>) {
                 "case_id": "tauri.bridge.command-roundtrip",
                 "dimensions": {"concurrency": concurrency, "payload_bytes": payload_bytes},
                 "latency_ns": started.elapsed().as_nanos(),
-                "cpu_time_ns": cpu.elapsed().as_nanos(),
+                "cpu_time_ns": process_cpu_time_ns().saturating_sub(cpu),
                 "request_frame_bytes": request_bytes,
                 "response_frame_bytes": response_bytes,
                 "operations": concurrency,
@@ -432,4 +433,44 @@ fn current_rss_bytes() -> u64 {
 #[allow(dead_code)]
 fn stable_hash(value: &Value) -> String {
     hex::encode(Sha256::digest(serde_json::to_vec(value).unwrap()))
+}
+
+#[cfg(unix)]
+fn process_cpu_time_ns() -> u128 {
+    let mut value = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `clock_gettime` only fills the caller-provided stack slot.
+    let status = unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut value) };
+    assert_eq!(status, 0, "clock_gettime(CLOCK_PROCESS_CPUTIME_ID) failed");
+    (value.tv_sec as u128) * 1_000_000_000 + value.tv_nsec as u128
+}
+
+#[cfg(windows)]
+fn process_cpu_time_ns() -> u128 {
+    use windows_sys::Win32::{
+        Foundation::FILETIME,
+        System::Threading::{GetCurrentProcess, GetProcessTimes},
+    };
+
+    let mut creation = FILETIME::default();
+    let mut exit = FILETIME::default();
+    let mut kernel = FILETIME::default();
+    let mut user = FILETIME::default();
+    // SAFETY: each pointer is a writable stack slot for exactly the five FILETIMEs
+    // `GetProcessTimes` fills; the pseudo process handle needs no closing.
+    let status = unsafe {
+        GetProcessTimes(
+            GetCurrentProcess(),
+            &mut creation,
+            &mut exit,
+            &mut kernel,
+            &mut user,
+        )
+    };
+    assert_ne!(status, 0, "GetProcessTimes failed");
+    let ticks =
+        |value: FILETIME| ((value.dwHighDateTime as u128) << 32) | value.dwLowDateTime as u128;
+    (ticks(kernel) + ticks(user)) * 100
 }

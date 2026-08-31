@@ -169,7 +169,7 @@ async fn ws_rpc_result(
 }
 
 // Re-export StreamExt for ws.next()
-use futures_util::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt};
 
 #[tokio::test]
 async fn config_rpc_list_schema_read_validate_apply() {

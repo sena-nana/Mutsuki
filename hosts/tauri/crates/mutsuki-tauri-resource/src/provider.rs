@@ -7,13 +7,13 @@ use mutsuki_runtime_contracts::{
 };
 use mutsuki_runtime_core::{RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{ResourcePlanGateway, ResourceProviderGateway};
-use parking_lot::RwLock;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::RwLock;
 use uuid::Uuid;
 
 pub const PROVIDER_ID: &str = "mutsuki.tauri.resource";
@@ -44,6 +44,7 @@ impl TauriResourceProvider {
     pub fn entry(&self, ref_id: &str) -> Result<ResourceEntry, ResourceBridgeError> {
         self.inner
             .read()
+            .unwrap()
             .entries
             .get(ref_id)
             .cloned()
@@ -63,7 +64,7 @@ impl TauriResourceProvider {
         let ref_id = format!("resource:tauri:{}", Uuid::new_v4());
         let key = format!("{}.bin", Uuid::new_v4());
         let (root, path) = {
-            let inner = self.inner.read();
+            let inner = self.inner.read().unwrap();
             let root = inner.root.clone();
             (root.clone(), root.join(&key))
         };
@@ -82,7 +83,7 @@ impl TauriResourceProvider {
             content_hash(&bytes),
             key,
         );
-        self.inner.write().entries.insert(
+        self.inner.write().unwrap().entries.insert(
             RefId::from(ref_id),
             ResourceEntry {
                 descriptor: descriptor.clone(),
@@ -158,7 +159,7 @@ impl TauriResourceProvider {
         updated.resource_id.version = updated.version;
         updated.size_hint = Some(bytes.len() as u64);
         updated.content_hash = Some(content_hash(&bytes));
-        self.inner.write().entries.insert(
+        self.inner.write().unwrap().entries.insert(
             RefId::from(ref_id),
             ResourceEntry {
                 descriptor: updated.clone(),
@@ -264,6 +265,7 @@ impl ResourcePlanGateway for TauriResourceProvider {
         let descriptor = entry.descriptor.clone();
         self.inner
             .write()
+            .unwrap()
             .entries
             .insert(entry.descriptor.ref_id.clone(), entry);
         Ok(receipt(
@@ -369,7 +371,7 @@ fn blocking_create_blob(
     let ref_id = format!("resource:tauri:{}", Uuid::new_v4());
     let key = format!("{}.bin", Uuid::new_v4());
     let (root, path) = {
-        let inner = provider.inner.read();
+        let inner = provider.inner.read().unwrap();
         let root = inner.root.clone();
         (root.clone(), root.join(&key))
     };
@@ -384,7 +386,7 @@ fn blocking_create_blob(
         content_hash(&bytes),
         key,
     );
-    provider.inner.write().entries.insert(
+    provider.inner.write().unwrap().entries.insert(
         RefId::from(ref_id),
         ResourceEntry {
             descriptor: descriptor.clone(),

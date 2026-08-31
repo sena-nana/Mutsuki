@@ -1,10 +1,10 @@
 //! Bounded actor mailboxes and control/data priority arbitration.
 
-use futures_channel::oneshot;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
+use tokio::sync::oneshot;
 
 use mutsuki_runtime_contracts::{TaskHandle, TaskStatus};
 use mutsuki_runtime_core::{RunnerCompletion, RuntimeResult};

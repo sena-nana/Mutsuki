@@ -15,7 +15,7 @@ mod process;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use futures_util::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt};
 use mutsuki_bot::load_single_instance_product_for_test;
 use mutsuki_plugin_bot_adapter_qqbot::QqBotConfig;
 use mutsuki_service_config::ServiceConfig;

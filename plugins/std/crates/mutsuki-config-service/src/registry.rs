@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use parking_lot::RwLock;
+use std::sync::RwLock;
 
 use crate::metrics::ConfigMetrics;
 use crate::provider::ConfigProvider;
@@ -87,7 +87,7 @@ impl ConfigProviderRegistry {
         staged: bool,
     ) -> Result<(String, u64), ConfigError> {
         let (id, descriptor) = self.validate_provider(&provider)?;
-        let mut guard = self.providers.write();
+        let mut guard = self.providers.write().unwrap();
         if guard.len() >= self.budgets.max_providers && !guard.contains_key(&id) {
             return Err(ConfigError::BudgetExceeded {
                 reason: format!("max_providers={}", self.budgets.max_providers),
@@ -123,7 +123,7 @@ impl ConfigProviderRegistry {
                 reason: format!("provider `{id}` does not support scope {scope:?}"),
             });
         }
-        let guard = self.providers.read();
+        let guard = self.providers.read().unwrap();
         if guard.len() >= self.budgets.max_providers && !guard.contains_key(&id) {
             return Err(ConfigError::BudgetExceeded {
                 reason: format!("max_providers={}", self.budgets.max_providers),
@@ -155,14 +155,14 @@ impl ConfigProviderRegistry {
     }
 
     pub fn unregister(&self, provider_id: &str) -> bool {
-        let mut guard = self.providers.write();
+        let mut guard = self.providers.write().unwrap();
         let removed = guard.remove(provider_id).is_some();
         self.metrics.set_provider_count(guard.len() as u64);
         removed
     }
 
     fn unregister_registration(&self, provider_id: &str, registration_id: u64) -> bool {
-        let mut guard = self.providers.write();
+        let mut guard = self.providers.write().unwrap();
         let mut removed = false;
         let mut empty = false;
         if let Some(entries) = guard.get_mut(provider_id) {
@@ -181,6 +181,7 @@ impl ConfigProviderRegistry {
     pub fn list(&self) -> Vec<ConfigProviderId> {
         self.providers
             .read()
+            .unwrap()
             .keys()
             .cloned()
             .map(ConfigProviderId::new)
@@ -190,6 +191,7 @@ impl ConfigProviderRegistry {
     pub fn get(&self, provider_id: &str) -> Result<ProviderEntry, ConfigError> {
         self.providers
             .read()
+            .unwrap()
             .get(provider_id)
             .and_then(|entries| entries.last().cloned())
             .ok_or(ConfigError::ProviderUnavailable)

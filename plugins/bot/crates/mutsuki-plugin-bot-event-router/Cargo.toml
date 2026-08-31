@@ -13,7 +13,6 @@ mutsuki-bot-flow.workspace = true
 mutsuki-bot-link-parser.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-thiserror.workspace = true
 tracing.workspace = true
 
 [lints]

@@ -12,9 +12,6 @@ mutsuki-distributed-contracts.workspace = true
 mutsuki-runtime-contracts.workspace = true
 mutsuki-service-control.workspace = true
 mutsuki-service-ipc.workspace = true
-serde = { workspace = true }
-serde_json.workspace = true
-thiserror.workspace = true
 
 [lints]
 workspace = true

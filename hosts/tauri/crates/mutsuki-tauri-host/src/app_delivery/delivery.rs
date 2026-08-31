@@ -5,9 +5,9 @@ use super::transport::AppLinkTransport;
 use super::types::{AppDeliveryError, AppDeliveryOptions, AppId, AppIdentity, DeliveryPhase};
 use mutsuki_runtime_contracts::{CapabilityDescriptor, CapabilityRequestEnvelope, DeliveryReceipt};
 use mutsuki_tauri_bridge::{DeliveryProgress, EventHub, MutsukiFrontendEvent};
-use parking_lot::Mutex;
 use serde_json::Value;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Duration;
 use tokio::sync::watch;
 use uuid::Uuid;
@@ -272,7 +272,10 @@ where
         phase: DeliveryPhase,
         error: Option<&AppDeliveryError>,
     ) {
-        self.operations.lock().record(request_id, phase.clone());
+        self.operations
+            .lock()
+            .unwrap()
+            .record(request_id, phase.clone());
         if let Some(events) = &self.events {
             let progress = DeliveryProgress {
                 request_id: request_id.to_string(),
@@ -286,10 +289,10 @@ where
     }
 
     pub fn phase_for(&self, request_id: &str) -> Option<DeliveryPhase> {
-        self.operations.lock().phase_for(request_id)
+        self.operations.lock().unwrap().phase_for(request_id)
     }
 
     pub fn operation_stats(&self) -> OperationHistoryStats {
-        self.operations.lock().stats()
+        self.operations.lock().unwrap().stats()
     }
 }

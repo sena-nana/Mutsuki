@@ -1,9 +1,9 @@
 use crate::error::ResourceBridgeError;
 use mutsuki_runtime_contracts::RefId;
 use mutsuki_tauri_bridge::PreviewHandle;
-use parking_lot::RwLock;
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::RwLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
@@ -35,7 +35,7 @@ impl TauriPreviewStore {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        self.inner.write().insert(
+        self.inner.write().unwrap().insert(
             token.clone(),
             PreviewToken {
                 ref_id: RefId::from(ref_id),
@@ -52,7 +52,7 @@ impl TauriPreviewStore {
 
     pub fn resolve_preview_token(&self, token: &str) -> Result<RefId, ResourceBridgeError> {
         let now = SystemTime::now();
-        let mut inner = self.inner.write();
+        let mut inner = self.inner.write().unwrap();
         inner.retain(|_, preview| preview.expires_at > now);
         inner
             .get(token)
@@ -63,6 +63,7 @@ impl TauriPreviewStore {
     pub fn revoke_preview_token(&self, token: &str) -> Result<(), ResourceBridgeError> {
         self.inner
             .write()
+            .unwrap()
             .remove(token)
             .map(|_| ())
             .ok_or_else(|| ResourceBridgeError::InvalidToken(token.to_string()))

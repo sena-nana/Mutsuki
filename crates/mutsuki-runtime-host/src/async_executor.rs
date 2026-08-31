@@ -5,8 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use futures_channel::oneshot;
-use futures_util::FutureExt;
+use futures::FutureExt;
 use mutsuki_runtime_contracts::{
     AsyncInvocation, AsyncInvocationHandle, CompletionBatch, ERR_CAPABILITY_EXHAUSTED,
     RuntimeError, ScalarValue,
@@ -15,6 +14,7 @@ use mutsuki_runtime_core::{AsyncCompletionFuture, RuntimeFailure, RuntimeResult}
 use mutsuki_runtime_sdk::BoxRuntimeFuture;
 use serde::Serialize;
 use tokio::runtime::{Builder, Runtime};
+use tokio::sync::oneshot;
 use tokio::task::AbortHandle;
 
 use crate::HostRuntimeReply;

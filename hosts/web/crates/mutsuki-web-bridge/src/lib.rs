@@ -26,7 +26,7 @@ use mutsuki_web_protocol::{
     EventEnvelope, ProtocolError, ProtocolResult, ResourceBudgets, RpcErrorBody, RpcRequest,
     RpcResponse, SessionInfo, WEB_PROTOCOL_VERSION, WEB_PROTOCOL_VERSION_MAJOR, WireMessage,
 };
-use parking_lot::RwLock;
+use std::sync::RwLock;
 use uuid::Uuid;
 
 /// Shared bridge state used by HTTP/WebSocket handlers.
@@ -88,19 +88,19 @@ impl WebBridge {
     }
 
     pub fn set_safe_mode(&self, enabled: bool) {
-        *self.inner.safe_mode.write() = enabled;
+        *self.inner.safe_mode.write().unwrap() = enabled;
     }
 
     pub fn safe_mode(&self) -> bool {
-        *self.inner.safe_mode.read()
+        *self.inner.safe_mode.read().unwrap()
     }
 
-    pub fn extensions(&self) -> parking_lot::RwLockReadGuard<'_, ExtensionRegistry> {
-        self.inner.extensions.read()
+    pub fn extensions(&self) -> std::sync::RwLockReadGuard<'_, ExtensionRegistry> {
+        self.inner.extensions.read().unwrap()
     }
 
-    pub fn extensions_mut(&self) -> parking_lot::RwLockWriteGuard<'_, ExtensionRegistry> {
-        self.inner.extensions.write()
+    pub fn extensions_mut(&self) -> std::sync::RwLockWriteGuard<'_, ExtensionRegistry> {
+        self.inner.extensions.write().unwrap()
     }
 
     pub fn active_sessions(&self) -> u64 {
@@ -253,7 +253,7 @@ impl WebBridge {
         } else if request.namespace == "recovery" {
             self.dispatch_recovery_rpc(session, &request)
         } else {
-            let rpc = self.inner.extensions.read().resolve_rpc(
+            let rpc = self.inner.extensions.read().unwrap().resolve_rpc(
                 &request.namespace,
                 &request.method,
                 &session.capabilities,
@@ -293,7 +293,7 @@ impl WebBridge {
         }
         self.inner.metrics.inc_rpc_inflight();
         let started = std::time::Instant::now();
-        let rpc = self.inner.extensions.read().resolve_rpc(
+        let rpc = self.inner.extensions.read().unwrap().resolve_rpc(
             &request.namespace,
             &request.method,
             &session.capabilities,
@@ -330,7 +330,7 @@ impl WebBridge {
                 if let Err(err) = session.require_capability("host.read") {
                     return rpc_error(request.id, "capability_denied", err.to_string());
                 }
-                let report = self.inner.extensions.read().report();
+                let report = self.inner.extensions.read().unwrap().report();
                 RpcResponse {
                     id: request.id,
                     result: Some(serde_json::json!({
@@ -368,7 +368,7 @@ impl WebBridge {
                 if let Err(err) = session.require_capability("recovery.read") {
                     return rpc_error(request.id, "capability_denied", err.to_string());
                 }
-                let failures = self.inner.extensions.read().failures();
+                let failures = self.inner.extensions.read().unwrap().failures();
                 RpcResponse {
                     id: request.id,
                     result: Some(serde_json::to_value(failures).unwrap_or_default()),
@@ -384,7 +384,7 @@ impl WebBridge {
                     .get("extension_id")
                     .and_then(|value| value.as_str())
                     .unwrap_or_default();
-                let disabled = self.inner.extensions.write().disable(extension_id);
+                let disabled = self.inner.extensions.write().unwrap().disable(extension_id);
                 RpcResponse {
                     id: request.id,
                     result: Some(serde_json::json!({ "disabled": disabled })),
@@ -411,7 +411,7 @@ impl WebBridge {
                     .get("extension_id")
                     .and_then(|value| value.as_str())
                     .unwrap_or_default();
-                let unloaded = self.inner.extensions.write().unload(extension_id);
+                let unloaded = self.inner.extensions.write().unwrap().unload(extension_id);
                 RpcResponse {
                     id: request.id,
                     result: Some(serde_json::json!({ "cleared": unloaded })),

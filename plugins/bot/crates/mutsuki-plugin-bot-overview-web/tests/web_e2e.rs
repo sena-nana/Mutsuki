@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use futures_util::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt};
 use mutsuki_plugin_bot_control_web::{ControlRpcCaller, FixtureControlHandler};
 use mutsuki_plugin_bot_overview_web::{OverviewWebExtension, materialize_frontend_assets};
 use mutsuki_web_host::{MinimalWebApplication, MutsukiWebHost, WebHost};

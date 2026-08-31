@@ -38,9 +38,8 @@ mutsuki-plugin-bot-bilibili.workspace = true
 mutsuki-plugin-bot-bilibili-workshop.workspace = true
 mutsuki-plugin-bot-mihuashi.workspace = true
 fastrand.workspace = true
-futures-util.workspace = true
+futures.workspace = true
 futures-executor = "0.3"
-reqwest.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 tokio.workspace = true
@@ -52,7 +51,6 @@ mutsuki-bot-web-console.workspace = true
 mutsuki-plugin-bot-qq-web.workspace = true
 mutsuki-bot-testkit.workspace = true
 mutsuki-plugin-config-sqlite.workspace = true
-toml.workspace = true
 tempfile.workspace = true
 
 [lints]

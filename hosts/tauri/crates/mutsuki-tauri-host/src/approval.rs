@@ -2,10 +2,10 @@ use crate::error::{HostError, HostResult};
 use mutsuki_tauri_bridge::{
     ApprovalAttribution, ApprovalDecision, ApprovalRequest, ApprovalResponse, FrontendContext,
 };
-use parking_lot::RwLock;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::RwLock;
 use uuid::Uuid;
 
 #[derive(Clone, Debug)]
@@ -55,7 +55,7 @@ impl ApprovalBridge {
             payload,
             context: attribution.context,
         };
-        self.pending.write().insert(
+        self.pending.write().unwrap().insert(
             request.approval_id.clone(),
             PendingApproval {
                 request: request.clone(),
@@ -65,7 +65,7 @@ impl ApprovalBridge {
     }
 
     pub fn resolve(&self, response: ApprovalResponse) -> HostResult<ApprovalDecision> {
-        let mut pending = self.pending.write();
+        let mut pending = self.pending.write().unwrap();
         let Some(entry) = pending.get(&response.approval_id) else {
             return Err(HostError::Approval(format!(
                 "approval request not pending: {}",
@@ -103,6 +103,7 @@ impl ApprovalBridge {
     pub fn pending(&self) -> Vec<ApprovalRequest> {
         self.pending
             .read()
+            .unwrap()
             .values()
             .map(|entry| entry.request.clone())
             .collect()

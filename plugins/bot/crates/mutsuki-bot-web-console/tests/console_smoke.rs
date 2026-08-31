@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use futures_util::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt};
 use mutsuki_bot_sandbox::{SandboxApi, SandboxService};
 use mutsuki_bot_state_db::BotStateDbRepository;
 use mutsuki_bot_web_console::{

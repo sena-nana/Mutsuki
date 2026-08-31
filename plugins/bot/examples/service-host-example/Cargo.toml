@@ -26,9 +26,7 @@ mutsuki-plugin-bot-adapter-qqbot.workspace = true
 mutsuki-bot-service-host-integration.workspace = true
 mutsuki-plugin-bot-command.workspace = true
 mutsuki-plugin-bot-event-router.workspace = true
-futures-util.workspace = true
 tokio.workspace = true
-tokio-tungstenite.workspace = true
 tempfile = "3"
 
 [lints]

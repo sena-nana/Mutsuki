@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use futures_util::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt};
 use mutsuki_plugin_bot_upgrade_web::UpgradeWebExtension;
 use mutsuki_plugin_catalog::FixtureRemoteHeadProvider;
 use mutsuki_web_host::{MinimalWebApplication, MutsukiWebHost, WebHost};

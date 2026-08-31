@@ -10,8 +10,8 @@ use mutsuki_config_service::{
     ConfigCompareAndSetRequest, ConfigDocumentKey, ConfigDocumentSnapshot, ConfigError,
     ConfigRepository, ConfigRevision, ConfigSource, PreparedConfigWrite,
 };
-use parking_lot::Mutex;
 use rusqlite::{Connection, OptionalExtension, params};
+use std::sync::Mutex;
 
 pub const PLUGIN_ID: &str = "mutsuki.config.repository.sqlite";
 
@@ -103,6 +103,7 @@ impl PreparedConfigWrite for SqlitePreparedWrite {
         self.repository
             .connection
             .lock()
+            .unwrap()
             .execute(
                 "UPDATE config_pending SET commit_marker = ?4
                  WHERE namespace = ?1 AND provider_id = ?2 AND context_key = ?3",
@@ -120,7 +121,7 @@ impl PreparedConfigWrite for SqlitePreparedWrite {
     }
 
     fn commit(&mut self) -> Result<ConfigDocumentSnapshot, ConfigError> {
-        let mut connection = self.repository.connection.lock();
+        let mut connection = self.repository.connection.lock().unwrap();
         let transaction = connection.transaction().map_err(sql_error)?;
         let current = SqliteConfigRepository::current_revision(
             &transaction,
@@ -181,6 +182,7 @@ impl PreparedConfigWrite for SqlitePreparedWrite {
         self.repository
             .connection
             .lock()
+            .unwrap()
             .execute(
                 "DELETE FROM config_pending
                  WHERE namespace = ?1 AND provider_id = ?2 AND context_key = ?3",
@@ -202,7 +204,7 @@ impl PreparedConfigWrite for SqlitePreparedWrite {
         if self.commit_marker.as_deref().is_some_and(Path::exists) {
             return self.finish();
         }
-        let mut connection = self.repository.connection.lock();
+        let mut connection = self.repository.connection.lock().unwrap();
         let transaction = connection.transaction().map_err(sql_error)?;
         if self.committed {
             match &self.before {
@@ -264,7 +266,7 @@ impl Drop for SqlitePreparedWrite {
 
 impl ConfigRepository for SqliteConfigRepository {
     fn read(&self, key: &ConfigDocumentKey) -> Result<Option<ConfigDocumentSnapshot>, ConfigError> {
-        let connection = self.connection.lock();
+        let connection = self.connection.lock().unwrap();
         connection
             .query_row(
                 "SELECT context_json, revision, schema_version, value_version, value_json
@@ -324,6 +326,7 @@ impl ConfigRepository for SqliteConfigRepository {
             .map_err(json_error)?;
         self.connection
             .lock()
+            .unwrap()
             .execute(
                 "INSERT INTO config_pending
                    (namespace, provider_id, context_key, expected_revision, request_json,
@@ -359,7 +362,7 @@ impl ConfigRepository for SqliteConfigRepository {
     }
 
     fn recover(&self) -> Result<(), ConfigError> {
-        let mut connection = self.connection.lock();
+        let mut connection = self.connection.lock().unwrap();
         let pending = {
             let mut statement = connection
                 .prepare(

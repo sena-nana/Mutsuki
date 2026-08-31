@@ -6,7 +6,7 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use futures_util::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt};
 use mutsuki_plugin_bot_qq_web::*;
 use mutsuki_web_extension::{WebExtension, content_hash};
 use mutsuki_web_host::{MinimalWebApplication, MutsukiWebHost, WebHost};

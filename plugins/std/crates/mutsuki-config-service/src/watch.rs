@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::sync::Weak;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use std::sync::Mutex;
 
 use crate::{ConfigContext, ConfigProviderId, ConfigRevision};
 
@@ -31,7 +31,10 @@ impl ConfigWatchHub {
         listener: RevisionChangedListener,
     ) -> ConfigWatchSubscription {
         let subscription_id = self.next_subscription_id.fetch_add(1, Ordering::Relaxed);
-        self.listeners.lock().insert(subscription_id, listener);
+        self.listeners
+            .lock()
+            .unwrap()
+            .insert(subscription_id, listener);
         ConfigWatchSubscription {
             hub: Arc::downgrade(self),
             subscription_id,
@@ -40,7 +43,13 @@ impl ConfigWatchHub {
     }
 
     pub fn notify(&self, event: RevisionChangedEvent) {
-        let listeners = self.listeners.lock().values().cloned().collect::<Vec<_>>();
+        let listeners = self
+            .listeners
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
         for listener in listeners {
             listener(event.clone());
         }
@@ -59,9 +68,13 @@ impl ConfigWatchSubscription {
             return false;
         }
         self.disposed = true;
-        self.hub
-            .upgrade()
-            .is_some_and(|hub| hub.listeners.lock().remove(&self.subscription_id).is_some())
+        self.hub.upgrade().is_some_and(|hub| {
+            hub.listeners
+                .lock()
+                .unwrap()
+                .remove(&self.subscription_id)
+                .is_some()
+        })
     }
 }
 

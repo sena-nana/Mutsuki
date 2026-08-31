@@ -1,8 +1,8 @@
 use mutsuki_runtime_contracts::{RuntimeError, RuntimeEvent, RuntimeEventKind, TaskStatus};
 use mutsuki_runtime_host::HostTaskSnapshot;
 use mutsuki_tauri_bridge::{HostRecentError, PluginSummary, RunnerSummary, RuntimeHealth};
-use parking_lot::Mutex;
 use std::collections::{BTreeMap, VecDeque};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const RECENT_ERROR_LIMIT: usize = 20;
@@ -93,7 +93,7 @@ impl HostHealthState {
     ) {
         let message = format!("{} at {}", error.code, error.route);
         {
-            let mut state = self.state.lock();
+            let mut state = self.state.lock().unwrap();
             state.runner_failures.insert(
                 runner_id.into(),
                 RunnerRuntimeFailure {
@@ -114,11 +114,22 @@ impl HostHealthState {
     }
 
     pub(crate) fn recent_errors(&self) -> Vec<HostRecentError> {
-        self.state.lock().recent_errors.iter().cloned().collect()
+        self.state
+            .lock()
+            .unwrap()
+            .recent_errors
+            .iter()
+            .cloned()
+            .collect()
     }
 
     pub(crate) fn runner_failure(&self, runner_id: &str) -> Option<RunnerRuntimeFailure> {
-        self.state.lock().runner_failures.get(runner_id).cloned()
+        self.state
+            .lock()
+            .unwrap()
+            .runner_failures
+            .get(runner_id)
+            .cloned()
     }
 
     fn record_plugin_error(&self, plugin_id: &str, message: &str) {
@@ -136,7 +147,7 @@ impl HostHealthState {
 
     fn record_runner_load_error(&self, runner_id: &str, plugin_id: &str, message: &str) {
         {
-            let mut state = self.state.lock();
+            let mut state = self.state.lock().unwrap();
             state.runner_failures.insert(
                 runner_id.into(),
                 RunnerRuntimeFailure {
@@ -157,7 +168,7 @@ impl HostHealthState {
     }
 
     fn push_error(&self, error: HostRecentError) {
-        let mut state = self.state.lock();
+        let mut state = self.state.lock().unwrap();
         if state.recent_errors.len() == RECENT_ERROR_LIMIT {
             state.recent_errors.pop_front();
         }

@@ -52,9 +52,9 @@ use mutsuki_service_config::HostSecretStore;
 use mutsuki_service_runtime::{
     ConfiguredPluginCatalog, ConfiguredPluginFactory, ServiceRuntimeBuilder, ServiceRuntimeResult,
 };
-use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::{Mutex, RwLock};
 use thiserror::Error;
 
 pub const AGENT_CONNECTIONS_PLUGIN_ID: &str = "mutsuki.agent.connections";
@@ -234,7 +234,12 @@ impl AgentConnectionRegistry {
 
     #[must_use]
     pub fn statuses(&self) -> Vec<AgentConnectionStatus> {
-        self.connections.read().values().map(status_of).collect()
+        self.connections
+            .read()
+            .unwrap()
+            .values()
+            .map(status_of)
+            .collect()
     }
 
     pub fn status(
@@ -243,6 +248,7 @@ impl AgentConnectionRegistry {
     ) -> Result<AgentConnectionStatus, AgentConnectionError> {
         self.connections
             .read()
+            .unwrap()
             .get(connection_id)
             .map(status_of)
             .ok_or_else(|| AgentConnectionError::ConnectionNotFound(connection_id.clone()))
@@ -252,6 +258,7 @@ impl AgentConnectionRegistry {
     pub fn is_healthy(&self, connection_id: &AgentConnectionId) -> bool {
         self.connections
             .read()
+            .unwrap()
             .get(connection_id)
             .is_some_and(|item| {
                 item.state == AgentConnectionState::Healthy && item.backend.is_some()
@@ -298,7 +305,7 @@ impl AgentConnectionRegistry {
             .into_iter()
             .map(|candidate| (candidate.config.connection_id.clone(), candidate))
             .collect::<BTreeMap<_, _>>();
-        let mut current = self.connections.write();
+        let mut current = self.connections.write().unwrap();
         let mut next = BTreeMap::new();
         for item in &config.connections {
             let generation = current
@@ -332,7 +339,7 @@ impl AgentConnectionRegistry {
     }
 
     fn commit(&self, candidate: PreparedConnection) -> AgentConnectionStatus {
-        let mut connections = self.connections.write();
+        let mut connections = self.connections.write().unwrap();
         let generation = connections
             .get(&candidate.config.connection_id)
             .map_or(1, |connection| connection.generation.saturating_add(1));
@@ -370,7 +377,7 @@ impl AgentConnectionRegistry {
     }
 
     fn remove_internal(&self, connection_id: &AgentConnectionId) {
-        let mut connections = self.connections.write();
+        let mut connections = self.connections.write().unwrap();
         if connections
             .get(connection_id)
             .is_some_and(|connection| connection.config.connector_id == IN_PROCESS_CONNECTOR_ID)
@@ -380,7 +387,7 @@ impl AgentConnectionRegistry {
     }
 
     fn mark_unavailable(&self, id: &AgentConnectionId, generation: u64, error: &AgentWireError) {
-        if let Some(connection) = self.connections.write().get_mut(id)
+        if let Some(connection) = self.connections.write().unwrap().get_mut(id)
             && connection.generation == generation
         {
             connection.state = AgentConnectionState::Unavailable;
@@ -418,7 +425,7 @@ impl AgentClientBackend for RegistryAgentBackend {
         request: AgentWireRequestEnvelope,
     ) -> Result<AgentWireResponseEnvelope, AgentWireError> {
         let (generation, backend) = {
-            let connections = self.registry.connections.read();
+            let connections = self.registry.connections.read().unwrap();
             let connection = connections.get(&self.connection_id).ok_or_else(|| {
                 wire_error(
                     "agent.connection.not_found",
@@ -445,7 +452,7 @@ impl AgentClientBackend for RegistryAgentBackend {
             })?;
             (connection.generation, backend)
         };
-        let result = backend.lock().request(request);
+        let result = backend.lock().unwrap().request(request);
         if let Err(error) = &result {
             self.registry
                 .mark_unavailable(&self.connection_id, generation, error);
@@ -503,7 +510,7 @@ impl AgentConnectionManager {
     #[must_use]
     pub fn snapshot(&self) -> AgentConnectionManagementSnapshot {
         AgentConnectionManagementSnapshot {
-            revision: self.state.lock().revision.0,
+            revision: self.state.lock().unwrap().revision.0,
             connections: self.registry.statuses(),
         }
     }
@@ -532,7 +539,7 @@ impl AgentConnectionManager {
     ) -> Result<AgentConnectionStatus, AgentConnectionError> {
         config.validate()?;
         let mut next = {
-            let current = self.state.lock();
+            let current = self.state.lock().unwrap();
             ensure_revision(current.revision, expected_revision)?;
             current.config.clone()
         };
@@ -574,7 +581,7 @@ impl AgentConnectionManager {
         connection_id: &AgentConnectionId,
     ) -> Result<AgentConnectionStatus, AgentConnectionError> {
         let config = {
-            let current = self.state.lock();
+            let current = self.state.lock().unwrap();
             ensure_revision(current.revision, expected_revision)?;
             current
                 .config
@@ -590,7 +597,7 @@ impl AgentConnectionManager {
             ));
         }
         let candidate = AgentConnectionRegistry::prepare(config, &self.connectors, &self.secrets)?;
-        let current = self.state.lock();
+        let current = self.state.lock().unwrap();
         ensure_revision(current.revision, expected_revision)?;
         let status = self.registry.commit(candidate);
         Ok(status)
@@ -686,7 +693,7 @@ impl ConfigActivation for AgentConnectionsActivation {
                     reason: "Agent connection activation was already consumed".into(),
                 })?,
         );
-        *self.state.lock() = AgentConnectionsState {
+        *self.state.lock().unwrap() = AgentConnectionsState {
             revision: self.next_revision,
             config: self.candidate.clone(),
         };
@@ -700,8 +707,8 @@ impl ConfigActivation for AgentConnectionsActivation {
 
     fn rollback(&mut self) -> Result<(), ConfigError> {
         if self.activated {
-            *self.registry.connections.write() = self.before_connections.clone();
-            *self.state.lock() = self.before_state.clone();
+            *self.registry.connections.write().unwrap() = self.before_connections.clone();
+            *self.state.lock().unwrap() = self.before_state.clone();
             self.activated = false;
         }
         Ok(())
@@ -772,8 +779,8 @@ impl ConfigProvider for AgentConnectionsConfigProvider {
             Box::new(AgentConnectionsActivation {
                 registry: self.registry.clone(),
                 state: self.state.clone(),
-                before_state: self.state.lock().clone(),
-                before_connections: self.registry.connections.read().clone(),
+                before_state: self.state.lock().unwrap().clone(),
+                before_connections: self.registry.connections.read().unwrap().clone(),
                 candidate: config,
                 next_revision,
                 prepared: Some(prepared),
@@ -856,7 +863,7 @@ impl ConfiguredPluginFactory for ConfiguredAgentConnectionsPlugin {
                 .await
         })
         .map_err(|error: ConfigError| error.to_string())?;
-        let config = state.lock().config.clone();
+        let config = state.lock().unwrap().config.clone();
         let manager = Arc::new(AgentConnectionManager::new(
             self.registry.clone(),
             self.connectors.clone(),

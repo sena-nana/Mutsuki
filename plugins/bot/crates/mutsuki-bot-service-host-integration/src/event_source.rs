@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use futures_util::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt};
 use mutsuki_service_runtime::{
     HostEventSource, HostEventSourceContext, HostEventSourceDescriptor, HostEventSourceFuture,
     HostEventSourceHealth,

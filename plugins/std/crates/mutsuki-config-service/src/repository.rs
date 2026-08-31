@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use parking_lot::Mutex;
+use std::sync::Mutex;
 
 use crate::{
     ConfigCompareAndSetRequest, ConfigDocumentKey, ConfigDocumentSnapshot, ConfigError,
@@ -66,14 +66,20 @@ struct MemoryPreparedWrite {
 impl PreparedConfigWrite for MemoryPreparedWrite {
     fn set_commit_marker(&mut self, marker: Option<&Path>) -> Result<(), ConfigError> {
         self.commit_marker = marker.map(Path::to_path_buf);
-        if let Some(pending) = self.state.lock().pending.get_mut(&self.request.key) {
+        if let Some(pending) = self
+            .state
+            .lock()
+            .unwrap()
+            .pending
+            .get_mut(&self.request.key)
+        {
             pending.commit_marker = self.commit_marker.clone();
         }
         Ok(())
     }
 
     fn commit(&mut self) -> Result<ConfigDocumentSnapshot, ConfigError> {
-        let mut state = self.state.lock();
+        let mut state = self.state.lock().unwrap();
         let current = state
             .documents
             .get(&self.request.key)
@@ -105,7 +111,7 @@ impl PreparedConfigWrite for MemoryPreparedWrite {
     }
 
     fn finish(&mut self) -> Result<(), ConfigError> {
-        self.state.lock().pending.remove(&self.request.key);
+        self.state.lock().unwrap().pending.remove(&self.request.key);
         if let Some(marker) = &self.commit_marker {
             remove_commit_marker(marker)?;
         }
@@ -117,7 +123,7 @@ impl PreparedConfigWrite for MemoryPreparedWrite {
         if self.commit_marker.as_deref().is_some_and(Path::exists) {
             return self.finish();
         }
-        let mut state = self.state.lock();
+        let mut state = self.state.lock().unwrap();
         state.pending.remove(&self.request.key);
         if self.committed {
             if let Some(before) = self.before.clone() {
@@ -148,14 +154,14 @@ impl Drop for MemoryPreparedWrite {
 
 impl ConfigRepository for InMemoryConfigRepository {
     fn read(&self, key: &ConfigDocumentKey) -> Result<Option<ConfigDocumentSnapshot>, ConfigError> {
-        Ok(self.state.lock().documents.get(key).cloned())
+        Ok(self.state.lock().unwrap().documents.get(key).cloned())
     }
 
     fn prepare_compare_and_set(
         &self,
         request: ConfigCompareAndSetRequest,
     ) -> Result<Box<dyn PreparedConfigWrite>, ConfigError> {
-        let mut state = self.state.lock();
+        let mut state = self.state.lock().unwrap();
         let before = state.documents.get(&request.key).cloned();
         let current = state
             .documents
@@ -195,7 +201,7 @@ impl ConfigRepository for InMemoryConfigRepository {
     }
 
     fn recover(&self) -> Result<(), ConfigError> {
-        let mut state = self.state.lock();
+        let mut state = self.state.lock().unwrap();
         let pending = std::mem::take(&mut state.pending);
         for (key, pending) in pending {
             let committed = pending.commit_marker.as_deref().is_some_and(Path::exists);

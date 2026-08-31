@@ -15,7 +15,6 @@ mutsuki-web-protocol.workspace = true
 mutsuki-web-recovery.workspace = true
 mutsuki-link-core.workspace = true
 mutsuki-link-local.workspace = true
-parking_lot.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

@@ -28,12 +28,12 @@ use mutsuki_tauri_bridge::{
     redact_runtime_event,
 };
 use mutsuki_tauri_resource::TauriResourceStore;
-use parking_lot::{Condvar, Mutex, RwLock};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Condvar, Mutex, RwLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -137,7 +137,7 @@ impl TaskSupervisor {
     }
 
     fn track(&self, handle: TaskHandle) {
-        let mut state = self.state.lock();
+        let mut state = self.state.lock().unwrap();
         let task_id = handle.task_id.clone();
         state.active.insert(task_id.clone(), handle);
         state.terminal_results.remove(&task_id);
@@ -146,11 +146,11 @@ impl TaskSupervisor {
     }
 
     fn handle_for(&self, task_id: &TaskId) -> Option<TaskHandle> {
-        self.state.lock().active.get(task_id).cloned()
+        self.state.lock().unwrap().active.get(task_id).cloned()
     }
 
     fn wait_result(&self, task_id: &TaskId, consume: bool) -> HostResult<FrontendTaskResult> {
-        let mut state = self.state.lock();
+        let mut state = self.state.lock().unwrap();
         loop {
             if let Some(result) = state.terminal_results.get(task_id).cloned() {
                 if consume && result.is_ok() {
@@ -164,12 +164,12 @@ impl TaskSupervisor {
                     "task result is not tracked: {task_id}"
                 )));
             }
-            self.changed.wait(&mut state);
+            state = self.changed.wait(state).unwrap();
         }
     }
 
     fn start_pump(&self) -> bool {
-        let mut state = self.state.lock();
+        let mut state = self.state.lock().unwrap();
         if state.pump_running || state.shutting_down {
             return false;
         }
@@ -178,7 +178,7 @@ impl TaskSupervisor {
     }
 
     fn set_pump_subscription(&self, subscription: TaskCompletionSubscription) -> bool {
-        let mut state = self.state.lock();
+        let mut state = self.state.lock().unwrap();
         if state.shutting_down || !state.pump_running {
             return false;
         }
@@ -187,7 +187,7 @@ impl TaskSupervisor {
     }
 
     fn set_pump_thread(&self, handle: thread::JoinHandle<()>) -> Option<thread::JoinHandle<()>> {
-        let mut state = self.state.lock();
+        let mut state = self.state.lock().unwrap();
         if state.shutting_down {
             Some(handle)
         } else {
@@ -196,7 +196,7 @@ impl TaskSupervisor {
     }
 
     fn active_snapshot(&self) -> Option<Vec<TaskHandle>> {
-        let mut state = self.state.lock();
+        let mut state = self.state.lock().unwrap();
         if state.active.is_empty() || state.shutting_down {
             state.pump_running = false;
             state.pump_subscription.take();
@@ -207,7 +207,7 @@ impl TaskSupervisor {
     }
 
     fn observe_cursor(&self) -> (u64, u64) {
-        let state = self.state.lock();
+        let state = self.state.lock().unwrap();
         (
             state.last_runtime_event_sequence,
             state.last_trace_span_sequence,
@@ -219,7 +219,7 @@ impl TaskSupervisor {
         page: ObservabilityPage<RuntimeEvent>,
         health: &HostHealthState,
     ) -> Vec<MutsukiFrontendEvent> {
-        let mut state = self.state.lock();
+        let mut state = self.state.lock().unwrap();
         state.last_runtime_event_sequence = page.next_sequence;
         let mut frontend_events = Vec::with_capacity(page.items.len() + usize::from(page.lost > 0));
         if page.lost > 0 {
@@ -246,7 +246,7 @@ impl TaskSupervisor {
     }
 
     fn ingest_trace_page(&self, page: ObservabilityPage<TraceSpan>) -> Vec<MutsukiFrontendEvent> {
-        self.state.lock().last_trace_span_sequence = page.next_sequence;
+        self.state.lock().unwrap().last_trace_span_sequence = page.next_sequence;
         let mut frontend_events = Vec::with_capacity(page.items.len() + usize::from(page.lost > 0));
         if page.lost > 0 {
             frontend_events.push(MutsukiFrontendEvent::ObservabilityGap {
@@ -264,7 +264,7 @@ impl TaskSupervisor {
     }
 
     fn finish_tasks(&self, states: Vec<HostTaskState>) -> bool {
-        let mut state = self.state.lock();
+        let mut state = self.state.lock().unwrap();
         let mut completed = false;
         for task_state in states {
             if task_state.outcome.is_none() {
@@ -296,7 +296,7 @@ impl TaskSupervisor {
     }
 
     fn fail_active(&self, message: String) {
-        let mut state = self.state.lock();
+        let mut state = self.state.lock().unwrap();
         state.pump_running = false;
         if let Some(subscription) = state.pump_subscription.take() {
             subscription.close();
@@ -408,7 +408,7 @@ impl TaskSupervisor {
 
     fn shutdown(&self, message: &str) {
         let (subscription, thread) = {
-            let mut state = self.state.lock();
+            let mut state = self.state.lock().unwrap();
             state.shutting_down = true;
             state.pump_running = false;
             let active = std::mem::take(&mut state.active);
@@ -538,6 +538,7 @@ impl MutsukiTauriHost {
     pub fn runners(&self) -> Vec<RunnerSummary> {
         self.plugin_state
             .read()
+            .unwrap()
             .runners
             .iter()
             .cloned()
@@ -554,7 +555,7 @@ impl MutsukiTauriHost {
     }
 
     fn runtime_health(&self) -> RuntimeHealth {
-        let result = self.runtime.lock().task_snapshots();
+        let result = self.runtime.lock().unwrap().task_snapshots();
         match result {
             Ok(snapshots) => runtime_health_from_snapshots(&snapshots),
             Err(error) => {
@@ -568,6 +569,7 @@ impl MutsukiTauriHost {
     fn plugins_with_runner_state(&self, runners: &[RunnerSummary]) -> Vec<PluginSummary> {
         self.plugin_state
             .read()
+            .unwrap()
             .plugins
             .iter()
             .cloned()
@@ -647,6 +649,7 @@ impl MutsukiTauriHost {
         if self
             .plugin_state
             .read()
+            .unwrap()
             .active_protocols
             .contains(protocol_id)
         {
@@ -665,7 +668,11 @@ impl MutsukiTauriHost {
     }
 
     pub fn task_snapshots(&self) -> HostResult<Vec<HostTaskSnapshot>> {
-        self.runtime.lock().task_snapshots().map_err(Into::into)
+        self.runtime
+            .lock()
+            .unwrap()
+            .task_snapshots()
+            .map_err(Into::into)
     }
 
     pub fn events_after(
@@ -675,6 +682,7 @@ impl MutsukiTauriHost {
     ) -> HostResult<ObservabilityPage<RuntimeEvent>> {
         self.runtime
             .lock()
+            .unwrap()
             .events_after(sequence, limit)
             .map_err(Into::into)
     }
@@ -686,21 +694,22 @@ impl MutsukiTauriHost {
     ) -> HostResult<ObservabilityPage<TraceSpan>> {
         self.runtime
             .lock()
+            .unwrap()
             .trace_spans_after(sequence, limit)
             .map_err(Into::into)
     }
 
     pub fn runtime_metrics(&self) -> mutsuki_runtime_host::HostRuntimeMetricsSnapshot {
-        self.runtime.lock().metrics()
+        self.runtime.lock().unwrap().metrics()
     }
 
     /// 返回最近一次启动/重载扫描得到的 `.momoplug` inventory。
     pub fn plugin_packages(&self) -> Vec<PluginPackageRecord> {
-        self.plugin_state.read().packages.clone()
+        self.plugin_state.read().unwrap().packages.clone()
     }
 
     pub fn plugin_selection(&self) -> PluginSelection {
-        self.plugin_state.read().selection.clone()
+        self.plugin_state.read().unwrap().selection.clone()
     }
 
     /// 重新扫描桌面插件并通过 Core 的 drain-and-swap 原子切换 generation。
@@ -709,7 +718,7 @@ impl MutsukiTauriHost {
         selection: PluginSelection,
         drain_timeout: Duration,
     ) -> HostResult<ReloadDecision> {
-        let _reload = self.reload_guard.lock();
+        let _reload = self.reload_guard.lock().unwrap();
         if self.reload_blocked_by_builtin_runners {
             return Err(HostError::Unsupported(
                 "plugin reload requires reloadable builtin runner factories".into(),
@@ -779,11 +788,15 @@ impl MutsukiTauriHost {
         };
         let generation = self.plugin_generation.load(Ordering::Acquire) + 1;
         let prepared = bootstrapper.prepare_reload(profile, generation)?;
-        let decision = self.runtime.lock().reload(prepared, drain_timeout)?;
+        let decision = self
+            .runtime
+            .lock()
+            .unwrap()
+            .reload(prepared, drain_timeout)?;
 
         self.health
             .record_summary_failures(&loaded.plugins, &loaded.runners);
-        *self.plugin_state.write() = DesktopPluginState {
+        *self.plugin_state.write().unwrap() = DesktopPluginState {
             selection,
             plugins: loaded.plugins,
             runners: loaded.runners,
@@ -797,11 +810,15 @@ impl MutsukiTauriHost {
     pub fn execution_domain_metrics(
         &self,
     ) -> HostResult<Vec<mutsuki_runtime_host::WorkerPoolSnapshot>> {
-        self.runtime.lock().worker_pools().map_err(Into::into)
+        self.runtime
+            .lock()
+            .unwrap()
+            .worker_pools()
+            .map_err(Into::into)
     }
 
     fn dispatch_submission(&self, command: HostRuntimeCommand) -> HostResult<HostRuntimeReply> {
-        let submitted = self.runtime.lock().dispatch(command);
+        let submitted = self.runtime.lock().unwrap().dispatch(command);
 
         let reply = match submitted {
             Ok(reply) => reply,
@@ -843,7 +860,7 @@ impl MutsukiTauriHost {
     }
 
     pub fn cancel_task_handle(&self, handle: TaskHandle) -> HostResult<TaskHandle> {
-        let runtime = self.runtime.lock();
+        let runtime = self.runtime.lock().unwrap();
         let reply = runtime.dispatch(HostRuntimeCommand::CancelTask(handle));
         drop(runtime);
         let reply = match reply {
@@ -868,14 +885,14 @@ impl MutsukiTauriHost {
     }
 
     pub fn task_status(&self, task_id: &str) -> Option<TaskStatus> {
-        self.runtime.lock().task_status(task_id)
+        self.runtime.lock().unwrap().task_status(task_id)
     }
 
     fn ensure_task_pump(&self) {
         if !self.tasks.start_pump() {
             return;
         }
-        let subscription = self.runtime.lock().subscribe_task_completions();
+        let subscription = self.runtime.lock().unwrap().subscribe_task_completions();
         if !self.tasks.set_pump_subscription(subscription.clone()) {
             subscription.close();
             return;
@@ -1093,6 +1110,7 @@ impl MutsukiTauriHost {
         let abort_error = self
             .runtime
             .lock()
+            .unwrap()
             .abort("tauri_host.shutdown")
             .err()
             .map(|error| format!("{:?}", error.error()));
@@ -1126,6 +1144,7 @@ fn run_task_pump(
 
         let snapshot = runtime
             .lock()
+            .unwrap()
             .task_states(active)
             .map_err(|error| format!("{:?}", error.error()));
 
@@ -1248,12 +1267,13 @@ fn drain_observability(
     frontend_event_batch_size: usize,
 ) -> Result<(), String> {
     const PAGE_LIMIT: usize = 256;
-    let _drain = tasks.observation_drain.lock();
+    let _drain = tasks.observation_drain.lock().unwrap();
     let (mut event_sequence, mut trace_sequence) = tasks.observe_cursor();
 
     loop {
         let page = runtime
             .lock()
+            .unwrap()
             .events_after(event_sequence, PAGE_LIMIT)
             .map_err(|error| format!("{:?}", error.error()))?;
         let next_sequence = page.next_sequence;
@@ -1275,6 +1295,7 @@ fn drain_observability(
     loop {
         let page = runtime
             .lock()
+            .unwrap()
             .trace_spans_after(trace_sequence, PAGE_LIMIT)
             .map_err(|error| format!("{:?}", error.error()))?;
         let next_sequence = page.next_sequence;
@@ -1383,7 +1404,7 @@ mod supervisor_tests {
                 .collect(),
         );
         assert_eq!(
-            supervisor.state.lock().terminal_results.len(),
+            supervisor.state.lock().unwrap().terminal_results.len(),
             TaskSupervisor::MAX_RETAINED_RESULTS
         );
 
@@ -1403,7 +1424,7 @@ mod supervisor_tests {
             failed.track(handle.clone());
         }
         failed.fail_active("pump failed".into());
-        let state = failed.state.lock();
+        let state = failed.state.lock().unwrap();
         assert_eq!(
             state.terminal_results.len(),
             TaskSupervisor::MAX_RETAINED_RESULTS
@@ -1453,7 +1474,7 @@ mod supervisor_tests {
             &HostHealthState::default(),
         );
         {
-            let state = supervisor.state.lock();
+            let state = supervisor.state.lock().unwrap();
             assert!(state.retained_task_events <= 3);
             assert!(
                 state

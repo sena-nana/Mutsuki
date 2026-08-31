@@ -6,8 +6,8 @@ use mutsuki_bot_protocol::{AgentSessionScope, BotSpeechReplyPolicy, QqStreamingS
 use mutsuki_config_service::{
     ConfigDescriptor, ConfigValueType, EnumOption, LocalizedText, MutsukiConfigSchema,
 };
-use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use std::sync::RwLock;
 use thiserror::Error;
 
 use crate::BOT_AGENT_BRIDGE_PLUGIN_ID;
@@ -330,7 +330,7 @@ impl BotAgentConfigHandle {
 
     #[must_use]
     pub fn versioned_snapshot(&self) -> BotAgentConfigSnapshot {
-        let live = self.0.read();
+        let live = self.0.read().unwrap();
         BotAgentConfigSnapshot {
             generation: live.generation,
             config: live.config.clone(),
@@ -344,7 +344,7 @@ impl BotAgentConfigHandle {
     /// Returns an error without advancing the generation when validation fails.
     pub fn replace(&self, config: BotAgentConfig) -> Result<(), BotAgentConfigError> {
         config.validate()?;
-        let mut live = self.0.write();
+        let mut live = self.0.write().unwrap();
         live.generation = live.generation.saturating_add(1);
         live.config = config;
         Ok(())

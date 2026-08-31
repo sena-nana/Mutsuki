@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use futures_util::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt};
 use mutsuki_bot::{CONSOLE_AUTH_TOKEN_KEY, load_single_instance_product_for_test};
 use mutsuki_bot_testkit::{FakeQqGatewayScript, FakeQqServer};
 use mutsuki_config_service::{ConfigApplyRequest, ConfigContext};

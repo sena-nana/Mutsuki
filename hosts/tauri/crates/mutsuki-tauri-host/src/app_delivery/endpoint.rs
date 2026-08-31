@@ -10,11 +10,11 @@ use mutsuki_runtime_contracts::{
     CapabilityDescriptor, CapabilityRequestEnvelope, DeliveryReceipt, IdempotentReceiptStore,
     ReceiptRetentionPolicy, ReceiptStoreStats, RejectionReason,
 };
-use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
 
@@ -121,18 +121,18 @@ impl AppCapabilityEndpoint {
     where
         F: Fn(CapabilityRequestEnvelope) -> DeliveryReceipt + Send + Sync + 'static,
     {
-        self.handlers.lock().insert(
+        self.handlers.lock().unwrap().insert(
             capability.name.clone(),
             (capability, Arc::new(handler) as CapabilityHandler),
         );
     }
 
     pub fn receipt_stats(&self) -> ReceiptStoreStats {
-        self.receipts.lock().stats()
+        self.receipts.lock().unwrap().stats()
     }
 
     pub(crate) fn describe(&self) -> EndpointDescriptor {
-        let handlers = self.handlers.lock();
+        let handlers = self.handlers.lock().unwrap();
         let mut capabilities: Vec<CapabilityDescriptor> = handlers
             .values()
             .map(|(capability, _)| capability.clone())
@@ -172,7 +172,7 @@ impl AppCapabilityEndpoint {
                 let _ = connection.close_write();
             }
         });
-        *self.accept_task.lock() = Some(handle);
+        *self.accept_task.lock().unwrap() = Some(handle);
         Ok(())
     }
 
@@ -220,7 +220,7 @@ impl AppCapabilityEndpoint {
 
     fn handle_envelope(&self, envelope: CapabilityRequestEnvelope) -> DeliveryReceipt {
         {
-            let receipts = self.receipts.lock();
+            let receipts = self.receipts.lock().unwrap();
             if let Some(existing) = receipts.get(envelope.request_id.as_str()) {
                 return DeliveryReceipt::Duplicate {
                     request_id: envelope.request_id.clone(),
@@ -228,7 +228,7 @@ impl AppCapabilityEndpoint {
                 };
             }
         }
-        let handlers = self.handlers.lock();
+        let handlers = self.handlers.lock().unwrap();
         let Some((capability, handler)) = handlers.get(&envelope.capability.name) else {
             return DeliveryReceipt::Rejected {
                 request_id: envelope.request_id,
@@ -245,16 +245,17 @@ impl AppCapabilityEndpoint {
         drop(handlers);
         self.receipts
             .lock()
+            .unwrap()
             .accept_or_duplicate(receipt.request_id().to_string(), receipt)
     }
 }
 
 impl Drop for AppCapabilityEndpoint {
     fn drop(&mut self) {
-        if let Some(handle) = self.accept_task.lock().take() {
+        if let Some(handle) = self.accept_task.lock().unwrap().take() {
             handle.abort();
         }
-        if let Some(lease) = self.lease.lock().take() {
+        if let Some(lease) = self.lease.lock().unwrap().take() {
             let _ = lease.clear();
         }
     }

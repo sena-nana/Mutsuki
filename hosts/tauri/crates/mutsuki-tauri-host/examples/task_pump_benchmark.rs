@@ -2,8 +2,8 @@
 // package. They are listed explicitly so the remaining debt stays auditable and
 // every other pedantic lint keeps failing the build.
 #![allow(clippy::default_trait_access)]
+#![allow(unsafe_code)]
 
-use cpu_time::ProcessTime;
 use mutsuki_runtime_contracts::{
     CancelPolicy, CompletionBatch, EntryCompletion, ExecutionClass, InvocationMode, ResourceAccess,
     ResourceId, ResourceLifetime, ResourceRef, ResourceSealState, ResourceSemantic,
@@ -114,11 +114,11 @@ fn run_scenario(active_tasks: usize) -> ScenarioReport {
     settle_task_pump(&host);
 
     let metrics_before = host.runtime_metrics();
-    let cpu_started = ProcessTime::now();
+    let cpu_started = process_cpu_time_ns();
     let wall_started = Instant::now();
     std::thread::sleep(IDLE_WINDOW);
     let idle_wall_ms = wall_started.elapsed().as_secs_f64() * 1000.0;
-    let idle_cpu_ms = cpu_started.elapsed().as_secs_f64() * 1000.0;
+    let idle_cpu_ms = process_cpu_time_ns().saturating_sub(cpu_started) as f64 / 1_000_000.0;
     let metrics_after_idle = host.runtime_metrics();
     let rss_after_waiting_bytes = current_rss_bytes();
 
@@ -391,4 +391,44 @@ fn benchmark_paths(root: &Path) -> PathsConfig {
         resources_dir: root.join("resources"),
         runners_dir: root.join("runners"),
     }
+}
+
+#[cfg(unix)]
+fn process_cpu_time_ns() -> u128 {
+    let mut value = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `clock_gettime` only fills the caller-provided stack slot.
+    let status = unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut value) };
+    assert_eq!(status, 0, "clock_gettime(CLOCK_PROCESS_CPUTIME_ID) failed");
+    (value.tv_sec as u128) * 1_000_000_000 + value.tv_nsec as u128
+}
+
+#[cfg(windows)]
+fn process_cpu_time_ns() -> u128 {
+    use windows_sys::Win32::{
+        Foundation::FILETIME,
+        System::Threading::{GetCurrentProcess, GetProcessTimes},
+    };
+
+    let mut creation = FILETIME::default();
+    let mut exit = FILETIME::default();
+    let mut kernel = FILETIME::default();
+    let mut user = FILETIME::default();
+    // SAFETY: each pointer is a writable stack slot for exactly the five FILETIMEs
+    // `GetProcessTimes` fills; the pseudo process handle needs no closing.
+    let status = unsafe {
+        GetProcessTimes(
+            GetCurrentProcess(),
+            &mut creation,
+            &mut exit,
+            &mut kernel,
+            &mut user,
+        )
+    };
+    assert_ne!(status, 0, "GetProcessTimes failed");
+    let ticks =
+        |value: FILETIME| ((value.dwHighDateTime as u128) << 32) | value.dwLowDateTime as u128;
+    (ticks(kernel) + ticks(user)) * 100
 }

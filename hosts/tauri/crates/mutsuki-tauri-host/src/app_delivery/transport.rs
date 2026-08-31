@@ -2,10 +2,10 @@ use super::types::{AppDeliveryError, AppId, HOST_PROTOCOL_VERSION, desktop_recei
 use mutsuki_runtime_contracts::{
     CapabilityDescriptor, CapabilityRequestEnvelope, DeliveryReceipt, IdempotentReceiptStore,
 };
-use parking_lot::Mutex;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -139,7 +139,7 @@ impl InMemoryAppLinkTransport {
     }
 
     pub fn register_online(&self, app_id: &AppId, capabilities: Vec<CapabilityDescriptor>) {
-        self.peers.lock().insert(
+        self.peers.lock().unwrap().insert(
             app_id.as_str().to_string(),
             MemoryPeer {
                 online: true,
@@ -156,7 +156,7 @@ impl InMemoryAppLinkTransport {
         capabilities: Vec<CapabilityDescriptor>,
         ready_after: Duration,
     ) {
-        self.peers.lock().insert(
+        self.peers.lock().unwrap().insert(
             app_id.as_str().to_string(),
             MemoryPeer {
                 online: false,
@@ -169,25 +169,25 @@ impl InMemoryAppLinkTransport {
     }
 
     pub fn set_force_error(&self, app_id: &AppId, error: AppDeliveryError) {
-        if let Some(peer) = self.peers.lock().get_mut(app_id.as_str()) {
+        if let Some(peer) = self.peers.lock().unwrap().get_mut(app_id.as_str()) {
             peer.force_error = Some(error);
         }
     }
 
     pub fn set_host_protocol_version(&self, app_id: &AppId, version: u32) {
-        if let Some(peer) = self.peers.lock().get_mut(app_id.as_str()) {
+        if let Some(peer) = self.peers.lock().unwrap().get_mut(app_id.as_str()) {
             peer.host_protocol_version = version;
         }
     }
 
     pub fn set_capabilities(&self, app_id: &AppId, capabilities: Vec<CapabilityDescriptor>) {
-        if let Some(peer) = self.peers.lock().get_mut(app_id.as_str()) {
+        if let Some(peer) = self.peers.lock().unwrap().get_mut(app_id.as_str()) {
             peer.capabilities = capabilities;
         }
     }
 
     pub fn mark_online(&self, app_id: &AppId) {
-        if let Some(peer) = self.peers.lock().get_mut(app_id.as_str()) {
+        if let Some(peer) = self.peers.lock().unwrap().get_mut(app_id.as_str()) {
             peer.online = true;
         }
     }
@@ -197,7 +197,7 @@ impl InMemoryAppLinkTransport {
         app_id: &AppId,
         readiness: MemoryReadinessView,
     ) -> Result<AppLinkSession, AppDeliveryError> {
-        let peers = self.peers.lock();
+        let peers = self.peers.lock().unwrap();
         let Some(peer) = peers.get(app_id.as_str()) else {
             return Err(AppDeliveryError::AppNotInstalled);
         };
@@ -272,7 +272,7 @@ impl AppLinkTransport for InMemoryAppLinkTransport {
     ) -> Result<DeliveryReceipt, AppDeliveryError> {
         let current = self.snapshot_session(&session.app_id, MemoryReadinessView::Authoritative)?;
         current.ensure_capability_ready(&envelope.capability)?;
-        let mut peers = self.peers.lock();
+        let mut peers = self.peers.lock().unwrap();
         let peer = peers
             .get_mut(session.app_id.as_str())
             .ok_or(AppDeliveryError::EndpointUnavailable)?;
@@ -290,7 +290,7 @@ impl AppLinkTransport for InMemoryAppLinkTransport {
         session: &AppLinkSession,
         request_id: &str,
     ) -> Result<Option<DeliveryReceipt>, AppDeliveryError> {
-        let peers = self.peers.lock();
+        let peers = self.peers.lock().unwrap();
         let peer = peers
             .get(session.app_id.as_str())
             .ok_or(AppDeliveryError::EndpointUnavailable)?;

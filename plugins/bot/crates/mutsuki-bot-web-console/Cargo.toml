@@ -29,11 +29,10 @@ mutsuki-web-protocol = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
-thiserror = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync"] }
 
 [dev-dependencies]
-futures-util = { workspace = true }
+futures.workspace = true
 mutsuki-bot-protocol = { workspace = true }
 mutsuki-service-control = { workspace = true }
 tempfile = { workspace = true }

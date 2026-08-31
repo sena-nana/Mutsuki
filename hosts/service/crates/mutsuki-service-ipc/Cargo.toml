@@ -9,7 +9,6 @@ mutsuki-service-config.workspace = true
 mutsuki-service-control.workspace = true
 rmp-serde.workspace = true
 serde.workspace = true
-serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true

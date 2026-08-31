@@ -11,6 +11,10 @@ pub(crate) fn current_rss_bytes() -> Option<u64> {
     platform::current_rss_bytes()
 }
 
+pub(crate) fn process_cpu_time_ms() -> Option<u64> {
+    platform::process_cpu_time_ms()
+}
+
 #[cfg(target_os = "linux")]
 mod platform {
     pub(super) fn current_rss_bytes() -> Option<u64> {
@@ -23,6 +27,21 @@ mod platform {
             return None;
         }
         Some(pages.saturating_mul(page_size as u64))
+    }
+
+    pub(super) fn process_cpu_time_ms() -> Option<u64> {
+        let mut value = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        // SAFETY: `clock_gettime` only fills the caller-provided stack slot; a non-zero
+        // status means the process CPU clock is unavailable.
+        let status = unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut value) };
+        if status != 0 {
+            return None;
+        }
+        let nanos = (value.tv_sec as u128) * 1_000_000_000 + value.tv_nsec as u128;
+        Some(u64::try_from(nanos / 1_000_000).unwrap_or(u64::MAX))
     }
 }
 
@@ -51,6 +70,21 @@ mod platform {
         // SAFETY: `task_info` reported `KERN_SUCCESS` above, so it fully initialised `info`.
         let info = unsafe { info.assume_init() };
         Some(info.resident_size)
+    }
+
+    pub(super) fn process_cpu_time_ms() -> Option<u64> {
+        let mut value = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        // SAFETY: `clock_gettime` only fills the caller-provided stack slot; a non-zero
+        // status means the process CPU clock is unavailable.
+        let status = unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut value) };
+        if status != 0 {
+            return None;
+        }
+        let nanos = (value.tv_sec as u128) * 1_000_000_000 + value.tv_nsec as u128;
+        Some(u64::try_from(nanos / 1_000_000).unwrap_or(u64::MAX))
     }
 }
 
@@ -83,6 +117,34 @@ mod platform {
             return None;
         }
         u64::try_from(counters.WorkingSetSize).ok()
+    }
+
+    pub(super) fn process_cpu_time_ms() -> Option<u64> {
+        use windows_sys::Win32::Foundation::FILETIME;
+        use windows_sys::Win32::System::Threading::GetProcessTimes;
+
+        let mut creation = FILETIME::default();
+        let mut exit = FILETIME::default();
+        let mut kernel = FILETIME::default();
+        let mut user = FILETIME::default();
+        // SAFETY: each pointer is a writable stack slot for exactly the five FILETIMEs
+        // `GetProcessTimes` fills; the pseudo process handle needs no closing.
+        let succeeded = unsafe {
+            GetProcessTimes(
+                GetCurrentProcess(),
+                &mut creation,
+                &mut exit,
+                &mut kernel,
+                &mut user,
+            )
+        } != 0;
+        if !succeeded {
+            return None;
+        }
+        let ticks =
+            |value: FILETIME| ((value.dwHighDateTime as u128) << 32) | value.dwLowDateTime as u128;
+        let nanos = (ticks(kernel) + ticks(user)) * 100;
+        Some(u64::try_from(nanos / 1_000_000).unwrap_or(u64::MAX))
     }
 
     #[cfg(test)]

@@ -7,7 +7,6 @@ publish = false
 default-run = "mutsuki-service-benchmarks"
 
 [dependencies]
-cpu-time.workspace = true
 mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-core.workspace = true
 mutsuki-runtime-sdk.workspace = true
@@ -25,6 +24,12 @@ sha2.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
 toml.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true }
 
 [lints]
 workspace = true
