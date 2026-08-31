@@ -12,8 +12,9 @@ const STYLE = `
 .sandbox-frame { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 220px) minmax(0, 1fr) minmax(0, 168px); border: 1px solid var(--border, transparent); border-radius: 16px; overflow: hidden; }
 .sandbox-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
 .sandbox-pane + .sandbox-pane { border-left: 1px solid var(--border, transparent); }
-.sandbox-pane-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--border, transparent); flex: 0 0 auto; }
+.sandbox-pane-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px; min-height: 42px; border-bottom: 1px solid var(--border, transparent); flex: 0 0 auto; }
 .sandbox-pane-head h2 { margin: 0; font-size: 13px; font-weight: 650; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sandbox-client .sandbox-pane-head .ghost { height: 26px; min-height: 0; padding: 0 8px; font-size: 12px; line-height: 1; }
 .sandbox-mode-tabs { width: 100%; height: auto; }
 .sandbox-mode-tabs button { flex: 1; justify-content: center; height: 26px; font-size: 12px; }
 .sandbox-status { margin: 0; padding: 0 10px 6px; font-size: 12px; }
@@ -45,9 +46,9 @@ const STYLE = `
   border: 0; border-radius: 0; background: transparent; text-align: left; padding: 6px 10px; cursor: pointer; color: inherit;
 }
 .sandbox-session { grid-template-columns: 32px minmax(0, 1fr) max-content; }
-.sandbox-member { grid-template-columns: 24px minmax(0, 1fr); }
+.sandbox-member { grid-template-columns: 24px minmax(0, 1fr) auto; }
 .sandbox-session > *, .sandbox-member > * { min-width: 0; }
-.sandbox-session > div, .sandbox-member > div { overflow: hidden; }
+.sandbox-session > div, .sandbox-member > div:not(.sandbox-member-actions) { overflow: hidden; }
 .sandbox-session p, .sandbox-member p, .sandbox-bubble p { margin: 0; }
 .sandbox-session-title, .sandbox-session-preview, .sandbox-member-name { max-width: 100%; }
 .sandbox-session:hover, .sandbox-member:hover { background: var(--bg-hover, var(--bg-subtle, transparent)); }
@@ -78,8 +79,8 @@ img.sandbox-avatar { display: block; object-fit: cover; object-position: center;
 .sandbox-compose-row .sandbox-add.is-active { background: var(--accent-soft, var(--bg-hover, transparent)); }
 .sandbox-pane--chat { overflow: visible; }
 .sandbox-quote-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
-.sandbox-client .sandbox-member .ghost { height: 22px; padding: 0 6px; font-size: 11px; flex: none; }
-.sandbox-member-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+.sandbox-client .sandbox-member .ghost { height: 22px; min-height: 0; padding: 0 6px; font-size: 11px; line-height: 1; flex: none; }
+.sandbox-member-actions { display: flex; gap: 4px; flex-wrap: nowrap; min-width: max-content; }
 .sandbox-context-menu {
   position: absolute; z-index: 1900; min-width: 160px; padding: 4px;
   background: var(--bg-elev, var(--bg, #fff)); border: 1px solid var(--border, transparent); border-radius: 10px;
@@ -1117,11 +1118,11 @@ export function mountSandboxPanel(host, rpc, events) {
       if (mode() === "simulate" && user.user_id === state.speakerId) item.classList.add("is-active");
       const meta = element("div", "");
       meta.append(element("span", "sandbox-member-name", user.display_name || user.user_id));
-      if (isBot) meta.append(element("p", "muted sandbox-session-preview", "机器人"));
       if (!isBot) item.oncontextmenu = (event) => openMemberMenu(event, user);
+      let actions = null;
       if (mode() === "simulate") {
         if (!isBot) {
-          const actions = element("div", "sandbox-member-actions");
+          actions = element("div", "sandbox-member-actions");
           const edit = button("编辑");
           edit.onclick = (event) => { event.stopPropagation(); openDialog(user.user_id); };
           const remove = button("移除");
@@ -1137,12 +1138,12 @@ export function mountSandboxPanel(host, rpc, events) {
             }
           };
           actions.append(edit, remove);
-          meta.append(actions);
         }
         item.onclick = () => { state.speakerId = user.user_id; render(); };
         item.onkeydown = (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); state.speakerId = user.user_id; render(); } };
       }
       item.append(avatar(user.display_name || user.user_id, "sandbox-avatar sandbox-avatar--sm", user.avatar_url), meta);
+      if (actions) item.append(actions);
       list.append(item);
     });
     pane.append(list);
