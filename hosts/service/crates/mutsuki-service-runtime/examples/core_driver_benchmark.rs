@@ -6,11 +6,11 @@
     clippy::cast_precision_loss,
     clippy::cast_sign_loss
 )]
+#![allow(unsafe_code)]
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-use cpu_time::ProcessTime;
 use mutsuki_runtime_contracts::{
     ExecutionClass, InvocationMode, ObservabilityProfile, RunnerBatchCapability, RunnerConcurrency,
     RunnerControlCapability, RunnerDescriptor, RunnerOrderingCapability, RunnerPayloadCapability,
@@ -87,7 +87,7 @@ fn idle_sample(event_driven: bool, duration: Duration) -> Value {
     let runtime = runtime(event_driven);
     let before = runtime.drive_state().expect("driver state");
     let wall_started = Instant::now();
-    let cpu_started = ProcessTime::now();
+    let cpu_started = process_cpu_time_ns();
     if event_driven {
         std::thread::sleep(duration);
     } else {
@@ -97,12 +97,12 @@ fn idle_sample(event_driven: bool, duration: Duration) -> Value {
                 .expect("legacy fixed poll tick");
         }
     }
-    let cpu = cpu_started.elapsed();
+    let cpu_ms = process_cpu_time_ns().saturating_sub(cpu_started) as f64 / 1_000_000.0;
     let wall = wall_started.elapsed();
     let after = runtime.drive_state().expect("driver state");
     json!({
         "wall_ms": wall.as_secs_f64() * 1_000.0,
-        "process_cpu_ms": cpu.as_secs_f64() * 1_000.0,
+        "process_cpu_ms": cpu_ms,
         "logical_ticks": after.current_step.saturating_sub(before.current_step),
         "timed_wakeups": after.timed_wakeups.saturating_sub(before.timed_wakeups),
     })
@@ -186,4 +186,44 @@ fn main() {
         },
     });
     println!("{}", serde_json::to_string_pretty(&report).unwrap());
+}
+
+#[cfg(unix)]
+fn process_cpu_time_ns() -> u128 {
+    let mut value = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `clock_gettime` only fills the caller-provided stack slot.
+    let status = unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut value) };
+    assert_eq!(status, 0, "clock_gettime(CLOCK_PROCESS_CPUTIME_ID) failed");
+    (value.tv_sec as u128) * 1_000_000_000 + value.tv_nsec as u128
+}
+
+#[cfg(windows)]
+fn process_cpu_time_ns() -> u128 {
+    use windows_sys::Win32::{
+        Foundation::FILETIME,
+        System::Threading::{GetCurrentProcess, GetProcessTimes},
+    };
+
+    let mut creation = FILETIME::default();
+    let mut exit = FILETIME::default();
+    let mut kernel = FILETIME::default();
+    let mut user = FILETIME::default();
+    // SAFETY: each pointer is a writable stack slot for exactly the five FILETIMEs
+    // `GetProcessTimes` fills; the pseudo process handle needs no closing.
+    let status = unsafe {
+        GetProcessTimes(
+            GetCurrentProcess(),
+            &mut creation,
+            &mut exit,
+            &mut kernel,
+            &mut user,
+        )
+    };
+    assert_ne!(status, 0, "GetProcessTimes failed");
+    let ticks =
+        |value: FILETIME| ((value.dwHighDateTime as u128) << 32) | value.dwLowDateTime as u128;
+    (ticks(kernel) + ticks(user)) * 100
 }

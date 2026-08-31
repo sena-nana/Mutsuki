@@ -11,9 +11,6 @@ mutsuki-web-protocol = { workspace = true }
 mutsuki-web-extension = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-thiserror = { workspace = true }
-parking_lot = { workspace = true }
-async-trait = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros"] }
 futures-executor = "0.3"
 
@@ -24,7 +21,7 @@ tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
 uuid = { version = "1", features = ["v4"] }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect"] }
-futures-util = { workspace = true }
+futures.workspace = true
 
 [lints]
 workspace = true

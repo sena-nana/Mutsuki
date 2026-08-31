@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use futures_util::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt};
 use mutsuki_bot_state_db::BotStateDbRepository;
 use mutsuki_plugin_bot_database_web::{
     DatabaseWebExtension, PLUGIN_ID, materialize_frontend_assets,

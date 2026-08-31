@@ -23,9 +23,29 @@ pub struct PathsConfig {
     pub runners_dir: PathBuf,
 }
 
+/// 平台标准数据目录，行为对齐原 `dirs::data_dir()`：
+/// macOS `~/Library/Application Support`、Windows `%APPDATA%`、其余 XDG 数据目录。
+fn system_data_dir() -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        std::env::home_dir().map(|home| home.join("Library/Application Support"))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::env::var_os("APPDATA").map(PathBuf::from)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .or_else(|| std::env::home_dir().map(|home| home.join(".local/share")))
+    }
+}
+
 impl PathsConfig {
     pub fn for_app(app_name: &str) -> Self {
-        let base = dirs::data_dir()
+        let base = system_data_dir()
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
             .join(app_name)
             .join("mutsuki");

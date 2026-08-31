@@ -10,11 +10,11 @@ pub(crate) use mailbox::{ActorSender, CoreActorMsg, actor_channel};
 use scheduling::*;
 use supervision::*;
 
-use futures_channel::oneshot;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::Ordering as AtomicOrdering;
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
+use tokio::sync::oneshot;
 
 use mutsuki_runtime_contracts::{AsyncInvocation, RunnerId, TaskId};
 use mutsuki_runtime_core::{CoreRuntime, RunnerLoopReport, RuntimeResult, TaskRecord};

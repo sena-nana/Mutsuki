@@ -50,10 +50,10 @@ use mutsuki_service_config::HostSecretStore;
 use mutsuki_service_runtime::{
     ConfiguredPluginFactory, LoadPlanLifecycleHook, ServiceRuntimeBuilder,
 };
-use parking_lot::Mutex;
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::sync::Mutex;
 use url::Url;
 
 use crate::AgentConnectionRegistry;
@@ -281,7 +281,7 @@ impl SqliteAgentRepository {
         after_session_id: Option<&str>,
         limit: usize,
     ) -> Result<Vec<AgentSession>, String> {
-        let connection = self.connection.lock();
+        let connection = self.connection.lock().unwrap();
         let mut statement = connection
             .prepare(
                 "SELECT payload FROM agent_transcript_sessions
@@ -311,6 +311,7 @@ impl SqliteAgentRepository {
         let payload = serde_json::to_string(result).map_err(|error| error.to_string())?;
         self.connection
             .lock()
+            .unwrap()
             .execute(
                 "INSERT INTO agent_run_results(session_id, turn_id, payload) VALUES(?1, ?2, ?3)
                  ON CONFLICT(session_id, turn_id) DO UPDATE SET payload=excluded.payload",
@@ -321,7 +322,7 @@ impl SqliteAgentRepository {
     }
 
     fn load_run_results(&self, session_id: &str) -> Result<Vec<(String, AgentRunResult)>, String> {
-        let connection = self.connection.lock();
+        let connection = self.connection.lock().unwrap();
         let mut statement = connection
             .prepare(
                 "SELECT turn_id, payload FROM agent_run_results
@@ -405,6 +406,7 @@ impl SessionPersistence for SqliteAgentRepository {
             serde_json::to_string(session).map_err(|error| persistence_error(error.to_string()))?;
         self.connection
             .lock()
+            .unwrap()
             .execute(
                 "INSERT INTO agent_transcript_sessions(session_id, payload) VALUES(?1, ?2)
                  ON CONFLICT(session_id) DO UPDATE SET payload=excluded.payload",
@@ -417,7 +419,7 @@ impl SessionPersistence for SqliteAgentRepository {
 
 impl AgentWireStateStore for SqliteAgentRepository {
     fn load(&self) -> Result<Vec<(String, Value)>, AgentWireError> {
-        let connection = self.connection.lock();
+        let connection = self.connection.lock().unwrap();
         let mut statement = connection
             .prepare("SELECT session_id, payload FROM agent_wire_sessions ORDER BY session_id")
             .map_err(|error| wire_error("agent.wire.persistence", error.to_string(), false))?;
@@ -442,6 +444,7 @@ impl AgentWireStateStore for SqliteAgentRepository {
             .map_err(|error| wire_error("agent.wire.persistence", error.to_string(), false))?;
         self.connection
             .lock()
+            .unwrap()
             .execute(
                 "INSERT INTO agent_wire_sessions(session_id, payload) VALUES(?1, ?2)
                  ON CONFLICT(session_id) DO UPDATE SET payload=excluded.payload",
@@ -635,6 +638,7 @@ impl LocalAgentEngine {
             .map_err(runtime_wire_error)?;
         self.active
             .lock()
+            .unwrap()
             .insert((session_id.into(), turn_id.into()), handle.clone());
         let deadline = Instant::now() + Duration::from_secs(120);
         let outcome = loop {
@@ -649,6 +653,7 @@ impl LocalAgentEngine {
                 let _ = self.runtime.cancel_task(&handle);
                 self.active
                     .lock()
+                    .unwrap()
                     .remove(&(session_id.into(), turn_id.into()));
                 return Err(wire_error(
                     "agent.local.turn_timeout",
@@ -660,6 +665,7 @@ impl LocalAgentEngine {
         };
         self.active
             .lock()
+            .unwrap()
             .remove(&(session_id.into(), turn_id.into()));
         let result = match outcome {
             TaskOutcome::Completed {
@@ -817,6 +823,7 @@ impl AgentWireRuntime for LocalAgentEngine {
         if let Some((_, turn_id)) = self
             .active
             .lock()
+            .unwrap()
             .keys()
             .find(|(active_session_id, _)| active_session_id == session_id)
             .cloned()
@@ -874,16 +881,22 @@ impl AgentWireRuntime for LocalAgentEngine {
 
     fn cancel_turn(&self, session_id: &str, turn_id: &str) -> Result<(), AgentWireError> {
         let key = (session_id.into(), turn_id.into());
-        if self.cancelled.lock().contains(&key) {
+        if self.cancelled.lock().unwrap().contains(&key) {
             return Ok(());
         }
-        let handle = self.active.lock().get(&key).cloned().ok_or_else(|| {
-            wire_error("agent.turn.not_active", "turn is not active".into(), false)
-        })?;
+        let handle = self
+            .active
+            .lock()
+            .unwrap()
+            .get(&key)
+            .cloned()
+            .ok_or_else(|| {
+                wire_error("agent.turn.not_active", "turn is not active".into(), false)
+            })?;
         self.runtime
             .cancel_task(&handle)
             .map_err(runtime_wire_error)?;
-        self.cancelled.lock().insert(key);
+        self.cancelled.lock().unwrap().insert(key);
         Ok(())
     }
 
@@ -1066,6 +1079,7 @@ impl LocalAgentRuntimeService {
         self.engine.cancel_turn(session_id, turn_id)?;
         self.authority
             .lock()
+            .unwrap()
             .cancel(session_id, turn_id, expected_version)
     }
 }
@@ -1096,7 +1110,7 @@ impl InProcessAgentService for LocalAgentRuntimeService {
         &mut self,
         request: AgentWireRequestEnvelope,
     ) -> Result<AgentWireResponseEnvelope, AgentWireError> {
-        self.authority.lock().dispatch(request)
+        self.authority.lock().unwrap().dispatch(request)
     }
 }
 
@@ -1330,12 +1344,12 @@ impl LoadPlanLifecycleHook for LocalConnectionHook {
             .negotiate()
             .cloned()
             .map_err(|error| format!("{}: {}", error.code, error.message))?;
-        *self.prepared.lock() = Some((client.into_backend(), negotiation));
+        *self.prepared.lock().unwrap() = Some((client.into_backend(), negotiation));
         Ok(())
     }
 
     fn activate(&self, _plan: &mutsuki_runtime_contracts::RuntimeLoadPlan) {
-        if let Some((backend, negotiation)) = self.prepared.lock().take() {
+        if let Some((backend, negotiation)) = self.prepared.lock().unwrap().take() {
             let connection_id = LOCAL_AGENT_CONNECTION_ID
                 .parse()
                 .expect("fixed local Agent connection id is valid");

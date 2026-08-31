@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use mutsuki_web_protocol::{
     EventEnvelope, EventSubscription, JsonValue, ProtocolError, ProtocolResult, ResourceBudgets,
 };
-use parking_lot::Mutex;
+use std::sync::Mutex;
 use tokio::sync::Notify;
 use uuid::Uuid;
 
@@ -201,7 +201,7 @@ impl SessionManager {
         capabilities: Vec<String>,
         safe_mode: bool,
     ) -> ProtocolResult<BridgeSession> {
-        let mut sessions = self.sessions.lock();
+        let mut sessions = self.sessions.lock().unwrap();
         if sessions.len() >= self.budgets.max_sessions {
             return Err(ProtocolError::BudgetExceeded(format!(
                 "max_sessions={}",
@@ -231,6 +231,7 @@ impl SessionManager {
     pub fn get(&self, session_id: Uuid) -> Option<BridgeSession> {
         self.sessions
             .lock()
+            .unwrap()
             .get(&session_id)
             .map(|state| state.session.clone())
     }
@@ -240,7 +241,7 @@ impl SessionManager {
         session_id: Uuid,
         subscription: EventSubscription,
     ) -> ProtocolResult<()> {
-        let mut sessions = self.sessions.lock();
+        let mut sessions = self.sessions.lock().unwrap();
         let state = sessions
             .get_mut(&session_id)
             .ok_or(ProtocolError::Unauthenticated)?;
@@ -257,7 +258,7 @@ impl SessionManager {
     }
 
     pub fn unsubscribe(&self, session_id: Uuid, subscription_id: Uuid) {
-        if let Some(state) = self.sessions.lock().get_mut(&session_id) {
+        if let Some(state) = self.sessions.lock().unwrap().get_mut(&session_id) {
             state.subscriptions.remove(&subscription_id);
         }
     }
@@ -268,7 +269,7 @@ impl SessionManager {
         payload: JsonValue,
         metrics: &BridgeMetrics,
     ) -> ProtocolResult<u64> {
-        let mut sessions = self.sessions.lock();
+        let mut sessions = self.sessions.lock().unwrap();
         let mut delivered = 0u64;
         let mut ready = Vec::new();
         for state in sessions.values_mut() {
@@ -308,12 +309,13 @@ impl SessionManager {
     pub fn event_notifier(&self, session_id: Uuid) -> Option<Arc<Notify>> {
         self.sessions
             .lock()
+            .unwrap()
             .get(&session_id)
             .map(|state| state.event_ready.clone())
     }
 
     pub fn drain_events(&self, session_id: Uuid) -> Vec<EventEnvelope> {
-        let mut sessions = self.sessions.lock();
+        let mut sessions = self.sessions.lock().unwrap();
         let Some(state) = sessions.get_mut(&session_id) else {
             return Vec::new();
         };
@@ -321,7 +323,7 @@ impl SessionManager {
     }
 
     pub fn close(&self, session_id: Uuid) {
-        let mut sessions = self.sessions.lock();
+        let mut sessions = self.sessions.lock().unwrap();
         if sessions.remove(&session_id).is_some() {
             self.active.fetch_sub(1, Ordering::Relaxed);
         }

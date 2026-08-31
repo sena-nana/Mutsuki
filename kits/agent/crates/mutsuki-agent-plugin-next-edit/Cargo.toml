@@ -12,7 +12,6 @@ mutsuki-agent-runtime.workspace = true
 mutsuki-runtime-sdk.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tokio.workspace = true
 
 [dev-dependencies]
 mutsuki-agent-testkit = { path = "../mutsuki-agent-testkit" }

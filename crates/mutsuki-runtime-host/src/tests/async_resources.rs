@@ -203,7 +203,7 @@ fn fake_db_http_and_link_providers_execute_only_through_async_gateway() {
         let db = gateway.execute_command_plan(plans[0].clone());
         let http = gateway.execute_command_plan(plans[1].clone());
         let link = gateway.execute_command_plan(plans[2].clone());
-        let (db, http, link) = futures_util::future::join3(db, http, link).await;
+        let (db, http, link) = futures::future::join3(db, http, link).await;
         vec![db.unwrap(), http.unwrap(), link.unwrap()]
     });
 

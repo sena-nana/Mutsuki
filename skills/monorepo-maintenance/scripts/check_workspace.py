@@ -85,6 +85,10 @@ UNSAFE_CODE_EXCEPTIONS = {
     "plugins/std/crates/mutsuki-std-benchmarks/src/main.rs": "allocation tracking",
     "plugins/std/crates/mutsuki-std-benchmarks/src/bin/effect_derive_bench.rs": "allocation tracking",
     "plugins/std/plugins/mutsuki-plugin-resource-shared-memory/tests/zero_copy.rs": "allocation budget test",
+    "hosts/service/crates/mutsuki-service-runtime/examples/core_driver_benchmark.rs": "process counters",
+    "hosts/service/crates/mutsuki-service-benchmarks/src/main.rs": "process counters",
+    "hosts/tauri/crates/mutsuki-tauri-benchmarks/src/main.rs": "process counters",
+    "hosts/tauri/crates/mutsuki-tauri-host/examples/task_pump_benchmark.rs": "process counters",
 }
 # Submodules of a file that already carries a module-level allow. They are listed separately so
 # the exception stays enumerated per file rather than silently inherited.

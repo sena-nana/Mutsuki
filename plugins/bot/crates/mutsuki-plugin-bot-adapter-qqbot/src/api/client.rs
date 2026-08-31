@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use futures_util::StreamExt;
+use futures::StreamExt;
 use serde_json::{Value, json};
 
 use crate::api::{QqMediaProvider, QqOpenApiError};

@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use parking_lot::Mutex;
+use std::sync::Mutex;
 
 use crate::{
     ConfigActivation, ConfigApplyMode, ConfigContext, ConfigDescriptor, ConfigError,
@@ -42,6 +42,7 @@ impl ConfigActivation for MemoryActivation {
         }
         self.active
             .lock()
+            .unwrap()
             .insert(self.key.clone(), self.after.clone());
         self.activated = true;
         Ok(())
@@ -72,7 +73,7 @@ impl ConfigActivation for MemoryActivation {
 
     fn rollback(&mut self) -> Result<(), ConfigError> {
         if self.activated {
-            let mut active = self.active.lock();
+            let mut active = self.active.lock().unwrap();
             if let Some(before) = self.before.clone() {
                 active.insert(self.key.clone(), before);
             } else {
@@ -258,7 +259,7 @@ impl ConfigProvider for MemoryConfigProvider {
     ) -> Result<PreparedConfigActivation, ConfigError> {
         context.validate(&crate::DEFAULT_BUDGETS)?;
         let key = context.storage_key();
-        let before = self.active.lock().get(&key).cloned();
+        let before = self.active.lock().unwrap().get(&key).cloned();
         let previous_secrets = before.as_ref().map_or_else(
             || self.initial_secrets.clone(),
             |value| value.secrets.clone(),

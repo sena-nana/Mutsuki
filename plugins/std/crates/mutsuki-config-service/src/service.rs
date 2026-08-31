@@ -10,7 +10,7 @@ use crate::{
     ConfigSource, ConfigValue, FieldDiff, RestartPolicy, RevisionChangedEvent,
     RevisionChangedListener, ValidationResult, capability,
 };
-use parking_lot::RwLock;
+use std::sync::RwLock;
 
 #[derive(Clone)]
 pub struct ConfigService {
@@ -36,12 +36,12 @@ impl ConfigService {
 
     #[must_use]
     pub fn with_lifecycle(self, lifecycle: Arc<dyn ConfigLifecycle>) -> Self {
-        *self.lifecycle.write() = Some(lifecycle);
+        *self.lifecycle.write().unwrap() = Some(lifecycle);
         self
     }
 
     pub fn set_lifecycle(&self, lifecycle: Arc<dyn ConfigLifecycle>) {
-        *self.lifecycle.write() = Some(lifecycle);
+        *self.lifecycle.write().unwrap() = Some(lifecycle);
     }
 
     #[must_use]
@@ -261,7 +261,7 @@ impl ConfigService {
                 [activation.rollback(), write.rollback()],
             ));
         }
-        let lifecycle = self.lifecycle.read().clone();
+        let lifecycle = self.lifecycle.read().unwrap().clone();
         let completed = if let Some(lifecycle) = &lifecycle {
             match lifecycle.execute(
                 provider_id,

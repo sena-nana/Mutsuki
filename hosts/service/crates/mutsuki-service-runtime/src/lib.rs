@@ -4025,9 +4025,7 @@ fn duration_nanos(duration: Duration) -> u64 {
 }
 
 fn current_cpu_time_ms() -> Option<u64> {
-    cpu_time::ProcessTime::try_now()
-        .ok()
-        .map(|time| u64::try_from(time.as_duration().as_millis()).unwrap_or(u64::MAX))
+    process_metrics::process_cpu_time_ms()
 }
 
 fn drain_blocking_stderr(runner_id: String, stderr: std::process::ChildStderr) {

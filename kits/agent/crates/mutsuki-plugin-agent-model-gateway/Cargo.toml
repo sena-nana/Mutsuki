@@ -10,10 +10,8 @@ mutsuki-agent-contracts.workspace = true
 mutsuki-agent-sdk.workspace = true
 mutsuki-runtime-sdk.workspace = true
 mutsuki-runtime-core.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 reqwest.workspace = true
-rustls.workspace = true
 tokio.workspace = true
 
 [lints]

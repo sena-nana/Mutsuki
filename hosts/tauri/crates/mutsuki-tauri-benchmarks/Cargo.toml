@@ -6,17 +6,21 @@ license.workspace = true
 publish = false
 
 [dependencies]
-cpu-time.workspace = true
 mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-core.workspace = true
 mutsuki-tauri-bridge.workspace = true
 mutsuki-tauri-host.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 hex.workspace = true
 sha2.workspace = true
 tempfile = "3.10"
 tokio.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true }
 
 [lints]
 workspace = true

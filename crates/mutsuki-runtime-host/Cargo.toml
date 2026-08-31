@@ -6,9 +6,7 @@ license.workspace = true
 
 [dependencies]
 crossbeam-channel.workspace = true
-futures-util.workspace = true
-futures-channel.workspace = true
-libloading.workspace = true
+futures.workspace = true
 mutsuki-plugin-api.workspace = true
 mutsuki-plugin-host.workspace = true
 mutsuki-runtime-contracts.workspace = true

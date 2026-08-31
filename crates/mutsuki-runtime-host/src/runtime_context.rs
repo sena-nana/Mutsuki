@@ -121,7 +121,7 @@ impl ActorCommandClient {
     fn dispatch_async(&self, command: HostRuntimeCommand) -> BoxRuntimeFuture<HostRuntimeReply> {
         let tx = self.tx.clone();
         Box::pin(async move {
-            let (reply_tx, reply_rx) = futures_channel::oneshot::channel();
+            let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
             tx.send(CoreActorMsg::AsyncResourceCommand(command, reply_tx))
                 .map_err(|_| host_failure("host.actor.async_command", "actor mailbox closed"))?;
             reply_rx

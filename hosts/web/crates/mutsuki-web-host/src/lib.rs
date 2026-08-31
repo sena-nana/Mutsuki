@@ -47,7 +47,7 @@ use mutsuki_web_protocol::{
     DEFAULT_BUDGETS, ExtensionFailure, ResourceBudgets, WEB_PROTOCOL_VERSION,
 };
 use mutsuki_web_recovery::RecoveryShell;
-use parking_lot::RwLock;
+use std::sync::RwLock;
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
@@ -132,7 +132,7 @@ impl MutsukiWebHost {
     }
 
     fn set_status(&self, mutate: impl FnOnce(&mut WebHostStatusReport)) {
-        let mut status = self.status.write();
+        let mut status = self.status.write().unwrap();
         mutate(&mut status);
     }
 
@@ -316,7 +316,7 @@ impl WebHost for MutsukiWebHost {
     }
 
     fn status(&self) -> WebHostStatusReport {
-        let mut report = self.status.read().clone();
+        let mut report = self.status.read().unwrap().clone();
         if let Some(bridge) = &self.bridge {
             report.active_sessions = bridge.active_sessions();
             let metrics = bridge.metrics();

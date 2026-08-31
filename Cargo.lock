@@ -933,7 +933,6 @@ dependencies = [
  "mutsuki-web-host",
  "mutsuki-web-protocol",
  "serde",
- "serde_json",
  "tempfile",
  "tokio",
 ]
@@ -987,16 +986,6 @@ name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
-
-[[package]]
-name = "cpu-time"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9e393a7668fe1fad3075085b86c781883000b4ede868f43627b34a87c8b7ded"
-dependencies = [
- "libc",
- "winapi",
-]
 
 [[package]]
 name = "cpufeatures"
@@ -1206,27 +1195,6 @@ checksum = "10a2a99df6e410a8ff4245aa2006499ea662245f967cc7c0a38c83ef8eb44dbf"
 dependencies = [
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "csv"
-version = "1.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52cd9d68cf7efc6ddfaaee42e7288d3a99d613d4b50f76ce9827ae0c6e14f938"
-dependencies = [
- "csv-core",
- "itoa",
- "ryu",
- "serde_core",
-]
-
-[[package]]
-name = "csv-core"
-version = "0.1.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "704a3c26996a80471189265814dbc2c257598b96b8a7feae2d31ace646bb9782"
-dependencies = [
- "memchr",
 ]
 
 [[package]]
@@ -3349,8 +3317,6 @@ dependencies = [
  "mutsuki-agent-contracts",
  "mutsuki-agent-sdk",
  "reqwest",
- "rustls",
- "serde",
  "serde_json",
  "tokio",
 ]
@@ -3375,8 +3341,6 @@ dependencies = [
  "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "reqwest",
- "rustls",
- "serde",
  "serde_json",
  "tokio",
 ]
@@ -3489,7 +3453,6 @@ dependencies = [
  "mutsuki-protocol-db",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
- "serde",
  "serde_json",
  "sha2 0.11.0",
  "tempfile",
@@ -3524,7 +3487,6 @@ dependencies = [
  "mutsuki-agent-adapter-openai",
  "mutsuki-agent-contracts",
  "mutsuki-agent-plugin-api",
- "serde",
  "serde_json",
  "sha2 0.11.0",
  "tokio",
@@ -3552,7 +3514,6 @@ dependencies = [
  "mutsuki-agent-contracts",
  "mutsuki-agent-plugin-api",
  "mutsuki-agent-runtime",
- "serde",
  "serde_json",
  "tempfile",
 ]
@@ -3592,7 +3553,6 @@ dependencies = [
  "mutsuki-agent-contracts",
  "mutsuki-agent-plugin-api",
  "mutsuki-agent-runtime",
- "serde",
  "serde_json",
  "tempfile",
  "url",
@@ -3607,8 +3567,6 @@ dependencies = [
  "mutsuki-agent-runtime",
  "mutsuki-agent-sdk",
  "reqwest",
- "rustls",
- "serde",
  "serde_json",
  "tempfile",
  "tokio",
@@ -3626,7 +3584,6 @@ dependencies = [
  "mutsuki-runtime-sdk",
  "serde",
  "serde_json",
- "tokio",
 ]
 
 [[package]]
@@ -3638,9 +3595,7 @@ dependencies = [
  "mutsuki-agent-runtime",
  "mutsuki-agent-sdk",
  "reqwest",
- "serde",
  "serde_json",
- "tempfile",
  "url",
 ]
 
@@ -3653,7 +3608,6 @@ dependencies = [
  "mutsuki-agent-sdk",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-sdk",
- "serde",
  "serde_json",
  "sha2 0.11.0",
  "tempfile",
@@ -3669,7 +3623,6 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
- "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -3694,7 +3647,6 @@ dependencies = [
  "mutsuki-runtime-sdk",
  "mutsuki-service-config",
  "mutsuki-service-runtime",
- "parking_lot",
  "rusqlite",
  "serde",
  "serde_json",
@@ -3730,7 +3682,7 @@ dependencies = [
 name = "mutsuki-bot"
 version = "0.1.0"
 dependencies = [
- "futures-util",
+ "futures",
  "hex",
  "mutsuki-agent-bundle",
  "mutsuki-agent-contracts",
@@ -3949,8 +3901,8 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "fastrand",
+ "futures",
  "futures-executor",
- "futures-util",
  "mutsuki-agent-client",
  "mutsuki-agent-contracts",
  "mutsuki-agent-service-host-integration",
@@ -3986,13 +3938,11 @@ dependencies = [
  "mutsuki-service-config",
  "mutsuki-service-control",
  "mutsuki-service-runtime",
- "reqwest",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
  "tokio-tungstenite 0.30.0",
- "toml 1.1.4+spec-1.1.0",
  "tracing",
 ]
 
@@ -4021,7 +3971,7 @@ dependencies = [
 name = "mutsuki-bot-testkit"
 version = "0.1.0"
 dependencies = [
- "futures-util",
+ "futures",
  "mutsuki-bot-protocol",
  "mutsuki-plugin-bot-adapter-qqbot",
  "serde_json",
@@ -4033,7 +3983,7 @@ dependencies = [
 name = "mutsuki-bot-web-console"
 version = "0.1.0"
 dependencies = [
- "futures-util",
+ "futures",
  "mutsuki-bot-flow",
  "mutsuki-bot-management",
  "mutsuki-bot-protocol",
@@ -4058,7 +4008,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror 2.0.19",
  "tokio",
  "tokio-tungstenite 0.30.0",
  "uuid",
@@ -4074,8 +4023,6 @@ dependencies = [
  "mutsuki-service-control",
  "mutsuki-service-ipc",
  "ratatui",
- "serde",
- "serde_json",
  "tokio",
 ]
 
@@ -4085,7 +4032,6 @@ version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
- "serde_json",
  "syn 3.0.3",
 ]
 
@@ -4097,11 +4043,8 @@ dependencies = [
  "criterion",
  "mutsuki-config-derive",
  "mutsuki-protocol-config",
- "parking_lot",
  "rmp-serde",
  "serde",
- "serde_json",
- "thiserror 2.0.19",
  "tokio",
 ]
 
@@ -4173,9 +4116,6 @@ dependencies = [
  "mutsuki-runtime-contracts",
  "mutsuki-service-control",
  "mutsuki-service-ipc",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -4316,7 +4256,6 @@ dependencies = [
  "mutsuki-agent-runtime",
  "mutsuki-agent-sdk",
  "mutsuki-runtime-sdk",
- "serde",
  "serde_json",
 ]
 
@@ -4361,8 +4300,6 @@ dependencies = [
  "mutsuki-agent-runtime",
  "mutsuki-agent-sdk",
  "mutsuki-runtime-sdk",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -4375,8 +4312,6 @@ dependencies = [
  "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "reqwest",
- "rustls",
- "serde",
  "serde_json",
  "tokio",
 ]
@@ -4400,8 +4335,6 @@ dependencies = [
  "mutsuki-agent-runtime",
  "mutsuki-agent-sdk",
  "mutsuki-runtime-sdk",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -4412,8 +4345,6 @@ dependencies = [
  "mutsuki-agent-runtime",
  "mutsuki-agent-sdk",
  "mutsuki-runtime-sdk",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -4434,7 +4365,6 @@ dependencies = [
  "mutsuki-agent-runtime",
  "mutsuki-agent-sdk",
  "mutsuki-runtime-sdk",
- "serde",
  "serde_json",
 ]
 
@@ -4452,8 +4382,7 @@ dependencies = [
 name = "mutsuki-plugin-bot-adapter-qqbot"
 version = "0.1.0"
 dependencies = [
- "fastrand",
- "futures-util",
+ "futures",
  "hex",
  "html-escape",
  "md5",
@@ -4470,7 +4399,6 @@ dependencies = [
  "thiserror 2.0.19",
  "time",
  "tokio",
- "tokio-tungstenite 0.30.0",
  "tracing",
  "url",
 ]
@@ -4489,7 +4417,6 @@ dependencies = [
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
- "parking_lot",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -4542,7 +4469,7 @@ name = "mutsuki-plugin-bot-bilibili-web"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "futures-util",
+ "futures",
  "mutsuki-bot-management",
  "mutsuki-bot-protocol",
  "mutsuki-web-extension",
@@ -4592,8 +4519,8 @@ dependencies = [
 name = "mutsuki-plugin-bot-control-web"
 version = "0.1.0"
 dependencies = [
+ "futures",
  "futures-executor",
- "futures-util",
  "mutsuki-runtime-contracts",
  "mutsuki-service-control",
  "mutsuki-web-extension",
@@ -4602,7 +4529,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror 2.0.19",
  "tokio",
  "tokio-tungstenite 0.30.0",
  "uuid",
@@ -4625,7 +4551,7 @@ dependencies = [
 name = "mutsuki-plugin-bot-database-web"
 version = "0.1.0"
 dependencies = [
- "futures-util",
+ "futures",
  "mutsuki-bot-state-db",
  "mutsuki-web-extension",
  "mutsuki-web-host",
@@ -4661,7 +4587,6 @@ dependencies = [
  "mutsuki-runtime-sdk",
  "serde",
  "serde_json",
- "thiserror 2.0.19",
  "tracing",
 ]
 
@@ -4739,8 +4664,8 @@ dependencies = [
 name = "mutsuki-plugin-bot-overview-web"
 version = "0.1.0"
 dependencies = [
+ "futures",
  "futures-executor",
- "futures-util",
  "mutsuki-plugin-bot-control-web",
  "mutsuki-service-control",
  "mutsuki-web-bridge",
@@ -4750,7 +4675,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror 2.0.19",
  "tokio",
  "tokio-tungstenite 0.30.0",
  "uuid",
@@ -4765,7 +4689,6 @@ dependencies = [
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
- "serde",
  "serde_json",
 ]
 
@@ -4774,13 +4697,12 @@ name = "mutsuki-plugin-bot-qq-web"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "futures-util",
+ "futures",
  "mutsuki-bot-management",
  "mutsuki-bot-protocol",
  "mutsuki-web-extension",
  "mutsuki-web-host",
  "mutsuki-web-protocol",
- "serde",
  "serde_json",
  "tempfile",
  "tokio",
@@ -4806,13 +4728,12 @@ name = "mutsuki-plugin-bot-sandbox-web"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "futures-util",
+ "futures",
  "mutsuki-bot-protocol",
  "mutsuki-bot-sandbox",
  "mutsuki-web-extension",
  "mutsuki-web-host",
  "mutsuki-web-protocol",
- "serde",
  "serde_json",
  "tempfile",
  "tokio",
@@ -4824,13 +4745,12 @@ dependencies = [
 name = "mutsuki-plugin-bot-upgrade-web"
 version = "0.1.0"
 dependencies = [
- "futures-util",
+ "futures",
  "mutsuki-plugin-bot-control-web",
  "mutsuki-plugin-catalog",
  "mutsuki-web-extension",
  "mutsuki-web-host",
  "mutsuki-web-protocol",
- "serde",
  "serde_json",
  "tempfile",
  "tokio",
@@ -4869,7 +4789,6 @@ name = "mutsuki-plugin-config-sqlite"
 version = "0.1.0"
 dependencies = [
  "mutsuki-config-service",
- "parking_lot",
  "rusqlite",
  "serde_json",
  "tempfile",
@@ -4879,19 +4798,16 @@ dependencies = [
 name = "mutsuki-plugin-config-web"
 version = "0.1.0"
 dependencies = [
- "async-trait",
+ "futures",
  "futures-executor",
- "futures-util",
  "mutsuki-config-service",
  "mutsuki-web-bridge",
  "mutsuki-web-extension",
  "mutsuki-web-host",
  "mutsuki-web-protocol",
- "parking_lot",
  "serde",
  "serde_json",
  "tempfile",
- "thiserror 2.0.19",
  "tokio",
  "tokio-tungstenite 0.30.0",
  "uuid",
@@ -4949,7 +4865,6 @@ dependencies = [
  "takumi-core",
  "takumi-html",
  "takumi-raster",
- "tempfile",
 ]
 
 [[package]]
@@ -4984,7 +4899,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "bytes",
- "futures-util",
+ "futures",
  "mutsuki-protocol-http",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
@@ -5129,7 +5044,6 @@ dependencies = [
 name = "mutsuki-runtime-benchmarks"
 version = "0.1.0"
 dependencies = [
- "csv",
  "hex",
  "libc",
  "mutsuki-runtime-contracts",
@@ -5165,10 +5079,8 @@ name = "mutsuki-runtime-host"
 version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
- "futures-channel",
- "futures-util",
+ "futures",
  "libc",
- "libloading",
  "mutsuki-plugin-api",
  "mutsuki-plugin-host",
  "mutsuki-runtime-contracts",
@@ -5239,8 +5151,8 @@ dependencies = [
 name = "mutsuki-service-benchmarks"
 version = "0.1.0"
 dependencies = [
- "cpu-time",
  "hex",
+ "libc",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
@@ -5257,13 +5169,13 @@ dependencies = [
  "tempfile",
  "tokio",
  "toml 1.1.4+spec-1.1.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "mutsuki-service-config"
 version = "0.1.0"
 dependencies = [
- "dirs",
  "serde",
  "serde_json",
  "tempfile",
@@ -5276,7 +5188,6 @@ dependencies = [
 name = "mutsuki-service-control"
 version = "0.1.0"
 dependencies = [
- "futures",
  "mutsuki-runtime-contracts",
  "serde",
  "serde_json",
@@ -5289,7 +5200,6 @@ name = "mutsuki-service-daemon"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "dirs",
  "mutsuki-service-config",
  "mutsuki-service-runtime",
  "plist",
@@ -5321,7 +5231,6 @@ dependencies = [
  "mutsuki-service-control",
  "rmp-serde",
  "serde",
- "serde_json",
  "tempfile",
  "thiserror 2.0.19",
  "tokio",
@@ -5387,8 +5296,6 @@ dependencies = [
 name = "mutsuki-service-runtime"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "cpu-time",
  "futures",
  "hex",
  "libc",
@@ -5492,17 +5399,17 @@ dependencies = [
 name = "mutsuki-tauri-benchmarks"
 version = "0.1.0"
 dependencies = [
- "cpu-time",
  "hex",
+ "libc",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
  "mutsuki-tauri-bridge",
  "mutsuki-tauri-host",
- "serde",
  "serde_json",
  "sha2 0.11.0",
  "tempfile",
  "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5531,9 +5438,8 @@ dependencies = [
 name = "mutsuki-tauri-host"
 version = "0.1.0"
 dependencies = [
- "cpu-time",
- "dirs",
  "hex",
+ "libc",
  "mutsuki-agent-bundle",
  "mutsuki-agent-contracts",
  "mutsuki-agent-sdk",
@@ -5547,7 +5453,6 @@ dependencies = [
  "mutsuki-tauri-abi-fixture",
  "mutsuki-tauri-bridge",
  "mutsuki-tauri-resource",
- "parking_lot",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -5555,6 +5460,7 @@ dependencies = [
  "tokio",
  "toml 1.1.4+spec-1.1.0",
  "uuid",
+ "windows-sys 0.61.2",
  "zip",
 ]
 
@@ -5567,7 +5473,6 @@ dependencies = [
  "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "mutsuki-tauri-bridge",
- "parking_lot",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -5582,10 +5487,8 @@ version = "0.1.0"
 dependencies = [
  "mutsuki-web-extension",
  "mutsuki-web-protocol",
- "parking_lot",
  "serde",
  "serde_json",
- "thiserror 2.0.19",
  "tokio",
  "uuid",
 ]
@@ -5595,7 +5498,6 @@ name = "mutsuki-web-extension"
 version = "0.1.0"
 dependencies = [
  "mutsuki-web-protocol",
- "serde",
  "serde_json",
  "sha2 0.11.0",
  "tempfile",
@@ -5616,7 +5518,6 @@ dependencies = [
  "mutsuki-web-extension",
  "mutsuki-web-protocol",
  "mutsuki-web-recovery",
- "parking_lot",
  "serde",
  "serde_json",
  "tempfile",
@@ -7544,7 +7445,6 @@ name = "service-host-example"
 version = "0.1.0"
 dependencies = [
  "bot-echo",
- "futures-util",
  "mutsuki-bot-flow",
  "mutsuki-bot-protocol",
  "mutsuki-bot-sdk",
@@ -7565,7 +7465,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
- "tokio-tungstenite 0.30.0",
 ]
 
 [[package]]
@@ -8233,9 +8132,7 @@ dependencies = [
  "mutsuki-tauri-bridge",
  "mutsuki-tauri-host",
  "serde",
- "serde_json",
  "tauri",
- "time",
 ]
 
 [[package]]

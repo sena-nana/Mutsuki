@@ -578,7 +578,7 @@ mod platform {
     }
 
     fn home_dir() -> Result<PathBuf> {
-        dirs::home_dir().ok_or_else(|| anyhow!("failed to resolve user home directory"))
+        std::env::home_dir().ok_or_else(|| anyhow!("failed to resolve user home directory"))
     }
 
     fn persist_control_token(config: &ServiceConfig, service_user: Option<&str>) -> Result<()> {

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use futures_util::StreamExt;
+use futures::StreamExt;
 use mutsuki_bot_protocol::{BOT_FLOW_INGRESS_PROTOCOL_ID, BotMediaKind, MessageSegment};
 use mutsuki_runtime_contracts::{
     CompletionBatch, EntryCompletion, ExecutionClass, InvocationMode, RunnerBatchCapability,

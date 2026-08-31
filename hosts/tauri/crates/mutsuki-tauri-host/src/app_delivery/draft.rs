@@ -2,13 +2,13 @@ use super::types::AppId;
 use mutsuki_runtime_contracts::{
     CapabilityDescriptor, CapabilityPeerId, CapabilityRequestEnvelope, CapabilityRequestId,
 };
-use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::RwLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Failure-recovery draft. Presence means delivery did not complete; never treat as delivered.
@@ -64,7 +64,11 @@ impl DeliveryDraftStore {
                 }
                 let payload = fs::read_to_string(&path)?;
                 if let Ok(draft) = serde_json::from_str::<DeliveryDraft>(&payload) {
-                    store.inner.write().insert(draft.request_id.clone(), draft);
+                    store
+                        .inner
+                        .write()
+                        .unwrap()
+                        .insert(draft.request_id.clone(), draft);
                 }
             }
         }
@@ -75,17 +79,21 @@ impl DeliveryDraftStore {
         if let Some(directory) = &self.directory {
             write_draft_file(directory, &draft)?;
         }
-        self.inner.write().insert(draft.request_id.clone(), draft);
+        self.inner
+            .write()
+            .unwrap()
+            .insert(draft.request_id.clone(), draft);
         Ok(())
     }
 
     pub fn get(&self, request_id: &str) -> Option<DeliveryDraft> {
-        self.inner.read().get(request_id).cloned()
+        self.inner.read().unwrap().get(request_id).cloned()
     }
 
     pub fn list_for_target(&self, target: &AppId) -> Vec<DeliveryDraft> {
         self.inner
             .read()
+            .unwrap()
             .values()
             .filter(|draft| draft.target_app == target.as_str())
             .cloned()

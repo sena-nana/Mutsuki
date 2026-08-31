@@ -10,12 +10,11 @@ async-trait.workspace = true
 mutsuki-bot-sandbox.workspace = true
 mutsuki-web-extension.workspace = true
 mutsuki-web-protocol.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-futures-util.workspace = true
+futures.workspace = true
 mutsuki-bot-protocol.workspace = true
 mutsuki-web-host.workspace = true
 tempfile.workspace = true

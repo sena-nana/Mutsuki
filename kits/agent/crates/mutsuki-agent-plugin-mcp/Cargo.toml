@@ -10,8 +10,6 @@ mutsuki-agent-plugin-api.workspace = true
 mutsuki-agent-runtime.workspace = true
 mutsuki-agent-sdk.workspace = true
 reqwest.workspace = true
-rustls.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 

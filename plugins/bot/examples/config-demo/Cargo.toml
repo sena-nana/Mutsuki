@@ -18,6 +18,5 @@ mutsuki-plugin-config-web = { workspace = true }
 mutsuki-web-host = { workspace = true }
 mutsuki-web-protocol = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }
 tempfile = { workspace = true }

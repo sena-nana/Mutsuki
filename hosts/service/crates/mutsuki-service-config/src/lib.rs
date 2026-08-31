@@ -1401,7 +1401,7 @@ fn verify_directory_access(path: &Path) -> ConfigResult<()> {
 }
 
 fn default_home_dir() -> PathBuf {
-    dirs::home_dir()
+    std::env::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".mutsuki")
 }

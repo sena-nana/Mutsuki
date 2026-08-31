@@ -11,6 +11,7 @@
     clippy::semicolon_if_nothing_returned,
     clippy::too_many_lines
 )]
+#![allow(unsafe_code)]
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -80,7 +81,7 @@ struct PreparedRuntime {
 #[tokio::main]
 async fn main() {
     let args = parse_args();
-    let started = cpu_time::ProcessTime::now();
+    let started = process_cpu_time_ns();
     let mut all_samples = BTreeMap::<String, Vec<Sample>>::new();
     let mut fixture_hashes = BTreeMap::new();
     let mut failures = Vec::new();
@@ -102,7 +103,7 @@ async fn main() {
         all_samples.insert(deployment.name().into(), samples);
     }
 
-    let cpu_ns = started.elapsed().as_nanos() as f64;
+    let cpu_ns = process_cpu_time_ns().saturating_sub(started) as f64;
     let report = build_report(&args, &all_samples, &fixture_hashes, &failures, cpu_ns);
     if let Some(parent) = args.output.parent() {
         fs::create_dir_all(parent).expect("create report directory");
@@ -858,4 +859,44 @@ mod tests {
         assert_eq!(value["mad"], 1.0);
         assert_eq!(value["sample_count"], 3);
     }
+}
+
+#[cfg(unix)]
+fn process_cpu_time_ns() -> u128 {
+    let mut value = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `clock_gettime` only fills the caller-provided stack slot.
+    let status = unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut value) };
+    assert_eq!(status, 0, "clock_gettime(CLOCK_PROCESS_CPUTIME_ID) failed");
+    (value.tv_sec as u128) * 1_000_000_000 + value.tv_nsec as u128
+}
+
+#[cfg(windows)]
+fn process_cpu_time_ns() -> u128 {
+    use windows_sys::Win32::{
+        Foundation::FILETIME,
+        System::Threading::{GetCurrentProcess, GetProcessTimes},
+    };
+
+    let mut creation = FILETIME::default();
+    let mut exit = FILETIME::default();
+    let mut kernel = FILETIME::default();
+    let mut user = FILETIME::default();
+    // SAFETY: each pointer is a writable stack slot for exactly the five FILETIMEs
+    // `GetProcessTimes` fills; the pseudo process handle needs no closing.
+    let status = unsafe {
+        GetProcessTimes(
+            GetCurrentProcess(),
+            &mut creation,
+            &mut exit,
+            &mut kernel,
+            &mut user,
+        )
+    };
+    assert_ne!(status, 0, "GetProcessTimes failed");
+    let ticks =
+        |value: FILETIME| ((value.dwHighDateTime as u128) << 32) | value.dwLowDateTime as u128;
+    (ticks(kernel) + ticks(user)) * 100
 }

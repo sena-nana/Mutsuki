@@ -23,7 +23,6 @@ takumi-raster = "=0.4.8"
 
 [dev-dependencies]
 mutsuki-plugin-resource-memory = { path = "../mutsuki-plugin-resource-memory" }
-tempfile.workspace = true
 
 [lints]
 workspace = true

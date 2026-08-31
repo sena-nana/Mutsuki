@@ -8,7 +8,6 @@ license.workspace = true
 mutsuki-agent-adapter-api.workspace = true
 mutsuki-agent-contracts.workspace = true
 mutsuki-agent-plugin-api.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 hex.workspace = true
 sha2.workspace = true
