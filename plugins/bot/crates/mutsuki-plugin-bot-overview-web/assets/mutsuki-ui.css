@@ -1547,6 +1547,12 @@ button:disabled {
   font-size: 18px;
 }
 
+.console-page-header__meta {
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .console-page-header__actions {
   display: inline-flex;
   align-items: center;
@@ -2049,6 +2055,8 @@ button:disabled {
 
 /* Overview dashboard */
 .mutsuki-console .overview-dashboard {
+  --overview-card-row-height: 168px;
+  --overview-card-columns: 4;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -2106,9 +2114,38 @@ button:disabled {
   margin-bottom: 0;
 }
 
+.mutsuki-console .overview-dashboard .overview-cards {
+  display: grid;
+  grid-template-columns: repeat(var(--overview-card-columns), minmax(0, 1fr));
+  grid-auto-rows: var(--overview-card-row-height);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.mutsuki-console .overview-dashboard .overview-cards > .card {
+  flex: none;
+  width: auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  margin-bottom: 0;
+  grid-column: span min(var(--overview-card-col-span, 2), var(--overview-card-columns));
+  grid-row: span var(--overview-card-row-span, 1);
+}
+
 @media (max-width: 900px) {
   .mutsuki-console .overview-grid {
     grid-template-columns: 1fr;
+  }
+
+  .mutsuki-console .overview-dashboard {
+    --overview-card-columns: 2;
+  }
+}
+
+@media (max-width: 600px) {
+  .mutsuki-console .overview-dashboard {
+    --overview-card-columns: 1;
   }
 }
 

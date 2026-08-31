@@ -451,7 +451,7 @@ fn service_descriptor() -> ConfigDescriptor {
         provider_id: ConfigProviderId::new(SERVICE_CONFIG_PROVIDER_ID),
         schema_version: 1,
         value_version: 1,
-        title: LocalizedText::new("Service Runtime"),
+        title: LocalizedText::new("服务运行时"),
         description: None,
         scopes: vec![ConfigScope::global()],
         root: ConfigNode {
@@ -460,7 +460,7 @@ fn service_descriptor() -> ConfigDescriptor {
                 key_strategy: mutsuki_config_service::MapKeyStrategy::FreeString,
                 value: Box::new(ConfigValueType::Object),
             },
-            title: LocalizedText::new("Service Runtime"),
+            title: LocalizedText::new("服务运行时"),
             description: None,
             default_value: None,
             constraints: ConfigConstraints::default(),

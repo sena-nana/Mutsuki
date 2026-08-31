@@ -2,43 +2,32 @@ name: Platform compatibility
 
 on:
   push:
+    branches:
+      - main
   pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
+# Linux full workspace gate lives in ci.yml. This workflow only covers other OSes.
 jobs:
-  rust:
-    name: Rust (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+  macos:
+    name: Rust (macos-15)
+    runs-on: macos-15
     timeout-minutes: 45
     env:
       RUSTC_WRAPPER: ""
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-15, ubuntu-24.04]
     steps:
       - uses: actions/checkout@v7
       - name: Install Rust
         run: |
           rustup set profile minimal
-          rustup toolchain install stable --component rustfmt
-      - name: Install Linux desktop dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            xdg-utils
-      - run: cargo metadata --locked --format-version 1
-      - run: cargo fmt --check
-      - run: bash scripts/check-distributed-boundary.sh
-      - run: cargo check --locked
-      - run: cargo test --locked
+          rustup toolchain install stable
+      - run: cargo test --workspace --all-targets --locked
 
   windows-host-metrics:
     name: Windows HostMetrics
@@ -51,8 +40,5 @@ jobs:
       - name: Install Rust
         run: |
           rustup set profile minimal
-          rustup toolchain install stable --component rustfmt
-      - run: cargo metadata --locked --format-version 1
-      - run: cargo fmt --check
-      - run: cargo check --locked -p mutsuki-service-control -p mutsuki-service-runtime
+          rustup toolchain install stable
       - run: cargo test --locked -p mutsuki-service-control -p mutsuki-service-runtime
