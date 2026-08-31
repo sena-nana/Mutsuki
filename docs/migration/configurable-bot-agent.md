@@ -19,10 +19,17 @@ Required migration:
    command tables and conversation policy rules are rejected or ignored; no automatic import is
    attempted.
 
-Agent owns only execution configuration such as session scope, runtime profile, STT/TTS,
+Agent owns execution configuration such as session scope, runtime profile, STT/TTS,
 concurrency and timeout. Its submit/cancel/reset/fork/status/regenerate nodes emit typed reply
 events; reliable Delivery sinks own outbound delivery. Existing session generation fencing,
 idempotency and connection handshake guarantees remain unchanged.
+
+An explicitly assembled local Agent engine can additionally edit the graph through an
+approval-gated toolset: `bot.flow.read`, `bot.flow.validate` and `bot.flow.apply` target the
+same `mutsuki.bot.flow` ConfigService revision-CAS apply as the editor, so the document keeps
+one source of truth and one validation path. The tools exist only where the Agent loop runtime
+is co-located with the Bot plugins; wire-connected external agents have no such channel, and no
+Agent tool exposes plugin reload, deployment or other control-plane commands.
 
 Saving the editor graph performs one ConfigService revision-CAS apply and immediately activates
 the snapshot. The repository plugin durably commits the redacted document while the Flow provider

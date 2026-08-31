@@ -929,12 +929,31 @@ pub fn configured_agent_plugin_catalog(
     connectors: AgentConnectorCatalog,
     config_service: Arc<ConfigService>,
 ) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
-    let mut catalog = ConfiguredPluginCatalog::new();
-    catalog.register(ConfiguredAgentConnectionsPlugin::new(
+    configured_agent_plugin_catalog_with_extensions(
         registry,
         connectors,
         config_service,
+        Vec::new(),
+    )
+}
+
+/// Agent catalog whose local in-process engine boots with bot-agnostic runtime
+/// extensions (see [`LocalAgentRuntimeExtension`]). The factory registers for
+/// every catalog consumer but only prepares when a selection enables
+/// [`LOCAL_AGENT_PLUGIN_ID`].
+pub fn configured_agent_plugin_catalog_with_extensions(
+    registry: AgentConnectionRegistry,
+    connectors: AgentConnectorCatalog,
+    config_service: Arc<ConfigService>,
+    extensions: Vec<LocalAgentRuntimeExtension>,
+) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
+    let mut catalog = ConfiguredPluginCatalog::new();
+    catalog.register(ConfiguredAgentConnectionsPlugin::new(
+        registry.clone(),
+        connectors,
+        config_service,
     ))?;
+    catalog.register(ConfiguredLocalAgentPlugin::new(registry).with_extensions(extensions))?;
     Ok(catalog)
 }
 
@@ -942,7 +961,20 @@ pub fn configured_standard_agent_plugin_catalog(
     registry: AgentConnectionRegistry,
     config_service: Arc<ConfigService>,
 ) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
-    configured_agent_plugin_catalog(registry, AgentConnectorCatalog::standard(), config_service)
+    configured_standard_agent_plugin_catalog_with_extensions(registry, config_service, Vec::new())
+}
+
+pub fn configured_standard_agent_plugin_catalog_with_extensions(
+    registry: AgentConnectionRegistry,
+    config_service: Arc<ConfigService>,
+    extensions: Vec<LocalAgentRuntimeExtension>,
+) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
+    configured_agent_plugin_catalog_with_extensions(
+        registry,
+        AgentConnectorCatalog::standard(),
+        config_service,
+        extensions,
+    )
 }
 
 #[derive(Debug, Deserialize)]

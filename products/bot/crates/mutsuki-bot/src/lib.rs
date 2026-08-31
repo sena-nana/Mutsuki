@@ -20,9 +20,14 @@
 use std::sync::Arc;
 
 use mutsuki_agent_service_host_integration::{
-    AgentConnectionRegistry, configured_standard_agent_plugin_catalog,
+    AgentConnectionRegistry, LocalAgentRuntimeExtension,
+    configured_standard_agent_plugin_catalog_with_extensions,
 };
-use mutsuki_bot_service_host_integration::configured_bot_plugin_catalog_with_agent;
+use mutsuki_bot_flow::{BotFlowRegistry, BotNodeCatalog};
+use mutsuki_bot_service_host_integration::configured_bot_plugin_catalog_with_agent_and_flow;
+use mutsuki_plugin_bot_flow_agent_tool::{
+    flow_tool_descriptors, flow_tool_manifest, flow_tool_runner,
+};
 use mutsuki_service_config::{ExecutionClassName, ExecutionDomainSection, ServiceConfig};
 use mutsuki_service_runtime::{ServiceRuntimeBuilder, ServiceRuntimeResult};
 use mutsuki_std_service_host_integration::configured_std_plugin_catalog;
@@ -83,19 +88,54 @@ pub fn assemble_service(
 }
 
 pub fn assemble_service_with_connections(
-    mut service: ServiceConfig,
+    service: ServiceConfig,
     config: Arc<mutsuki_config_service::ConfigService>,
     agent_connections: AgentConnectionRegistry,
 ) -> ServiceRuntimeResult<ServiceRuntimeBuilder> {
-    apply_product_runtime_profile(&mut service);
-    let mut catalog = configured_std_plugin_catalog()?;
-    catalog.merge(configured_standard_agent_plugin_catalog(
-        agent_connections.clone(),
-        config.clone(),
-    )?)?;
-    catalog.merge(configured_bot_plugin_catalog_with_agent(
+    assemble_service_with_flow_registry(
+        service,
         config,
         agent_connections,
+        Arc::new(BotFlowRegistry::new(BotNodeCatalog::default())),
+    )
+}
+
+/// Assembly variant that pins the shared `BotFlowRegistry`: the flow router,
+/// the console bridge and the co-located Agent flow tools must observe one
+/// active graph.
+pub fn assemble_service_with_flow_registry(
+    mut service: ServiceConfig,
+    config: Arc<mutsuki_config_service::ConfigService>,
+    agent_connections: AgentConnectionRegistry,
+    flow_registry: Arc<BotFlowRegistry>,
+) -> ServiceRuntimeResult<ServiceRuntimeBuilder> {
+    apply_product_runtime_profile(&mut service);
+    let mut catalog = configured_std_plugin_catalog()?;
+    catalog.merge(configured_standard_agent_plugin_catalog_with_extensions(
+        agent_connections.clone(),
+        config.clone(),
+        vec![flow_tool_extension(config.clone(), flow_registry.clone())],
+    )?)?;
+    catalog.merge(configured_bot_plugin_catalog_with_agent_and_flow(
+        config,
+        agent_connections,
+        flow_registry,
     )?)?;
     Ok(ServiceRuntimeBuilder::new(service).with_configured_plugin_catalog(catalog))
+}
+
+/// Co-located Bot Flow tool extension installed into the local in-process
+/// Agent engine. Assembly only wires the shared ConfigService and flow
+/// registry into the target runner owned by `mutsuki-plugin-bot-flow-agent-tool`.
+fn flow_tool_extension(
+    config: Arc<mutsuki_config_service::ConfigService>,
+    flow_registry: Arc<BotFlowRegistry>,
+) -> LocalAgentRuntimeExtension {
+    LocalAgentRuntimeExtension {
+        manifests: vec![flow_tool_manifest()],
+        runners: vec![Arc::new(move |client| {
+            flow_tool_runner(client, config.clone(), flow_registry.clone())
+        })],
+        tools: flow_tool_descriptors(),
+    }
 }
