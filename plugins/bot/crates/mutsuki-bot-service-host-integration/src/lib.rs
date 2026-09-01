@@ -58,6 +58,6 @@ pub use mutsuki_plugin_bot_delivery::{
 };
 pub use mutsuki_plugin_bot_interaction::bot_interaction_manifest;
 pub use orchestrated_flow::{
-    QQ_AI_PRESENTATION_FAILURE_TEXT, bilibili_live_push_flow, qq_ai_orchestrated_flow,
-    qq_ai_orchestrated_flow_with_source, qq_link_resolve_flow,
+    QQ_AI_PRESENTATION_FAILURE_TEXT, bilibili_push_flow, qq_ai_orchestrated_flow,
+    qq_ai_orchestrated_flow_with_source, qq_full_business_flow, qq_link_resolve_flow,
 };

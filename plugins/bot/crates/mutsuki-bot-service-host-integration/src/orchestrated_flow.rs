@@ -21,6 +21,30 @@ use serde_json::json;
 const QQ_FORWARD_FOLD_NODE_TYPE: &str = "mutsuki.bot.qq.reply.forward_fold";
 pub const QQ_AI_PRESENTATION_FAILURE_TEXT: &str = "刚才没能发出回复，请稍后再试。";
 
+/// Rewrites every node and edge ID of a reference graph with a prefix so several
+/// graphs can share the single flow document Flow activates.
+fn prefixed_parts(prefix: &str, flow: &BotFlowDocument) -> (Vec<BotFlowNode>, Vec<BotFlowEdge>) {
+    let scope = |id: &str| format!("{prefix}{id}");
+    (
+        flow.nodes
+            .iter()
+            .map(|node| BotFlowNode {
+                node_id: scope(&node.node_id),
+                ..node.clone()
+            })
+            .collect(),
+        flow.edges
+            .iter()
+            .map(|edge| BotFlowEdge {
+                edge_id: scope(&edge.edge_id),
+                from_node_id: scope(&edge.from_node_id),
+                to_node_id: scope(&edge.to_node_id),
+                ..edge.clone()
+            })
+            .collect(),
+    )
+}
+
 /// First-party example graph. Source fans out to `/persona` matching and `record-icl-listen`.
 /// Empty-mention Create opens a waiter; the next ingress rematches. Bare @ never edges to Agent.
 /// Submit is record-icl → attach-icl → identifiers → attach-bound-persona → bind-profile →
@@ -348,14 +372,17 @@ pub fn qq_link_resolve_flow() -> BotFlowDocument {
     }
 }
 
-/// Example graph: Bilibili polling trigger → push card → QQ send. The polling
-/// runner only submits `mutsuki.bot.event.bilibili` trigger events; this graph
+/// Example graph: Bilibili polling trigger → push card → QQ send. One chain serves every
+/// notification kind — live, dynamic and video — because `mutsuki.bot.bilibili.card` picks
+/// the layout from the `BilibiliNotification.kind` payload; sending a kind to a different
+/// chat is a subscription concern (per-subscription kinds + target), not a graph branch.
+/// The polling runner only submits `mutsuki.bot.event.bilibili` trigger events; this graph
 /// owns rendering and delivery. Works for both Bilibili backends.
 #[must_use]
-pub fn bilibili_live_push_flow() -> BotFlowDocument {
+pub fn bilibili_push_flow() -> BotFlowDocument {
     BotFlowDocument {
-        flow_id: "bilibili.live.push".into(),
-        name: "Bilibili 直播推送".into(),
+        flow_id: "bilibili.push".into(),
+        name: "Bilibili 推送（直播/动态/视频）".into(),
         nodes: vec![
             flow_node(
                 "notification",
@@ -373,6 +400,26 @@ pub fn bilibili_live_push_flow() -> BotFlowDocument {
             flow_edge("notify-card", "notification", "event", "card", "event"),
             flow_edge("card-send", "card", "message", "qq-send", "input"),
         ],
+    }
+}
+
+/// First-party all-in-one reference graph. Flow activates a single document, so this
+/// merges the AI conversation, Bilibili/Mihuashi link resolve and Bilibili push graphs
+/// with `ai-` / `resolve-` / `push-` ID prefixes, each keeping its own `qq.send` sink.
+#[must_use]
+pub fn qq_full_business_flow() -> BotFlowDocument {
+    let (mut nodes, mut edges) = prefixed_parts("ai-", &qq_ai_orchestrated_flow());
+    let (resolve_nodes, resolve_edges) = prefixed_parts("resolve-", &qq_link_resolve_flow());
+    nodes.extend(resolve_nodes);
+    edges.extend(resolve_edges);
+    let (push_nodes, push_edges) = prefixed_parts("push-", &bilibili_push_flow());
+    nodes.extend(push_nodes);
+    edges.extend(push_edges);
+    BotFlowDocument {
+        flow_id: "qq.business.full".into(),
+        name: "QQ 全业务参考图".into(),
+        nodes,
+        edges,
     }
 }
 
@@ -577,7 +624,7 @@ mod tests {
             ),
         ])
         .expect("push catalogs merge");
-        let flow = bilibili_live_push_flow();
+        let flow = bilibili_push_flow();
         let result = validate_flow(&flow, &catalog);
         assert!(result.valid, "{:#?}", result.issues);
         assert!(
@@ -602,6 +649,75 @@ mod tests {
             selector.event_type.as_ref().unwrap().type_id,
             "mutsuki.bot.event.bilibili"
         );
+    }
+
+    #[test]
+    fn full_business_flow_validates_against_merged_catalog() {
+        let catalog = BotNodeCatalog::from_manifests(&[
+            qqbot_adapter_manifest(1, false),
+            flow_router_manifest(),
+            bot_command_manifest(1),
+            bot_conversation_context_manifest(),
+            bot_agent_bridge_manifest(),
+            bot_reply_manifest(),
+            bot_reply_delivery_manifest(),
+            bot_persona_manifest(),
+            bot_interaction_manifest(),
+            mutsuki_plugin_bot_bilibili::manifest(),
+            mutsuki_plugin_bot_mihuashi::manifest(),
+        ])
+        .expect("full business catalogs merge");
+        let flow = qq_full_business_flow();
+        let result = validate_flow(&flow, &catalog);
+        assert!(result.valid, "{:#?}", result.issues);
+        assert!(
+            flow.edges
+                .iter()
+                .any(|edge| edge.edge_id == "resolve-bili-matched"
+                    && edge.to_node_id == "resolve-bili-resolve")
+        );
+        assert!(
+            flow.edges
+                .iter()
+                .any(|edge| edge.edge_id == "resolve-mihuashi-matched"
+                    && edge.to_node_id == "resolve-mihuashi-resolve")
+        );
+        assert!(
+            flow.edges
+                .iter()
+                .any(|edge| edge.edge_id == "push-notify-card" && edge.to_node_id == "push-card")
+        );
+        assert!(
+            flow.edges
+                .iter()
+                .any(|edge| edge.edge_id == "push-card-send" && edge.to_node_id == "push-qq-send")
+        );
+        let notification = flow
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "push-notification")
+            .unwrap();
+        let selector = notification.source.as_ref().unwrap();
+        assert_eq!(
+            selector.event_type.as_ref().unwrap().type_id,
+            "mutsuki.bot.event.bilibili"
+        );
+    }
+
+    #[test]
+    fn full_business_example_json_matches_reference_graph() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../configs/flow-full.example.json");
+        let raw = std::fs::read_to_string(path).expect("full example json is committed");
+        let json: serde_json::Value = serde_json::from_str(&raw).expect("full example json parses");
+        let mut example: BotFlowDocument =
+            serde_json::from_value(json.get("flow").expect("flow envelope").clone())
+                .expect("full example json decodes");
+        let mut reference = qq_full_business_flow();
+        for node in example.nodes.iter_mut().chain(reference.nodes.iter_mut()) {
+            node.position = BotFlowNodePosition::default();
+        }
+        assert_eq!(example, reference);
     }
 
     #[test]
