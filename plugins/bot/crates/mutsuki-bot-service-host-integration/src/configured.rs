@@ -8,7 +8,7 @@ use mutsuki_bot_flow::{
     BOT_FLOW_CONFIG_PROVIDER_ID, BotFlowConfigProvider, BotFlowRegistry, BotNodeCatalog,
 };
 use mutsuki_bot_management::{BilibiliCredentialSecretState, BilibiliManagementApi};
-use mutsuki_bot_protocol::ConversationPolicy;
+use mutsuki_bot_protocol::{BotFlowDocument, ConversationPolicy};
 use mutsuki_bot_sandbox::{SANDBOX_SERVICE_ID, SandboxService};
 use mutsuki_bot_sdk::BotSubmissionGate;
 use mutsuki_bot_state_db::BotStateDbRepository;
@@ -89,6 +89,7 @@ impl HostEffect for ConfigProviderEffect {
 pub struct BotFlowRouterConfiguredPlugin {
     config: Arc<ConfigService>,
     registry: Option<Arc<BotFlowRegistry>>,
+    seed: Option<BotFlowDocument>,
 }
 
 impl BotFlowRouterConfiguredPlugin {
@@ -97,6 +98,7 @@ impl BotFlowRouterConfiguredPlugin {
         Self {
             config,
             registry: None,
+            seed: None,
         }
     }
 
@@ -105,6 +107,23 @@ impl BotFlowRouterConfiguredPlugin {
         Self {
             config,
             registry: Some(registry),
+            seed: None,
+        }
+    }
+
+    /// Registry-sharing variant that additionally seeds `seed` into stores that never
+    /// recorded a flow document. Existing records — including a graph the user cleared —
+    /// are never overwritten.
+    #[must_use]
+    pub fn with_registry_and_seed(
+        config: Arc<ConfigService>,
+        registry: Arc<BotFlowRegistry>,
+        seed: BotFlowDocument,
+    ) -> Self {
+        Self {
+            config,
+            registry: Some(registry),
+            seed: Some(seed),
         }
     }
 }
@@ -128,6 +147,7 @@ impl ConfiguredPluginFactory for LegacyBotEventRouterConfiguredPlugin {
 struct BotFlowLoadPlanObserver {
     registry: Arc<BotFlowRegistry>,
     config: Arc<ConfigService>,
+    seed: Option<BotFlowDocument>,
 }
 
 impl LoadPlanObserver for BotFlowLoadPlanObserver {
@@ -142,18 +162,37 @@ impl LoadPlanObserver for BotFlowLoadPlanObserver {
             .activate_load_plan(plan)
             .expect("validated Bot Flow LoadPlan catalog must activate");
         let key = ConfigDocumentKey::new(BOT_FLOW_CONFIG_PROVIDER_ID, ConfigContext::global());
-        if self.config.repository().read(&key).ok().flatten().is_none() {
+        let config = self.config.clone();
+        if self.config.repository().read(&key).ok().flatten().is_some() {
+            tokio::spawn(async move {
+                if let Err(error) = config
+                    .restore(BOT_FLOW_CONFIG_PROVIDER_ID, ConfigContext::global())
+                    .await
+                {
+                    tracing::error!(
+                        error = %error,
+                        "stored Bot Flow could not be restored after startup; routing stays on an empty graph"
+                    );
+                }
+            });
             return;
         }
-        let config = self.config.clone();
+        let Some(seed) = self.seed.clone() else {
+            return;
+        };
         tokio::spawn(async move {
+            let candidate = ConfigValue::from_json(&serde_json::json!({ "flow": seed }));
             if let Err(error) = config
-                .restore(BOT_FLOW_CONFIG_PROVIDER_ID, ConfigContext::global())
+                .create_if_absent(
+                    BOT_FLOW_CONFIG_PROVIDER_ID,
+                    candidate,
+                    ConfigContext::global(),
+                )
                 .await
             {
                 tracing::error!(
                     error = %error,
-                    "stored Bot Flow could not be restored after startup; routing stays on an empty graph"
+                    "Bot Flow seed was not applied; routing stays on an empty graph"
                 );
             }
         });
@@ -235,6 +274,7 @@ impl ConfiguredPluginFactory for BotFlowRouterConfiguredPlugin {
                 Arc::new(BotFlowLoadPlanObserver {
                     registry,
                     config: self.config.clone(),
+                    seed: self.seed.clone(),
                 }),
             ))
     }
@@ -1120,16 +1160,120 @@ pub fn configured_bot_plugin_catalog_with_agent_and_flow(
     Ok(catalog)
 }
 
+/// Same as [`configured_bot_plugin_catalog_with_agent_and_flow`], but LoadPlan activation
+/// additionally seeds `seed_flow` into stores that never recorded a flow document;
+/// existing records, including a graph the user cleared, are never overwritten.
+pub fn configured_bot_plugin_catalog_with_agent_flow_and_seed(
+    config: Arc<ConfigService>,
+    connections: AgentConnectionRegistry,
+    flow_registry: Arc<BotFlowRegistry>,
+    seed_flow: BotFlowDocument,
+) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
+    let mut catalog =
+        configured_bot_plugin_catalog_inner(Some(config.clone()), Some(flow_registry.clone()))?;
+    catalog.register(BotFlowRouterConfiguredPlugin::with_registry_and_seed(
+        config,
+        flow_registry,
+        seed_flow,
+    ))?;
+    catalog.register(BotAgentConfiguredPlugin::new(connections))?;
+    Ok(catalog)
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use mutsuki_config_service::{
-        ConfigCompareAndSetRequest, ConfigContext, ConfigDocumentKey, ConfigRepository,
-        ConfigRevision, ConfigValue, InMemoryConfigRepository,
+        ConfigCompareAndSetRequest, ConfigContext, ConfigDocumentKey, ConfigProviderRegistry,
+        ConfigRepository, ConfigRevision, ConfigService, ConfigValue, InMemoryConfigRepository,
     };
+    use mutsuki_plugin_bot_adapter_qqbot::qqbot_adapter_manifest;
+    use mutsuki_plugin_bot_event_router::flow_router_manifest;
+    use mutsuki_plugin_bot_interaction::bot_interaction_manifest;
+    use mutsuki_runtime_contracts::RuntimeLoadPlan;
     use mutsuki_service_config::{ConfiguredPluginSelection, ServiceConfig};
     use serde_json::json;
 
     use super::*;
+
+    fn reference_catalog_manifests() -> Vec<PluginManifest> {
+        vec![
+            qqbot_adapter_manifest(1, false),
+            flow_router_manifest(),
+            bot_command_manifest(1),
+            bot_conversation_context_manifest(),
+            bot_agent_bridge_manifest(),
+            bot_reply_manifest(),
+            mutsuki_plugin_bot_delivery::bot_reply_delivery_manifest(),
+            bot_persona_manifest(),
+            bot_interaction_manifest(),
+            mutsuki_plugin_bot_bilibili::manifest(),
+            mutsuki_plugin_bot_mihuashi::manifest(),
+        ]
+    }
+
+    fn empty_load_plan(manifests: Vec<PluginManifest>) -> RuntimeLoadPlan {
+        RuntimeLoadPlan {
+            lock_version: 1,
+            core_api_version: "1".into(),
+            profile_id: "test".into(),
+            profile_hash: "hash".into(),
+            registry_generation: 1,
+            plugins: manifests,
+            load_order: Vec::new(),
+            runner_bindings: BTreeMap::new(),
+            plugin_deployments: BTreeMap::new(),
+            observability: Default::default(),
+            capability_graph: Default::default(),
+            contract_surfaces: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn flow_observer_seeds_reference_graph_when_store_has_no_record() {
+        let manifests = reference_catalog_manifests();
+        let registry = Arc::new(BotFlowRegistry::new(
+            BotNodeCatalog::from_manifests(&manifests).expect("reference catalogs merge"),
+        ));
+        let config = Arc::new(
+            ConfigService::new(
+                Arc::new(ConfigProviderRegistry::default()),
+                Arc::new(InMemoryConfigRepository::default()),
+            )
+            .expect("config service"),
+        );
+        config
+            .registry()
+            .register(Arc::new(BotFlowConfigProvider::new(registry.clone())))
+            .expect("flow provider registers");
+        let observer = BotFlowLoadPlanObserver {
+            registry: registry.clone(),
+            config: config.clone(),
+            seed: Some(crate::orchestrated_flow::qq_full_business_flow()),
+        };
+
+        observer.activate(&empty_load_plan(manifests));
+
+        let key = ConfigDocumentKey::new(BOT_FLOW_CONFIG_PROVIDER_ID, ConfigContext::global());
+        let mut seeded = false;
+        for _ in 0..100 {
+            let recorded = config
+                .repository()
+                .read(&key)
+                .expect("repository readable")
+                .is_some_and(|snapshot| {
+                    snapshot.value.to_json()["flow"]["flow_id"] == "qq.business.full"
+                });
+            if recorded {
+                seeded = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(seeded, "observer must seed the absent flow record");
+        assert_eq!(registry.active().flow.flow_id, "qq.business.full");
+    }
 
     fn seed_stored_flow(repo: &InMemoryConfigRepository, value: ConfigValue) {
         let mut write = repo
