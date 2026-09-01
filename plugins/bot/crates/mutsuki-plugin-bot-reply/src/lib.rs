@@ -10,6 +10,8 @@
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(test)]
+use mutsuki_bot_protocol::BotNodeWiring;
 use mutsuki_bot_protocol::{
     BOT_EXT_REPLY_SOURCE_MESSAGE_ID, BOT_EXT_REPLY_SOURCE_USER_ID, BOT_FLOW_DELIVERY_REPLY_TYPE,
     BOT_REPLY_MENTION_PROTOCOL_ID, BOT_REPLY_QUOTE_PROTOCOL_ID, BOT_REPLY_SEGMENT_PROTOCOL_ID,
@@ -418,6 +420,7 @@ mod tests {
             execution_id: "ex".into(),
             node_id: "n".into(),
             input_port_id: "reply".into(),
+            wiring: BotNodeWiring::default(),
             config: json!({}),
             input: BotFlowEventEnvelope {
                 event_id: "e1".into(),

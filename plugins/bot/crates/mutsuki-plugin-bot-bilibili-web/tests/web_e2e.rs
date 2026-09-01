@@ -45,6 +45,7 @@ impl BilibiliManagementApi for Api {
             credential_loaded: true,
             subscription_count: 0,
             reason: None,
+            push_wired: Some(true),
         }
     }
 

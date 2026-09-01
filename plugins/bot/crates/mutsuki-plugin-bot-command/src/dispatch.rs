@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+#[cfg(test)]
+use mutsuki_bot_protocol::BotNodeWiring;
 use mutsuki_bot_protocol::{
     BOT_COMMAND_HANDLE_PROTOCOL_ID, BOT_COMMAND_PARSE_PROTOCOL_ID, BOT_COMMAND_REPLY_PROTOCOL_ID,
     BOT_EXT_REPLY_SOURCE_MESSAGE_ID, BOT_FLOW_ERROR_TYPE, BOT_MESSAGE_SEND_PROTOCOL_ID,
@@ -707,6 +709,7 @@ mod tests {
             execution_id: "execution".into(),
             node_id: "reply".into(),
             input_port_id: "command".into(),
+            wiring: BotNodeWiring::default(),
             config: json!({"text": "pong", "reply": true}),
             input: matched.outputs[0].event.clone(),
         });
@@ -749,6 +752,7 @@ mod tests {
             execution_id: "execution".into(),
             node_id: "present-fail".into(),
             input_port_id: "error".into(),
+            wiring: BotNodeWiring::default(),
             config: json!({"text": "呈现失败", "reply": true}),
             input: BotFlowEventEnvelope {
                 event_id: "event:error:segment".into(),
@@ -924,6 +928,7 @@ mod tests {
                 execution_id: "execution".into(),
                 node_id: "command".into(),
                 input_port_id: "event".into(),
+                wiring: BotNodeWiring::default(),
                 config,
                 input: BotFlowEventEnvelope {
                     event_id: event_id.into(),

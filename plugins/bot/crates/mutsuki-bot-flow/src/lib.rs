@@ -22,7 +22,7 @@ use mutsuki_bot_protocol::{
     BOT_FLOW_ERROR_TYPE, BOT_FLOW_NODE_EXTENSION_ID, BOT_FLOW_NODE_EXTENSION_VERSION,
     BotFlowDocument, BotFlowEdgeKind, BotFlowSnapshot, BotFlowValidationIssue,
     BotFlowValidationResult, BotFlowValidationSeverity, BotNodeCatalogFragment, BotNodeDescriptor,
-    BotNodePortDirection, BotNodeRole,
+    BotNodePortDirection, BotNodeRole, BotNodeWiring,
 };
 use mutsuki_config_service::{
     ConfigActivation, ConfigConstraints, ConfigContext, ConfigDescriptor, ConfigError, ConfigKey,
@@ -531,6 +531,62 @@ fn push_issue(
     });
 }
 
+/// Port-level wiring of one node instance in the graph, as delivered to the
+/// node handler through `BotNodeInvocation`. Returns `None` for unknown nodes.
+pub fn node_wiring(flow: &BotFlowDocument, node_id: &str) -> Option<BotNodeWiring> {
+    flow.nodes.iter().find(|node| node.node_id == node_id)?;
+    let mut wiring = BotNodeWiring::default();
+    for edge in &flow.edges {
+        if edge.kind == BotFlowEdgeKind::Event
+            && edge.to_node_id == node_id
+            && !wiring.wired_inputs.contains(&edge.to_port_id)
+        {
+            wiring.wired_inputs.push(edge.to_port_id.clone());
+        }
+        if edge.from_node_id != node_id {
+            continue;
+        }
+        match edge.kind {
+            BotFlowEdgeKind::Event => {
+                if !wiring.wired_outputs.contains(&edge.from_port_id) {
+                    wiring.wired_outputs.push(edge.from_port_id.clone());
+                }
+            }
+            BotFlowEdgeKind::Error => wiring.error_wired = true,
+        }
+    }
+    wiring.wired_inputs.sort();
+    wiring.wired_outputs.sort();
+    Some(wiring)
+}
+
+/// Whether the graph has a Source chain for the given ingress selector that is
+/// actually wired to a downstream node. Mirrors ingress matching: the selector
+/// matches by protocol id plus either a wildcard or the exact event type, and
+/// `event_type: None` in the query counts every event type on the protocol.
+pub fn source_wired(
+    flow: &BotFlowDocument,
+    protocol_id: &str,
+    event_type: Option<(&str, u32)>,
+) -> bool {
+    flow.nodes.iter().any(|node| {
+        let Some(source) = node.source.as_ref() else {
+            return false;
+        };
+        let selector_matches = source.protocol_id == protocol_id
+            && match (&source.event_type, event_type) {
+                (None, _) | (Some(_), None) => true,
+                (Some(selector), Some(emitted)) => {
+                    selector.type_id == emitted.0 && selector.version == emitted.1
+                }
+            };
+        selector_matches
+            && flow.edges.iter().any(|edge| {
+                edge.kind == BotFlowEdgeKind::Event && edge.from_node_id == node.node_id
+            })
+    })
+}
+
 pub const BOT_FLOW_CONFIG_PROVIDER_ID: &str = "mutsuki.bot.flow";
 
 /// Process-lifetime counters for Flow ingress routing. An envelope is accepted
@@ -628,6 +684,20 @@ impl BotFlowRegistry {
             .read()
             .expect("Bot flow active lock poisoned")
             .clone()
+    }
+
+    /// Wiring of one node instance on the active graph, for plugins that hold
+    /// the `mutsuki.bot.flow.registry` host service.
+    #[must_use]
+    pub fn node_wiring(&self, node_id: &str) -> Option<BotNodeWiring> {
+        node_wiring(&self.active().flow, node_id)
+    }
+
+    /// Whether an active Source chain for the given ingress selector is wired
+    /// to a downstream node; `false` means submitting would freeze the event.
+    #[must_use]
+    pub fn source_wired(&self, protocol_id: &str, event_type: Option<(&str, u32)>) -> bool {
+        source_wired(&self.active().flow, protocol_id, event_type)
     }
 
     #[must_use]
@@ -1042,5 +1112,159 @@ mod tests {
         assert!(registry.catalog().is_empty());
         assert_eq!(registry.active().revision, 0);
         assert_eq!(registry.active().flow, BotFlowDocument::default());
+    }
+
+    fn wiring_catalog() -> BotNodeCatalog {
+        let event = BotFlowTypeRef::new("test.event", 1);
+        let mut catalog = catalog();
+        catalog.nodes.insert(
+            ("test.process".into(), 1),
+            BotNodeDescriptor {
+                node_type_id: "test.process".into(),
+                version: 1,
+                title: "Process".into(),
+                category: "test".into(),
+                role: BotNodeRole::Processor,
+                binding: None,
+                ports: vec![
+                    BotNodePortDescriptor {
+                        port_id: "input".into(),
+                        title: "Input".into(),
+                        direction: BotNodePortDirection::Input,
+                        event_type: event.clone(),
+                        required: false,
+                    },
+                    BotNodePortDescriptor {
+                        port_id: "out".into(),
+                        title: "Out".into(),
+                        direction: BotNodePortDirection::Output,
+                        event_type: event,
+                        required: false,
+                    },
+                ],
+                config_schema: serde_json::json!({
+                    "type": "object",
+                    "additionalProperties": false
+                }),
+            },
+        );
+        catalog
+    }
+
+    fn wiring_flow() -> BotFlowDocument {
+        let mut flow = flow("wired");
+        flow.nodes.push(BotFlowNode {
+            node_id: "downstream".into(),
+            node_type_id: "test.process".into(),
+            node_type_version: 1,
+            config: serde_json::json!({}),
+            source: None,
+            position: BotFlowNodePosition::default(),
+        });
+        flow.edges.push(BotFlowEdge {
+            edge_id: "source-downstream".into(),
+            from_node_id: "source".into(),
+            from_port_id: "event".into(),
+            to_node_id: "downstream".into(),
+            to_port_id: "input".into(),
+            kind: BotFlowEdgeKind::Event,
+        });
+        flow
+    }
+
+    #[test]
+    fn node_wiring_reports_port_level_connections_and_summary_flags() {
+        let mut flow = wiring_flow();
+        let source_wiring = node_wiring(&flow, "source").unwrap();
+        assert_eq!(source_wiring.wired_inputs, Vec::<String>::new());
+        assert_eq!(source_wiring.wired_outputs, vec!["event".to_owned()]);
+        assert!(source_wiring.is_connected());
+        assert!(source_wiring.has_downstream());
+
+        let downstream_wiring = node_wiring(&flow, "downstream").unwrap();
+        assert_eq!(downstream_wiring.wired_inputs, vec!["input".to_owned()]);
+        assert!(downstream_wiring.wired_outputs.is_empty());
+        assert!(downstream_wiring.is_connected());
+        assert!(!downstream_wiring.has_downstream());
+
+        flow.edges.push(BotFlowEdge {
+            edge_id: "downstream-error".into(),
+            from_node_id: "downstream".into(),
+            from_port_id: String::new(),
+            to_node_id: "source".into(),
+            to_port_id: String::new(),
+            kind: BotFlowEdgeKind::Error,
+        });
+        let with_error = node_wiring(&flow, "downstream").unwrap();
+        assert!(!with_error.wired_outputs.is_empty() || with_error.error_wired);
+        assert!(with_error.error_wired);
+
+        assert!(node_wiring(&flow, "missing").is_none());
+        assert_eq!(
+            node_wiring(&BotFlowDocument::default(), "source"),
+            None,
+            "an empty graph has no node instances at all"
+        );
+    }
+
+    #[test]
+    fn source_wired_matches_ingress_selector_semantics() {
+        let wired = wiring_flow();
+        assert!(source_wired(&wired, "test.ingress", None));
+        assert!(source_wired(
+            &wired,
+            "test.ingress",
+            Some(("test.event", 1))
+        ));
+
+        let mut dead_end = flow("dead-end");
+        dead_end.nodes.push(BotFlowNode {
+            node_id: "idle".into(),
+            node_type_id: "test.source".into(),
+            node_type_version: 1,
+            config: serde_json::json!({}),
+            source: None,
+            position: BotFlowNodePosition::default(),
+        });
+        assert!(!source_wired(&dead_end, "test.ingress", None));
+
+        // A typed Source only counts when it is wired, and only for its own
+        // event type; wiring is provided by a downstream process node.
+        let mut typed_selector = wiring_flow();
+        typed_selector.nodes[0].source = Some(BotFlowSourceSelector {
+            protocol_id: "test.ingress".into(),
+            event_type: Some(BotFlowTypeRef::new("test.event.other", 1)),
+        });
+        assert!(!source_wired(
+            &typed_selector,
+            "test.ingress",
+            Some(("test.event", 1))
+        ));
+        assert!(source_wired(
+            &typed_selector,
+            "test.ingress",
+            Some(("test.event.other", 1))
+        ));
+    }
+
+    #[test]
+    fn registry_wiring_queries_read_the_active_snapshot() {
+        let registry = BotFlowRegistry::with_snapshot(
+            wiring_catalog(),
+            BotFlowSnapshot {
+                revision: 7,
+                flow: wiring_flow(),
+            },
+        )
+        .unwrap();
+        assert!(registry.source_wired("test.ingress", Some(("test.event", 1))));
+        assert_eq!(
+            registry.node_wiring("source").unwrap().wired_outputs,
+            vec!["event".to_owned()]
+        );
+
+        let empty = BotFlowRegistry::new(catalog());
+        assert!(!empty.source_wired("test.ingress", None));
+        assert_eq!(empty.node_wiring("source"), None);
     }
 }

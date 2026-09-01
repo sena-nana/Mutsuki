@@ -583,11 +583,22 @@ impl ConfiguredPluginFactory for QqBotConfiguredPlugin {
 
 pub struct BilibiliConfiguredPlugin {
     config_service: Option<Arc<ConfigService>>,
+    flow_registry: Option<Arc<BotFlowRegistry>>,
 }
 
 impl BilibiliConfiguredPlugin {
     fn new(config_service: Option<Arc<ConfigService>>) -> Self {
-        Self { config_service }
+        Self {
+            config_service,
+            flow_registry: None,
+        }
+    }
+
+    /// Shares the Flow registry so the push poll path and the management
+    /// status observe the same active graph the router activates.
+    fn with_flow_registry(mut self, registry: Arc<BotFlowRegistry>) -> Self {
+        self.flow_registry = Some(registry);
+        self
     }
 }
 
@@ -811,7 +822,7 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
             .map_err(|error| error.to_string())?;
 
         let management_service = if let Some(config_service) = config_service {
-            let service = Arc::new(BilibiliManagementService::new(
+            let mut service = BilibiliManagementService::new(
                 runner_config.clone(),
                 web_credential.clone(),
                 Box::new(ReqwestBilibiliTransport::new(
@@ -825,8 +836,11 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
                 }),
                 Arc::new(ConfigServiceBilibiliConfigStore(config_service)),
                 Arc::new(HostSecretPresence(host_secret_store.clone())),
-            ));
-            Some(service)
+            );
+            if let Some(registry) = self.flow_registry.clone() {
+                service = service.with_flow_registry(registry);
+            }
+            Some(Arc::new(service))
         } else {
             None
         };
@@ -845,6 +859,7 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
         let management_api = management_service
             .clone()
             .map(|service| service as Arc<dyn BilibiliManagementApi>);
+        let runner_flow_registry = self.flow_registry.clone();
         let builder = builder.register_builtin_loaded_plugin_factory(manifest, move || {
             let host_services = management_api
                 .as_ref()
@@ -929,6 +944,9 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
                         resources,
                     )));
                     runner = runner.with_management(runner_config.clone(), management);
+                }
+                if let Some(registry) = runner_flow_registry.clone() {
+                    runner = runner.with_flow_registry(registry);
                 }
                 Ok::<
                     Box<dyn mutsuki_runtime_core::Runner>,
@@ -1034,11 +1052,12 @@ impl ConfiguredPluginFactory for MihuashiConfiguredPlugin {
 /// `BotAgentConfiguredPlugin` against the shared `BotStateDb` file. They are not
 /// independently selectable factories (that path used a process-local Memory store).
 pub fn configured_bot_plugin_catalog() -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
-    configured_bot_plugin_catalog_inner(None)
+    configured_bot_plugin_catalog_inner(None, None)
 }
 
 fn configured_bot_plugin_catalog_inner(
     config: Option<Arc<ConfigService>>,
+    flow_registry: Option<Arc<BotFlowRegistry>>,
 ) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
     let mut catalog = ConfiguredPluginCatalog::new();
     let slot: SharedSandboxSlot = Arc::new(OnceLock::new());
@@ -1046,7 +1065,11 @@ fn configured_bot_plugin_catalog_inner(
     catalog.register(BotCommandConfiguredPlugin)?;
     catalog.register(SandboxConfiguredPlugin { slot: slot.clone() })?;
     catalog.register(QqBotConfiguredPlugin { slot })?;
-    catalog.register(BilibiliConfiguredPlugin::new(config))?;
+    let bilibili = match flow_registry.clone() {
+        Some(registry) => BilibiliConfiguredPlugin::new(config).with_flow_registry(registry),
+        None => BilibiliConfiguredPlugin::new(config),
+    };
+    catalog.register(bilibili)?;
     catalog.register(WorkshopConfiguredPlugin)?;
     catalog.register(MihuashiConfiguredPlugin)?;
     Ok(catalog)
@@ -1056,10 +1079,12 @@ fn configured_bot_plugin_catalog_inner(
 pub fn configured_bot_plugin_catalog_with_config(
     config: Arc<ConfigService>,
 ) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
-    let mut catalog = configured_bot_plugin_catalog_inner(Some(config.clone()))?;
+    let flow_registry = Arc::new(BotFlowRegistry::new(BotNodeCatalog::default()));
+    let mut catalog =
+        configured_bot_plugin_catalog_inner(Some(config.clone()), Some(flow_registry.clone()))?;
     catalog.register(BotFlowRouterConfiguredPlugin::with_registry(
         config,
-        Arc::new(BotFlowRegistry::new(BotNodeCatalog::default())),
+        flow_registry,
     ))?;
     Ok(catalog)
 }
@@ -1085,7 +1110,8 @@ pub fn configured_bot_plugin_catalog_with_agent_and_flow(
     connections: AgentConnectionRegistry,
     flow_registry: Arc<BotFlowRegistry>,
 ) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
-    let mut catalog = configured_bot_plugin_catalog_inner(Some(config.clone()))?;
+    let mut catalog =
+        configured_bot_plugin_catalog_inner(Some(config.clone()), Some(flow_registry.clone()))?;
     catalog.register(BotFlowRouterConfiguredPlugin::with_registry(
         config,
         flow_registry,

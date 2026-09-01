@@ -79,6 +79,10 @@ pub struct BilibiliManagementStatus {
     pub credential_loaded: bool,
     pub subscription_count: usize,
     pub reason: Option<String>,
+    /// Whether the push Source chain is wired into the active Bot Flow graph;
+    /// `None` when the assembly did not share a Flow registry.
+    #[serde(default)]
+    pub push_wired: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

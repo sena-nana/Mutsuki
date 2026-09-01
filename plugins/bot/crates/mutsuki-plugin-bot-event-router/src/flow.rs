@@ -373,15 +373,7 @@ async fn run_node(
         .binding
         .as_ref()
         .ok_or_else(|| failure(&task, "node.binding_missing", &node.node_type_id))?;
-    let invocation = BotNodeInvocation {
-        flow_id: flow.flow_id.clone(),
-        graph_revision: execution.graph_revision,
-        execution_id: execution.execution_id.clone(),
-        node_id: execution.node_id.clone(),
-        input_port_id: execution.input_port_id.clone(),
-        config: node.config.clone(),
-        input: execution.event.clone(),
-    };
+    let invocation = node_invocation(flow, &execution, node);
     let payload = serde_json::to_value(invocation)
         .map_err(|error| failure(&task, "node.invocation.encode", error))?;
     let child = ctx
@@ -443,6 +435,26 @@ async fn run_node(
             .map(move |edge| (edge, output.event.clone()))
     });
     fan_out(&task, flow, &execution, outputs)
+}
+
+/// Builds the plugin-facing invocation for one node execution. The wiring is
+/// derived from the pinned immutable graph so the node learns whether it is
+/// connected without holding the document itself.
+fn node_invocation(
+    flow: &mutsuki_bot_protocol::BotFlowDocument,
+    execution: &PinnedBotFlowNodeExecution,
+    node: &BotFlowNode,
+) -> BotNodeInvocation {
+    BotNodeInvocation {
+        flow_id: flow.flow_id.clone(),
+        graph_revision: execution.graph_revision,
+        execution_id: execution.execution_id.clone(),
+        node_id: execution.node_id.clone(),
+        input_port_id: execution.input_port_id.clone(),
+        wiring: mutsuki_bot_flow::node_wiring(flow, &execution.node_id).unwrap_or_default(),
+        config: node.config.clone(),
+        input: execution.event.clone(),
+    }
 }
 
 fn decode_node_result(
@@ -603,15 +615,16 @@ mod tests {
 
     use mutsuki_bot_protocol::{
         BOT_SELF_SENT_EXT_KEY, BotAccountRef, BotEvent, BotEventKind, BotFlowContext, BotFlowEdge,
-        BotFlowEdgeKind, BotFlowEventEnvelope, BotFlowNode, BotFlowNodePosition, BotFlowPayload,
-        BotFlowSourceSelector, BotFlowTypeRef, BotPlatform, BotTarget, BotUser,
+        BotFlowEdgeKind, BotFlowEventEnvelope, BotFlowNode, BotFlowNodeExecution,
+        BotFlowNodePosition, BotFlowPayload, BotFlowSourceSelector, BotFlowTypeRef, BotPlatform,
+        BotTarget, BotUser,
     };
     use mutsuki_runtime_contracts::{InvocationMode, RunnerConcurrency, Task};
     use serde_json::{Value, json};
 
     use super::{
-        downstream_task, node_descriptor, record_ingress_outcome, source_accepts_envelope,
-        source_index_for,
+        PinnedBotFlowNodeExecution, downstream_task, node_descriptor, node_invocation,
+        record_ingress_outcome, source_accepts_envelope, source_index_for,
     };
 
     fn message_event(actor_id: &str, self_sent: bool) -> BotEvent {
@@ -944,5 +957,65 @@ mod tests {
                 .as_str()
                 .contains("graph:1:flow:default:edge:source-right")
         );
+    }
+
+    #[test]
+    fn node_invocation_carries_port_level_wiring_from_the_pinned_graph() {
+        let flow = mutsuki_bot_protocol::BotFlowDocument {
+            flow_id: "wired".into(),
+            name: "wired".into(),
+            nodes: vec![
+                BotFlowNode {
+                    node_id: "source".into(),
+                    node_type_id: "test.source".into(),
+                    node_type_version: 1,
+                    config: json!({}),
+                    source: Some(BotFlowSourceSelector {
+                        protocol_id: "test.ingress".into(),
+                        event_type: None,
+                    }),
+                    position: BotFlowNodePosition::default(),
+                },
+                BotFlowNode {
+                    node_id: "downstream".into(),
+                    node_type_id: "test.process".into(),
+                    node_type_version: 1,
+                    config: json!({}),
+                    source: None,
+                    position: BotFlowNodePosition::default(),
+                },
+            ],
+            edges: vec![BotFlowEdge {
+                edge_id: "source-downstream".into(),
+                from_node_id: "source".into(),
+                from_port_id: "event".into(),
+                to_node_id: "downstream".into(),
+                to_port_id: "input".into(),
+                kind: BotFlowEdgeKind::Event,
+            }],
+        };
+        let execution_for = |node_id: &str| {
+            PinnedBotFlowNodeExecution::from(BotFlowNodeExecution {
+                graph_revision: 3,
+                flow: flow.clone(),
+                execution_id: "exec".into(),
+                node_id: node_id.into(),
+                input_port_id: "input".into(),
+                event: message_envelope("member-1", false),
+            })
+        };
+        let source_node = flow.nodes[0].clone();
+        let downstream_node = flow.nodes[1].clone();
+
+        let source = node_invocation(&flow, &execution_for("source"), &source_node);
+        assert_eq!(source.wiring.wired_outputs, vec!["event".to_owned()]);
+        assert!(source.wiring.wired_inputs.is_empty());
+        assert!(source.wiring.is_connected());
+
+        let downstream = node_invocation(&flow, &execution_for("downstream"), &downstream_node);
+        assert_eq!(downstream.wiring.wired_inputs, vec!["input".to_owned()]);
+        assert!(downstream.wiring.wired_outputs.is_empty());
+        assert!(downstream.wiring.is_connected());
+        assert!(!downstream.wiring.has_downstream());
     }
 }

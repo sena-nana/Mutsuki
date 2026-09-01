@@ -67,6 +67,13 @@ When the Bilibili management service is registered, the embedded console injects
 WebExtension and the overview shows **B站推送**. Static enablement stays in the product file
 and `security.secret_file`; it is not a Config-page form.
 
+When the product assembly shares the Flow registry (`configured_bot_plugin_catalog_with_agent_and_flow`),
+the `status` response carries `push_wired`: whether the `mutsuki.bot.bilibili.notification`
+Source chain is wired into the active Bot Flow graph (`null` when no registry is shared).
+While it is `false`, polling skips the upstream Bilibili API call entirely — pushes are frozen
+and observable, and the first wired poll after a freeze baselines the cursor instead of
+replaying the frozen window as a backlog.
+
 Auth:
 
 - Console holders of `WEB_CONSOLE_AUTH_TOKEN` with `runtime.read` / `runtime.write` act as

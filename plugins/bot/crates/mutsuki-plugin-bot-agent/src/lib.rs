@@ -28,6 +28,8 @@ use mutsuki_bot_conversation::{
     AgentEventClaim, ConversationError, ConversationService, qq_conversation_from_event,
     session_binding_key,
 };
+#[cfg(test)]
+use mutsuki_bot_protocol::BotNodeWiring;
 use mutsuki_bot_protocol::{
     AgentSessionBinding, BOT_AGENT_BIND_PROFILE_PROTOCOL_ID, BOT_AGENT_CANCEL_PROTOCOL_ID,
     BOT_AGENT_FORK_PROTOCOL_ID, BOT_AGENT_REGENERATE_PROTOCOL_ID, BOT_AGENT_RESET_PROTOCOL_ID,
@@ -2846,6 +2848,7 @@ mod tests {
             execution_id: "ex".into(),
             node_id: "bind".into(),
             input_port_id: "input".into(),
+            wiring: BotNodeWiring::default(),
             config,
             input: BotFlowEventEnvelope {
                 event_id: source.event_id.clone(),
