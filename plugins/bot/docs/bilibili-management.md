@@ -27,6 +27,15 @@ The management contract contains only product fields:
 - every subscription has a stable `subscription_id`, `uid`, notification kinds, target, outbound
   binding, `paused`, and optional `owner_user_id`.
 
+Push delivery is a Flow concern: the polling runner submits a `mutsuki.bot.event.bilibili`
+trigger event per fresh item and never sends a message itself. The active graph must wire
+`mutsuki.bot.bilibili.notification` → `mutsuki.bot.bilibili.card` → a platform send node
+(reference graph `bilibili_live_push_flow()`); with no matching Source the event is dropped.
+A subscription's `outbound_binding` remains required configuration and Web `subscribe` still
+asks for it, but it is carried as event context only — the graph's send node binding decides
+delivery. The `/bili preview` command path keeps its direct command-route reply and still never
+advances the poll cursor.
+
 Enabling management requires the service to be loaded from a real product config file and requires
 Host `security.secret_file`. The product config stores only
 `backend = { type = "web_cookie", cookie_secret_key = "..." }`; the ignored secret

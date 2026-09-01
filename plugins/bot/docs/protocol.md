@@ -9,6 +9,13 @@ promises a runner only when its manifest and `RunnerDescriptor` list that ID.
   `mutsuki.bot.flow/ingress@1` tasks that carry this envelope.
 - `mutsuki.bot.command/handle@1` — Command Match `matched` output envelope (`BotCommandEvent`).
 
+Domain plugins join Flow the same way: the plugin submits `mutsuki.bot.flow/ingress@1` envelopes
+whose `payload.event_type` is a plugin-owned `mutsuki.bot.event.*` specialization, and the plugin
+stops there — rendering and delivery belong to the graph. Bilibili polling submits
+`mutsuki.bot.event.bilibili` v1 carrying a `BilibiliNotification`; the
+`mutsuki.bot.bilibili.notification` Source node matches it by selector alone (it is intentionally
+absent from the router kind table because the payload is not a `BotEvent`).
+
 Standard Bot runner protocols:
 
 - `mutsuki.bot.flow/ingress@1`

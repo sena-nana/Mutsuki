@@ -26,6 +26,13 @@ description: Change Bot Flow graph validation/execution, node catalogs, command 
   repository, server draft, publish revision, path or database assumption.
 - Command prefix, path, aliases and typed arguments live only in Command Match node config;
   `matched` and `unmatched` are explicit outputs.
+- Domain push pipelines submit `mutsuki.bot.flow/ingress@1` envelopes with a plugin-owned
+  `mutsuki.bot.event.*` payload and stop there; rendering and delivery belong to graph nodes. A
+  Source node whose payload is not a `BotEvent` is selected by its event-type selector alone and
+  must stay out of the router `source_kinds_for_node` kind table — registering it would reject
+  every event. `mutsuki.bot.bilibili.notification` → `mutsuki.bot.bilibili.card` is the reference
+  implementation.
 
 Test validation failures, hit/miss, linear chains, fan-out, same-graph Source chains, error edges,
-revision pinning, ConfigService CAS conflicts, restart recovery and typed output shape.
+revision pinning, ConfigService CAS conflicts, restart recovery, typed output shape, trigger-event
+emission (payload fields, no direct send, cursor timing) and selector-matched plugin sources.
