@@ -110,22 +110,6 @@ impl BotFlowRouterConfiguredPlugin {
             seed: None,
         }
     }
-
-    /// Registry-sharing variant that additionally seeds `seed` into stores that never
-    /// recorded a flow document. Existing records — including a graph the user cleared —
-    /// are never overwritten.
-    #[must_use]
-    pub fn with_registry_and_seed(
-        config: Arc<ConfigService>,
-        registry: Arc<BotFlowRegistry>,
-        seed: BotFlowDocument,
-    ) -> Self {
-        Self {
-            config,
-            registry: Some(registry),
-            seed: Some(seed),
-        }
-    }
 }
 
 struct LegacyBotEventRouterConfiguredPlugin;
@@ -1131,51 +1115,21 @@ pub fn configured_bot_plugin_catalog_with_config(
 
 /// Production Bot catalog with configurable Agent nodes wired to a shared Agent owner
 /// registry. The base catalog intentionally remains Agent-free for products that do not opt in.
-pub fn configured_bot_plugin_catalog_with_agent(
-    config: Arc<ConfigService>,
-    connections: AgentConnectionRegistry,
-) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
-    configured_bot_plugin_catalog_with_agent_and_flow(
-        config,
-        connections,
-        Arc::new(BotFlowRegistry::new(BotNodeCatalog::default())),
-    )
-}
-
-/// Same as [`configured_bot_plugin_catalog_with_agent`], but shares a
-/// caller-owned flow registry so co-located Agent tool runners observe the
-/// same active graph the router activates.
+/// `seed_flow` is applied by LoadPlan activation into stores that never recorded a flow
+/// document; existing records, including a graph the user cleared, are never overwritten.
 pub fn configured_bot_plugin_catalog_with_agent_and_flow(
     config: Arc<ConfigService>,
     connections: AgentConnectionRegistry,
     flow_registry: Arc<BotFlowRegistry>,
+    seed_flow: Option<BotFlowDocument>,
 ) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
     let mut catalog =
         configured_bot_plugin_catalog_inner(Some(config.clone()), Some(flow_registry.clone()))?;
-    catalog.register(BotFlowRouterConfiguredPlugin::with_registry(
+    catalog.register(BotFlowRouterConfiguredPlugin {
         config,
-        flow_registry,
-    ))?;
-    catalog.register(BotAgentConfiguredPlugin::new(connections))?;
-    Ok(catalog)
-}
-
-/// Same as [`configured_bot_plugin_catalog_with_agent_and_flow`], but LoadPlan activation
-/// additionally seeds `seed_flow` into stores that never recorded a flow document;
-/// existing records, including a graph the user cleared, are never overwritten.
-pub fn configured_bot_plugin_catalog_with_agent_flow_and_seed(
-    config: Arc<ConfigService>,
-    connections: AgentConnectionRegistry,
-    flow_registry: Arc<BotFlowRegistry>,
-    seed_flow: BotFlowDocument,
-) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
-    let mut catalog =
-        configured_bot_plugin_catalog_inner(Some(config.clone()), Some(flow_registry.clone()))?;
-    catalog.register(BotFlowRouterConfiguredPlugin::with_registry_and_seed(
-        config,
-        flow_registry,
-        seed_flow,
-    ))?;
+        registry: Some(flow_registry),
+        seed: seed_flow,
+    })?;
     catalog.register(BotAgentConfiguredPlugin::new(connections))?;
     Ok(catalog)
 }
