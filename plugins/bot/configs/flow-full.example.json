@@ -1,0 +1,275 @@
+{
+  "flow": {
+    "flow_id": "qq.business.full",
+    "name": "QQ 全业务参考图",
+    "nodes": [
+      {
+        "node_id": "ai-source",
+        "node_type_id": "mutsuki.bot.qq.message.created",
+        "node_type_version": 1,
+        "config": {},
+        "source": {
+          "protocol_id": "mutsuki.bot.event/ingest@1",
+          "event_type": { "type_id": "mutsuki.bot.event", "version": 1 }
+        },
+        "position": { "x": 40, "y": 240 }
+      },
+      {
+        "node_id": "ai-persona-command",
+        "node_type_id": "mutsuki.bot.command.match",
+        "node_type_version": 1,
+        "config": {
+          "prefixes": ["/"],
+          "path": ["persona"],
+          "aliases": [],
+          "arguments": [
+            { "name": "id", "kind": "string", "optional": true, "variadic": false }
+          ],
+          "case_sensitive": false
+        },
+        "position": { "x": 280, "y": 40 }
+      },
+      {
+        "node_id": "ai-persona",
+        "node_type_id": "mutsuki.bot.agent.persona",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 560, "y": 40 }
+      },
+      {
+        "node_id": "ai-qq-send",
+        "node_type_id": "mutsuki.bot.qq.send",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 840, "y": 40 }
+      },
+      {
+        "node_id": "ai-empty-mention",
+        "node_type_id": "mutsuki.bot.match.empty_mention",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 280, "y": 320 }
+      },
+      {
+        "node_id": "ai-interaction-create",
+        "node_type_id": "mutsuki.bot.interaction.create",
+        "node_type_version": 1,
+        "config": { "timeout_ms": 60000 },
+        "position": { "x": 560, "y": 240 }
+      },
+      {
+        "node_id": "ai-interaction",
+        "node_type_id": "mutsuki.bot.interaction.match",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 560, "y": 320 }
+      },
+      {
+        "node_id": "ai-mention",
+        "node_type_id": "mutsuki.bot.match.mention",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 280, "y": 440 }
+      },
+      {
+        "node_id": "ai-record-icl",
+        "node_type_id": "mutsuki.bot.conversation.record_icl",
+        "node_type_version": 1,
+        "config": { "max_count": 20 },
+        "position": { "x": 560, "y": 440 }
+      },
+      {
+        "node_id": "ai-record-icl-listen",
+        "node_type_id": "mutsuki.bot.conversation.record_icl",
+        "node_type_version": 1,
+        "config": { "max_count": 20 },
+        "position": { "x": 560, "y": 560 }
+      },
+      {
+        "node_id": "ai-attach-icl",
+        "node_type_id": "mutsuki.bot.conversation.attach_icl",
+        "node_type_version": 1,
+        "config": { "max_count": 20 },
+        "position": { "x": 800, "y": 440 }
+      },
+      {
+        "node_id": "ai-identifiers",
+        "node_type_id": "mutsuki.bot.conversation.attach_identifiers",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 1040, "y": 440 }
+      },
+      {
+        "node_id": "ai-attach-bound-persona",
+        "node_type_id": "mutsuki.bot.agent.attach_bound_persona",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 1280, "y": 440 }
+      },
+      {
+        "node_id": "ai-bind-profile",
+        "node_type_id": "mutsuki.bot.agent.bind_profile",
+        "node_type_version": 1,
+        "config": { "profile_id": "qq-assistant" },
+        "position": { "x": 1520, "y": 440 }
+      },
+      {
+        "node_id": "ai-agent",
+        "node_type_id": "mutsuki.bot.agent.submit",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 1760, "y": 440 }
+      },
+      {
+        "node_id": "ai-quote",
+        "node_type_id": "mutsuki.bot.reply.quote",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 2000, "y": 360 }
+      },
+      {
+        "node_id": "ai-mention-reply",
+        "node_type_id": "mutsuki.bot.reply.mention",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 2240, "y": 360 }
+      },
+      {
+        "node_id": "ai-segment",
+        "node_type_id": "mutsuki.bot.reply.segment",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 2480, "y": 360 }
+      },
+      {
+        "node_id": "ai-forward-fold",
+        "node_type_id": "mutsuki.bot.qq.reply.forward_fold",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 2720, "y": 360 }
+      },
+      {
+        "node_id": "ai-delivery",
+        "node_type_id": "mutsuki.bot.delivery.reply",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 2960, "y": 360 }
+      },
+      {
+        "node_id": "ai-present-fail",
+        "node_type_id": "mutsuki.bot.command.reply",
+        "node_type_version": 1,
+        "config": { "text": "刚才没能发出回复，请稍后再试。", "reply": true },
+        "position": { "x": 2480, "y": 560 }
+      },
+      {
+        "node_id": "resolve-source",
+        "node_type_id": "mutsuki.bot.qq.message.created",
+        "node_type_version": 1,
+        "config": {},
+        "source": {
+          "protocol_id": "mutsuki.bot.event/ingest@1",
+          "event_type": { "type_id": "mutsuki.bot.event", "version": 1 }
+        },
+        "position": { "x": 40, "y": 800 }
+      },
+      {
+        "node_id": "resolve-bili-link",
+        "node_type_id": "mutsuki.bot.match.link",
+        "node_type_version": 1,
+        "config": { "hosts": ["b23.tv", "bilibili.com"] },
+        "position": { "x": 280, "y": 720 }
+      },
+      {
+        "node_id": "resolve-mihuashi-link",
+        "node_type_id": "mutsuki.bot.match.link",
+        "node_type_version": 1,
+        "config": { "hosts": ["mihuashi.com"] },
+        "position": { "x": 280, "y": 880 }
+      },
+      {
+        "node_id": "resolve-bili-resolve",
+        "node_type_id": "mutsuki.bot.bilibili.resolve",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 560, "y": 720 }
+      },
+      {
+        "node_id": "resolve-mihuashi-resolve",
+        "node_type_id": "mutsuki.bot.mihuashi.resolve",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 560, "y": 880 }
+      },
+      {
+        "node_id": "resolve-qq-send",
+        "node_type_id": "mutsuki.bot.qq.send",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 840, "y": 800 }
+      },
+      {
+        "node_id": "push-notification",
+        "node_type_id": "mutsuki.bot.bilibili.notification",
+        "node_type_version": 1,
+        "config": {},
+        "source": {
+          "protocol_id": "mutsuki.bot.event/ingest@1",
+          "event_type": { "type_id": "mutsuki.bot.event.bilibili", "version": 1 }
+        },
+        "position": { "x": 40, "y": 1080 }
+      },
+      {
+        "node_id": "push-card",
+        "node_type_id": "mutsuki.bot.bilibili.card",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 320, "y": 1080 }
+      },
+      {
+        "node_id": "push-qq-send",
+        "node_type_id": "mutsuki.bot.qq.send",
+        "node_type_version": 1,
+        "config": {},
+        "position": { "x": 600, "y": 1080 }
+      }
+    ],
+    "edges": [
+      { "edge_id": "ai-source-persona-cmd", "from_node_id": "ai-source", "from_port_id": "event", "to_node_id": "ai-persona-command", "to_port_id": "event", "kind": "event" },
+      { "edge_id": "ai-source-listen", "from_node_id": "ai-source", "from_port_id": "event", "to_node_id": "ai-record-icl-listen", "to_port_id": "input", "kind": "event" },
+      { "edge_id": "ai-persona-cmd-handler", "from_node_id": "ai-persona-command", "from_port_id": "matched", "to_node_id": "ai-persona", "to_port_id": "command", "kind": "event" },
+      { "edge_id": "ai-persona-message-send", "from_node_id": "ai-persona", "from_port_id": "message", "to_node_id": "ai-qq-send", "to_port_id": "input", "kind": "event" },
+      { "edge_id": "ai-cmd-unmatched-empty", "from_node_id": "ai-persona-command", "from_port_id": "unmatched", "to_node_id": "ai-empty-mention", "to_port_id": "event", "kind": "event" },
+      { "edge_id": "ai-empty-matched-create", "from_node_id": "ai-empty-mention", "from_port_id": "matched", "to_node_id": "ai-interaction-create", "to_port_id": "event", "kind": "event" },
+      { "edge_id": "ai-empty-unmatched-interaction", "from_node_id": "ai-empty-mention", "from_port_id": "unmatched", "to_node_id": "ai-interaction", "to_port_id": "event", "kind": "event" },
+      { "edge_id": "ai-interaction-unmatched-mention", "from_node_id": "ai-interaction", "from_port_id": "unmatched", "to_node_id": "ai-mention", "to_port_id": "event", "kind": "event" },
+      { "edge_id": "ai-interaction-record", "from_node_id": "ai-interaction", "from_port_id": "matched", "to_node_id": "ai-record-icl", "to_port_id": "input", "kind": "event" },
+      { "edge_id": "ai-mention-record", "from_node_id": "ai-mention", "from_port_id": "matched", "to_node_id": "ai-record-icl", "to_port_id": "input", "kind": "event" },
+      { "edge_id": "ai-record-attach", "from_node_id": "ai-record-icl", "from_port_id": "output", "to_node_id": "ai-attach-icl", "to_port_id": "input", "kind": "event" },
+      { "edge_id": "ai-icl-ids", "from_node_id": "ai-attach-icl", "from_port_id": "output", "to_node_id": "ai-identifiers", "to_port_id": "input", "kind": "event" },
+      { "edge_id": "ai-ids-persona", "from_node_id": "ai-identifiers", "from_port_id": "output", "to_node_id": "ai-attach-bound-persona", "to_port_id": "input", "kind": "event" },
+      { "edge_id": "ai-persona-profile", "from_node_id": "ai-attach-bound-persona", "from_port_id": "output", "to_node_id": "ai-bind-profile", "to_port_id": "input", "kind": "event" },
+      { "edge_id": "ai-profile-agent", "from_node_id": "ai-bind-profile", "from_port_id": "output", "to_node_id": "ai-agent", "to_port_id": "input", "kind": "event" },
+      { "edge_id": "ai-agent-quote", "from_node_id": "ai-agent", "from_port_id": "reply", "to_node_id": "ai-quote", "to_port_id": "reply", "kind": "event" },
+      { "edge_id": "ai-quote-mention", "from_node_id": "ai-quote", "from_port_id": "reply", "to_node_id": "ai-mention-reply", "to_port_id": "reply", "kind": "event" },
+      { "edge_id": "ai-mention-segment", "from_node_id": "ai-mention-reply", "from_port_id": "reply", "to_node_id": "ai-segment", "to_port_id": "reply", "kind": "event" },
+      { "edge_id": "ai-segment-fold", "from_node_id": "ai-segment", "from_port_id": "reply", "to_node_id": "ai-forward-fold", "to_port_id": "reply", "kind": "event" },
+      { "edge_id": "ai-fold-delivery", "from_node_id": "ai-forward-fold", "from_port_id": "reply", "to_node_id": "ai-delivery", "to_port_id": "reply", "kind": "event" },
+      { "edge_id": "ai-agent-fail", "from_node_id": "ai-agent", "from_port_id": "error", "to_node_id": "ai-present-fail", "to_port_id": "error", "kind": "error" },
+      { "edge_id": "ai-quote-fail", "from_node_id": "ai-quote", "from_port_id": "error", "to_node_id": "ai-present-fail", "to_port_id": "error", "kind": "error" },
+      { "edge_id": "ai-mention-reply-fail", "from_node_id": "ai-mention-reply", "from_port_id": "error", "to_node_id": "ai-present-fail", "to_port_id": "error", "kind": "error" },
+      { "edge_id": "ai-segment-fail", "from_node_id": "ai-segment", "from_port_id": "error", "to_node_id": "ai-present-fail", "to_port_id": "error", "kind": "error" },
+      { "edge_id": "ai-fold-fail", "from_node_id": "ai-forward-fold", "from_port_id": "error", "to_node_id": "ai-present-fail", "to_port_id": "error", "kind": "error" },
+      { "edge_id": "ai-delivery-fail", "from_node_id": "ai-delivery", "from_port_id": "error", "to_node_id": "ai-present-fail", "to_port_id": "error", "kind": "error" },
+      { "edge_id": "ai-present-fail-send", "from_node_id": "ai-present-fail", "from_port_id": "message", "to_node_id": "ai-qq-send", "to_port_id": "input", "kind": "event" },
+      { "edge_id": "resolve-source-bili", "from_node_id": "resolve-source", "from_port_id": "event", "to_node_id": "resolve-bili-link", "to_port_id": "event", "kind": "event" },
+      { "edge_id": "resolve-source-mihuashi", "from_node_id": "resolve-source", "from_port_id": "event", "to_node_id": "resolve-mihuashi-link", "to_port_id": "event", "kind": "event" },
+      { "edge_id": "resolve-bili-matched", "from_node_id": "resolve-bili-link", "from_port_id": "matched", "to_node_id": "resolve-bili-resolve", "to_port_id": "event", "kind": "event" },
+      { "edge_id": "resolve-mihuashi-matched", "from_node_id": "resolve-mihuashi-link", "from_port_id": "matched", "to_node_id": "resolve-mihuashi-resolve", "to_port_id": "event", "kind": "event" },
+      { "edge_id": "resolve-bili-send", "from_node_id": "resolve-bili-resolve", "from_port_id": "message", "to_node_id": "resolve-qq-send", "to_port_id": "input", "kind": "event" },
+      { "edge_id": "resolve-mihuashi-send", "from_node_id": "resolve-mihuashi-resolve", "from_port_id": "message", "to_node_id": "resolve-qq-send", "to_port_id": "input", "kind": "event" },
+      { "edge_id": "push-notify-card", "from_node_id": "push-notification", "from_port_id": "event", "to_node_id": "push-card", "to_port_id": "event", "kind": "event" },
+      { "edge_id": "push-card-send", "from_node_id": "push-card", "from_port_id": "message", "to_node_id": "push-qq-send", "to_port_id": "input", "kind": "event" }
+    ]
+  }
+}

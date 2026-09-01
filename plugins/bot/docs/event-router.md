@@ -44,9 +44,13 @@ is deliberately not listed in the router's `source_kinds_for_node` kind table (t
 `BotEvent` kinds; an unknown node type with a non-`BotEvent` payload passes through its selector).
 Bilibili pushes work this way: polling detects a fresh item and submits
 `mutsuki.bot.event.bilibili` v1 with a `BilibiliNotification`; the first-party push example
-(`bilibili.live.push`) sequences `mutsuki.bot.bilibili.notification` → `mutsuki.bot.bilibili.card`
+(`bilibili.push`) sequences `mutsuki.bot.bilibili.notification` → `mutsuki.bot.bilibili.card`
 (cover download + `mutsuki.protocol.image` card render, outputs `mutsuki.bot.message.send`) →
-`qq.send`. If the active graph has no matching Source, the business behavior behind that event
+`qq.send`. One chain serves every notification kind (live/dynamic/video) because the card node
+picks the layout from the payload; sending a kind to a different chat is a subscription
+concern, not a graph branch. The all-in-one reference (`qq.business.full`,
+`qq_full_business_flow()`, example `configs/flow-full.example.json`) merges this chain with the
+AI conversation and link-resolve subgraphs into the single document Flow activates. If the active graph has no matching Source, the business behavior behind that event
 stays frozen: the envelope is counted in the registry ingress stats (`accepted_total` /
 `dropped_total`, published on the `mutsuki.bot.flow.ingress` health snapshot) and its ingress
 task output records `matched_sources: 0`. Recreate the push subgraph after upgrading or before

@@ -22,9 +22,9 @@ Required migration:
    runner detects fresh items against the durable cursor and submits a
    `mutsuki.bot.event.bilibili` trigger event per item. Wire
    `mutsuki.bot.bilibili.notification` → `mutsuki.bot.bilibili.card` → a platform send node
-   (reference graph `bilibili_live_push_flow()`); while the active graph has no matching Source,
-   trigger events are silently dropped and nothing is pushed. Subscription targets and pause
-   state stay in the Bilibili owner config; the subscription `outbound_binding` is carried as
+   (reference graph `bilibili_push_flow()`, one chain for live/dynamic/video kinds); while the
+   active graph has no matching Source, trigger events are silently dropped and nothing is
+   pushed. Subscription targets and pause state stay in the Bilibili owner config; the subscription `outbound_binding` is carried as
    event context, and the graph's send node binding decides delivery.
 
 Agent owns execution configuration such as session scope, runtime profile, STT/TTS,
