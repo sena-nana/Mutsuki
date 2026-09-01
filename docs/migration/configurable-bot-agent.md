@@ -24,7 +24,10 @@ Required migration:
    `mutsuki.bot.bilibili.notification` → `mutsuki.bot.bilibili.card` → a platform send node
    (reference graph `bilibili_push_flow()`, one chain for live/dynamic/video kinds); while the
    active graph has no matching Source, trigger events are silently dropped and nothing is
-   pushed. Subscription targets and pause state stay in the Bilibili owner config; the subscription `outbound_binding` is carried as
+   pushed. Fresh first-party product stores without any flow record are seeded with the full
+   reference graph (`qq.business.full`) at startup; stores that already contain a flow
+   document keep theirs and must add the push subgraph manually. Subscription targets and
+   pause state stay in the Bilibili owner config; the subscription `outbound_binding` is carried as
    event context, and the graph's send node binding decides delivery.
 
 Agent owns execution configuration such as session scope, runtime profile, STT/TTS,

@@ -49,8 +49,9 @@ cargo run --locked -p mutsuki-bot
 
 旧 `local.toml`、旧 bootstrap、旧 SQLite 和旧 secret 不读取、不迁移；升级后需在新实例中重新
 配置。QQ 登录、模型和回复只在配置页填写；首页显示运行概览和机器人连接卡片，沙盒是侧栏一级入口。沙盒默认可
-模拟群聊，接入 QQ 后可切换真实数据查看近期发言用户并从后台发送消息。系统不会
-自动生成 Flow。
+模拟群聊，接入 QQ 后可切换真实数据查看近期发言用户并从后台发送消息。配置仓库没有 Flow 记录时，
+启动会把全量参考图 `qq.business.full` 种子化并激活；已有记录（含用户主动清空的空图）永不
+覆盖。图内业务仍受对应 owner 配置启用状态约束，节点目录不完整时种子不应用并保持空图。
 
 已有 document 永不被种子覆盖。产品插件选择、WebExtension 选择以及各 owner 配置均保存到
 配置仓库，而不是写回 bootstrap。Secret 明文只进入 Host secret store，配置文档保存引用或
@@ -69,7 +70,8 @@ Bot Flow 是 provider id 为 `mutsuki.bot.flow` 的普通配置文档。插件�
 `mutsuki.bot.flow.nodes@1` 节点、类型化端口、schema 和精确 binding；匹配、顺序、命令与分支
 全部来自 active Flow snapshot。
 
-`bot-flow-editor` 是独立、显式选择的 WebExtension；默认种子不选择它，也不会生成 Flow：
+`bot-flow-editor` 是独立、显式选择的 WebExtension；默认种子不选择它。Flow 的种子化与覆盖
+语义见上节：种子只写入没有 Flow 记录的仓库，此后一切图变更都经编辑器或 Agent flow 工具：
 
 - Router 与编辑器仍保持独立 owner 边界；
 - 浏览器本地保存未提交草稿并绑定读取 revision；

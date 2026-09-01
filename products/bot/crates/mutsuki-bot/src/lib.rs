@@ -24,7 +24,9 @@ use mutsuki_agent_service_host_integration::{
     configured_standard_agent_plugin_catalog_with_extensions,
 };
 use mutsuki_bot_flow::{BotFlowRegistry, BotNodeCatalog};
-use mutsuki_bot_service_host_integration::configured_bot_plugin_catalog_with_agent_and_flow;
+use mutsuki_bot_service_host_integration::{
+    configured_bot_plugin_catalog_with_agent_flow_and_seed, qq_full_business_flow,
+};
 use mutsuki_plugin_bot_flow_agent_tool::{
     flow_tool_descriptors, flow_tool_manifest, flow_tool_runner,
 };
@@ -116,10 +118,11 @@ pub fn assemble_service_with_flow_registry(
         config.clone(),
         vec![flow_tool_extension(config.clone(), flow_registry.clone())],
     )?)?;
-    catalog.merge(configured_bot_plugin_catalog_with_agent_and_flow(
+    catalog.merge(configured_bot_plugin_catalog_with_agent_flow_and_seed(
         config,
         agent_connections,
         flow_registry,
+        qq_full_business_flow(),
     )?)?;
     Ok(ServiceRuntimeBuilder::new(service).with_configured_plugin_catalog(catalog))
 }

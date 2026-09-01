@@ -173,7 +173,8 @@ WebExtensions and product-facing assembly:
   catalog factories, sandbox outbound intercept). It may ship first-party default Flow graphs
   (`qq_ai_orchestrated_flow`, `qq_link_resolve_flow`, `bilibili_push_flow`, merged into
   `qq_full_business_flow` with example `configs/flow-full.example.json`); user graphs live in
-  ConfigService. Do not add business runners
+  ConfigService, and first-party products seed `qq_full_business_flow` into stores without a
+  flow record while never overwriting existing ones. Do not add business runners
   here. QQ Adapter still only translates official protocol.
 - `examples/bot-echo`: platform-neutral example business plugin over `mutsuki.bot.*` only.
 

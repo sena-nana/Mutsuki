@@ -20,8 +20,9 @@ Bilibili `web_cookie` 贡献 `mutsuki.bot.bilibili.resolve`，米画师贡献
 resolve → `qq.send`。B 站小程序自动解析需要 `web_cookie` 和全量群消息
 （`GROUP_MESSAGE_CREATE`）；AT-only 收不到未 @ 的分享，`open_platform` 没有 `link/resolve`。
 ConfigService 只接受一个激活 flow 文档；`qq_full_business_flow()`（flow_id
-`qq.business.full`）把 AI 对话、链接解析与 Bilibili 推送子图合并为一张全量参考图，
-示例 `configs/flow-full.example.json` 可经编辑器或 Agent flow 工具直接导入。
+`qq.business.full`）把 AI 对话、链接解析与 Bilibili 推送子图合并为一张全量参考图。
+第一方产品在配置仓库没有 flow 记录时于启动种子化该图，已有记录永不覆盖；
+示例 `configs/flow-full.example.json` 供 Agent flow 工具应用或对照参考。
 Bilibili 状态固定写入 ServiceHost
 `data_dir/bilibili/state.sqlite3`；首次轮询只建立 cursor，不补发历史。轮询检测到新条目后不再
 直连发送：runner 提交 `mutsuki.bot.event.bilibili` v1 触发事件（载荷 `BilibiliNotification`，
