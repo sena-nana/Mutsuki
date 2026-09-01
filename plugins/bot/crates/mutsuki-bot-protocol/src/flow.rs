@@ -264,6 +264,38 @@ pub struct BotFlowValidationResult {
     pub issues: Vec<BotFlowValidationIssue>,
 }
 
+/// Port-level connection state of one node instance inside the pinned flow
+/// graph. The router derives it from the immutable graph revision of the
+/// execution, so a plugin can learn whether it is wired without owning the
+/// document. Port lists are sorted and deduplicated.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BotNodeWiring {
+    /// Input ports that at least one event edge targets.
+    #[serde(default)]
+    pub wired_inputs: Vec<String>,
+    /// Output ports with at least one outgoing event edge.
+    #[serde(default)]
+    pub wired_outputs: Vec<String>,
+    /// Whether at least one error edge leaves this node.
+    #[serde(default)]
+    pub error_wired: bool,
+}
+
+impl BotNodeWiring {
+    /// The node instance has any inbound or outbound connection in the graph.
+    #[must_use]
+    pub fn is_connected(&self) -> bool {
+        !self.wired_inputs.is_empty() || self.has_downstream()
+    }
+
+    /// The node can hand an event to a downstream node through an event or
+    /// error edge; an unwired Source chain freezes its business by design.
+    #[must_use]
+    pub fn has_downstream(&self) -> bool {
+        !self.wired_outputs.is_empty() || self.error_wired
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BotNodeInvocation {
     pub flow_id: String,
@@ -271,6 +303,8 @@ pub struct BotNodeInvocation {
     pub execution_id: String,
     pub node_id: String,
     pub input_port_id: String,
+    #[serde(default)]
+    pub wiring: BotNodeWiring,
     pub config: Value,
     pub input: BotFlowEventEnvelope,
 }
@@ -306,4 +340,74 @@ pub struct BotFlowErrorEvent {
     pub failed_node_id: String,
     pub error: RuntimeError,
     pub input: BotFlowEventEnvelope,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_invocation() -> BotNodeInvocation {
+        BotNodeInvocation {
+            flow_id: "default".into(),
+            graph_revision: 3,
+            execution_id: "exec".into(),
+            node_id: "card".into(),
+            input_port_id: "event".into(),
+            wiring: BotNodeWiring {
+                wired_inputs: vec!["event".into()],
+                wired_outputs: vec!["message".into()],
+                error_wired: true,
+            },
+            config: serde_json::json!({}),
+            input: BotFlowEventEnvelope {
+                event_id: "e1".into(),
+                protocol_id: "mutsuki.bot.event/ingest@1".into(),
+                payload: BotFlowPayload {
+                    event_type: BotFlowTypeRef::new("mutsuki.bot.event", 1),
+                    value: serde_json::json!({}),
+                },
+                context: BotFlowContext {
+                    bot: None,
+                    target: None,
+                    actor: None,
+                    ext: BotExtMap::new(),
+                },
+                trace_id: None,
+                correlation_id: None,
+            },
+        }
+    }
+
+    #[test]
+    fn invocation_wiring_round_trips_and_defaults_for_older_senders() {
+        let invocation = sample_invocation();
+        let encoded = serde_json::to_value(&invocation).unwrap();
+        assert_eq!(
+            serde_json::from_value::<BotNodeInvocation>(encoded).unwrap(),
+            invocation
+        );
+
+        let mut legacy = serde_json::to_value(&invocation).unwrap();
+        legacy.as_object_mut().unwrap().remove("wiring");
+        let decoded = serde_json::from_value::<BotNodeInvocation>(legacy).unwrap();
+        assert_eq!(decoded.wiring, BotNodeWiring::default());
+        assert!(!decoded.wiring.is_connected());
+    }
+
+    #[test]
+    fn wiring_summary_flags_distinguish_inbound_from_downstream() {
+        let wiring = BotNodeWiring {
+            wired_inputs: vec!["event".into()],
+            ..BotNodeWiring::default()
+        };
+        assert!(wiring.is_connected());
+        assert!(!wiring.has_downstream());
+
+        let downstream = BotNodeWiring {
+            error_wired: true,
+            ..BotNodeWiring::default()
+        };
+        assert!(downstream.is_connected());
+        assert!(downstream.has_downstream());
+    }
 }

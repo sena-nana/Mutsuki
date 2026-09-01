@@ -21,6 +21,9 @@ description: Change generic mutsuki.bot protocol DTOs, protocol identifiers, mes
 - Version breaking wire changes and update manifests, adapters and round-trip tests together.
 - Keep Bot Flow node/event/document DTOs in the Bot protocol owner. Plugin node catalogs are
   carried through the domain-neutral `PluginProvides.extensions` contract; Core and Std workflow
-  must not interpret Bot graph semantics.
+  must not interpret Bot graph semantics. `BotNodeWiring` (the port-level connection snapshot
+  delivered inside `BotNodeInvocation`) also lives there; the router derives it from the pinned
+  graph and the `BotFlowRegistry` host service mirrors it as `node_wiring`/`source_wired`
+  queries.
 
 Do not expose platform SDK clients, sockets or Host objects through the Bot API.

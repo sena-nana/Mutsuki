@@ -104,6 +104,7 @@ pub fn pipeline_sample(event_count: usize, adapter_count: usize) -> Sample {
                         execution_id: format!("benchmark:{}", event.event_id),
                         node_id: "echo".into(),
                         input_port_id: "command".into(),
+                        wiring: BotNodeWiring::default(),
                         config: json!({}),
                         input: event,
                     }),
@@ -258,6 +259,7 @@ fn command_invocation(event: BotEvent) -> BotNodeInvocation {
         execution_id: format!("benchmark:{event_id}"),
         node_id: "command".into(),
         input_port_id: "event".into(),
+        wiring: BotNodeWiring::default(),
         config: json!({
             "prefixes": ["/"],
             "path": ["echo"],
@@ -665,6 +667,7 @@ pub fn gateway_ingress_chain_sample(event_count: usize) -> Sample {
                         execution_id: format!("benchmark:{}", event.event_id),
                         node_id: "echo".into(),
                         input_port_id: "command".into(),
+                        wiring: BotNodeWiring::default(),
                         config: json!({}),
                         input: event,
                     }),

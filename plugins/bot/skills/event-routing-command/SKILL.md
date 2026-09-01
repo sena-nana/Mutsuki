@@ -38,6 +38,14 @@ description: Change Bot Flow graph validation/execution, node catalogs, command 
   them on the `mutsuki.bot.flow.ingress` health snapshot, and records `matched_sources` in each
   ingress task output. Business sources submit through the SDK `BotSubmissionGate` and must not
   declare `requires_protocol` on platform business protocols.
+- Plugins learn whether they are wired through Flow-owned interfaces only: the router derives
+  `BotNodeInvocation.wiring` (`BotNodeWiring`: wired input/output ports, error edge, summary
+  flags) from the pinned graph revision, and the `mutsuki.bot.flow.registry` host service exposes
+  `node_wiring(node_id)` / `source_wired(protocol_id, event_type)` against the active graph.
+  Business push pipelines may skip upstream work while `source_wired` is false — Bilibili
+  polling skips the upstream API call, reports `push_wired: false` / `poll_skipped: true` in the
+  task output and in management status, and baselines the cursor on the first wired poll so the
+  frozen window never replays as a backlog.
 
 Test validation failures, hit/miss, linear chains, fan-out, same-graph Source chains, error edges,
 revision pinning, ConfigService CAS conflicts, restart recovery, typed output shape, trigger-event

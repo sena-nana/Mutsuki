@@ -9,6 +9,8 @@
 
 use mutsuki_bot_conversation::qq_conversation_from_event;
 use mutsuki_bot_interaction::{InteractionError, InteractionService};
+#[cfg(test)]
+use mutsuki_bot_protocol::BotNodeWiring;
 use mutsuki_bot_protocol::{
     BOT_FLOW_BOT_EVENT_TYPE, BOT_INTERACTION_CREATE_PROTOCOL_ID, BOT_INTERACTION_MATCH_PROTOCOL_ID,
     BOT_INTERACTION_SESSION_PROTOCOL_ID, BotEvent, BotEventKind, BotFlowEventEnvelope,
@@ -687,6 +689,7 @@ mod tests {
             execution_id: "exec".into(),
             node_id: "interaction-create".into(),
             input_port_id: "event".into(),
+            wiring: BotNodeWiring::default(),
             config: serde_json::json!({"timeout_ms": 60_000}),
             input: BotFlowEventEnvelope {
                 event_id: empty.event_id.clone(),
@@ -738,6 +741,7 @@ mod tests {
             execution_id: "exec".into(),
             node_id: "interaction-create".into(),
             input_port_id: "event".into(),
+            wiring: BotNodeWiring::default(),
             config: serde_json::json!({}),
             input: BotFlowEventEnvelope {
                 event_id: "event-actor".into(),

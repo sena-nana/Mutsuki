@@ -73,6 +73,21 @@ Every node Task pins `graph_revision`, registry generation, trace and correlatio
 configuration revision atomically changes new ingress only; an in-flight task keeps its immutable
 `Arc` snapshot.
 
+Plugins can ask whether they are wired into the active graph through two Flow-owned interfaces:
+
+- `BotNodeInvocation.wiring` carries a `BotNodeWiring` snapshot derived from the pinned graph
+  revision: `wired_inputs` / `wired_outputs` list the ports an edge actually references,
+  `error_wired` reports an error edge, and `is_connected()` / `has_downstream()` summarize. An
+  unwired Source chain freezes its business by design, so a node handler can use this to skip
+  work whose result would be dropped anyway.
+- The `mutsuki.bot.flow.registry` host service (`BotFlowRegistry`) exposes `node_wiring(node_id)`
+  for one instance on the active graph and `source_wired(protocol_id, event_type)` for ingress
+  selectors — `false` means a submission would freeze. Business push pipelines use it before
+  doing upstream work: Bilibili polling skips the upstream poll entirely while its
+  `mutsuki.bot.bilibili.notification` chain is unwired (task output records
+  `push_wired: false, poll_skipped: true`), and the first wired poll after a freeze baselines the
+  cursor instead of replaying the frozen window as a notification backlog.
+
 Save is revision-fenced: the editor submits one CAS after validation against the current LoadPlan
 catalog, and the applied document is immediately live. `ConfigRepository` owns durable storage and
 `BotFlowConfigProvider` owns activation/rollback. LoadPlan only admits the node catalog; stored

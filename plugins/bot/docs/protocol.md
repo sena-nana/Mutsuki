@@ -89,6 +89,10 @@ is custom markdown content. QQ keyboard and template markdown stay `PlatformSpec
 `PluginProvides.extensions` carries versioned domain-neutral extension payloads. Bot plugins use
 `mutsuki.bot.flow.nodes@1` for their node catalog. `BotFlowEventEnvelope`, `BotNodeInvocation` and
 `BotNodeResult` preserve typed ports plus Bot/trace/correlation context across graph execution.
+`BotNodeInvocation.wiring` (a `BotNodeWiring`) reports the port-level connections of the node
+instance on the pinned graph revision; the `mutsuki.bot.flow.registry` host service additionally
+offers `node_wiring` / `source_wired` queries so push pipelines can check they are wired before
+submitting.
 
 `mutsuki.bot.delivery/submit@1` owns active (non-Agent) durable send: persist request, CAS-claim
 due receipts, retry, and `mutsuki.bot.message/send@1` at the side-effect boundary.

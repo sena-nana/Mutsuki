@@ -40,7 +40,10 @@ Adapter/Gateway。它不拥有 Core 调度、Host 生命周期、Agent 能力或
     `delivery/*`、`agent/*`），业务 manifest 注册前必须通过
     `BotSubmissionGate::ensure_manifest_business_surface` 校验。活动图未接线等于对应业务冻结；
     冻结经 ingress 统计（`accepted_total`/`dropped_total`）与 `mutsuki.bot.flow.ingress`
-    健康探针可观测，不是静默失败。
+    健康探针可观测，不是静默失败。插件经 Flow 拥有的两个接口查询自身连线状态：
+    `BotNodeInvocation.wiring`（随图版本固定的端口级连线）与 `mutsuki.bot.flow.registry`
+    host service 的 `node_wiring`/`source_wired`；业务推送管线据此在未接线时跳过上游工作
+    （Bilibili 轮询跳过上游 API 并基线化游标，不回放冻结窗口）。
 14. 已发起的效果经持久完成路径排空：`BotReplyDeliveryRecoveryEventSource`、reserved draft
     Submit、interaction waiter 以及 adapter/delivery 服务本身不在第 13 条限制内；控制面
     （管理 API、Web 控制台）同样豁免。图外直连 `mutsuki.bot.agent/submit@1` 仅保留给测试面，

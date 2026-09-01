@@ -7,8 +7,8 @@ use mutsuki_bot_protocol::{
     BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID, BotConversationKind, BotDeliveryContent, BotEvent,
     BotEventKind, BotFlowContext, BotFlowEventEnvelope, BotFlowPayload, BotFlowTypeRef,
     BotMediaKind, BotMessage, BotMessageRecallRequest, BotNodeInvocation, BotNodeResult,
-    BotReplyDeliveryPart, BotReplyDeliveryRequest, BotTarget, BotUser, DeliveryPolicy,
-    MessageSegment, QQ_CONVERSATION_REF_VERSION, QQBOT_ACCOUNT_GET_PROTOCOL_ID,
+    BotNodeWiring, BotReplyDeliveryPart, BotReplyDeliveryRequest, BotTarget, BotUser,
+    DeliveryPolicy, MessageSegment, QQ_CONVERSATION_REF_VERSION, QQBOT_ACCOUNT_GET_PROTOCOL_ID,
     QQBOT_GATEWAY_STATUS_PROTOCOL_ID, QQBOT_OPENAPI_PERMANENT_ERROR,
     QQBOT_OPENAPI_RATE_LIMITED_ERROR, QQBOT_RAW_CALL_PROTOCOL_ID, QqConversationRef,
     QqMessageSegmentKind, QqPermissionRequirement,
@@ -1598,6 +1598,7 @@ fn openapi_runner_applies_forward_fold_without_http() {
         execution_id: "ex".into(),
         node_id: "n".into(),
         input_port_id: "reply".into(),
+        wiring: BotNodeWiring::default(),
         config: json!({"threshold": 8}),
         input: BotFlowEventEnvelope {
             event_id: "e1".into(),

@@ -26,7 +26,7 @@
     clippy::useless_vec
 )]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -34,6 +34,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
+use mutsuki_bot_flow::BotFlowRegistry;
 use mutsuki_bot_link_parser::{MAX_LINK_CARD_MEDIA_BYTES, ResolvedLinkCard, preferred_event_url};
 #[cfg(test)]
 use mutsuki_bot_management::BilibiliCredentialSecretState;
@@ -990,6 +991,10 @@ pub struct BilibiliRunner {
     media_provider_id: String,
     managed_config: Option<SharedBilibiliConfig>,
     management: Option<Arc<dyn BilibiliManagementApi>>,
+    flow_registry: Option<Arc<BotFlowRegistry>>,
+    /// Cursor keys skipped while the push chain was unwired. The next wired
+    /// poll baselines them so the frozen window never replays as a backlog.
+    frozen_polls: BTreeSet<String>,
 }
 
 struct PreparedCards {
@@ -1041,7 +1046,25 @@ impl BilibiliRunner {
             media_provider_id: media_provider_id.into(),
             managed_config: None,
             management: None,
+            flow_registry: None,
+            frozen_polls: BTreeSet::new(),
         }
+    }
+
+    /// Shares the Flow registry so the poll path can ask whether the push
+    /// Source chain is wired into the active graph. Without a registry the
+    /// runner keeps the historical always-poll behavior.
+    pub fn with_flow_registry(mut self, registry: Arc<BotFlowRegistry>) -> Self {
+        self.flow_registry = Some(registry);
+        self
+    }
+
+    /// `None` when no registry is injected (wiring unknown); otherwise whether
+    /// the `mutsuki.bot.bilibili.notification` Source chain has downstream.
+    fn push_source_wired(&self) -> Option<bool> {
+        self.flow_registry.as_ref().map(|registry| {
+            registry.source_wired(BOT_EVENT_INGEST_PROTOCOL_ID, Some((BILIBILI_EVENT_TYPE, 1)))
+        })
     }
 
     pub fn with_management(
@@ -1085,12 +1108,16 @@ impl BilibiliRunner {
         kind: BilibiliPollKind,
         items: Vec<BilibiliItem>,
         status: Option<DomainEvent>,
+        force_baseline: bool,
     ) -> Result<RunnerResult, RuntimeError> {
-        let key = format!("{kind:?}:{}:{}", request.uid, request.subscription_id);
-        let previous = self
-            .repository
-            .cursor(&key)
-            .map_err(|error| bili_error(task, BilibiliError::Transport(error.to_string())))?;
+        let key = poll_cursor_key(&kind, &request);
+        let previous = if force_baseline {
+            None
+        } else {
+            self.repository
+                .cursor(&key)
+                .map_err(|error| bili_error(task, BilibiliError::Transport(error.to_string())))?
+        };
         let mut result = RunnerResult::completed(task.task_id.clone());
         result.events.extend(status);
         let Some(head) = items.first().map(|item| item.id.clone()) else {
@@ -1548,6 +1575,27 @@ async fn run_task_async(
             BilibiliError::InvalidResponse("unsupported poll protocol".into()),
         ))
     })?;
+    // Flow is the only initiation surface: when the push Source chain is not
+    // wired the business is frozen, so the upstream poll is skipped entirely.
+    // The skipped cursor key baselines on the first wired poll instead of
+    // replaying the frozen window as a notification backlog.
+    let poll_plan = {
+        let mut runner = state.lock().expect("Bilibili runner mutex");
+        let key = poll_cursor_key(&kind, &request);
+        match runner.push_source_wired() {
+            Some(false) => {
+                runner.frozen_polls.insert(key);
+                None
+            }
+            Some(true) => Some(runner.frozen_polls.take(&key).is_some()),
+            None => Some(false),
+        }
+    };
+    let Some(force_baseline) = poll_plan else {
+        let mut result = RunnerResult::completed(task.task_id.clone());
+        result.output = Some(json!({ "push_wired": false, "poll_skipped": true }));
+        return Ok(result);
+    };
     let attempt = state
         .lock()
         .expect("Bilibili runner mutex")
@@ -1557,7 +1605,7 @@ async fn run_task_async(
         Ok(items) => state
             .lock()
             .expect("Bilibili runner mutex")
-            .finish_poll(&task, request, kind, items, None)
+            .finish_poll(&task, request, kind, items, None, force_baseline)
             .map_err(RuntimeFailure::new),
         Err(BilibiliError::RiskControl352)
             if kind == BilibiliPollKind::Dynamic && risk_control.is_some() =>
@@ -2086,8 +2134,13 @@ async fn run_chromium_risk_control_fallback(
             BilibiliPollKind::Dynamic,
             items,
             Some(status),
+            false,
         )
         .map_err(RuntimeFailure::new)
+}
+
+fn poll_cursor_key(kind: &BilibiliPollKind, request: &PollRequest) -> String {
+    format!("{kind:?}:{}:{}", request.uid, request.subscription_id)
 }
 
 pub fn manifest() -> mutsuki_runtime_contracts::PluginManifest {
@@ -2864,7 +2917,11 @@ fn wbi_mixin_key(img_url: &str, sub_url: &str) -> Result<String, BilibiliError> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mutsuki_bot_protocol::{BotAccountRef, BotEvent, BotEventKind, BotPlatform, BotUser};
+    use mutsuki_bot_protocol::{
+        BotAccountRef, BotEvent, BotEventKind, BotFlowDocument, BotFlowEdge, BotFlowEdgeKind,
+        BotFlowNode, BotFlowNodePosition, BotFlowSourceSelector, BotNodeWiring, BotPlatform,
+        BotUser,
+    };
     use mutsuki_runtime_contracts::resource::experimental::{CommandBatch, SagaPlan};
     use mutsuki_runtime_contracts::{
         BatchEntry, BatchPayload, CommandPlan, DispatchLane, ExportPlan, OrderingRequirement,
@@ -3577,6 +3634,7 @@ mod tests {
             execution_id: "exec".into(),
             node_id: "bili".into(),
             input_port_id: "event".into(),
+            wiring: BotNodeWiring::default(),
             config: json!({"outbound_binding": "qq-main", "cooldown_ms": 60_000}),
             input: BotFlowEventEnvelope {
                 event_id: "e1".into(),
@@ -3760,6 +3818,7 @@ mod tests {
             execution_id: "exec".into(),
             node_id: "card".into(),
             input_port_id: "event".into(),
+            wiring: BotNodeWiring::default(),
             config: json!({}),
             input: BotFlowEventEnvelope {
                 event_id: "notify-1".into(),
@@ -4308,5 +4367,245 @@ mod tests {
             Some(BilibiliPollKind::Dynamic)
         );
         assert_eq!(BilibiliPollKind::from_protocol_id(LINK_RESOLVE), None);
+    }
+
+    struct CountingTransport {
+        polls: Arc<AtomicU64>,
+    }
+
+    impl BilibiliTransport for CountingTransport {
+        fn poll(
+            &mut self,
+            _kind: &BilibiliPollKind,
+            uid: u64,
+        ) -> Result<Vec<BilibiliItem>, BilibiliError> {
+            let sequence = self.polls.fetch_add(1, Ordering::SeqCst) + 1;
+            Ok(vec![BilibiliItem {
+                id: format!("item-{sequence}"),
+                title: format!("item {sequence}"),
+                url: format!("https://t.bilibili.com/{uid}/{sequence}"),
+                image_url: None,
+            }])
+        }
+
+        fn resolve(&mut self, _url: &str) -> Result<ResolvedLinkCard, BilibiliError> {
+            unreachable!()
+        }
+
+        fn download(&mut self, _url: &str, _max_bytes: usize) -> Result<Vec<u8>, BilibiliError> {
+            unreachable!()
+        }
+
+        fn qr_start(&mut self) -> Result<BilibiliQrCode, BilibiliError> {
+            unreachable!()
+        }
+
+        fn qr_poll(&mut self, _key: &str) -> Result<BilibiliQrPoll, BilibiliError> {
+            unreachable!()
+        }
+
+        fn profile(&mut self, _uid: u64) -> Result<BilibiliProfile, BilibiliError> {
+            unreachable!()
+        }
+    }
+
+    fn push_flow_document(wired: bool) -> BotFlowDocument {
+        let mut flow = BotFlowDocument {
+            flow_id: "push".into(),
+            name: "push".into(),
+            nodes: vec![
+                BotFlowNode {
+                    node_id: "push".into(),
+                    node_type_id: BILIBILI_NOTIFICATION_NODE_TYPE.into(),
+                    node_type_version: 1,
+                    config: json!({}),
+                    source: Some(BotFlowSourceSelector {
+                        protocol_id: BOT_EVENT_INGEST_PROTOCOL_ID.into(),
+                        event_type: Some(BotFlowTypeRef::new(BILIBILI_EVENT_TYPE, 1)),
+                    }),
+                    position: BotFlowNodePosition::default(),
+                },
+                BotFlowNode {
+                    node_id: "card".into(),
+                    node_type_id: BILIBILI_CARD_NODE_TYPE.into(),
+                    node_type_version: 1,
+                    config: json!({}),
+                    source: None,
+                    position: BotFlowNodePosition::default(),
+                },
+            ],
+            edges: Vec::new(),
+        };
+        if wired {
+            flow.edges.push(BotFlowEdge {
+                edge_id: "push-card".into(),
+                from_node_id: "push".into(),
+                from_port_id: "event".into(),
+                to_node_id: "card".into(),
+                to_port_id: "event".into(),
+                kind: BotFlowEdgeKind::Event,
+            });
+        }
+        flow
+    }
+
+    fn push_registry(wired: bool) -> Arc<BotFlowRegistry> {
+        use mutsuki_bot_flow::BotNodeCatalog;
+        use mutsuki_bot_protocol::BotFlowSnapshot;
+
+        let manifest = manifest_for_backend(BilibiliBackendKind::WebCookie, false, false);
+        Arc::new(
+            BotFlowRegistry::with_snapshot(
+                BotNodeCatalog::from_manifests(&[manifest]).unwrap(),
+                BotFlowSnapshot {
+                    revision: 1,
+                    flow: push_flow_document(wired),
+                },
+            )
+            .unwrap(),
+        )
+    }
+
+    fn run_poll_task(runner: &mut Box<dyn Runner>, task_id: &str) -> RunnerResult {
+        let task = Task::new(
+            task_id,
+            POLL_LIVE,
+            serde_json::to_value(PollRequest {
+                subscription_id: "sub".into(),
+                uid: 7,
+                target: BotTarget::Group {
+                    group_id: "group".into(),
+                },
+                outbound_binding: "qq-main".into(),
+            })
+            .unwrap(),
+        );
+        let context =
+            RunnerContext::new(1, 1, "executor", None::<&str>, "invocation").with_batch("batch", 1);
+        let batch = command_batch(vec![task]);
+        let completed = runner.run_batch(context, batch).unwrap();
+        completed.results[0].result.as_ref().unwrap().clone()
+    }
+
+    fn count_runner(
+        polls: Arc<AtomicU64>,
+        registry: Option<Arc<BotFlowRegistry>>,
+    ) -> Box<dyn Runner> {
+        let mut runner = BilibiliRunner::new(
+            Box::new(CountingTransport {
+                polls: polls.clone(),
+            }),
+            Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap()),
+            Arc::new(UnusedResources),
+            "memory",
+        );
+        if let Some(registry) = registry {
+            runner = runner.with_flow_registry(registry);
+        }
+        runner.into_runtime_runner(Arc::new(CompletedChildClient), None)
+    }
+
+    #[test]
+    fn unwired_push_chain_skips_polling_and_reports_the_freeze() {
+        let polls = Arc::new(AtomicU64::new(0));
+        let mut runner = count_runner(polls.clone(), Some(push_registry(false)));
+
+        let result = run_poll_task(&mut runner, "frozen-poll");
+        assert_eq!(
+            polls.load(Ordering::SeqCst),
+            0,
+            "unwired chain must not poll"
+        );
+        assert_eq!(result.output.as_ref().unwrap()["poll_skipped"], json!(true));
+        assert_eq!(result.output.as_ref().unwrap()["push_wired"], json!(false));
+    }
+
+    #[test]
+    fn wired_push_chain_polls_and_fans_out_notifications() {
+        let polls = Arc::new(AtomicU64::new(0));
+        let mut runner = count_runner(polls.clone(), Some(push_registry(true)));
+
+        let first = run_poll_task(&mut runner, "first-poll");
+        assert_eq!(polls.load(Ordering::SeqCst), 1);
+        assert!(first.tasks.is_empty(), "first poll baselines the cursor");
+
+        let second = run_poll_task(&mut runner, "second-poll");
+        assert_eq!(polls.load(Ordering::SeqCst), 2);
+        assert_eq!(second.tasks.len(), 1);
+        assert_eq!(second.tasks[0].protocol_id, BOT_FLOW_INGRESS_PROTOCOL_ID);
+    }
+
+    #[test]
+    fn forced_baseline_poll_advances_the_cursor_without_notifications() {
+        let repository = Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap());
+        repository.set_cursor("Live:7:sub", "item-8").unwrap();
+        let mut runner = BilibiliRunner::new(
+            Box::new(CountingTransport {
+                polls: Arc::new(AtomicU64::new(0)),
+            }),
+            repository.clone(),
+            Arc::new(UnusedResources),
+            "memory",
+        );
+        let request = PollRequest {
+            subscription_id: "sub".into(),
+            uid: 7,
+            target: BotTarget::Group {
+                group_id: "group".into(),
+            },
+            outbound_binding: "qq-main".into(),
+        };
+        let task = Task::new(
+            "baseline",
+            POLL_LIVE,
+            serde_json::to_value(&request).unwrap(),
+        );
+        let items = vec![BilibiliItem {
+            id: "item-9".into(),
+            title: "newest".into(),
+            url: "https://t.bilibili.com/9".into(),
+            image_url: None,
+        }];
+
+        let result = runner
+            .finish_poll(&task, request, BilibiliPollKind::Live, items, None, true)
+            .unwrap();
+        assert!(
+            result.tasks.is_empty(),
+            "the frozen window must not replay as a notification backlog"
+        );
+        assert_eq!(
+            repository.cursor("Live:7:sub").unwrap().as_deref(),
+            Some("item-9")
+        );
+    }
+
+    fn managed_status_service(state: Arc<Mutex<FakeTransportState>>) -> BilibiliManagementService {
+        BilibiliManagementService::new(
+            SharedBilibiliConfig::new(managed_config()),
+            SharedBilibiliCredential::default(),
+            Box::new(FakeTransport(state)),
+            Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap()),
+            Arc::new(RecordingCredentialStore::default()),
+            Arc::new(RecordingConfigStore::default()),
+            Arc::new(AlwaysPresentSecrets),
+        )
+    }
+
+    #[test]
+    fn management_status_reports_push_wiring_only_with_a_shared_registry() {
+        let status =
+            managed_status_service(Arc::new(Mutex::new(FakeTransportState::default()))).status();
+        assert_eq!(status.push_wired, None);
+
+        let status = managed_status_service(Arc::new(Mutex::new(FakeTransportState::default())))
+            .with_flow_registry(push_registry(false))
+            .status();
+        assert_eq!(status.push_wired, Some(false));
+
+        let status = managed_status_service(Arc::new(Mutex::new(FakeTransportState::default())))
+            .with_flow_registry(push_registry(true))
+            .status();
+        assert_eq!(status.push_wired, Some(true));
     }
 }

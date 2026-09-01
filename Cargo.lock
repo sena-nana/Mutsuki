@@ -4449,6 +4449,7 @@ dependencies = [
  "fastrand",
  "hmac 0.13.0",
  "md5",
+ "mutsuki-bot-flow",
  "mutsuki-bot-link-parser",
  "mutsuki-bot-management",
  "mutsuki-bot-protocol",

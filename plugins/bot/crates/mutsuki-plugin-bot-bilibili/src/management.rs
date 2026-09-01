@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use async_trait::async_trait;
+use mutsuki_bot_flow::BotFlowRegistry;
 use mutsuki_bot_management::{
     BilibiliBindChallengeResult, BilibiliBindVerifyResult, BilibiliCredentialSecretState,
     BilibiliLoginPollResult, BilibiliLoginSession, BilibiliLoginStartResult, BilibiliManagementApi,
@@ -12,13 +13,14 @@ use mutsuki_bot_management::{
     BilibiliNotificationKind, BilibiliPreviewCardView, BilibiliQrLoginStatus,
     BilibiliSubscriptionView, in_blocking_section,
 };
-use mutsuki_bot_protocol::BotTarget;
+use mutsuki_bot_protocol::{BOT_EVENT_INGEST_PROTOCOL_ID, BotTarget};
 
 use crate::{
-    BilibiliBackendConfig, BilibiliBackendKind, BilibiliConfig, BilibiliConfigStore,
-    BilibiliCredentialStore, BilibiliError, BilibiliPollKind, BilibiliQrStatus,
-    BilibiliSubscription, BilibiliTransport, SharedBilibiliConfig, SharedBilibiliCredential,
-    SqliteBilibiliRepository, binding_code, select_subscription, self_subscription_id_for,
+    BILIBILI_EVENT_TYPE, BilibiliBackendConfig, BilibiliBackendKind, BilibiliConfig,
+    BilibiliConfigStore, BilibiliCredentialStore, BilibiliError, BilibiliPollKind,
+    BilibiliQrStatus, BilibiliSubscription, BilibiliTransport, SharedBilibiliConfig,
+    SharedBilibiliCredential, SqliteBilibiliRepository, binding_code, select_subscription,
+    self_subscription_id_for,
 };
 
 #[async_trait]
@@ -41,6 +43,7 @@ pub struct BilibiliManagementService {
     qr_renderer: RwLock<Option<Arc<dyn BilibiliQrRenderer>>>,
     change_revision: AtomicU64,
     changes: tokio::sync::broadcast::Sender<BilibiliManagementChangeEvent>,
+    flow_registry: Option<Arc<BotFlowRegistry>>,
 }
 
 impl BilibiliManagementService {
@@ -65,6 +68,7 @@ impl BilibiliManagementService {
             qr_renderer: RwLock::new(None),
             change_revision: AtomicU64::new(0),
             changes,
+            flow_registry: None,
         }
     }
 
@@ -81,6 +85,13 @@ impl BilibiliManagementService {
 
     pub fn bind_qr_renderer(&self, renderer: Arc<dyn BilibiliQrRenderer>) {
         *self.qr_renderer.write().expect("QR renderer lock") = Some(renderer);
+    }
+
+    /// Shares the Flow registry so `status()` can report whether the push
+    /// Source chain is wired into the active graph.
+    pub fn with_flow_registry(mut self, registry: Arc<BotFlowRegistry>) -> Self {
+        self.flow_registry = Some(registry);
+        self
     }
 
     fn status_impl(&self) -> BilibiliManagementStatus {
@@ -117,6 +128,9 @@ impl BilibiliManagementService {
             credential_loaded: self.credential.is_loaded(),
             subscription_count: snapshot.subscriptions.len(),
             reason,
+            push_wired: self.flow_registry.as_ref().map(|registry| {
+                registry.source_wired(BOT_EVENT_INGEST_PROTOCOL_ID, Some((BILIBILI_EVENT_TYPE, 1)))
+            }),
         }
     }
 

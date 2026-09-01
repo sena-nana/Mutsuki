@@ -10,6 +10,8 @@
 use std::sync::Arc;
 
 use mutsuki_bot_link_parser::{MAX_LINK_CARD_MEDIA_BYTES, preferred_event_url};
+#[cfg(test)]
+use mutsuki_bot_protocol::BotNodeWiring;
 use mutsuki_bot_protocol::{
     BOT_MESSAGE_SEND_PROTOCOL_ID, BotEvent, BotExtMap, BotFlowEventEnvelope, BotFlowPayload,
     BotFlowTypeRef, BotMessage, BotNodeBinding, BotNodeCatalogFragment, BotNodeDescriptor,
@@ -767,6 +769,7 @@ mod tests {
             execution_id: "exec".into(),
             node_id: "mihuashi".into(),
             input_port_id: "event".into(),
+            wiring: BotNodeWiring::default(),
             config: json!({}),
             input: BotFlowEventEnvelope {
                 event_id: "e1".into(),

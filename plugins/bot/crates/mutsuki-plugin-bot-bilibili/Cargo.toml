@@ -9,6 +9,7 @@ async-trait.workspace = true
 fastrand.workspace = true
 md5.workspace = true
 hmac.workspace = true
+mutsuki-bot-flow.workspace = true
 mutsuki-bot-link-parser.workspace = true
 mutsuki-bot-management.workspace = true
 mutsuki-bot-protocol.workspace = true

@@ -29,7 +29,7 @@ use mutsuki_bot_protocol::{
     BotFlowEdgeKind, BotFlowEventEnvelope, BotFlowNode, BotFlowNodePosition, BotFlowPayload,
     BotFlowSourceSelector, BotFlowTypeRef, BotMessage, BotNodeCatalogFragment, BotNodeDescriptor,
     BotNodeInvocation, BotNodeOutput, BotNodePortDescriptor, BotNodePortDirection, BotNodeResult,
-    BotNodeRole, BotPlatform, BotReplyDeliveryCommand, BotReplyDeliveryPart,
+    BotNodeRole, BotNodeWiring, BotPlatform, BotReplyDeliveryCommand, BotReplyDeliveryPart,
     BotReplyDeliveryRequest, BotSpeechReplyPolicy, BotTarget, BotUser, ConversationPolicy,
     DeliveryPolicy, DeliveryStatus, MessageSegment, QqConversationRef,
 };
@@ -716,6 +716,7 @@ async fn submit_agent_node(runtime: &ServiceRuntime, event_id: &str) {
         execution_id: format!("execution-{event_id}"),
         node_id: "agent".into(),
         input_port_id: "input".into(),
+        wiring: BotNodeWiring::default(),
         config: json!({}),
         input: BotFlowEventEnvelope {
             event_id: event.event_id.clone(),
