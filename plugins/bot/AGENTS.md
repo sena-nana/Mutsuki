@@ -34,6 +34,17 @@ Adapter/Gateway。它不拥有 Core 调度、Host 生命周期、Agent 能力或
 12. 有 `PluginBuilder` 的可加载面必须使用 `mutsuki-plugin-*` 名；库面 crate 只持有 trait/service。
     `mutsuki-bot-state-db` 实现 conversation/persona/delivery/interaction/sandbox 库面 store，
     禁止反向依赖 plugin 包。
+13. Flow 是业务行为唯一启动面：业务插件只经图节点 binding 被调用，或只提交
+    `mutsuki.bot.flow/ingress@1` 触发事件并到此为止。业务 EventSource 的提交面必须经
+    `mutsuki-bot-sdk` 的 `BotSubmissionGate` 包装（拒绝直提 `message/send`、`message/recall`、
+    `delivery/*`、`agent/*`），业务 manifest 注册前必须通过
+    `BotSubmissionGate::ensure_manifest_business_surface` 校验。活动图未接线等于对应业务冻结；
+    冻结经 ingress 统计（`accepted_total`/`dropped_total`）与 `mutsuki.bot.flow.ingress`
+    健康探针可观测，不是静默失败。
+14. 已发起的效果经持久完成路径排空：`BotReplyDeliveryRecoveryEventSource`、reserved draft
+    Submit、interaction waiter 以及 adapter/delivery 服务本身不在第 13 条限制内；控制面
+    （管理 API、Web 控制台）同样豁免。图外直连 `mutsuki.bot.agent/submit@1` 仅保留给测试面，
+    不是生产启动路径。
 
 完整 crate 表见 `docs/architecture.md`。关键边界：
 

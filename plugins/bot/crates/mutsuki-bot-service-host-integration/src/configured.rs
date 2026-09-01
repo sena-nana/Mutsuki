@@ -10,6 +10,7 @@ use mutsuki_bot_flow::{
 use mutsuki_bot_management::{BilibiliCredentialSecretState, BilibiliManagementApi};
 use mutsuki_bot_protocol::ConversationPolicy;
 use mutsuki_bot_sandbox::{SANDBOX_SERVICE_ID, SandboxService};
+use mutsuki_bot_sdk::BotSubmissionGate;
 use mutsuki_bot_state_db::BotStateDbRepository;
 use mutsuki_config_service::{
     ConfigApplyMode, ConfigApplyRequest, ConfigConstraints, ConfigContext, ConfigDescriptor,
@@ -192,6 +193,7 @@ impl ConfiguredPluginFactory for BotFlowRouterConfiguredPlugin {
         let ingress_registry = registry.clone();
         let node_registry = registry.clone();
         let service_registry = registry.clone();
+        let ingress_stats_registry = registry.clone();
         let config_service = self.config.clone();
         Ok(builder
             .register_builtin_loaded_plugin_factory(manifest, move || {
@@ -216,6 +218,14 @@ impl ConfiguredPluginFactory for BotFlowRouterConfiguredPlugin {
                 })
             })
             .register_builtin_runner(move || flow_ingress_runner(ingress_registry.clone()))
+            .register_health_probe("mutsuki.bot.flow.ingress", move || {
+                let stats = ingress_stats_registry.ingress_stats();
+                serde_json::json!({
+                    "status": "ok",
+                    "accepted_total": stats.accepted_total(),
+                    "dropped_total": stats.dropped_total(),
+                })
+            })
             .register_builtin_runner(move || Box::new(BotFlowMatchRunner::default()))
             .register_runtime_client_runner(move |client| {
                 flow_node_runner(client, node_registry.clone())
@@ -797,6 +807,8 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
             ContractSurfaceKind::ResourceProvider,
             runner_config.snapshot().media_provider_id,
         ));
+        BotSubmissionGate::ensure_manifest_business_surface(&manifest)
+            .map_err(|error| error.to_string())?;
 
         let management_service = if let Some(config_service) = config_service {
             let service = Arc::new(BilibiliManagementService::new(
@@ -962,6 +974,8 @@ impl ConfiguredPluginFactory for WorkshopConfiguredPlugin {
             ContractSurfaceKind::ResourceProvider,
             config.media_provider_id.clone(),
         ));
+        BotSubmissionGate::ensure_manifest_business_surface(&manifest)
+            .map_err(|error| error.to_string())?;
         Ok(builder
             .register_builtin_plugin(manifest)
             .register_fallible_runtime_services_runner(move |_client, resources| {
@@ -998,6 +1012,8 @@ impl ConfiguredPluginFactory for MihuashiConfiguredPlugin {
         manifest.requires.push(SurfaceRequirement::task_protocol(
             "mutsuki.browser.snapshot",
         ));
+        BotSubmissionGate::ensure_manifest_business_surface(&manifest)
+            .map_err(|error| error.to_string())?;
         Ok(builder
             .register_builtin_plugin(manifest)
             .register_runtime_services_runner(move |client, resources| {

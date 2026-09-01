@@ -26,11 +26,20 @@ Bot Agent final turn
   -> persist attempt + platform receipt
 ```
 
-Direct `mutsuki.bot.agent/submit@1` (outside a Flow node) still `Submit`s delivery itself. The
-Flow Agent node Reserves occupancy-only parts so `ResumeDue` will not send an unpresented draft.
-Delivery `Submit` clears occupancy, replaces unsent parts, then sends. Stable reply and part ids
+Flow is the only initiation surface for Bot business behavior. Chat events, sandbox simulate
+traffic and domain push pipelines all enter through `mutsuki.bot.flow/ingress@1`; business
+plugins are invoked only through graph node bindings. Business EventSources submit through the
+SDK `BotSubmissionGate`, which rejects direct submissions of `mutsuki.bot.message/send@1`,
+`mutsuki.bot.message/recall@1`, `mutsuki.bot.delivery/*` and `mutsuki.bot.agent/*`, and their
+manifests are validated against that surface at assembly. A graph with no matching Source chain
+freezes the business behavior behind the event; the freeze is observable through the ingress
+stats (`accepted_total` / `dropped_total`) on the `mutsuki.bot.flow.ingress` health snapshot.
+The Flow Agent node Reserves occupancy-only parts so `ResumeDue` will not send an unpresented
+draft. Delivery `Submit` clears occupancy, replaces unsent parts, then sends. Stable reply and part ids
 make replay an inspection of the existing bundle. After Submit,
-`BotReplyDeliveryRecoveryEventSource` claims due parts without replaying the Agent. A crash
+`BotReplyDeliveryRecoveryEventSource` claims due parts without replaying the Agent. These
+completion paths drain effects that a Flow chain already initiated; they never originate new
+business behavior, which is why they stay graph-independent. A crash
 between Agent and delivery still has reserved receipts, but those drafts stay unsent until
 Submit. A transient failure only schedules the unconfirmed part; already succeeded parts remain
 terminal. Cancellation or a Runtime timeout after the send boundary becomes `ReconcileRequired`,

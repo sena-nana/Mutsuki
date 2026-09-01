@@ -14,6 +14,7 @@
 )]
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
@@ -532,9 +533,41 @@ fn push_issue(
 
 pub const BOT_FLOW_CONFIG_PROVIDER_ID: &str = "mutsuki.bot.flow";
 
+/// Process-lifetime counters for Flow ingress routing. An envelope is accepted
+/// when it enters routing and is not a projected bot self-sent echo; it is
+/// dropped when no active Source chain accepts it. Dropping is the documented
+/// frozen-business behavior of an unwired graph, so the dropped counter is what
+/// makes that freeze observable instead of silent.
+#[derive(Default)]
+pub struct BotFlowIngressStats {
+    accepted_total: AtomicU64,
+    dropped_total: AtomicU64,
+}
+
+impl BotFlowIngressStats {
+    pub fn record_accepted(&self) {
+        self.accepted_total.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_dropped(&self) {
+        self.dropped_total.fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[must_use]
+    pub fn accepted_total(&self) -> u64 {
+        self.accepted_total.load(Ordering::Relaxed)
+    }
+
+    #[must_use]
+    pub fn dropped_total(&self) -> u64 {
+        self.dropped_total.load(Ordering::Relaxed)
+    }
+}
+
 pub struct BotFlowRegistry {
     catalog: RwLock<BotNodeCatalog>,
     active: RwLock<Arc<BotFlowSnapshot>>,
+    ingress_stats: BotFlowIngressStats,
 }
 
 impl BotFlowRegistry {
@@ -546,6 +579,7 @@ impl BotFlowRegistry {
                 revision: 0,
                 flow: BotFlowDocument::default(),
             })),
+            ingress_stats: BotFlowIngressStats::default(),
         }
     }
 
@@ -562,7 +596,13 @@ impl BotFlowRegistry {
         Ok(Self {
             catalog: RwLock::new(catalog),
             active: RwLock::new(Arc::new(snapshot)),
+            ingress_stats: BotFlowIngressStats::default(),
         })
+    }
+
+    #[must_use]
+    pub fn ingress_stats(&self) -> &BotFlowIngressStats {
+        &self.ingress_stats
     }
 
     #[must_use]
