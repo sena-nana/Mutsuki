@@ -143,6 +143,13 @@ async fn published_flow_routes_agent_reply_once_and_recovers_after_restart() {
     wait_for(&fixture.submits, 2).await;
     wait_for(&fixture.sends, 2).await;
     wait_for_flow_tasks(&runtime).await;
+    // Routed business events are counted; a wired graph drops none. The
+    // restarted runtime owns a fresh registry.
+    let registry = runtime
+        .host_service::<BotFlowRegistry>(BOT_FLOW_REGISTRY_SERVICE_ID)
+        .unwrap();
+    assert!(registry.ingress_stats().accepted_total() >= 1);
+    assert_eq!(registry.ingress_stats().dropped_total(), 0);
     runtime.shutdown().await;
 }
 

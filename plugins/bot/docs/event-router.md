@@ -46,8 +46,11 @@ Bilibili pushes work this way: polling detects a fresh item and submits
 `mutsuki.bot.event.bilibili` v1 with a `BilibiliNotification`; the first-party push example
 (`bilibili.live.push`) sequences `mutsuki.bot.bilibili.notification` → `mutsuki.bot.bilibili.card`
 (cover download + `mutsuki.protocol.image` card render, outputs `mutsuki.bot.message.send`) →
-`qq.send`. If the active graph has no matching Source, the event is silently dropped — recreate
-the push subgraph after upgrading or before relying on pushes.
+`qq.send`. If the active graph has no matching Source, the business behavior behind that event
+stays frozen: the envelope is counted in the registry ingress stats (`accepted_total` /
+`dropped_total`, published on the `mutsuki.bot.flow.ingress` health snapshot) and its ingress
+task output records `matched_sources: 0`. Recreate the push subgraph after upgrading or before
+relying on pushes.
 
 Submit uses mention/interaction matched → record-icl → attach-icl → identifiers →
 attach-bound-persona → bind-profile → agent → quote → mention-reply → segment →

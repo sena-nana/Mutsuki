@@ -10,5 +10,8 @@ description: Add or change Bot protocol conformance, Runner batch tests, fake pl
 - Cover single/multi-entry batches, partial failure, task handles, trace/correlation and generation propagation.
 - Keep real credentials in ignored local configuration and redact captured output.
 - Verify stop releases sockets, workers and EventSources.
+- Cover the Flow-only business surface: `BotSubmissionGate` rejections (send/recall/delivery/agent
+  direct submissions), manifest validation at assembly, and ingress stats accounting
+  (accepted/dropped, self-sent skipped, `matched_sources` in ingress output).
 
 Report whether validation used unit, fake-server or real-account smoke coverage.

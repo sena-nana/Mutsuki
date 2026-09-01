@@ -3917,6 +3917,7 @@ dependencies = [
  "mutsuki-bot-management",
  "mutsuki-bot-protocol",
  "mutsuki-bot-sandbox",
+ "mutsuki-bot-sdk",
  "mutsuki-bot-state-db",
  "mutsuki-bot-testkit",
  "mutsuki-bot-web-console",

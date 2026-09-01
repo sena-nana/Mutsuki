@@ -238,6 +238,7 @@ impl Runner for BotFlowIngressRunner {
         let graph_revision = snapshot.revision;
         let flow = Arc::new(snapshot.flow.clone());
         let index = self.source_index(graph_revision, flow.as_ref());
+        let stats = self.registry.ingress_stats();
         map_work_batch_entries(&batch, |task| {
             let envelope = task
                 .payload
@@ -259,12 +260,14 @@ impl Runner for BotFlowIngressRunner {
             }
             source_indexes.sort_unstable();
             source_indexes.dedup();
+            let mut matched_sources = 0_usize;
             let mut tasks = Vec::new();
             for source_index in source_indexes {
                 let source = &flow.nodes[source_index];
                 if !source_accepts_event(source, event.as_ref()) {
                     continue;
                 }
+                matched_sources += 1;
                 let execution_id = format!(
                     "flow:{}:{}:{}",
                     graph_revision, flow.flow_id, envelope.event_id
@@ -296,14 +299,32 @@ impl Runner for BotFlowIngressRunner {
                     );
                 }
             }
+            record_ingress_outcome(stats, event.as_ref(), matched_sources);
             let mut result = RunnerResult::completed(task.task_id.clone());
             result.tasks = tasks;
             result.output = Some(serde_json::json!({
                 "graph_revision": graph_revision,
                 "flow_tasks": result.tasks.len(),
+                "matched_sources": matched_sources,
             }));
             Ok(result)
         })
+    }
+}
+
+/// Bot self-sent projections never start Source chains by design, so they are
+/// not business events and stay out of the frozen-traffic counters.
+fn record_ingress_outcome(
+    stats: &mutsuki_bot_flow::BotFlowIngressStats,
+    event: Option<&BotEvent>,
+    matched_sources: usize,
+) {
+    if event.is_some_and(BotEvent::is_self_sent_message) {
+        return;
+    }
+    stats.record_accepted();
+    if matched_sources == 0 {
+        stats.record_dropped();
     }
 }
 
@@ -588,14 +609,17 @@ mod tests {
     use mutsuki_runtime_contracts::{InvocationMode, RunnerConcurrency, Task};
     use serde_json::{Value, json};
 
-    use super::{downstream_task, node_descriptor, source_accepts_envelope, source_index_for};
+    use super::{
+        downstream_task, node_descriptor, record_ingress_outcome, source_accepts_envelope,
+        source_index_for,
+    };
 
-    fn message_envelope(actor_id: &str, self_sent: bool) -> BotFlowEventEnvelope {
+    fn message_event(actor_id: &str, self_sent: bool) -> BotEvent {
         let mut ext = mutsuki_bot_protocol::BotExtMap::new();
         if self_sent {
             ext.insert(BOT_SELF_SENT_EXT_KEY.into(), Value::Bool(true));
         }
-        let event = BotEvent {
+        BotEvent {
             event_id: "e1".into(),
             platform: BotPlatform::QqBot,
             bot: BotAccountRef {
@@ -615,7 +639,11 @@ mod tests {
             message: None,
             raw: None,
             ext,
-        };
+        }
+    }
+
+    fn message_envelope(actor_id: &str, self_sent: bool) -> BotFlowEventEnvelope {
+        let event = message_event(actor_id, self_sent);
         BotFlowEventEnvelope {
             event_id: "e1".into(),
             protocol_id: "mutsuki.bot.event/ingest@1".into(),
@@ -794,6 +822,31 @@ mod tests {
             RunnerConcurrency::Sharded { instances: 1 }
         );
         assert_eq!(descriptor.batch.max_inflight_batches, 1);
+    }
+
+    #[test]
+    fn ingress_stats_count_unmatched_business_events_and_skip_self_sent() {
+        let registry = Arc::new(mutsuki_bot_flow::BotFlowRegistry::new(
+            mutsuki_bot_flow::BotNodeCatalog::default(),
+        ));
+        let stats = registry.ingress_stats();
+
+        record_ingress_outcome(stats, Some(&message_event("member-1", false)), 0);
+        assert_eq!(stats.accepted_total(), 1);
+        assert_eq!(stats.dropped_total(), 1);
+
+        record_ingress_outcome(stats, Some(&message_event("member-2", false)), 2);
+        assert_eq!(stats.accepted_total(), 2);
+        assert_eq!(stats.dropped_total(), 1);
+
+        record_ingress_outcome(stats, Some(&message_event("BOT_OPENID", true)), 0);
+        assert_eq!(stats.accepted_total(), 2);
+        assert_eq!(stats.dropped_total(), 1);
+
+        // A non-BotEvent payload (plugin-owned typed event) is a business event.
+        record_ingress_outcome(stats, None, 0);
+        assert_eq!(stats.accepted_total(), 3);
+        assert_eq!(stats.dropped_total(), 2);
     }
 
     #[test]

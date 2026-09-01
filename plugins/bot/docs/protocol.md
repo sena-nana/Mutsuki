@@ -16,6 +16,14 @@ stops there — rendering and delivery belong to the graph. Bilibili polling sub
 `mutsuki.bot.bilibili.notification` Source node matches it by selector alone (it is intentionally
 absent from the router kind table because the payload is not a `BotEvent`).
 
+This makes Flow the only initiation surface for business behavior. Business plugins and business
+EventSources submit through the SDK `BotSubmissionGate`, which fails loud on direct submissions of
+`mutsuki.bot.message/send@1`, `mutsuki.bot.message/recall@1`, `mutsuki.bot.delivery/*` and
+`mutsuki.bot.agent/*`; their manifests are validated with
+`BotSubmissionGate::ensure_manifest_business_surface` before registration. Only the adapter (via
+graph send nodes) and the durable delivery service write past the send boundary, and only
+completion paths (delivery recovery, reserved drafts) act outside an active graph.
+
 Standard Bot runner protocols:
 
 - `mutsuki.bot.flow/ingress@1`

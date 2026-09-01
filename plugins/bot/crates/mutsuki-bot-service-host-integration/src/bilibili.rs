@@ -2,11 +2,13 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use mutsuki_bot_sdk::BotSubmissionGate;
 use mutsuki_plugin_bot_bilibili::{
     BilibiliConfig, BilibiliPollKind, PLUGIN_ID, PollRequest, SharedBilibiliConfig,
     SharedBilibiliCredential,
 };
 use mutsuki_runtime_contracts::{Task, TaskBatch, TaskHandle, TaskOutcome};
+use mutsuki_runtime_sdk::TaskSubmitter;
 use mutsuki_service_runtime::{
     HostEventSource, HostEventSourceContext, HostEventSourceDescriptor, HostEventSourceFuture,
     HostEventSourceHealth,
@@ -183,6 +185,11 @@ async fn run_polling(
     mut stop: watch::Receiver<bool>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     health.lock().expect("Bilibili health mutex").running = true;
+    // The polling source is a business initiation surface: it may submit its own
+    // poll protocols (and ingress), never platform business protocols. Flow owns
+    // rendering and delivery, so an unwired graph freezes pushes.
+    let submitter: Arc<dyn TaskSubmitter> =
+        Arc::new(BotSubmissionGate::new(ctx.task_submitter.clone()));
     let mut inflight: BTreeMap<(String, String), TaskHandle> = BTreeMap::new();
     let mut next_due: BTreeMap<(String, String), Instant> = BTreeMap::new();
     let mut failures: BTreeMap<(String, String), u32> = BTreeMap::new();
@@ -201,7 +208,7 @@ async fn run_polling(
                             kind.protocol_id().to_owned(),
                         );
                         if let Some(handle) = inflight.get(&key).cloned() {
-                            match ctx.task_submitter.task_outcome(&handle) {
+                            match submitter.task_outcome(&handle) {
                                 Ok(None) => continue,
                                 Ok(Some(TaskOutcome::Completed { .. })) => {
                                     inflight.remove(&key);
@@ -233,7 +240,7 @@ async fn run_polling(
                         task_sequence = task_sequence.wrapping_add(1);
                         let task_id = format!("bilibili:{:?}:{}:{task_sequence}", kind, subscription.uid);
                         let task = Task::new(task_id.clone(), kind.protocol_id(), serde_json::to_value(request)?);
-                        match ctx.task_submitter.submit_batch(TaskBatch::one(format!("batch:{task_id}"), task)) {
+                        match submitter.submit_batch(TaskBatch::one(format!("batch:{task_id}"), task)) {
                             Ok(mut handles) if !handles.is_empty() => { inflight.insert(key.clone(), handles.remove(0)); }
                             Ok(_) => { health.lock().expect("Bilibili health mutex").last_error = Some("poll submit returned no handle".into()); }
                             Err(error) => { health.lock().expect("Bilibili health mutex").last_error = Some(error.to_string()); }

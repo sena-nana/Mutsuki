@@ -32,7 +32,14 @@ description: Change Bot Flow graph validation/execution, node catalogs, command 
   must stay out of the router `source_kinds_for_node` kind table — registering it would reject
   every event. `mutsuki.bot.bilibili.notification` → `mutsuki.bot.bilibili.card` is the reference
   implementation.
+- Flow is the only initiation surface for business behavior: an event whose Source chain is not
+  wired freezes that business, and the freeze is observable, not silent. Ingress counts
+  `accepted_total`/`dropped_total` on the registry (skipping bot self-sent projections), exposes
+  them on the `mutsuki.bot.flow.ingress` health snapshot, and records `matched_sources` in each
+  ingress task output. Business sources submit through the SDK `BotSubmissionGate` and must not
+  declare `requires_protocol` on platform business protocols.
 
 Test validation failures, hit/miss, linear chains, fan-out, same-graph Source chains, error edges,
 revision pinning, ConfigService CAS conflicts, restart recovery, typed output shape, trigger-event
-emission (payload fields, no direct send, cursor timing) and selector-matched plugin sources.
+emission (payload fields, no direct send, cursor timing), selector-matched plugin sources and
+ingress stats accounting (accepted/dropped, self-sent skipped, `matched_sources` output).

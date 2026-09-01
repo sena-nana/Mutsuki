@@ -12,6 +12,11 @@ description: Change generic mutsuki.bot protocol DTOs, protocol identifiers, mes
 - Keep library-surface crates (`mutsuki-bot-*`) free of `PluginBuilder` manifests; loadable
   plugin surfaces and their node catalogs live in `mutsuki-plugin-bot-*` crates.
 - Submit operations through RuntimeClient/TaskSubmitter and return `TaskHandle` semantics.
+- Author helpers on business surfaces compose with `BotSubmissionGate`: direct submissions of
+  `mutsuki.bot.message/send@1`, `mutsuki.bot.message/recall@1`, `mutsuki.bot.delivery/*` and
+  `mutsuki.bot.agent/*` fail loud there, because Flow initiates business behavior. Durable
+  services (delivery, agent bridge) and control-plane callers are exempt and keep their own
+  clients.
 - Preserve trace, correlation, target binding, cancel policy and registry generation.
 - Version breaking wire changes and update manifests, adapters and round-trip tests together.
 - Keep Bot Flow node/event/document DTOs in the Bot protocol owner. Plugin node catalogs are
