@@ -348,6 +348,34 @@ pub fn qq_link_resolve_flow() -> BotFlowDocument {
     }
 }
 
+/// Example graph: Bilibili polling trigger → push card → QQ send. The polling
+/// runner only submits `mutsuki.bot.event.bilibili` trigger events; this graph
+/// owns rendering and delivery. Works for both Bilibili backends.
+#[must_use]
+pub fn bilibili_live_push_flow() -> BotFlowDocument {
+    BotFlowDocument {
+        flow_id: "bilibili.live.push".into(),
+        name: "Bilibili 直播推送".into(),
+        nodes: vec![
+            flow_node(
+                "notification",
+                "mutsuki.bot.bilibili.notification",
+                json!({}),
+                Some(BotFlowSourceSelector {
+                    protocol_id: BOT_EVENT_INGEST_PROTOCOL_ID.into(),
+                    event_type: Some(BotFlowTypeRef::new("mutsuki.bot.event.bilibili", 1)),
+                }),
+            ),
+            flow_node("card", "mutsuki.bot.bilibili.card", json!({}), None),
+            flow_node("qq-send", "mutsuki.bot.qq.send", json!({}), None),
+        ],
+        edges: vec![
+            flow_edge("notify-card", "notification", "event", "card", "event"),
+            flow_edge("card-send", "card", "message", "qq-send", "input"),
+        ],
+    }
+}
+
 fn flow_node(
     node_id: &str,
     node_type_id: &str,
@@ -534,6 +562,45 @@ mod tests {
                 .any(|edge| edge.from_node_id == "mihuashi-link"
                     && edge.from_port_id == "matched"
                     && edge.to_node_id == "mihuashi-resolve")
+        );
+    }
+
+    #[test]
+    fn bilibili_push_flow_validates_against_bilibili_catalog() {
+        let catalog = BotNodeCatalog::from_manifests(&[
+            qqbot_adapter_manifest(1, false),
+            flow_router_manifest(),
+            mutsuki_plugin_bot_bilibili::manifest_for_backend(
+                mutsuki_plugin_bot_bilibili::BilibiliBackendKind::OpenPlatform,
+                false,
+                false,
+            ),
+        ])
+        .expect("push catalogs merge");
+        let flow = bilibili_live_push_flow();
+        let result = validate_flow(&flow, &catalog);
+        assert!(result.valid, "{:#?}", result.issues);
+        assert!(
+            flow.edges
+                .iter()
+                .any(|edge| edge.from_node_id == "notification"
+                    && edge.from_port_id == "event"
+                    && edge.to_node_id == "card"
+                    && edge.to_port_id == "event")
+        );
+        assert!(flow.edges.iter().any(|edge| edge.from_node_id == "card"
+            && edge.from_port_id == "message"
+            && edge.to_node_id == "qq-send"
+            && edge.to_port_id == "input"));
+        let notification = flow
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "notification")
+            .unwrap();
+        let selector = notification.source.as_ref().unwrap();
+        assert_eq!(
+            selector.event_type.as_ref().unwrap().type_id,
+            "mutsuki.bot.event.bilibili"
         );
     }
 

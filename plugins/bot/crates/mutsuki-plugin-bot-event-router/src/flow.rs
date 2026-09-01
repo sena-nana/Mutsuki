@@ -723,6 +723,68 @@ mod tests {
     }
 
     #[test]
+    fn plugin_typed_event_sources_match_by_selector_without_a_kind_entry() {
+        let ingest = mutsuki_bot_protocol::BOT_EVENT_INGEST_PROTOCOL_ID;
+        let flow = mutsuki_bot_protocol::BotFlowDocument {
+            flow_id: "push".into(),
+            name: "push".into(),
+            nodes: vec![BotFlowNode {
+                node_id: "bili".into(),
+                node_type_id: "mutsuki.bot.bilibili.notification".into(),
+                node_type_version: 1,
+                config: json!({}),
+                source: Some(BotFlowSourceSelector {
+                    protocol_id: ingest.into(),
+                    event_type: Some(BotFlowTypeRef::new("mutsuki.bot.event.bilibili", 1)),
+                }),
+                position: BotFlowNodePosition::default(),
+            }],
+            edges: vec![],
+        };
+        let index = source_index_for(&flow);
+        let matched = index
+            .by_selector
+            .get(&(
+                ingest.into(),
+                Some(("mutsuki.bot.event.bilibili".into(), 1)),
+            ))
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(matched, vec![0]);
+
+        let envelope = BotFlowEventEnvelope {
+            event_id: "notify-1".into(),
+            protocol_id: ingest.into(),
+            payload: BotFlowPayload {
+                event_type: BotFlowTypeRef::new("mutsuki.bot.event.bilibili", 1),
+                value: json!({"kind": "live", "uid": 42}),
+            },
+            context: BotFlowContext {
+                bot: None,
+                target: None,
+                actor: None,
+                ext: Default::default(),
+            },
+            trace_id: None,
+            correlation_id: None,
+        };
+        assert!(source_accepts_envelope(&flow.nodes[0], &envelope));
+
+        let qq_source = BotFlowNode {
+            node_id: "qq-message".into(),
+            node_type_id: "mutsuki.bot.qq.message.created".into(),
+            node_type_version: 1,
+            config: json!({}),
+            source: Some(BotFlowSourceSelector {
+                protocol_id: ingest.into(),
+                event_type: None,
+            }),
+            position: BotFlowNodePosition::default(),
+        };
+        assert!(!source_accepts_envelope(&qq_source, &envelope));
+    }
+
+    #[test]
     fn cooperative_node_runner_dispatches_one_stateful_batch_without_blocking_waiters() {
         let descriptor = node_descriptor(&[]);
 

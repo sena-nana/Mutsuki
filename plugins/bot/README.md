@@ -7,6 +7,7 @@ Mutsuki-native 迁移提供以下 builtin Rust 协议：
 - `mutsuki.bot.bilibili.poll/live@1`
 - `mutsuki.bot.bilibili.poll/dynamic@1`
 - `mutsuki.bot.bilibili.poll/video@1`
+- `mutsuki.bot.bilibili.card/render@1`
 - `mutsuki.bot.bilibili.link/resolve@1`
 - `mutsuki.bot.bilibili.workshop.link/resolve@1`
 - `mutsuki.bot.mihuashi.link/resolve@1`
@@ -19,7 +20,12 @@ Bilibili `web_cookie` 贡献 `mutsuki.bot.bilibili.resolve`，米画师贡献
 resolve → `qq.send`。B 站小程序自动解析需要 `web_cookie` 和全量群消息
 （`GROUP_MESSAGE_CREATE`）；AT-only 收不到未 @ 的分享，`open_platform` 没有 `link/resolve`。
 Bilibili 状态固定写入 ServiceHost
-`data_dir/bilibili/state.sqlite3`；首次轮询只建立 cursor，不补发历史。产品必须显式选择
+`data_dir/bilibili/state.sqlite3`；首次轮询只建立 cursor，不补发历史。轮询检测到新条目后不再
+直连发送：runner 提交 `mutsuki.bot.event.bilibili` v1 触发事件（载荷 `BilibiliNotification`，
+target 取自订阅），推送卡片渲染与投递由 Flow 子图
+`mutsuki.bot.bilibili.notification` → `mutsuki.bot.bilibili.card` → 平台 send 节点完成
+（参考图 `bilibili_live_push_flow()`）。活动图中没有匹配 Source 时事件按 ingress 语义静默丢弃，
+升级后需在 Flow 编辑器或 Agent flow 工具中重建推送子图。产品必须显式选择
 `backend.type = "web_cookie"` 或 `backend.type = "open_platform"`。Web backend 的 Cookie 只通过
 `backend.cookie_secret_key` 进入共享 credential boundary，WBI 请求使用运行时获取的
 mixin key 和注入式签名函数。

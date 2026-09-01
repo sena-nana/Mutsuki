@@ -37,6 +37,18 @@ The first-party link example (`qq.link.resolve`) sequences source → `mutsuki.b
 Bilibili / Mihuashi resolve → `qq.send`. It requires the Bilibili `web_cookie` catalog node and
 full group receive; AT-only traffic will not see unmentioned mini-program shares.
 
+Plugins can start chains without a chat message: a domain runner submits a `flow/ingress@1`
+envelope whose `payload.value` is a plugin-owned typed payload and whose `event_type` is a
+`mutsuki.bot.event.*` specialization. The matching Source node is selected by that type alone and
+is deliberately not listed in the router's `source_kinds_for_node` kind table (that table filters
+`BotEvent` kinds; an unknown node type with a non-`BotEvent` payload passes through its selector).
+Bilibili pushes work this way: polling detects a fresh item and submits
+`mutsuki.bot.event.bilibili` v1 with a `BilibiliNotification`; the first-party push example
+(`bilibili.live.push`) sequences `mutsuki.bot.bilibili.notification` → `mutsuki.bot.bilibili.card`
+(cover download + `mutsuki.protocol.image` card render, outputs `mutsuki.bot.message.send`) →
+`qq.send`. If the active graph has no matching Source, the event is silently dropped — recreate
+the push subgraph after upgrading or before relying on pushes.
+
 Submit uses mention/interaction matched → record-icl → attach-icl → identifiers →
 attach-bound-persona → bind-profile → agent → quote → mention-reply → segment →
 `mutsuki.bot.qq.reply.forward_fold` → delivery. Presentation/delivery failures take error edges

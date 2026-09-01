@@ -98,7 +98,10 @@ Domain plugins and durable services:
 - `mutsuki-bot-interaction`: durable multi-step waiter service and repository traits.
 - `mutsuki-plugin-bot-interaction`: `interaction/handle@1` plus match/create node plugin manifests.
 - `mutsuki-plugin-bot-bilibili` / `mutsuki-plugin-bot-bilibili-workshop` / `mutsuki-plugin-bot-mihuashi`:
-  platform processors that consume `bot.link.url`.
+  platform processors that consume `bot.link.url`. Bilibili polling only detects fresh items and
+  submits `mutsuki.bot.event.bilibili` trigger events into Flow ingress; the push card render and
+  delivery live in the `mutsuki.bot.bilibili.notification` → `mutsuki.bot.bilibili.card` graph
+  nodes.
 - `mutsuki-bot-state-db`: durable session, delivery, interaction, persona, conversation-context
   and sandbox history repository; implements store traits from library crates rather than
   depending on plugin packages. Historical Flow tables are neither read nor destructively removed.

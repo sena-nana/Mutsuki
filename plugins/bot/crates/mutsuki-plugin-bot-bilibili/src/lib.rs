@@ -42,10 +42,11 @@ use mutsuki_bot_management::{
     BilibiliNotificationKind,
 };
 use mutsuki_bot_protocol::{
-    BOT_MESSAGE_SEND_PROTOCOL_ID, BotCommandEvent, BotEvent, BotExtMap, BotFlowEventEnvelope,
-    BotFlowPayload, BotFlowTypeRef, BotMessage, BotNodeBinding, BotNodeCatalogFragment,
-    BotNodeDescriptor, BotNodeInvocation, BotNodeOutput, BotNodePortDescriptor,
-    BotNodePortDirection, BotNodeResult, BotNodeRole, BotTarget, MessageSegment,
+    BOT_EVENT_INGEST_PROTOCOL_ID, BOT_FLOW_INGRESS_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID,
+    BotCommandEvent, BotEvent, BotExtMap, BotFlowContext, BotFlowEventEnvelope, BotFlowPayload,
+    BotFlowTypeRef, BotMessage, BotNodeBinding, BotNodeCatalogFragment, BotNodeDescriptor,
+    BotNodeInvocation, BotNodeOutput, BotNodePortDescriptor, BotNodePortDirection, BotNodeResult,
+    BotNodeRole, BotTarget, MessageSegment,
 };
 use mutsuki_protocol_browser::{
     BrowserSnapshot, BrowserSnapshotRequest, BrowserWaitMode, SNAPSHOT, SNAPSHOT_SCHEMA,
@@ -90,9 +91,13 @@ pub const RUNNER_ID: &str = "mutsuki.bot.bilibili.runner";
 pub const POLL_LIVE: &str = "mutsuki.bot.bilibili.poll/live@1";
 pub const POLL_DYNAMIC: &str = "mutsuki.bot.bilibili.poll/dynamic@1";
 pub const POLL_VIDEO: &str = "mutsuki.bot.bilibili.poll/video@1";
+pub const NOTIFY_CARD: &str = "mutsuki.bot.bilibili.card/render@1";
 pub const LINK_RESOLVE: &str = "mutsuki.bot.bilibili.link/resolve@1";
 pub const MANAGEMENT_COMMAND: &str = "mutsuki.bot.bilibili.management/command@1";
 pub const RISK_CONTROL_STATUS_EVENT: &str = "mutsuki.bot.bilibili.risk_control/status@1";
+pub const BILIBILI_EVENT_TYPE: &str = "mutsuki.bot.event.bilibili";
+pub const BILIBILI_NOTIFICATION_NODE_TYPE: &str = "mutsuki.bot.bilibili.notification";
+pub const BILIBILI_CARD_NODE_TYPE: &str = "mutsuki.bot.bilibili.card";
 pub const MAX_MEDIA_BYTES: usize = MAX_LINK_CARD_MEDIA_BYTES;
 
 pub struct RuntimeBilibiliQrRenderer {
@@ -201,6 +206,22 @@ pub struct PollRequest {
     pub uid: u64,
     pub target: BotTarget,
     pub outbound_binding: String,
+}
+
+/// Trigger event payload submitted into Bot Flow when polling finds a fresh
+/// item. Card rendering and delivery are graph concerns; the plugin only
+/// reports what changed and which chat the subscription watches.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BilibiliNotification {
+    pub kind: BilibiliPollKind,
+    pub subscription_id: String,
+    pub uid: u64,
+    pub target: BotTarget,
+    pub item_id: String,
+    pub title: String,
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_url: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1064,64 +1085,43 @@ impl BilibiliRunner {
         kind: BilibiliPollKind,
         items: Vec<BilibiliItem>,
         status: Option<DomainEvent>,
-    ) -> Result<PreparedCards, RuntimeError> {
+    ) -> Result<RunnerResult, RuntimeError> {
         let key = format!("{kind:?}:{}:{}", request.uid, request.subscription_id);
         let previous = self
             .repository
             .cursor(&key)
             .map_err(|error| bili_error(task, BilibiliError::Transport(error.to_string())))?;
+        let mut result = RunnerResult::completed(task.task_id.clone());
+        result.events.extend(status);
         let Some(head) = items.first().map(|item| item.id.clone()) else {
-            let mut result = RunnerResult::completed(task.task_id.clone());
-            result.events.extend(status);
-            return Ok(PreparedCards {
-                result,
-                cards: Vec::new(),
-                cursor_update: None,
-                cooldown_update: None,
-            });
+            return Ok(result);
         };
         let Some(previous) = previous else {
             self.repository
                 .set_cursor(&key, &head)
                 .map_err(|error| bili_error(task, BilibiliError::Transport(error.to_string())))?;
-            let mut result = RunnerResult::completed(task.task_id.clone());
-            result.events.extend(status);
-            return Ok(PreparedCards {
-                result,
-                cards: Vec::new(),
-                cursor_update: None,
-                cooldown_update: None,
-            });
+            return Ok(result);
         };
-        let fresh = fresh_since(items, &previous);
-        let mut result = RunnerResult::completed(task.task_id.clone());
-        result.events.extend(status);
-        let mut cards = Vec::with_capacity(fresh.len());
-        for item in fresh {
-            let card = ResolvedLinkCard {
-                url: item.url,
-                title: item.title,
-                description: match &kind {
-                    BilibiliPollKind::Live => "直播状态更新",
-                    BilibiliPollKind::Dynamic => "发布了新动态",
-                    BilibiliPollKind::Video => "发布了新投稿",
-                }
-                .into(),
-                image_url: item.image_url,
-            };
-            let (layout, kicker, live) = layout_for_poll(kind);
-            cards.push(PreparedCard {
-                target: request.target.clone(),
-                request: self.prepare_card_request(card, task, layout, kicker, live)?,
-                route: CardRoute::Notify(request.outbound_binding.clone()),
-            });
+        for (index, item) in fresh_since(items, &previous).into_iter().enumerate() {
+            result.tasks.push(notification_ingress_task(
+                task,
+                BilibiliNotification {
+                    kind,
+                    subscription_id: request.subscription_id.clone(),
+                    uid: request.uid,
+                    target: request.target.clone(),
+                    item_id: item.id,
+                    title: item.title,
+                    url: item.url,
+                    image_url: item.image_url,
+                },
+                index,
+            ));
         }
-        Ok(PreparedCards {
-            result,
-            cards,
-            cursor_update: Some((self.repository.clone(), key, head)),
-            cooldown_update: None,
-        })
+        self.repository
+            .set_cursor(&key, &head)
+            .map_err(|error| bili_error(task, BilibiliError::Transport(error.to_string())))?;
+        Ok(result)
     }
 
     fn run_command(&mut self, task: &Task) -> Result<RunnerResult, RuntimeError> {
@@ -1425,6 +1425,14 @@ fn layout_for_poll(kind: BilibiliPollKind) -> (CardLayout, &'static str, bool) {
     }
 }
 
+fn poll_description(kind: BilibiliPollKind) -> &'static str {
+    match kind {
+        BilibiliPollKind::Live => "直播状态更新",
+        BilibiliPollKind::Dynamic => "发布了新动态",
+        BilibiliPollKind::Video => "发布了新投稿",
+    }
+}
+
 fn layout_for_url(url: &str) -> (CardLayout, &'static str, bool) {
     let parsed = Url::parse(url).ok();
     let host = parsed
@@ -1521,6 +1529,18 @@ async fn run_task_async(
             Ok(result)
         };
     }
+    if task.protocol_id == NOTIFY_CARD {
+        let invocation = serde_json::from_value::<BotNodeInvocation>(task.payload.to_value())
+            .map_err(|error| {
+                RuntimeFailure::new(bili_error(
+                    &task,
+                    BilibiliError::InvalidResponse(format!(
+                        "notify card node requires a flow invocation: {error}"
+                    )),
+                ))
+            })?;
+        return run_notification_card(&ctx, &task, state, invocation).await;
+    }
     let request: PollRequest = decode(&task).map_err(RuntimeFailure::new)?;
     let kind = BilibiliPollKind::from_protocol_id(task.protocol_id.as_str()).ok_or_else(|| {
         RuntimeFailure::new(bili_error(
@@ -1534,14 +1554,11 @@ async fn run_task_async(
         .transport
         .poll(&kind, request.uid);
     match attempt {
-        Ok(items) => {
-            let prepared = state
-                .lock()
-                .expect("Bilibili runner mutex")
-                .finish_poll(&task, request, kind, items, None)
-                .map_err(RuntimeFailure::new)?;
-            render_cards(&ctx, &task, prepared).await
-        }
+        Ok(items) => state
+            .lock()
+            .expect("Bilibili runner mutex")
+            .finish_poll(&task, request, kind, items, None)
+            .map_err(RuntimeFailure::new),
         Err(BilibiliError::RiskControl352)
             if kind == BilibiliPollKind::Dynamic && risk_control.is_some() =>
         {
@@ -1836,6 +1853,123 @@ async fn render_cards(
     Ok(prepared.result)
 }
 
+fn notification_ingress_task(
+    parent: &Task,
+    notification: BilibiliNotification,
+    index: usize,
+) -> Task {
+    let context = BotFlowContext {
+        bot: None,
+        target: Some(notification.target.clone()),
+        actor: None,
+        ext: BotExtMap::new(),
+    };
+    let envelope = BotFlowEventEnvelope {
+        event_id: format!("{}:notify:{index}", parent.task_id),
+        protocol_id: BOT_EVENT_INGEST_PROTOCOL_ID.into(),
+        payload: BotFlowPayload {
+            event_type: BotFlowTypeRef::new(BILIBILI_EVENT_TYPE, 1),
+            value: serde_json::to_value(notification).expect("BilibiliNotification serializes"),
+        },
+        context,
+        trace_id: parent.trace_id.clone().map(Into::into),
+        correlation_id: parent
+            .correlation_id
+            .clone()
+            .or_else(|| Some(parent.task_id.to_string())),
+    };
+    let mut child = Task::new(
+        format!("mutsuki.bot.flow.ingress:{}:notify:{index}", parent.task_id),
+        BOT_FLOW_INGRESS_PROTOCOL_ID,
+        mutsuki_runtime_contracts::TaskPayload::from_local(envelope),
+    );
+    child.registry_generation = parent.registry_generation;
+    child
+}
+
+async fn run_notification_card(
+    ctx: &AsyncRunnerContext,
+    task: &Task,
+    state: Arc<Mutex<BilibiliRunner>>,
+    invocation: BotNodeInvocation,
+) -> RuntimeResult<RunnerResult> {
+    let notification: BilibiliNotification =
+        serde_json::from_value(invocation.input.payload.value.clone()).map_err(|error| {
+            RuntimeFailure::new(bili_error(
+                task,
+                BilibiliError::InvalidResponse(error.to_string()),
+            ))
+        })?;
+    let request = {
+        let mut runner = state.lock().expect("Bilibili runner mutex");
+        let (layout, kicker, live) = layout_for_poll(notification.kind);
+        runner
+            .prepare_card_request(
+                ResolvedLinkCard {
+                    url: notification.url.clone(),
+                    title: notification.title.clone(),
+                    description: poll_description(notification.kind).into(),
+                    image_url: notification.image_url.clone(),
+                },
+                task,
+                layout,
+                kicker,
+                live,
+            )
+            .map_err(RuntimeFailure::new)?
+    };
+    let outcome = ctx
+        .call_raw(
+            CARD_RENDER,
+            serde_json::to_value(request).map_err(|error| {
+                RuntimeFailure::new(bili_error(
+                    task,
+                    BilibiliError::InvalidResponse(error.to_string()),
+                ))
+            })?,
+        )
+        .await?;
+    let rendered = decode_render_outcome(task, outcome, "card")?;
+    let message = BotMessage {
+        message_id: None,
+        target: notification.target,
+        sender: None,
+        segments: vec![
+            MessageSegment::Image {
+                resource: rendered.resource,
+            },
+            MessageSegment::Text {
+                text: notification.url,
+            },
+        ],
+        reply_to: None,
+        time_ms: None,
+        ext: BotExtMap::new(),
+    };
+    let mut result = RunnerResult::completed(task.task_id.clone());
+    result.output = Some(
+        serde_json::to_value(BotNodeResult {
+            outputs: vec![BotNodeOutput {
+                port_id: "message".into(),
+                event: BotFlowEventEnvelope {
+                    event_id: format!("{}:message", invocation.input.event_id),
+                    protocol_id: BOT_MESSAGE_SEND_PROTOCOL_ID.into(),
+                    payload: BotFlowPayload {
+                        event_type: BotFlowTypeRef::new("mutsuki.bot.message.send", 1),
+                        value: serde_json::to_value(message).expect("BotMessage serializes"),
+                    },
+                    context: invocation.input.context.clone(),
+                    trace_id: invocation.input.trace_id.clone(),
+                    correlation_id: invocation.input.correlation_id.clone(),
+                },
+            }],
+            metadata: Default::default(),
+        })
+        .expect("BotNodeResult serializes"),
+    );
+    Ok(result)
+}
+
 fn decode_render_outcome(
     task: &Task,
     outcome: impl Into<TaskOutcome>,
@@ -1943,7 +2077,7 @@ async fn run_chromium_risk_control_fallback(
             "fallback": "succeeded"
         }),
     };
-    let prepared = state
+    state
         .lock()
         .expect("Bilibili runner mutex")
         .finish_poll(
@@ -1953,8 +2087,7 @@ async fn run_chromium_risk_control_fallback(
             items,
             Some(status),
         )
-        .map_err(RuntimeFailure::new)?;
-    render_cards(&ctx, &task, prepared).await
+        .map_err(RuntimeFailure::new)
 }
 
 pub fn manifest() -> mutsuki_runtime_contracts::PluginManifest {
@@ -1969,7 +2102,8 @@ pub fn manifest_for_config(config: &BilibiliConfig) -> mutsuki_runtime_contracts
     )
 }
 
-fn manifest_for_backend(
+#[must_use]
+pub fn manifest_for_backend(
     backend_kind: BilibiliBackendKind,
     management_enabled: bool,
     risk_control_enabled: bool,
@@ -1979,13 +2113,59 @@ fn manifest_for_backend(
             descriptor: runner_descriptor(management_enabled, risk_control_enabled, backend_kind),
         }))
         .protocol_handler(protocol(POLL_LIVE), RUNNER_ID, "orchestration")
-        .protocol_handler(protocol(POLL_VIDEO), RUNNER_ID, "orchestration");
+        .protocol_handler(protocol(POLL_VIDEO), RUNNER_ID, "orchestration")
+        .protocol_handler(protocol(NOTIFY_CARD), RUNNER_ID, "orchestration");
     if backend_kind == BilibiliBackendKind::WebCookie {
         builder = builder
             .protocol_handler(protocol(POLL_DYNAMIC), RUNNER_ID, "orchestration")
             .protocol_handler(protocol(LINK_RESOLVE), RUNNER_ID, "orchestration");
     }
     let mut nodes = Vec::new();
+    nodes.push(BotNodeDescriptor {
+        node_type_id: BILIBILI_NOTIFICATION_NODE_TYPE.into(),
+        version: 1,
+        title: "Bilibili 通知".into(),
+        category: "Bilibili".into(),
+        role: BotNodeRole::Source,
+        binding: None,
+        ports: vec![BotNodePortDescriptor {
+            port_id: "event".into(),
+            title: "事件".into(),
+            direction: BotNodePortDirection::Output,
+            event_type: BotFlowTypeRef::new(BILIBILI_EVENT_TYPE, 1),
+            required: false,
+        }],
+        config_schema: json!({"type": "object", "additionalProperties": false}),
+    });
+    nodes.push(BotNodeDescriptor {
+        node_type_id: BILIBILI_CARD_NODE_TYPE.into(),
+        version: 1,
+        title: "Bilibili 推送卡片".into(),
+        category: "Bilibili".into(),
+        role: BotNodeRole::Processor,
+        binding: Some(BotNodeBinding {
+            binding_id: format!("binding:{NOTIFY_CARD}"),
+            protocol_id: NOTIFY_CARD.into(),
+            runner_hint: Some(RUNNER_ID.into()),
+        }),
+        ports: vec![
+            BotNodePortDescriptor {
+                port_id: "event".into(),
+                title: "通知".into(),
+                direction: BotNodePortDirection::Input,
+                event_type: BotFlowTypeRef::new(BILIBILI_EVENT_TYPE, 1),
+                required: true,
+            },
+            BotNodePortDescriptor {
+                port_id: "message".into(),
+                title: "发送消息".into(),
+                direction: BotNodePortDirection::Output,
+                event_type: BotFlowTypeRef::new("mutsuki.bot.message.send", 1),
+                required: false,
+            },
+        ],
+        config_schema: json!({"type": "object", "additionalProperties": false}),
+    });
     if backend_kind == BilibiliBackendKind::WebCookie {
         nodes.push(BotNodeDescriptor {
             node_type_id: "mutsuki.bot.bilibili.resolve".into(),
@@ -2090,8 +2270,14 @@ fn runner_descriptor(
 ) -> RunnerDescriptor {
     let mut builder = RunnerDescriptorBuilder::new(RUNNER_ID, PLUGIN_ID);
     let protocols: &[&str] = match backend_kind {
-        BilibiliBackendKind::WebCookie => &[POLL_LIVE, POLL_DYNAMIC, POLL_VIDEO, LINK_RESOLVE],
-        BilibiliBackendKind::OpenPlatform => &[POLL_LIVE, POLL_VIDEO],
+        BilibiliBackendKind::WebCookie => &[
+            POLL_LIVE,
+            POLL_DYNAMIC,
+            POLL_VIDEO,
+            NOTIFY_CARD,
+            LINK_RESOLVE,
+        ],
+        BilibiliBackendKind::OpenPlatform => &[POLL_LIVE, POLL_VIDEO, NOTIFY_CARD],
     };
     for protocol in protocols {
         builder = builder.accepted_protocol(*protocol);
@@ -3102,10 +3288,34 @@ mod tests {
         )
         .unwrap()
         .unwrap();
+        fn node_ids(nodes: &BotNodeCatalogFragment) -> Vec<&str> {
+            nodes
+                .nodes
+                .iter()
+                .map(|node| node.node_type_id.as_str())
+                .collect()
+        }
         assert_eq!(
-            base_nodes.nodes[0].node_type_id,
-            "mutsuki.bot.bilibili.resolve"
+            node_ids(&base_nodes),
+            [
+                BILIBILI_NOTIFICATION_NODE_TYPE,
+                BILIBILI_CARD_NODE_TYPE,
+                "mutsuki.bot.bilibili.resolve"
+            ]
         );
+        let notification = &base_nodes.nodes[0];
+        assert_eq!(notification.role, BotNodeRole::Source);
+        assert!(notification.binding.is_none());
+        let notification_port = &notification.ports[0];
+        assert_eq!(notification_port.direction, BotNodePortDirection::Output);
+        assert_eq!(notification_port.event_type.type_id, BILIBILI_EVENT_TYPE);
+        assert_eq!(notification_port.event_type.version, 1);
+        let card = &base_nodes.nodes[1];
+        assert_eq!(card.role, BotNodeRole::Processor);
+        assert_eq!(card.binding.as_ref().unwrap().protocol_id, NOTIFY_CARD);
+        assert_eq!(card.ports[0].direction, BotNodePortDirection::Input);
+        assert_eq!(card.ports[0].event_type.type_id, BILIBILI_EVENT_TYPE);
+        assert_eq!(card.ports[1].event_type.type_id, "mutsuki.bot.message.send");
 
         let mut config = managed_config();
         let managed = manifest_for_config(&config);
@@ -3125,18 +3335,16 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(
-            nodes
-                .nodes
-                .iter()
-                .map(|node| node.node_type_id.as_str())
-                .collect::<Vec<_>>(),
+            node_ids(&nodes),
             [
+                BILIBILI_NOTIFICATION_NODE_TYPE,
+                BILIBILI_CARD_NODE_TYPE,
                 "mutsuki.bot.bilibili.resolve",
                 "mutsuki.bot.bilibili.management"
             ]
         );
         assert_eq!(
-            nodes.nodes[1].binding.as_ref().unwrap().protocol_id,
+            nodes.nodes[3].binding.as_ref().unwrap().protocol_id,
             MANAGEMENT_COMMAND
         );
         assert!(
@@ -3454,7 +3662,7 @@ mod tests {
     }
 
     #[test]
-    fn multiple_fresh_items_render_in_order_before_cursor_commit() {
+    fn multiple_fresh_items_are_emitted_as_flow_events_in_order() {
         let repository = Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap());
         repository.set_cursor("Dynamic:7:sub", "1").unwrap();
         let mut runner = BilibiliRunner::new(
@@ -3463,9 +3671,9 @@ mod tests {
             Arc::new(UnusedResources),
             "memory",
         )
-        .into_runtime_runner(Arc::new(RenderedChildClient), None);
+        .into_runtime_runner(Arc::new(CompletedChildClient), None);
         let task = Task::new(
-            "multi-card",
+            "multi-notify",
             POLL_DYNAMIC,
             serde_json::to_value(PollRequest {
                 subscription_id: "sub".into(),
@@ -3481,32 +3689,37 @@ mod tests {
         let context =
             RunnerContext::new(1, 1, "executor", None::<&str>, "invocation").with_batch("batch", 1);
 
-        let first = runner.run_batch(context.clone(), batch.clone()).unwrap();
-        assert_eq!(
-            first.results[0].result.as_ref().unwrap().tasks[0].protocol_id,
-            CARD_RENDER
-        );
-        assert_eq!(repository.cursor("Dynamic:7:sub").unwrap().unwrap(), "1");
-
-        let second = runner.run_batch(context.clone(), batch.clone()).unwrap();
-        assert_eq!(
-            second.results[0].result.as_ref().unwrap().tasks[0].protocol_id,
-            CARD_RENDER
-        );
-        assert_eq!(repository.cursor("Dynamic:7:sub").unwrap().unwrap(), "1");
-
         let completed = runner.run_batch(context, batch).unwrap();
         let completed = completed.results[0].result.as_ref().unwrap();
         assert_eq!(completed.tasks.len(), 2);
+        assert!(
+            completed
+                .tasks
+                .iter()
+                .all(|task| task.protocol_id == BOT_FLOW_INGRESS_PROTOCOL_ID)
+        );
         let urls = completed
             .tasks
             .iter()
             .map(|task| {
-                let message: BotMessage = serde_json::from_value(task.payload.to_value()).unwrap();
-                let MessageSegment::Text { text } = &message.segments[1] else {
-                    panic!("second segment must be URL text")
-                };
-                text.clone()
+                let envelope: BotFlowEventEnvelope =
+                    serde_json::from_value(task.payload.to_value()).unwrap();
+                assert_eq!(
+                    envelope.protocol_id,
+                    mutsuki_bot_protocol::BOT_EVENT_INGEST_PROTOCOL_ID
+                );
+                assert_eq!(envelope.payload.event_type.type_id, BILIBILI_EVENT_TYPE);
+                let notification: BilibiliNotification =
+                    serde_json::from_value(envelope.payload.value).unwrap();
+                assert_eq!(notification.kind, BilibiliPollKind::Dynamic);
+                assert_eq!(notification.uid, 7);
+                assert_eq!(
+                    notification.target,
+                    BotTarget::Group {
+                        group_id: "group".into(),
+                    }
+                );
+                notification.url
             })
             .collect::<Vec<_>>();
         assert_eq!(
@@ -3517,6 +3730,100 @@ mod tests {
             ]
         );
         assert_eq!(repository.cursor("Dynamic:7:sub").unwrap().unwrap(), "3");
+    }
+
+    #[test]
+    fn notification_card_node_renders_subscription_payload_into_message_send() {
+        let repository = Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap());
+        let mut runner = BilibiliRunner::new(
+            Box::new(LinkTransport),
+            repository,
+            Arc::new(UnusedResources),
+            "memory",
+        )
+        .into_runtime_runner(Arc::new(RenderedChildClient), None);
+        let notification = BilibiliNotification {
+            kind: BilibiliPollKind::Live,
+            subscription_id: "sub".into(),
+            uid: 42,
+            target: BotTarget::Group {
+                group_id: "group".into(),
+            },
+            item_id: "true".into(),
+            title: "晚上 eight 点开播".into(),
+            url: "https://live.bilibili.com/1000".into(),
+            image_url: None,
+        };
+        let invocation = BotNodeInvocation {
+            flow_id: "push".into(),
+            graph_revision: 1,
+            execution_id: "exec".into(),
+            node_id: "card".into(),
+            input_port_id: "event".into(),
+            config: json!({}),
+            input: BotFlowEventEnvelope {
+                event_id: "notify-1".into(),
+                protocol_id: mutsuki_bot_protocol::BOT_EVENT_INGEST_PROTOCOL_ID.into(),
+                payload: BotFlowPayload {
+                    event_type: BotFlowTypeRef::new(BILIBILI_EVENT_TYPE, 1),
+                    value: serde_json::to_value(&notification).unwrap(),
+                },
+                context: mutsuki_bot_protocol::BotFlowContext {
+                    bot: None,
+                    target: Some(notification.target.clone()),
+                    actor: None,
+                    ext: BotExtMap::new(),
+                },
+                trace_id: None,
+                correlation_id: None,
+            },
+        };
+        let task = Task::new(
+            "notify-card",
+            NOTIFY_CARD,
+            serde_json::to_value(invocation).unwrap(),
+        );
+        let batch = command_batch(vec![task]);
+        let context =
+            RunnerContext::new(1, 1, "executor", None::<&str>, "invocation").with_batch("batch", 1);
+
+        let waiting = runner.run_batch(context.clone(), batch.clone()).unwrap();
+        let waiting = waiting.results[0].result.as_ref().unwrap();
+        assert_eq!(waiting.tasks[0].protocol_id, CARD_RENDER);
+        let request: CardRenderRequest =
+            serde_json::from_value(waiting.tasks[0].payload.to_value()).unwrap();
+        assert_eq!(request.layout, CardLayout::Row);
+        assert_eq!(request.kicker, "直播");
+        assert!(request.live);
+        assert_eq!(request.cover, None);
+        assert!(waiting.task_await.is_some());
+
+        let completed = runner.run_batch(context, batch).unwrap();
+        let completed = completed.results[0].result.as_ref().unwrap();
+        let output = completed.output.as_ref().unwrap();
+        let node_result: BotNodeResult = serde_json::from_value(output.clone()).unwrap();
+        assert_eq!(node_result.outputs.len(), 1);
+        let output = &node_result.outputs[0];
+        assert_eq!(output.port_id, "message");
+        assert_eq!(
+            output.event.payload.event_type.type_id,
+            "mutsuki.bot.message.send"
+        );
+        let message: BotMessage =
+            serde_json::from_value(output.event.payload.value.clone()).unwrap();
+        assert_eq!(
+            message.target,
+            BotTarget::Group {
+                group_id: "group".into(),
+            }
+        );
+        assert!(matches!(message.segments[0], MessageSegment::Image { .. }));
+        assert_eq!(
+            message.segments[1],
+            MessageSegment::Text {
+                text: "https://live.bilibili.com/1000".into(),
+            }
+        );
     }
 
     #[test]
@@ -3968,16 +4275,29 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(protocols.contains(&POLL_LIVE));
         assert!(protocols.contains(&POLL_VIDEO));
+        assert!(protocols.contains(&NOTIFY_CARD));
         assert!(!protocols.contains(&POLL_DYNAMIC));
         assert!(!protocols.contains(&LINK_RESOLVE));
-        assert!(manifest.provides.extensions.is_empty());
+        let nodes = BotNodeCatalogFragment::from_plugin_extension(
+            manifest.provides.extensions.first().unwrap(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            nodes
+                .nodes
+                .iter()
+                .map(|node| node.node_type_id.as_str())
+                .collect::<Vec<_>>(),
+            [BILIBILI_NOTIFICATION_NODE_TYPE, BILIBILI_CARD_NODE_TYPE]
+        );
         assert_eq!(
             manifest.provides.runners[0]
                 .accepted_protocol_ids
                 .iter()
                 .map(|protocol_id| protocol_id.as_str())
                 .collect::<Vec<_>>(),
-            vec![POLL_LIVE, POLL_VIDEO]
+            vec![POLL_LIVE, POLL_VIDEO, NOTIFY_CARD]
         );
     }
 
