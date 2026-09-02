@@ -178,6 +178,37 @@ async fn starts_on_loopback_serves_shell_and_health() {
 }
 
 #[tokio::test]
+async fn start_failure_names_occupied_listen_address() {
+    let mut first = start_host(false, None).await;
+    let addr = first.listen_addr().unwrap();
+    let shell_dir = tempdir().unwrap();
+    let mut second = MutsukiWebHost::builder()
+        .application(MinimalWebApplication::empty("mutsuki.web.example"))
+        .listen(addr.to_string())
+        .safe_mode(false)
+        .shell_dir(shell_dir.path().join("shell"))
+        .auth_token("test-token")
+        .mode(DeploymentMode::Embedded)
+        .build()
+        .expect("build host");
+    let error = second
+        .start()
+        .await
+        .expect_err("second host must fail on the occupied port");
+    let message = error.to_string();
+    assert!(
+        message.contains(&addr.to_string()),
+        "start error must name the occupied address, got: {message}"
+    );
+    assert!(
+        !message.contains("server dropped before ready"),
+        "start error must surface the real bind failure, got: {message}"
+    );
+    first.stop().await.unwrap();
+    std::mem::forget(shell_dir);
+}
+
+#[tokio::test]
 async fn static_csp_includes_application_image_hosts() {
     let assets = tempdir().unwrap();
     std::fs::write(
