@@ -230,6 +230,7 @@ impl QqBotPluginBundle {
                 });
                 let management =
                     Arc::new(QqBotManagementService::with_state_store(provider, state));
+                management.attach_gateway_status_watch(management_health.status_changes());
                 let sandbox = match &workspace_sandbox {
                     Some(sandbox) => sandbox.clone(),
                     None => Arc::new(

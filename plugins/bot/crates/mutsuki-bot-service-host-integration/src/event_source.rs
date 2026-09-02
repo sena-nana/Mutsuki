@@ -50,16 +50,45 @@ pub struct QqGatewayHealthSnapshot {
 #[derive(Clone)]
 pub struct QqGatewayHealthHandle {
     inner: Arc<Mutex<QqGatewayHealthSnapshot>>,
+    /// Bumped on every snapshot mutation that console frontends render, so
+    /// status consumers can react to transitions without polling.
+    changes: Arc<watch::Sender<u64>>,
 }
 
 impl QqGatewayHealthHandle {
+    fn new() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(QqGatewayHealthSnapshot {
+                started_at_unix_ms: unix_ms(),
+                ..QqGatewayHealthSnapshot::default()
+            })),
+            changes: Arc::new(watch::Sender::new(0)),
+        }
+    }
+
     pub fn snapshot(&self) -> QqGatewayHealthSnapshot {
         self.inner.lock().expect("QQBot health mutex").clone()
     }
 
+    /// Subscribes to gateway status transitions; each wakeup means the
+    /// snapshot changed and consumers should re-read [`Self::snapshot`].
+    pub fn status_changes(&self) -> watch::Receiver<u64> {
+        self.changes.subscribe()
+    }
+
     pub fn set_self_user(&self, user: BotUser) {
+        self.update(|snapshot| {
+            snapshot.self_user = Some(merge_self_user(snapshot.self_user.clone(), user));
+        });
+    }
+
+    /// Applies one snapshot mutation and wakes status watchers.
+    fn update(&self, apply: impl FnOnce(&mut QqGatewayHealthSnapshot)) {
         let mut snapshot = self.inner.lock().expect("QQBot health mutex");
-        snapshot.self_user = Some(merge_self_user(snapshot.self_user.clone(), user));
+        apply(&mut snapshot);
+        drop(snapshot);
+        self.changes
+            .send_modify(|version| *version = version.wrapping_add(1));
     }
 }
 
@@ -146,12 +175,7 @@ impl QqGatewayEventSource {
             config,
             credentials,
             auth,
-            health: QqGatewayHealthHandle {
-                inner: Arc::new(Mutex::new(QqGatewayHealthSnapshot {
-                    started_at_unix_ms: unix_ms(),
-                    ..QqGatewayHealthSnapshot::default()
-                })),
-            },
+            health: QqGatewayHealthHandle::new(),
             control: QqGatewayControlHandle::default(),
             inbound: QqInboundObserveHandle::default(),
             stop: Arc::new(Mutex::new(None)),
@@ -591,10 +615,11 @@ async fn run_connection(
                         let task = pump.handle_frame(frame.clone(), 0)
                             .map_err(GatewayFailure::Recoverable)?;
                         if matches!(frame.t.as_deref(), Some("READY" | "RESUMED")) {
-                            let mut snapshot = health.inner.lock().expect("QQBot health mutex");
-                            snapshot.identified = true;
-                            snapshot.last_error = None;
-                            snapshot.last_error_code = None;
+                            health.update(|snapshot| {
+                                snapshot.identified = true;
+                                snapshot.last_error = None;
+                                snapshot.last_error_code = None;
+                            });
                             awaiting_ready_since = None;
                             *reconnect_attempt = 0;
                         }
@@ -999,48 +1024,53 @@ fn merge_self_user(existing: Option<BotUser>, incoming: BotUser) -> BotUser {
 }
 
 fn mark_connected(health: &QqGatewayHealthHandle) {
-    let mut health = health.inner.lock().expect("QQBot health mutex");
-    let now = unix_ms();
-    if health.started_at_unix_ms.is_none() {
-        health.started_at_unix_ms = now;
-    }
-    health.connected_since_unix_ms = now;
-    health.connected = true;
-    health.identified = false;
-    health.last_error = None;
-    health.last_error_code = None;
+    health.update(|snapshot| {
+        let now = unix_ms();
+        if snapshot.started_at_unix_ms.is_none() {
+            snapshot.started_at_unix_ms = now;
+        }
+        snapshot.connected_since_unix_ms = now;
+        snapshot.connected = true;
+        snapshot.identified = false;
+        snapshot.last_error = None;
+        snapshot.last_error_code = None;
+    });
 }
 
 fn mark_disconnected(health: &QqGatewayHealthHandle) {
-    let mut health = health.inner.lock().expect("QQBot health mutex");
-    health.connected = false;
-    health.identified = false;
-    health.connected_since_unix_ms = None;
+    health.update(|snapshot| {
+        snapshot.connected = false;
+        snapshot.identified = false;
+        snapshot.connected_since_unix_ms = None;
+    });
 }
 
 fn mark_reconnect(health: &QqGatewayHealthHandle, reason: &ReconnectReason) {
-    let mut health = health.inner.lock().expect("QQBot health mutex");
-    health.connected = false;
-    health.identified = false;
-    health.connected_since_unix_ms = None;
-    health.reconnect_count = health.reconnect_count.saturating_add(1);
-    health.last_error = Some(reason.detail.clone());
-    health.last_error_code = reason.code.map(str::to_owned);
+    health.update(|snapshot| {
+        snapshot.connected = false;
+        snapshot.identified = false;
+        snapshot.connected_since_unix_ms = None;
+        snapshot.reconnect_count = snapshot.reconnect_count.saturating_add(1);
+        snapshot.last_error = Some(reason.detail.clone());
+        snapshot.last_error_code = reason.code.map(str::to_owned);
+    });
 }
 
 fn mark_error(health: &QqGatewayHealthHandle, error: &str) {
-    let mut health = health.inner.lock().expect("QQBot health mutex");
-    health.connected = false;
-    health.identified = false;
-    health.connected_since_unix_ms = None;
-    health.last_error = Some(error.into());
-    health.last_error_code = None;
+    health.update(|snapshot| {
+        snapshot.connected = false;
+        snapshot.identified = false;
+        snapshot.connected_since_unix_ms = None;
+        snapshot.last_error = Some(error.into());
+        snapshot.last_error_code = None;
+    });
 }
 
 fn mark_stopped(health: &QqGatewayHealthHandle) {
-    let mut health = health.inner.lock().expect("QQBot health mutex");
-    health.connected = false;
-    health.identified = false;
+    health.update(|snapshot| {
+        snapshot.connected = false;
+        snapshot.identified = false;
+    });
 }
 
 fn unix_ms() -> Option<u128> {
@@ -1286,6 +1316,35 @@ mod tests {
                 if reason == "heartbeat ACK timed out"
         ));
         assert_eq!(source.health.snapshot().reconnect_count, 1);
+    }
+
+    #[tokio::test]
+    async fn gateway_health_transitions_wakeup_status_watchers() {
+        let source = QqGatewayEventSource::new(
+            QqBotConfig::new("main", "APP_ID"),
+            SharedQqCredentials::default(),
+            QqAuthManager::new(),
+        );
+        let mut status = source.health.status_changes();
+
+        mark_connected(&source.health);
+        status.changed().await.expect("connect notifies watchers");
+        assert_eq!(*status.borrow(), 1);
+
+        mark_reconnect(
+            &source.health,
+            &ReconnectReason::new("heartbeat ACK timed out"),
+        );
+        status.changed().await.expect("reconnect notifies watchers");
+        assert_eq!(*status.borrow(), 2);
+
+        source.health.set_self_user(BotUser {
+            user_id: "BOT_OPENID".into(),
+            display_name: Some("mutsuki".into()),
+            avatar_url: None,
+        });
+        status.changed().await.expect("self user notifies watchers");
+        assert_eq!(*status.borrow(), 3);
     }
 
     #[test]

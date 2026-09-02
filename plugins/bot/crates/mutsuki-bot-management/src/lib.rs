@@ -26,7 +26,7 @@ use mutsuki_bot_protocol::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 
 /// Runs blocking management IO from an async context without stalling a reactor thread.
 ///
@@ -537,6 +537,37 @@ impl QqBotManagementService {
                 )
             })
             .collect()
+    }
+
+    /// Republishes live gateway status transitions as Snapshot change events.
+    ///
+    /// The gateway EventSource only records connected/identified transitions in
+    /// its in-process health snapshot, so [`QqBotManagementApi::subscribe_changes`]
+    /// consumers otherwise learn about the account coming online solely through
+    /// polling or a manual page reload. Each watch wakeup is forwarded with the
+    /// current revision; the forwarder ends once every status watch sender is
+    /// dropped (the gateway source shut down) or the owning service generation
+    /// is replaced.
+    pub fn attach_gateway_status_watch(&self, mut status: watch::Receiver<u64>) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let changes = self.changes.clone();
+        let state = Arc::downgrade(&self.state);
+        runtime.spawn(async move {
+            while status.changed().await.is_ok() {
+                let Some(state) = state.upgrade() else {
+                    break;
+                };
+                let Ok(revision) = in_blocking_section(|| state.revision()) else {
+                    continue;
+                };
+                let _ = changes.send(QqManagementChangeEvent {
+                    revision,
+                    areas: vec![QqManagementChangeArea::Snapshot],
+                });
+            }
+        });
     }
 }
 
@@ -1367,6 +1398,22 @@ mod tests {
         assert_eq!(snap.revision, 2);
         assert_eq!(snap.deliveries[0].receipt.status, DeliveryStatus::Pending);
         assert_eq!(snap.interactions[0].status, InteractionStatus::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn gateway_status_watch_republishes_snapshot_change() {
+        let (api, _) = service();
+        let mut changes = api.subscribe_changes().expect("QQ change source");
+        let (status_tx, status_rx) = watch::channel(0_u64);
+        api.attach_gateway_status_watch(status_rx);
+
+        status_tx.send_modify(|version| *version = version.wrapping_add(1));
+        let changed = changes.changed().await.expect("gateway status change");
+        assert_eq!(changed.areas, vec![QqManagementChangeArea::Snapshot]);
+        assert_eq!(
+            changed.revision,
+            api.snapshot("", true).await.unwrap().revision
+        );
     }
 
     #[tokio::test]
