@@ -47,7 +47,12 @@ async fn production_binary_runs_fake_qq_from_config_repository_and_shuts_down_cl
         }
     })
     .await
-    .unwrap_or_else(|_| panic!("product did not become healthy: {}", process.summary()));
+    .unwrap_or_else(|_| {
+        panic!(
+            "product did not become healthy: {}",
+            process.output_summary()
+        )
+    });
     assert_gateway_health(&health);
 
     let tasks = task_list(&product).await;
@@ -72,7 +77,7 @@ async fn production_binary_runs_fake_qq_from_config_repository_and_shuts_down_cl
     assert!(
         status.success(),
         "product exited with {status}: {}",
-        process.summary()
+        process.output_summary()
     );
     assert!(
         tokio::net::TcpStream::connect(&product.console_address)
@@ -114,7 +119,12 @@ async fn sigterm_uses_the_same_orderly_product_shutdown_path() {
         }
     })
     .await
-    .unwrap_or_else(|_| panic!("product did not become healthy: {}", process.summary()));
+    .unwrap_or_else(|_| {
+        panic!(
+            "product did not become healthy: {}",
+            process.output_summary()
+        )
+    });
 
     let signal = std::process::Command::new("kill")
         .args(["-TERM", &process.id().to_string()])
@@ -125,7 +135,7 @@ async fn sigterm_uses_the_same_orderly_product_shutdown_path() {
     assert!(
         status.success(),
         "SIGTERM exit failed: {}",
-        process.summary()
+        process.output_summary()
     );
     assert!(
         tokio::net::TcpStream::connect(&product.console_address)
