@@ -28,9 +28,15 @@ pub(super) fn request_running_cancel(
         return;
     };
     let delivered = handle.as_ref().is_some_and(|handle| {
-        management
-            .cancel(runner_id.to_string(), invocation_id.into(), handle.clone())
-            .is_ok()
+        if handle.cancels_in_process() {
+            // Apply the flag on the actor thread so `abort` cannot race a
+            // queued worker that has not registered its invocation yet.
+            handle.cancel(invocation_id).is_ok()
+        } else {
+            management
+                .cancel(runner_id.to_string(), invocation_id.into(), handle.clone())
+                .is_ok()
+        }
     });
     if !delivered {
         let pending = pending_cancels.entry(runner_id).or_default();

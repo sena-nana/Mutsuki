@@ -88,6 +88,10 @@ impl RunnerManagementHandle for NativeCancellationRegistry {
         Ok(())
     }
 
+    fn cancels_in_process(&self) -> bool {
+        true
+    }
+
     fn dispose(&self) -> RuntimeResult<()> {
         self.clear();
         Ok(())

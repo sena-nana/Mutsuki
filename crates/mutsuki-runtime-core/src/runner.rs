@@ -44,6 +44,15 @@ pub trait RunnerManagementHandle: Send + Sync + fmt::Debug {
     fn cancel(&self, invocation_id: &str) -> RuntimeResult<()>;
 
     fn dispose(&self) -> RuntimeResult<()>;
+
+    /// Whether [`cancel`](Self::cancel) is safe to apply inline on the
+    /// scheduling actor thread. In-process registries store a flag under a
+    /// lock and must complete before `abort` reports success; external
+    /// process handles are delivered through the management worker pool
+    /// because they may block on sidecar termination.
+    fn cancels_in_process(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Clone)]
