@@ -404,6 +404,7 @@ impl SandboxService {
         ))
     }
 
+    #[allow(clippy::unused_async_trait_impl)]
     async fn ingest_as_bot(
         &self,
         expected_revision: u64,

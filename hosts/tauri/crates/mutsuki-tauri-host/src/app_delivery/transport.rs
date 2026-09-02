@@ -257,6 +257,7 @@ impl MemoryReadinessView {
 }
 
 impl AppLinkTransport for InMemoryAppLinkTransport {
+    #[allow(clippy::unused_async_trait_impl)]
     async fn try_connect(&self, app_id: &AppId) -> Result<AppLinkSession, AppDeliveryError> {
         self.snapshot_session(app_id, MemoryReadinessView::Probe)
     }
@@ -283,6 +284,7 @@ impl AppLinkTransport for InMemoryAppLinkTransport {
         }
     }
 
+    #[allow(clippy::unused_async_trait_impl)]
     async fn transmit(
         &self,
         session: &AppLinkSession,
@@ -303,6 +305,7 @@ impl AppLinkTransport for InMemoryAppLinkTransport {
             .accept_or_duplicate(envelope.request_id.clone(), receipt))
     }
 
+    #[allow(clippy::unused_async_trait_impl)]
     async fn query_receipt(
         &self,
         session: &AppLinkSession,
@@ -398,6 +401,7 @@ impl AppLinkTransport for LinkLocalAppTransport {
         .await
     }
 
+    #[allow(clippy::unused_async_trait_impl)]
     async fn query_receipt(
         &self,
         _session: &AppLinkSession,

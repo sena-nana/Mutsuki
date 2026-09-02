@@ -45,6 +45,7 @@ impl TauriAppActivator for ProcessAppActivator {
             .ok_or_else(|| ActivationError::AppNotInstalled(app_id.to_string()))
     }
 
+    #[allow(clippy::unused_async_trait_impl)]
     async fn activate(&self, app: &AppDescriptor) -> Result<ActivationReceipt, ActivationError> {
         let executable = app.executable.as_ref().ok_or_else(|| {
             ActivationError::ActivationFailed(format!(

@@ -95,6 +95,7 @@ impl ConfigService {
         Ok((*self.registry.schema(provider_id)?).clone())
     }
 
+    #[allow(clippy::unused_async_trait_impl)]
     pub async fn read(
         &self,
         provider_id: &str,
