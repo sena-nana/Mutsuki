@@ -489,10 +489,7 @@ fn flow_message_result(
 }
 
 fn mihuashi_layout(url: &str) -> CardLayout {
-    if Url::parse(url)
-        .ok()
-        .is_some_and(|parsed| parsed.path().contains("/profiles/"))
-    {
+    if Url::parse(url).is_ok_and(|parsed| parsed.path().contains("/profiles/")) {
         CardLayout::Profile
     } else {
         CardLayout::Art

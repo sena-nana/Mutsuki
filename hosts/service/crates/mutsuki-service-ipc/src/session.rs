@@ -82,14 +82,18 @@ pub struct ControlSession {
 impl ControlSession {
     pub async fn connect(config: ControlClientConfig) -> IpcResult<Self> {
         let stream = connect_transport(config.transport.clone(), &config.endpoint).await?;
-        Self::from_stream(config, stream, Arc::new(AtomicU64::new(1))).await
+        Ok(Self::from_stream(
+            config,
+            stream,
+            Arc::new(AtomicU64::new(1)),
+        ))
     }
 
-    async fn from_stream(
+    fn from_stream(
         config: ControlClientConfig,
         stream: ControlStream,
         connections: Arc<AtomicU64>,
-    ) -> IpcResult<Self> {
+    ) -> Self {
         let (reader, writer) = tokio::io::split(stream);
         let writer: Arc<Mutex<Box<dyn AsyncWrite + Send + Unpin>>> =
             Arc::new(Mutex::new(Box::new(writer)));
@@ -97,7 +101,7 @@ impl ControlSession {
             Arc::new(Mutex::new(HashMap::new()));
         let closed = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let reader_task = spawn_reader(reader, config.limits, pending.clone(), closed.clone());
-        Ok(Self {
+        Self {
             config,
             writer,
             pending,
@@ -107,7 +111,7 @@ impl ControlSession {
             encode_buf: Mutex::new(Vec::new()),
             payload_buf: Mutex::new(Vec::new()),
             connections,
-        })
+        }
     }
 
     pub fn connection_count(&self) -> u64 {

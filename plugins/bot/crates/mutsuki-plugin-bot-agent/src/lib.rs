@@ -1479,6 +1479,7 @@ impl BotAgentBridge {
     /// # Errors
     ///
     /// Returns an error for unsupported targets, invalid identity, or repository failure.
+    #[allow(clippy::unused_async_trait_impl)]
     pub async fn resolve(
         &self,
         event: &BotEvent,
