@@ -251,9 +251,19 @@ impl WebHost for MutsukiWebHost {
         let cancel = self.cancel.clone();
         let join = tokio::spawn(async move { server.serve(ready_tx, stop_rx, cancel).await });
 
-        let addr = ready_rx
-            .await
-            .map_err(|_| WebHostError::StartFailed("server dropped before ready".into()))??;
+        // Channel closed without readiness: the server task exited early, and its join
+        // result carries the real failure (bind errors, panics).
+        let addr = match ready_rx.await {
+            Ok(result) => result?,
+            Err(_) => {
+                join.await.map_err(|err| {
+                    WebHostError::StartFailed(format!("server task failed before ready: {err}"))
+                })??;
+                return Err(WebHostError::StartFailed(
+                    "server exited without reporting readiness".into(),
+                ));
+            }
+        };
 
         self.bridge = Some(bridge);
         self.listen_addr = Some(addr);

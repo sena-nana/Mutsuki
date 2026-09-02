@@ -85,7 +85,7 @@ impl HostServer {
             .map_err(|err| WebHostError::InvalidConfig(err.to_string()))?;
         let listener = TcpListener::bind(addr)
             .await
-            .map_err(|err| WebHostError::StartFailed(err.to_string()))?;
+            .map_err(|err| WebHostError::StartFailed(format!("failed to bind {addr}: {err}")))?;
         let local = listener
             .local_addr()
             .map_err(|err| WebHostError::StartFailed(err.to_string()))?;
