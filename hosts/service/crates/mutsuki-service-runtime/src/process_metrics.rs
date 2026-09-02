@@ -26,7 +26,7 @@ mod platform {
         if page_size <= 0 {
             return None;
         }
-        Some(pages.saturating_mul(page_size as u64))
+        Some(pages.saturating_mul(page_size.cast_unsigned()))
     }
 
     pub(super) fn process_cpu_time_ms() -> Option<u64> {
@@ -40,7 +40,8 @@ mod platform {
         if status != 0 {
             return None;
         }
-        let nanos = (value.tv_sec as u128) * 1_000_000_000 + value.tv_nsec as u128;
+        let nanos = u128::from(value.tv_sec.unsigned_abs()) * 1_000_000_000
+            + u128::from(value.tv_nsec.unsigned_abs());
         Some(u64::try_from(nanos / 1_000_000).unwrap_or(u64::MAX))
     }
 }
