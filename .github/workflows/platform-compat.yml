@@ -27,6 +27,7 @@ jobs:
         run: |
           rustup set profile minimal
           rustup toolchain install stable
+          rustup component add rust-analyzer
       - run: cargo test --workspace --all-targets --locked
 
   windows-host-metrics:

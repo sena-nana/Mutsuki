@@ -3,6 +3,7 @@ from __future__ import annotations
 from mutsuki_runner_kit.contracts.codec import to_json_dict
 from mutsuki_runner_kit.contracts.ids import (
     ExecutorId,
+    PluginId,
     RefId,
     ResourceCellId,
     ResourceLeaseId,
@@ -173,7 +174,7 @@ def test_resource_cell_and_resource_lease_roundtrip() -> None:
     cell = ResourceCellRef(
         cell_id=ResourceCellId("cell:http:default"),
         resource_kind="http.connection_pool",
-        owner_plugin_id="plugin-http",
+        owner_plugin_id=PluginId("plugin-http"),
         schema="http.connection_pool.v1",
         generation=1,
         health="healthy",

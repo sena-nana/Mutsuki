@@ -13,7 +13,7 @@ from mutsuki_runner_kit.contracts.extension import (
     SchedulerPolicyDescriptor,
     WorkflowDescriptor,
 )
-from mutsuki_runner_kit.contracts.ids import BindingId, ProtocolId, SurfaceId
+from mutsuki_runner_kit.contracts.ids import BindingId, PluginId, ProtocolId, RunnerId, SurfaceId
 from mutsuki_runner_kit.contracts.observability import (
     ObservabilityOutletProfile,
     ObservabilityOverflowPolicy,
@@ -73,8 +73,8 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
         dispatch_spans=False,
     )
     descriptor = RunnerDescriptor(
-        runner_id="runner-a",
-        plugin_id="plugin-a",
+        runner_id=RunnerId("runner-a"),
+        plugin_id=PluginId("plugin-a"),
         plugin_generation=1,
         accepted_protocol_ids=(ProtocolId("raw.input"),),
         purity=RunnerPurity.PURE,
@@ -85,7 +85,7 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
         contract_surfaces=(SurfaceId("runner:runner-a"),),
     )
     protocol = ProtocolDescriptor(
-        protocol_id="im.message.received.v1",
+        protocol_id=ProtocolId("im.message.received.v1"),
         version="1.0.0",
         input_schema={"type": "object"},
         output_schema={"type": "object"},
@@ -95,8 +95,8 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
     )
     binding = HandlerBinding(
         binding_id=BindingId("message-handler"),
-        plugin_id="plugin-a",
-        protocol_id="im.message.received.v1",
+        plugin_id=PluginId("plugin-a"),
+        protocol_id=ProtocolId("im.message.received.v1"),
         target_protocol_id=ProtocolId("raw.input"),
         target_runner_hint="runner-a",
         pool_id="default",
@@ -108,10 +108,10 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
         runners=(descriptor,),
         protocols=(protocol,),
         protocol_classes={
-            "raw.input": ProtocolClass.DOMAIN,
-            "im.message.received.v1": ProtocolClass.CONTROL,
-            "effect.chat.send": ProtocolClass.EFFECT,
-            "mutsuki.task.v1": ProtocolClass.CORE,
+            ProtocolId("raw.input"): ProtocolClass.DOMAIN,
+            ProtocolId("im.message.received.v1"): ProtocolClass.CONTROL,
+            ProtocolId("effect.chat.send"): ProtocolClass.EFFECT,
+            ProtocolId("mutsuki.task.v1"): ProtocolClass.CORE,
         },
         handler_bindings=(binding,),
         extensions=(
@@ -200,7 +200,7 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
         services=("mutsuki.agent.management",),
     )
     manifest = PluginManifest(
-        plugin_id="plugin-a",
+        plugin_id=PluginId("plugin-a"),
         version="0.1.0",
         api_version="mutsuki-plugin-v1",
         artifact=PluginArtifact(
@@ -234,9 +234,9 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
         profile_hash="sha256:profile",
         registry_generation=1,
         plugins=(manifest,),
-        load_order=("plugin-a",),
+        load_order=(PluginId("plugin-a"),),
         runner_bindings={"raw.input": "runner-a"},
-        plugin_deployments={"plugin-a": PluginDeploymentKind.PYTHON},
+        plugin_deployments={PluginId("plugin-a"): PluginDeploymentKind.PYTHON},
         observability=observability,
         capability_graph=RuntimeCapabilityGraph(
             profile_mode=RuntimeProfileMode.FULL_DEV,
@@ -256,14 +256,14 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
             active_capability_providers=(
                 CapabilityProviderSelection(
                     capability="plugin:plugin-a",
-                    provider_plugin_id="plugin-a",
+                    provider_plugin_id=PluginId("plugin-a"),
                     provider_version="0.1.0",
                     surface_id=SurfaceId("plugin:plugin-a"),
                     reason="active_plan",
                 ),
                 CapabilityProviderSelection(
                     capability="plugin_backend:plugin.backend.python",
-                    provider_plugin_id="plugin-a",
+                    provider_plugin_id=PluginId("plugin-a"),
                     provider_version=None,
                     surface_id=SurfaceId("plugin_backend:plugin.backend.python"),
                     reason="active_plan",
@@ -279,7 +279,7 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
             active_workflows=("workflow.linear",),
             permission_audit=(
                 PermissionAuditEntry(
-                    plugin_id="plugin-a",
+                    plugin_id=PluginId("plugin-a"),
                     permission_kind="effect",
                     permission="effect.chat.send",
                     granted=True,
@@ -287,7 +287,7 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
                     reason="active_effect",
                 ),
                 PermissionAuditEntry(
-                    plugin_id="plugin-a",
+                    plugin_id=PluginId("plugin-a"),
                     permission_kind="resource",
                     permission="read",
                     granted=True,
@@ -300,77 +300,77 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
             ContractSurface(
                 surface_id=SurfaceId("runner:runner-a"),
                 kind=ContractSurfaceKind.RUNNER,
-                owner_plugin_id="plugin-a",
+                owner_plugin_id=PluginId("plugin-a"),
                 fingerprint="sha256:runner",
                 deprecated=False,
             ),
             ContractSurface(
                 surface_id=SurfaceId("task_protocol:raw.input"),
                 kind=ContractSurfaceKind.TASK_PROTOCOL,
-                owner_plugin_id="plugin-a",
+                owner_plugin_id=PluginId("plugin-a"),
                 fingerprint="task_protocol:raw.input",
                 deprecated=False,
             ),
             ContractSurface(
                 surface_id=SurfaceId("protocol:im.message.received.v1"),
                 kind=ContractSurfaceKind.PROTOCOL,
-                owner_plugin_id="plugin-a",
+                owner_plugin_id=PluginId("plugin-a"),
                 fingerprint="protocol:im.message.received.v1:1.0.0",
                 deprecated=False,
             ),
             ContractSurface(
                 surface_id=SurfaceId("handler_binding:message-handler"),
                 kind=ContractSurfaceKind.HANDLER_BINDING,
-                owner_plugin_id="plugin-a",
+                owner_plugin_id=PluginId("plugin-a"),
                 fingerprint="handler_binding:message-handler",
                 deprecated=False,
             ),
             ContractSurface(
                 surface_id=SurfaceId("plugin_extension:plugin-a:example.plugin.catalog@1"),
                 kind=ContractSurfaceKind.PLUGIN_EXTENSION,
-                owner_plugin_id="plugin-a",
+                owner_plugin_id=PluginId("plugin-a"),
                 fingerprint='plugin_extension:example.plugin.catalog@1:{"entries":[]}',
                 deprecated=False,
             ),
             ContractSurface(
                 surface_id=SurfaceId("plugin_backend:plugin.backend.python"),
                 kind=ContractSurfaceKind.PLUGIN_BACKEND,
-                owner_plugin_id="plugin-a",
+                owner_plugin_id=PluginId("plugin-a"),
                 fingerprint="plugin_backend:plugin.backend.python",
                 deprecated=False,
             ),
             ContractSurface(
                 surface_id=SurfaceId("host_extension:host.extension.python"),
                 kind=ContractSurfaceKind.HOST_EXTENSION,
-                owner_plugin_id="plugin-a",
+                owner_plugin_id=PluginId("plugin-a"),
                 fingerprint="host_extension:host.extension.python",
                 deprecated=False,
             ),
             ContractSurface(
                 surface_id=SurfaceId("codec:mutsuki.codec.typed-msgpack.v1"),
                 kind=ContractSurfaceKind.CODEC,
-                owner_plugin_id="plugin-a",
+                owner_plugin_id=PluginId("plugin-a"),
                 fingerprint="codec:mutsuki.codec.typed-msgpack.v1",
                 deprecated=False,
             ),
             ContractSurface(
                 surface_id=SurfaceId("bridge:bridge.python.binary"),
                 kind=ContractSurfaceKind.BRIDGE,
-                owner_plugin_id="plugin-a",
+                owner_plugin_id=PluginId("plugin-a"),
                 fingerprint="bridge:bridge.python.binary",
                 deprecated=False,
             ),
             ContractSurface(
                 surface_id=SurfaceId("scheduler_policy:scheduler.fair"),
                 kind=ContractSurfaceKind.SCHEDULER_POLICY,
-                owner_plugin_id="plugin-a",
+                owner_plugin_id=PluginId("plugin-a"),
                 fingerprint="scheduler_policy:scheduler.fair",
                 deprecated=False,
             ),
             ContractSurface(
                 surface_id=SurfaceId("workflow:workflow.linear"),
                 kind=ContractSurfaceKind.WORKFLOW,
-                owner_plugin_id="plugin-a",
+                owner_plugin_id=PluginId("plugin-a"),
                 fingerprint="workflow:workflow.linear",
                 deprecated=False,
             ),
@@ -416,9 +416,9 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
         RuntimeProfile(
             profile_id="default",
             mode=RuntimeProfileMode.FULL_DEV,
-            enabled_plugins=("plugin-a",),
+            enabled_plugins=(PluginId("plugin-a"),),
             bindings={"raw.input": "plugin-a"},
-            plugin_deployments={"plugin-a": PluginDeploymentKind.PYTHON},
+            plugin_deployments={PluginId("plugin-a"): PluginDeploymentKind.PYTHON},
             observability=observability,
             allow_dynamic_registration=False,
             allow_hot_reload=True,

@@ -4,6 +4,7 @@
 #![allow(clippy::too_many_lines)]
 
 use std::fs;
+use std::path::PathBuf;
 use std::process::Command;
 
 use mutsuki_bot::assemble_service;
@@ -34,9 +35,19 @@ async fn identical_business_config_runs_builtin_then_managed_abi() {
         .find(|package| package["name"] == "mutsuki-plugin-bot-command")
         .and_then(|package| package["manifest_path"].as_str())
         .expect("Bot command manifest in dependency metadata");
-    let fixture_target = root.path().join("plugin-target");
+    // Reuse a stable target directory: a per-run temporary target dir cold-builds
+    // the whole plugin dependency tree every run and competes for disk with the
+    // surrounding workspace build.
+    let fixture_target =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../target/abi-plugin-fixture");
     let build = Command::new(env!("CARGO"))
-        .args(["build", "--manifest-path", plugin_manifest, "-p"])
+        .args([
+            "build",
+            "--locked",
+            "--manifest-path",
+            plugin_manifest,
+            "-p",
+        ])
         .arg("mutsuki-plugin-bot-command")
         .arg("--target-dir")
         .arg(&fixture_target)

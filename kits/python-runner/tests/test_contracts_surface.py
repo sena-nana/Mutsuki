@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from mutsuki_runner_kit.contracts.ids import SurfaceId
+from mutsuki_runner_kit.contracts.ids import PluginId, SurfaceId
 from mutsuki_runner_kit.contracts.surface import (
     SurfaceOccupancy,
     SurfaceOccupancyHandle,
@@ -25,7 +25,7 @@ def test_surface_occupancy_roundtrips() -> None:
     handle = SurfaceOccupancyHandle(
         handle_id="timer:heartbeat:1",
         surface_id=SurfaceId("timer:heartbeat"),
-        owner_plugin_id="plugin-a",
+        owner_plugin_id=PluginId("plugin-a"),
         plugin_generation=2,
         registry_generation=7,
         kind=SurfaceOccupancyHandleKind.TIMER,

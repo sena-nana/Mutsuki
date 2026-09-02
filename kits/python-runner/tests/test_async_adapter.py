@@ -5,7 +5,7 @@ from dataclasses import replace
 
 import pytest
 
-from mutsuki_runner_kit.contracts.ids import ProtocolId, SurfaceId, TraceId
+from mutsuki_runner_kit.contracts.ids import PluginId, ProtocolId, RunnerId, SurfaceId, TraceId
 from mutsuki_runner_kit.contracts.runner import (
     ExecutionClass,
     RunnerDescriptor,
@@ -32,8 +32,8 @@ class ManualClient:
 
 def async_descriptor() -> RunnerDescriptor:
     return RunnerDescriptor(
-        runner_id="async.runner",
-        plugin_id="plugin-a",
+        runner_id=RunnerId("async.runner"),
+        plugin_id=PluginId("plugin-a"),
         plugin_generation=1,
         accepted_protocol_ids=(ProtocolId("parent.work"),),
         purity=RunnerPurity.PURE,

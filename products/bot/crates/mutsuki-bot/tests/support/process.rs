@@ -9,10 +9,11 @@ pub struct ProductProcess {
 }
 
 impl ProductProcess {
-    pub fn spawn(executable_path: &Path, output_path: PathBuf) -> Self {
+    pub fn spawn(executable_path: &Path, console_listen: &str, output_path: PathBuf) -> Self {
         let output = File::create(&output_path).expect("create product process output");
         let error = output.try_clone().expect("clone product process output");
         let child = Command::new(executable_path)
+            .env(mutsuki_bot::CONSOLE_LISTEN_ENV, console_listen)
             .stdin(Stdio::null())
             .stdout(Stdio::from(output))
             .stderr(Stdio::from(error))

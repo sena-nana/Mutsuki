@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from mutsuki_runner_kit.contracts.batch import CompletionBatch, WorkBatch
-from mutsuki_runner_kit.contracts.ids import ProtocolId, SurfaceId
+from mutsuki_runner_kit.contracts.ids import PluginId, ProtocolId, RunnerId, SurfaceId
 from mutsuki_runner_kit.contracts.runner import (
     ExecutionClass,
     RunnerContext,
@@ -39,8 +39,8 @@ class EchoRunner:
 
 def echo_descriptor() -> RunnerDescriptor:
     return RunnerDescriptor(
-        runner_id="echo.runner",
-        plugin_id="plugin.echo",
+        runner_id=RunnerId("echo.runner"),
+        plugin_id=PluginId("plugin.echo"),
         plugin_generation=1,
         accepted_protocol_ids=(ProtocolId("raw.input"),),
         purity=RunnerPurity.PURE,

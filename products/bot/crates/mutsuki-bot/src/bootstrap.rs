@@ -20,6 +20,7 @@ use crate::{
 pub const SERVICE_CONFIG_PROVIDER_ID: &str = "mutsuki.service.runtime";
 pub const CONSOLE_AUTH_TOKEN_KEY: &str = "mutsuki.web.console.token";
 pub const CONSOLE_AUTH_TOKEN_ENV: &str = "MUTSUKI_SECRET_MUTSUKI_WEB_CONSOLE_TOKEN";
+pub const CONSOLE_LISTEN_ENV: &str = "MUTSUKI_CONSOLE_LISTEN";
 const INSTANCE_DIR: &str = ".mutsuki-bot";
 const CONFIG_NAMESPACE: &str = "mutsuki-bot";
 
@@ -141,7 +142,12 @@ where
         ));
     }
     let product = product_snapshot.value.to_json();
-    let console = console_config(&product);
+    let mut console = console_config(&product);
+    if let Ok(listen) = std::env::var(CONSOLE_LISTEN_ENV)
+        && !listen.is_empty()
+    {
+        console.listen = listen;
+    }
     let boundary = root.join("instance.boundary");
     let mut service = service
         .finalize_bootstrap(&boundary, None)
