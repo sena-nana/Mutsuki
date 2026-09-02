@@ -945,6 +945,10 @@ impl RunnerManagementHandle for ScopeOwnedManagementHandle {
         self.0.cancel(invocation_id)
     }
 
+    fn cancels_in_process(&self) -> bool {
+        self.0.cancels_in_process()
+    }
+
     fn dispose(&self) -> RuntimeResult<()> {
         Ok(())
     }
