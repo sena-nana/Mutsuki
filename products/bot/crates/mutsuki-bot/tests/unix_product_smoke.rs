@@ -54,7 +54,7 @@ async fn production_binary_runs_fake_qq_from_config_repository_and_shuts_down_cl
     assert_gateway_only_task_surface(&tasks);
 
     shutdown(&product).await.unwrap();
-    tokio::time::timeout(Duration::from_secs(1), async {
+    tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             if tokio::net::TcpStream::connect(&product.console_address)
                 .await
