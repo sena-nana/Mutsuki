@@ -94,7 +94,7 @@ async fn real_qqbot_product_process_is_healthy_and_shuts_down_cleanly() {
                 .unwrap_or_else(|| "health unavailable".into());
             panic!(
                 "QQ Gateway health timeout: {summary}; {}",
-                process.summary()
+                process.output_summary()
             );
         }
     };

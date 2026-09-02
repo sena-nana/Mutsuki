@@ -24,7 +24,10 @@ impl ProductProcess {
 
     pub fn assert_running(&mut self) {
         if let Some(status) = self.child.try_wait().expect("inspect product process") {
-            panic!("product exited early with {status}; {}", self.summary());
+            panic!(
+                "product exited early with {status}; {}",
+                self.output_summary()
+            );
         }
     }
 
@@ -42,7 +45,7 @@ impl ProductProcess {
             assert!(
                 Instant::now() < deadline,
                 "product did not exit after shutdown; {}",
-                self.summary()
+                self.output_summary()
             );
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
@@ -55,6 +58,15 @@ impl ProductProcess {
     pub fn summary(&self) -> String {
         let bytes = self.output_bytes().len();
         format!("captured_bytes={bytes}")
+    }
+
+    /// Summarises why the product exited, including the captured output that
+    /// normally only lands in the temporary product log.
+    pub fn output_summary(&self) -> String {
+        let bytes = self.output_bytes();
+        let head = String::from_utf8_lossy(&bytes);
+        let head = head.chars().take(400).collect::<String>();
+        format!("{} captured_output={head:?}", self.summary())
     }
 }
 
