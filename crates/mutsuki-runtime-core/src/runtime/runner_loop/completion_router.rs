@@ -50,13 +50,12 @@ pub(super) fn complete_runner_dispatch(
         .clone();
     let descriptor = &descriptor;
     let result = completion.result;
-    if let Some(runner) = completion.runner {
-        if let Some(mut rejected) = runtime
+    if let Some(runner) = completion.runner
+        && let Some(mut rejected) = runtime
             .registry_for_generation(dispatch_generation)
             .put_runner(runner, dispatch_generation)
-        {
-            rejected.dispose()?;
-        }
+    {
+        rejected.dispose()?;
     }
     let result = match result {
         Ok(result) => result,

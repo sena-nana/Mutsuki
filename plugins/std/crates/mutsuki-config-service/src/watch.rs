@@ -63,6 +63,9 @@ pub struct ConfigWatchSubscription {
 }
 
 impl ConfigWatchSubscription {
+    /// # Panics
+    ///
+    /// Panics if the listener registry lock is poisoned.
     pub fn dispose(&mut self) -> bool {
         if self.disposed {
             return false;

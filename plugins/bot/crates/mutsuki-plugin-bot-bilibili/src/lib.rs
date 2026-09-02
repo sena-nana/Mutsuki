@@ -3345,6 +3345,7 @@ mod tests {
         )
         .unwrap()
         .unwrap();
+        #[allow(clippy::items_after_statements)]
         fn node_ids(nodes: &BotNodeCatalogFragment) -> Vec<&str> {
             nodes
                 .nodes

@@ -183,9 +183,7 @@ impl RpcRegistry {
                 ExtensionError::Registration(format!("rpc method not found: {key}"))
             })?;
         match handler {
-            RegisteredRpcHandler::Sync(handler) => {
-                dispatch_sync_handler(handler, RpcCallContext::default(), params).await
-            }
+            RegisteredRpcHandler::Sync(handler) => handler(RpcCallContext::default(), params),
             RegisteredRpcHandler::Async(handler) => {
                 handler(RpcCallContext::default(), params).await
             }
@@ -208,9 +206,7 @@ impl RpcRegistry {
                 ExtensionError::Registration(format!("rpc method not found: {key}"))
             })?;
         match handler {
-            RegisteredRpcHandler::Sync(handler) => {
-                dispatch_sync_handler(handler, context, params).await
-            }
+            RegisteredRpcHandler::Sync(handler) => handler(context, params),
             RegisteredRpcHandler::Async(handler) => handler(context, params).await,
         }
     }
@@ -230,14 +226,6 @@ impl RpcRegistry {
             Some(RegisteredRpcHandler::Async(_))
         )
     }
-}
-
-async fn dispatch_sync_handler(
-    handler: RpcHandler,
-    context: RpcCallContext,
-    params: JsonValue,
-) -> Result<JsonValue, ExtensionError> {
-    handler(context, params)
 }
 
 #[derive(Default)]

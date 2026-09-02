@@ -442,7 +442,7 @@ fn process_cpu_time_ns() -> u128 {
         tv_nsec: 0,
     };
     // SAFETY: `clock_gettime` only fills the caller-provided stack slot.
-    let status = unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut value) };
+    let status = unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &raw mut value) };
     assert_eq!(status, 0, "clock_gettime(CLOCK_PROCESS_CPUTIME_ID) failed");
     (value.tv_sec as u128) * 1_000_000_000 + value.tv_nsec as u128
 }

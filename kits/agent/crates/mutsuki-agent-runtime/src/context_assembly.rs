@@ -57,6 +57,7 @@ struct AgentContextParts {
     preparation_cost_microunits: u64,
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum AgentContextBuildPreparation {
     Ready(AgentContext),
     Compaction(Box<PendingAgentContextCompaction>),

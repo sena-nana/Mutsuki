@@ -13,6 +13,7 @@
     clippy::unused_async
 )]
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -464,6 +465,7 @@ async fn run_bridge_node_task(
     Ok(completed)
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn bind_profile_node(task: &Task, invocation: BotNodeInvocation) -> RuntimeResult<RunnerResult> {
     let mut event: BotEvent = serde_json::from_value(invocation.input.payload.value.clone())
         .map_err(|error| bridge_failure(task, "node.event", error))?;
@@ -501,7 +503,7 @@ fn bind_profile_node(task: &Task, invocation: BotNodeInvocation) -> RuntimeResul
                 port_id: "output".into(),
                 event: output,
             }],
-            metadata: Default::default(),
+            metadata: BTreeMap::default(),
         })
         .map_err(|error| bridge_failure(task, "node.output", error))?,
     );
@@ -2450,7 +2452,7 @@ mod tests {
                 bot: None,
                 target: None,
                 actor: None,
-                ext: Default::default(),
+                ext: BTreeMap::default(),
             },
             &source,
         );
@@ -2861,7 +2863,7 @@ mod tests {
                     bot: None,
                     target: None,
                     actor: None,
-                    ext: Default::default(),
+                    ext: BTreeMap::default(),
                 },
                 trace_id: None,
                 correlation_id: None,

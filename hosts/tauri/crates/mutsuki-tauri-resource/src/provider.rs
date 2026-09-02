@@ -41,6 +41,9 @@ impl TauriResourceProvider {
         }
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn entry(&self, ref_id: &str) -> Result<ResourceEntry, ResourceBridgeError> {
         self.inner
             .read()
@@ -55,6 +58,9 @@ impl TauriResourceProvider {
         Ok(self.entry(ref_id)?.descriptor)
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub async fn create_blob(
         &self,
         schema: &str,
@@ -145,6 +151,9 @@ impl TauriResourceProvider {
     }
 
     /// UI preview-only write path; not a runtime ResourcePlanGateway write.
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub async fn write_bytes(
         &self,
         ref_id: &str,

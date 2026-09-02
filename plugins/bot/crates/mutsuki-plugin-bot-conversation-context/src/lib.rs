@@ -279,6 +279,7 @@ fn icl_entry(event: &BotEvent) -> Option<ConversationIclEntry> {
     })
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn completed_event(
     task: &Task,
     invocation: &BotNodeInvocation,
@@ -362,7 +363,7 @@ mod tests {
                 text,
             )),
             raw: None,
-            ext: Default::default(),
+            ext: BTreeMap::default(),
         }
     }
 

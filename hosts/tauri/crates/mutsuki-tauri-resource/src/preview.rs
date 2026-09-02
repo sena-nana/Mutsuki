@@ -24,6 +24,9 @@ impl TauriPreviewStore {
         Self::default()
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn create_preview_handle(
         &self,
         ref_id: &str,
@@ -50,6 +53,9 @@ impl TauriPreviewStore {
         })
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn resolve_preview_token(&self, token: &str) -> Result<RefId, ResourceBridgeError> {
         let now = SystemTime::now();
         let mut inner = self.inner.write().unwrap();
@@ -60,6 +66,9 @@ impl TauriPreviewStore {
             .ok_or_else(|| ResourceBridgeError::InvalidToken(token.to_string()))
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn revoke_preview_token(&self, token: &str) -> Result<(), ResourceBridgeError> {
         self.inner
             .write()

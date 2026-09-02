@@ -308,8 +308,9 @@ async fn reply_delivery_result(
 fn unix_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
-        .unwrap_or(0)
+        .map_or(0, |duration| {
+            u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+        })
 }
 
 fn runtime_error(task: &Task, error: impl std::fmt::Display) -> RuntimeFailure {
@@ -320,6 +321,7 @@ fn runtime_error(task: &Task, error: impl std::fmt::Display) -> RuntimeFailure {
     ))
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn runtime_delivery_error(task: &Task, error: DeliveryError) -> RuntimeFailure {
     RuntimeFailure::new(mutsuki_runtime_contracts::RuntimeError::new(
         error.code(),

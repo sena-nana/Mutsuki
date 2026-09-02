@@ -118,6 +118,7 @@ fn run_scenario(active_tasks: usize) -> ScenarioReport {
     let wall_started = Instant::now();
     std::thread::sleep(IDLE_WINDOW);
     let idle_wall_ms = wall_started.elapsed().as_secs_f64() * 1000.0;
+    #[allow(clippy::cast_precision_loss)]
     let idle_cpu_ms = process_cpu_time_ns().saturating_sub(cpu_started) as f64 / 1_000_000.0;
     let metrics_after_idle = host.runtime_metrics();
     let rss_after_waiting_bytes = current_rss_bytes();
@@ -394,13 +395,14 @@ fn benchmark_paths(root: &Path) -> PathsConfig {
 }
 
 #[cfg(unix)]
+#[allow(clippy::cast_sign_loss)]
 fn process_cpu_time_ns() -> u128 {
     let mut value = libc::timespec {
         tv_sec: 0,
         tv_nsec: 0,
     };
     // SAFETY: `clock_gettime` only fills the caller-provided stack slot.
-    let status = unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut value) };
+    let status = unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &raw mut value) };
     assert_eq!(status, 0, "clock_gettime(CLOCK_PROCESS_CPUTIME_ID) failed");
     (value.tv_sec as u128) * 1_000_000_000 + value.tv_nsec as u128
 }

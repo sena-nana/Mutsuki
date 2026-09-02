@@ -23,6 +23,9 @@ pub use runners::{
 };
 
 #[must_use]
+/// # Panics
+///
+/// Panics if the associated lock is poisoned.
 pub fn bot_scheduled_delivery_manifest() -> PluginManifest {
     PluginBuilder::new(BOT_SCHEDULED_DELIVERY_PLUGIN_ID)
         .runner_descriptor(scheduled_delivery_descriptor())
@@ -67,6 +70,9 @@ pub fn bot_reply_delivery_manifest() -> PluginManifest {
 }
 
 #[must_use]
+/// # Panics
+///
+/// Panics if the associated lock is poisoned.
 pub fn bot_reply_delivery_manifest_for(plugin_id: &str, runner_id: &str) -> PluginManifest {
     PluginBuilder::new(plugin_id)
         .runner_descriptor(reply_delivery_descriptor(plugin_id, runner_id))

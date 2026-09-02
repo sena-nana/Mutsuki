@@ -585,7 +585,7 @@ pub fn gateway_ingress_chain_sample(event_count: usize) -> Sample {
     let mut command_hits = 0_usize;
     let mut echo_outputs = 0_usize;
     for chunk in frames.chunks(64) {
-        let mapped = mapper
+        let mapped_tasks = mapper
             .run_batch(
                 context("gateway-map", chunk.len()),
                 batch(
@@ -594,7 +594,7 @@ pub fn gateway_ingress_chain_sample(event_count: usize) -> Sample {
                 ),
             )
             .unwrap();
-        let ingress_tasks = mapped
+        let ingress_tasks = mapped_tasks
             .results
             .into_iter()
             .flat_map(|entry| entry.result.expect("gateway map failed").tasks)

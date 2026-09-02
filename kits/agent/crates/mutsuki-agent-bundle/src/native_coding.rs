@@ -121,6 +121,7 @@ impl Default for NativeCodingBackends {
 impl NativeCodingBackends {
     /// Test helper. Production assemblies leave process/browser unset until the
     /// Host injects real backends; Native Coding does not register Fake by default.
+    #[must_use]
     pub fn with_fake_process_and_browser(mut self) -> Self {
         self.process = Some(Arc::new(FakeProcessBackend::default()));
         self.browser = Some(Arc::new(FakeBrowserBackend::default()));

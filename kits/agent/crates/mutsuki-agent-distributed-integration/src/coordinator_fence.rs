@@ -72,6 +72,7 @@ impl CoordinatorFence {
         Ok(())
     }
 
+    #[must_use]
     pub fn current(&self, session_id: &str) -> Option<&CoordinatorLease> {
         self.active.get(session_id)
     }

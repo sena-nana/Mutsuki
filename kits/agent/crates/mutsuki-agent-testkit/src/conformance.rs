@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use mutsuki_agent_contracts::{
     AgentMemoryQueryRequest, AgentMemoryWriteRequest, AgentMessage, AgentModelGenerateRequest,
-    AgentModelStreamRequest, AgentPromptRenderRequest, AgentPromptTemplate,
+    AgentModelStreamRequest, AgentPermissionMode, AgentPromptRenderRequest, AgentPromptTemplate,
     AgentSessionAppendRequest, AgentSessionCreateRequest, AgentToolExecuteRequest,
     AgentToolListRequest,
 };
@@ -106,7 +106,7 @@ pub fn tool_round_trip() {
         session_id: Some("session-a".into()),
         approval: None,
         context: None,
-        permission_mode: Default::default(),
+        permission_mode: AgentPermissionMode::default(),
     });
     assert_eq!(result.output, Some(serde_json::json!({"value": "hello"})));
     assert!(result.approved);

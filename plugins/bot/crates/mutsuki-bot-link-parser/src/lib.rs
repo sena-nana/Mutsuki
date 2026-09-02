@@ -222,10 +222,10 @@ mod tests {
                 segments,
                 reply_to: None,
                 time_ms: None,
-                ext: Default::default(),
+                ext: BTreeMap::default(),
             }),
             raw: None,
-            ext: Default::default(),
+            ext: BTreeMap::default(),
         }
     }
 

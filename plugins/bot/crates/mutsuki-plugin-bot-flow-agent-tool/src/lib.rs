@@ -1,7 +1,7 @@
 //! Approval-gated Agent tools for the Bot Flow document.
 //!
 //! `bot.flow.read`, `bot.flow.validate` and `bot.flow.apply` reuse the same
-//! `mutsuki.bot.flow` ConfigService provider as the web flow editor: reads see
+//! `mutsuki.bot.flow` `ConfigService` provider as the web flow editor: reads see
 //! the active document, validates run the provider validator, and applies go
 //! through one revision-CAS activation. The target keeps the neutral Agent
 //! execution envelope (`ToolTargetPayloadMode::ExecutionRequest`), so this
@@ -351,10 +351,12 @@ fn parse_input<T: serde::de::DeserializeOwned>(input: &Value) -> Result<T, FlowT
     })
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn config_error(error: ConfigError) -> FlowToolError {
     FlowToolError::new(ERR_FLOW_TOOL_CONFIG, error.to_string())
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn encode_failure(error: serde_json::Error) -> FlowToolError {
     FlowToolError::new(ERR_FLOW_TOOL_CONFIG, error.to_string())
 }
@@ -394,7 +396,7 @@ mod tests {
     use futures_executor::block_on;
     use mutsuki_agent_contracts::AgentPermissionMode;
     use mutsuki_bot_flow::BotNodeCatalog;
-    use mutsuki_bot_protocol::{BotFlowEdge, BotFlowNode};
+    use mutsuki_bot_protocol::{BotFlowEdge, BotFlowNode, BotFlowNodePosition};
     use mutsuki_config_service::{ConfigProviderRegistry, InMemoryConfigRepository};
     use mutsuki_runtime_sdk::contracts::ScalarValue;
 
@@ -430,7 +432,7 @@ mod tests {
                 node_type_version: 1,
                 config: json!({}),
                 source: None,
-                position: Default::default(),
+                position: BotFlowNodePosition::default(),
             }],
             edges: vec![BotFlowEdge {
                 edge_id: "e1".into(),

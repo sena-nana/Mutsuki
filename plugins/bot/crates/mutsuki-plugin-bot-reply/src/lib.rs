@@ -318,8 +318,9 @@ fn apply_segment(config: &Value, request: &mut BotReplyDeliveryRequest) -> Resul
 fn unix_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
-        .unwrap_or(0)
+        .map_or(0, |duration| {
+            u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+        })
 }
 
 fn context_string(ext: &BTreeMap<String, Value>, key: &str) -> Option<String> {
@@ -329,6 +330,7 @@ fn context_string(ext: &BTreeMap<String, Value>, key: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn completed_reply(
     task: &Task,
     invocation: &BotNodeInvocation,

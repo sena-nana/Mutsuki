@@ -547,6 +547,7 @@ struct LocalAgentEngine {
 }
 
 impl LocalAgentEngine {
+    #[allow(clippy::too_many_lines)]
     fn new(
         config: &LocalAgentConfig,
         secrets: HostSecretStore,
@@ -1669,6 +1670,7 @@ mod tests {
     /// output feeds the final model turn without any approval round-trip for a
     /// read-only tool.
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn local_engine_boots_with_runtime_extensions_and_executes_their_tools() {
         struct EchoProtocol;
         impl mutsuki_runtime_sdk::SdkProtocol for EchoProtocol {

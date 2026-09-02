@@ -195,6 +195,9 @@ impl SessionManager {
         self.create_authenticated("internal", capabilities, safe_mode)
     }
 
+    /// # Panics
+    ///
+    /// Panics if the session registry lock is poisoned.
     pub fn create_authenticated(
         &self,
         principal_id: impl Into<String>,
@@ -228,6 +231,9 @@ impl SessionManager {
         Ok(session)
     }
 
+    /// # Panics
+    ///
+    /// Panics if the session registry lock is poisoned.
     pub fn get(&self, session_id: Uuid) -> Option<BridgeSession> {
         self.sessions
             .lock()
@@ -236,6 +242,9 @@ impl SessionManager {
             .map(|state| state.session.clone())
     }
 
+    /// # Panics
+    ///
+    /// Panics if the session registry lock is poisoned.
     pub fn subscribe(
         &self,
         session_id: Uuid,
@@ -257,12 +266,18 @@ impl SessionManager {
         Ok(())
     }
 
+    /// # Panics
+    ///
+    /// Panics if the session registry lock is poisoned.
     pub fn unsubscribe(&self, session_id: Uuid, subscription_id: Uuid) {
         if let Some(state) = self.sessions.lock().unwrap().get_mut(&session_id) {
             state.subscriptions.remove(&subscription_id);
         }
     }
 
+    /// # Panics
+    ///
+    /// Panics if the session registry lock is poisoned.
     pub fn fanout(
         &self,
         topic: &str,
@@ -306,6 +321,9 @@ impl SessionManager {
         Ok(delivered)
     }
 
+    /// # Panics
+    ///
+    /// Panics if the session registry lock is poisoned.
     pub fn event_notifier(&self, session_id: Uuid) -> Option<Arc<Notify>> {
         self.sessions
             .lock()
@@ -314,6 +332,9 @@ impl SessionManager {
             .map(|state| state.event_ready.clone())
     }
 
+    /// # Panics
+    ///
+    /// Panics if the session registry lock is poisoned.
     pub fn drain_events(&self, session_id: Uuid) -> Vec<EventEnvelope> {
         let mut sessions = self.sessions.lock().unwrap();
         let Some(state) = sessions.get_mut(&session_id) else {
@@ -322,6 +343,9 @@ impl SessionManager {
         state.outbound.drain(..).collect()
     }
 
+    /// # Panics
+    ///
+    /// Panics if the session registry lock is poisoned.
     pub fn close(&self, session_id: Uuid) {
         let mut sessions = self.sessions.lock().unwrap();
         if sessions.remove(&session_id).is_some() {

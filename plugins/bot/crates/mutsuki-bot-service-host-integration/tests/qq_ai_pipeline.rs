@@ -1251,7 +1251,7 @@ impl Runner for TestForwardFoldRunner {
                         port_id: "reply".into(),
                         event,
                     }],
-                    metadata: Default::default(),
+                    metadata: BTreeMap::default(),
                 })
                 .map_err(|error| {
                     mutsuki_runtime_contracts::RuntimeError::new(

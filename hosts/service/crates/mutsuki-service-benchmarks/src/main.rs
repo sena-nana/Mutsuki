@@ -848,29 +848,31 @@ fn parse_args() -> Args {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn distribution_retains_samples_and_robust_statistics() {
-        let value = distribution(&[1.0, 2.0, 100.0], "ns");
-        assert_eq!(value["median"], 2.0);
-        assert_eq!(value["mad"], 1.0);
-        assert_eq!(value["sample_count"], 3);
-    }
-}
-
 #[cfg(unix)]
+#[allow(clippy::items_after_test_module)]
 fn process_cpu_time_ns() -> u128 {
     let mut value = libc::timespec {
         tv_sec: 0,
         tv_nsec: 0,
     };
     // SAFETY: `clock_gettime` only fills the caller-provided stack slot.
-    let status = unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut value) };
+    let status = unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &raw mut value) };
     assert_eq!(status, 0, "clock_gettime(CLOCK_PROCESS_CPUTIME_ID) failed");
     (value.tv_sec as u128) * 1_000_000_000 + value.tv_nsec as u128
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn distribution_retains_samples_and_robust_statistics() {
+        #[allow(clippy::borrow_as_ptr)]
+        let value = distribution(&[1.0, 2.0, 100.0], "ns");
+        assert_eq!(value["median"], 2.0);
+        assert_eq!(value["mad"], 1.0);
+        assert_eq!(value["sample_count"], 3);
+    }
 }
 
 #[cfg(windows)]

@@ -385,7 +385,7 @@ fn deterministic_unit_sample(event_id: &str) -> f64 {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0x100_0000_01b3);
     }
-    (hash % 10_000) as f64 / 10_000.0
+    f64::from((hash % 10_000) as u32) / 10_000.0
 }
 
 fn message_text(event: &BotEvent) -> Option<String> {
