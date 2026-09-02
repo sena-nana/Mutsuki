@@ -2,7 +2,7 @@
 //!
 //! Flow initiates business behavior: business plugins are invoked through graph
 //! bindings or submit `mutsuki.bot.flow/ingress@1` trigger events. The gate
-//! fails loud when a business EventSource or helper submits a platform business
+//! fails loud when a business `EventSource` or helper submits a platform business
 //! protocol directly; the adapter and delivery service keep their own clients.
 
 use std::sync::Arc;

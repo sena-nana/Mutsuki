@@ -70,7 +70,7 @@ pub struct AgentServiceRunner {
     disposed: bool,
 }
 
-/// Routes collect to a ContextProvider. Runner id is the provider id so Context
+/// Routes collect to a `ContextProvider`. Runner id is the provider id so Context
 /// can target it with `runner_hint`. Hosts inject the provider; no Fake here.
 pub struct ContextProviderCollectRunner {
     descriptor: RunnerDescriptor,
@@ -198,7 +198,7 @@ pub fn context_collect_plugin(
         .runner(Box::new(runner)))
 }
 
-/// LoadPlan seam used when a Host has not injected coding/search providers.
+/// `LoadPlan` seam used when a Host has not injected coding/search providers.
 /// Collect still fail-loud at runtime for the uninjected provider id.
 pub fn uninjected_context_collect_plugin(generation: u64) -> Result<PluginBuilder, AgentError> {
     context_collect_plugin(

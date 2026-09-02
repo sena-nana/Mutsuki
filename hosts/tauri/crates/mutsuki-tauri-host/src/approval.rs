@@ -36,6 +36,9 @@ impl ApprovalBridge {
         )
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn request_with_attribution(
         &self,
         requester: impl Into<String>,
@@ -64,6 +67,9 @@ impl ApprovalBridge {
         request
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn resolve(&self, response: ApprovalResponse) -> HostResult<ApprovalDecision> {
         let mut pending = self.pending.write().unwrap();
         let Some(entry) = pending.get(&response.approval_id) else {
@@ -100,6 +106,9 @@ impl ApprovalBridge {
         Ok(response.decision)
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn pending(&self) -> Vec<ApprovalRequest> {
         self.pending
             .read()

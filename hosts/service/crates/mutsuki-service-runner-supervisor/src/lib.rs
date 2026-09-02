@@ -423,7 +423,7 @@ struct RestartBudget {
 }
 
 impl RestartBudget {
-    const WINDOW: Duration = Duration::from_secs(60);
+    const WINDOW: Duration = Duration::from_mins(1);
     const BASE_BACKOFF: Duration = Duration::from_millis(100);
     const MAX_BACKOFF: Duration = Duration::from_secs(10);
 

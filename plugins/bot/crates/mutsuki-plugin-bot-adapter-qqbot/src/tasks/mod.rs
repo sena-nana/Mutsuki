@@ -243,7 +243,7 @@ fn qqbot_node_catalog(media_enabled: bool) -> BotNodeCatalogFragment {
         category: "QQ".into(),
         role: BotNodeRole::Processor,
         binding: Some(BotNodeBinding {
-            binding_id: format!("binding:{}", BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID),
+            binding_id: format!("binding:{BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID}"),
             protocol_id: BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID.into(),
             runner_hint: Some(QQBOT_OPENAPI_RUNNER_ID.into()),
         }),

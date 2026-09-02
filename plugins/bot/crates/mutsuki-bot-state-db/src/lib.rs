@@ -956,7 +956,7 @@ fn send_reply<T>(
     if let Err(error) = &result {
         metrics.observe_error(error);
     }
-    let _ = reply.send(result);
+    reply.send(result);
 }
 
 fn open_connection(
@@ -3044,7 +3044,7 @@ mod tests {
             if batch.is_empty() {
                 break;
             }
-            assert!(batch.len() <= super::CLAIM_DUE_BATCH_LIMIT as usize);
+            assert!(batch.len() <= usize::try_from(super::CLAIM_DUE_BATCH_LIMIT).unwrap());
             claimed.extend(batch);
         }
         assert_eq!(claimed.len(), count);

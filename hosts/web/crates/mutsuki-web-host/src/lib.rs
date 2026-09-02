@@ -253,17 +253,15 @@ impl WebHost for MutsukiWebHost {
 
         // Channel closed without readiness: the server task exited early, and its join
         // result carries the real failure (bind errors, panics).
-        let addr = match ready_rx.await {
-            Ok(result) => result?,
-            Err(_) => {
-                join.await.map_err(|err| {
-                    WebHostError::StartFailed(format!("server task failed before ready: {err}"))
-                })??;
-                return Err(WebHostError::StartFailed(
-                    "server exited without reporting readiness".into(),
-                ));
-            }
+        let Ok(addr) = ready_rx.await else {
+            join.await.map_err(|err| {
+                WebHostError::StartFailed(format!("server task failed before ready: {err}"))
+            })??;
+            return Err(WebHostError::StartFailed(
+                "server exited without reporting readiness".into(),
+            ));
         };
+        let addr = addr?;
 
         self.bridge = Some(bridge);
         self.listen_addr = Some(addr);

@@ -236,9 +236,9 @@ async fn drain_rejects_new_requests() {
             Err(_) => true,
             // Losing the race with the accept loop is allowed; being served is not.
             Ok(session) => {
-                let served = session.request(ControlCommand::HealthCheck).await.is_ok();
+                let request_served = session.request(ControlCommand::HealthCheck).await.is_ok();
                 let _ = session.close().await;
-                !served
+                !request_served
             }
         };
         if rejected {

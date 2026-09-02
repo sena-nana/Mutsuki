@@ -87,18 +87,30 @@ impl WebBridge {
         self.inner.budgets
     }
 
+    /// # Panics
+    ///
+    /// Panics if the safe-mode lock is poisoned.
     pub fn set_safe_mode(&self, enabled: bool) {
         *self.inner.safe_mode.write().unwrap() = enabled;
     }
 
+    /// # Panics
+    ///
+    /// Panics if the safe-mode lock is poisoned.
     pub fn safe_mode(&self) -> bool {
         *self.inner.safe_mode.read().unwrap()
     }
 
+    /// # Panics
+    ///
+    /// Panics if the extension registry lock is poisoned.
     pub fn extensions(&self) -> std::sync::RwLockReadGuard<'_, ExtensionRegistry> {
         self.inner.extensions.read().unwrap()
     }
 
+    /// # Panics
+    ///
+    /// Panics if the extension registry lock is poisoned.
     pub fn extensions_mut(&self) -> std::sync::RwLockWriteGuard<'_, ExtensionRegistry> {
         self.inner.extensions.write().unwrap()
     }

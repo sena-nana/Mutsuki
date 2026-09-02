@@ -34,12 +34,18 @@ impl ConfigService {
         })
     }
 
+    /// # Panics
+    ///
+    /// Panics if the lifecycle lock is poisoned.
     #[must_use]
     pub fn with_lifecycle(self, lifecycle: Arc<dyn ConfigLifecycle>) -> Self {
         *self.lifecycle.write().unwrap() = Some(lifecycle);
         self
     }
 
+    /// # Panics
+    ///
+    /// Panics if the lifecycle lock is poisoned.
     pub fn set_lifecycle(&self, lifecycle: Arc<dyn ConfigLifecycle>) {
         *self.lifecycle.write().unwrap() = Some(lifecycle);
     }

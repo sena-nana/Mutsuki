@@ -302,7 +302,7 @@ impl Harness {
                 session_id: None,
                 approval: None,
                 context: None,
-                permission_mode: Default::default(),
+                permission_mode: AgentPermissionMode::default(),
             },
             self.latency,
         );
@@ -372,7 +372,7 @@ pub fn parallel_tools_sample(latency: SimulatedLatency) -> Sample {
                     session_id: None,
                     approval: None,
                     context: None,
-                    permission_mode: Default::default(),
+                    permission_mode: AgentPermissionMode::default(),
                 })
                 .unwrap(),
             )
@@ -414,7 +414,7 @@ pub fn parallel_tools_sample(latency: SimulatedLatency) -> Sample {
                             session_id: None,
                             approval: None,
                             context: None,
-                            permission_mode: Default::default(),
+                            permission_mode: AgentPermissionMode::default(),
                         },
                         latency,
                     );

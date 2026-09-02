@@ -138,6 +138,9 @@ impl InMemoryAppLinkTransport {
         Self::default()
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn register_online(&self, app_id: &AppId, capabilities: Vec<CapabilityDescriptor>) {
         self.peers.lock().unwrap().insert(
             app_id.as_str().to_string(),
@@ -150,6 +153,9 @@ impl InMemoryAppLinkTransport {
         );
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn register_offline(
         &self,
         app_id: &AppId,
@@ -168,24 +174,36 @@ impl InMemoryAppLinkTransport {
         );
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn set_force_error(&self, app_id: &AppId, error: AppDeliveryError) {
         if let Some(peer) = self.peers.lock().unwrap().get_mut(app_id.as_str()) {
             peer.force_error = Some(error);
         }
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn set_host_protocol_version(&self, app_id: &AppId, version: u32) {
         if let Some(peer) = self.peers.lock().unwrap().get_mut(app_id.as_str()) {
             peer.host_protocol_version = version;
         }
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn set_capabilities(&self, app_id: &AppId, capabilities: Vec<CapabilityDescriptor>) {
         if let Some(peer) = self.peers.lock().unwrap().get_mut(app_id.as_str()) {
             peer.capabilities = capabilities;
         }
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn mark_online(&self, app_id: &AppId) {
         if let Some(peer) = self.peers.lock().unwrap().get_mut(app_id.as_str()) {
             peer.online = true;

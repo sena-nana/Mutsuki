@@ -542,6 +542,7 @@ async fn missing_capability_after_ready_wait_is_capability_unavailable() {
     assert_eq!(error, AppDeliveryError::CapabilityUnavailable);
 }
 
+#[allow(clippy::unused_async)]
 async fn spawn_legacy_endpoint(target: AppId, lease_dir: PathBuf) {
     use mutsuki_link_core::{Connection, EndpointId, TransportBudget};
     use mutsuki_link_local::{

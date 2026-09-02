@@ -10,7 +10,7 @@ use mutsuki_agent_contracts::{
     AGENT_RUN_PROTOCOL, AGENT_SESSION_CREATE_PROTOCOL, AgentError, AgentMessage,
     AgentModelGenerateRequest, AgentModelGenerateResult, AgentModelStopReason, AgentRole,
     AgentRunRequest, AgentRunResult, AgentRunStatus, AgentSession, AgentSessionCreateRequest,
-    AgentToolCall, AgentUsage, PermissionDecision, PermissionDecisionKind,
+    AgentToolCall, AgentToolListRequest, AgentUsage, PermissionDecision, PermissionDecisionKind,
 };
 use mutsuki_agent_service_host_integration::AgentConnectionRegistry;
 use mutsuki_bot::assemble_service_with_flow_registry;
@@ -38,6 +38,7 @@ use tempfile::tempdir;
 struct FlowScriptedProvider;
 
 impl FlowScriptedProvider {
+    #[allow(clippy::needless_pass_by_value)]
     fn result(request: AgentModelGenerateRequest) -> Result<AgentModelGenerateResult, AgentError> {
         let last_user_index = request
             .messages
@@ -104,7 +105,7 @@ impl FlowScriptedProvider {
 }
 
 impl ModelProvider for FlowScriptedProvider {
-    fn provider_id(&self) -> &str {
+    fn provider_id(&self) -> &'static str {
         "flow-scripted"
     }
 
@@ -125,6 +126,7 @@ fn default_flow() -> serde_json::Value {
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn flow_agent_tools_apply_through_approval_and_report_conflicts() {
     let root = tempdir().unwrap();
     let config_path = root.path().join("flow-tool-e2e.toml");
@@ -153,7 +155,7 @@ async fn flow_agent_tools_apply_through_approval_and_report_conflicts() {
     }
     bundle
         .context
-        .set_tools(bundle.tools.list(Default::default()).tools);
+        .set_tools(bundle.tools.list(AgentToolListRequest::default()).tools);
     bundle
         .context
         .set_system_prompt("Edit the Bot Flow graph through the flow tools.");
@@ -329,9 +331,10 @@ async fn wait_outcome(client: &ControlClient, task_id: &str) -> TaskOutcomeView 
         if outcome.status != "pending" {
             return outcome;
         }
-        if tokio::time::Instant::now() >= deadline {
-            panic!("task {task_id} timed out");
-        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "task {task_id} timed out"
+        );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }

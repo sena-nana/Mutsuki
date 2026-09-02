@@ -10,6 +10,7 @@ use mutsuki_runtime_sdk::contracts::{RunnerResult, Task};
 use mutsuki_runtime_sdk::{
     AsyncRunnerContext, PluginBuilder, RuntimeClientRef, RuntimeResult, TaskAwaitRunnerAdapter,
 };
+use std::collections::BTreeMap;
 
 use crate::{AgentContextBuildPreparation, AgentContextModelSummary, ContextBuilder};
 
@@ -131,6 +132,7 @@ async fn run_task(
     }
 }
 
+#[allow(clippy::too_many_lines)]
 async fn enrich_context(
     ctx: &AsyncRunnerContext,
     task_id: impl AsRef<str>,
@@ -156,7 +158,7 @@ async fn enrich_context(
         let outcome = ctx
             .call::<AgentPromptRenderProtocol>(AgentPromptRenderRequest {
                 template_id: template_id.to_owned(),
-                variables: Default::default(),
+                variables: BTreeMap::default(),
             })
             .await
             .map_err(|error| AgentError::provider_unavailable(error.to_string()))?;
@@ -348,15 +350,14 @@ async fn collect_providers(
         });
     }
     batch.resolve(
-        request
-            .compaction
-            .as_ref()
-            .map(|_| ContextBudget::default())
-            .unwrap_or_else(|| ContextBudget {
+        request.compaction.as_ref().map_or_else(
+            || ContextBudget {
                 max_tokens: request.max_context_tokens,
                 max_bytes: None,
                 max_items: Some(u32::try_from(request.providers.len()).unwrap_or(u32::MAX)),
-            }),
+            },
+            |_| ContextBudget::default(),
+        ),
         completions,
     )
 }

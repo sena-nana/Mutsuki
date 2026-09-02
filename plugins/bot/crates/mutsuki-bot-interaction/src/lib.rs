@@ -13,16 +13,39 @@ use mutsuki_bot_protocol::{
 use thiserror::Error;
 
 pub trait InteractionRepository: Send + Sync {
+    /// Persists a new interaction session.
+    ///
+    /// # Errors
+    ///
+    /// Returns a repository error when the session cannot be stored.
     fn create(&self, session: BotInteractionSession) -> Result<(), InteractionError>;
+
+    /// Loads the interaction sessions that are still active for an origin key.
+    ///
+    /// # Errors
+    ///
+    /// Returns a repository error when the sessions cannot be loaded.
     fn active_for_origin(
         &self,
         origin_key: &str,
     ) -> Result<Vec<BotInteractionSession>, InteractionError>;
+
+    /// Commits a session update when `expected_version` still matches.
+    ///
+    /// # Errors
+    ///
+    /// Returns a repository error when the update cannot be committed.
     fn compare_and_set(
         &self,
         expected_version: u64,
         session: BotInteractionSession,
     ) -> Result<(), InteractionError>;
+
+    /// Loads the sessions that are waiting for interaction recovery.
+    ///
+    /// # Errors
+    ///
+    /// Returns a repository error when the sessions cannot be loaded.
     fn recover_waiting(&self) -> Result<Vec<BotInteractionSession>, InteractionError>;
 }
 

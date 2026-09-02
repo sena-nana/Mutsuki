@@ -78,6 +78,11 @@ pub trait ReplyDeliveryRepository: DeliveryRepository {
 pub const DELIVERY_SEND_LEASE_MS: u64 = 30_000;
 
 pub trait DeliveryGateway: Send + Sync {
+    /// Delivers one content payload to a bot target.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DeliveryFailure`] when the platform rejects or fails the send.
     fn send(
         &self,
         target: &BotTarget,
@@ -86,6 +91,11 @@ pub trait DeliveryGateway: Send + Sync {
 }
 
 pub trait DeliveryPolicyResolver: Send + Sync {
+    /// Reports whether the delivery policy allows sending for a conversation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DeliveryError`] when the active policy cannot be resolved.
     fn active_delivery_allowed(
         &self,
         conversation: &QqConversationRef,

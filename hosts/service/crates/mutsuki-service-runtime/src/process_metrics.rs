@@ -83,6 +83,7 @@ mod platform {
         if status != 0 {
             return None;
         }
+        #[allow(clippy::cast_sign_loss)]
         let nanos = (value.tv_sec as u128) * 1_000_000_000 + value.tv_nsec as u128;
         Some(u64::try_from(nanos / 1_000_000).unwrap_or(u64::MAX))
     }

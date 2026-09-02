@@ -535,6 +535,9 @@ impl MutsukiTauriHost {
         self.plugins_with_runner_state(&runners)
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn runners(&self) -> Vec<RunnerSummary> {
         self.plugin_state
             .read()
@@ -667,6 +670,9 @@ impl MutsukiTauriHost {
         Err(HostError::RuntimeFailure(RuntimeFailure::new(error)))
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn task_snapshots(&self) -> HostResult<Vec<HostTaskSnapshot>> {
         self.runtime
             .lock()
@@ -675,6 +681,9 @@ impl MutsukiTauriHost {
             .map_err(Into::into)
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn events_after(
         &self,
         sequence: u64,
@@ -687,6 +696,9 @@ impl MutsukiTauriHost {
             .map_err(Into::into)
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn trace_spans_after(
         &self,
         sequence: u64,
@@ -699,20 +711,32 @@ impl MutsukiTauriHost {
             .map_err(Into::into)
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn runtime_metrics(&self) -> mutsuki_runtime_host::HostRuntimeMetricsSnapshot {
         self.runtime.lock().unwrap().metrics()
     }
 
     /// 返回最近一次启动/重载扫描得到的 `.momoplug` inventory。
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn plugin_packages(&self) -> Vec<PluginPackageRecord> {
         self.plugin_state.read().unwrap().packages.clone()
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn plugin_selection(&self) -> PluginSelection {
         self.plugin_state.read().unwrap().selection.clone()
     }
 
     /// 重新扫描桌面插件并通过 Core 的 drain-and-swap 原子切换 generation。
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn reload_plugins(
         &self,
         selection: PluginSelection,
@@ -807,6 +831,9 @@ impl MutsukiTauriHost {
         Ok(decision)
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn execution_domain_metrics(
         &self,
     ) -> HostResult<Vec<mutsuki_runtime_host::WorkerPoolSnapshot>> {
@@ -859,6 +886,9 @@ impl MutsukiTauriHost {
             .map(|handle| handle.task_id.to_string())
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn cancel_task_handle(&self, handle: TaskHandle) -> HostResult<TaskHandle> {
         let runtime = self.runtime.lock().unwrap();
         let reply = runtime.dispatch(HostRuntimeCommand::CancelTask(handle));
@@ -884,6 +914,9 @@ impl MutsukiTauriHost {
         }
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn task_status(&self, task_id: &str) -> Option<TaskStatus> {
         self.runtime.lock().unwrap().task_status(task_id)
     }
@@ -1106,6 +1139,9 @@ impl MutsukiTauriHost {
         self.approvals.pending()
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn shutdown(&self) {
         let abort_error = self
             .runtime

@@ -75,7 +75,7 @@ pub struct BotFlowToolApplyOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{BotFlowEdge, BotFlowNode};
+    use crate::{BotFlowEdge, BotFlowNode, BotFlowNodePosition};
 
     #[test]
     fn flow_tool_inputs_round_trip_with_typed_payloads() {
@@ -86,7 +86,7 @@ mod tests {
                 node_type_version: 1,
                 config: serde_json::json!({}),
                 source: None,
-                position: Default::default(),
+                position: BotFlowNodePosition::default(),
             }],
             edges: vec![BotFlowEdge {
                 edge_id: "e1".into(),

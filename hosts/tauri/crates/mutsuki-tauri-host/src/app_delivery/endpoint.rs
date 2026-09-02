@@ -117,6 +117,9 @@ impl AppCapabilityEndpoint {
         &self.app_id
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn register_handler<F>(&self, capability: CapabilityDescriptor, handler: F)
     where
         F: Fn(CapabilityRequestEnvelope) -> DeliveryReceipt + Send + Sync + 'static,
@@ -127,6 +130,9 @@ impl AppCapabilityEndpoint {
         );
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn receipt_stats(&self) -> ReceiptStoreStats {
         self.receipts.lock().unwrap().stats()
     }

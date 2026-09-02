@@ -1376,6 +1376,7 @@ fn resolve_approvals(
     Ok(ApprovalResolution::Ready { approvals, blocked })
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn readonly_side_effect(side_effect: &ToolSideEffect) -> bool {
     matches!(
         side_effect,

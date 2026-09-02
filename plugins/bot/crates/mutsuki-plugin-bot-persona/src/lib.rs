@@ -174,23 +174,20 @@ impl Runner for PersonaRunner {
                 .payload
                 .decode_shared::<BotNodeInvocation>()
                 .map_err(|error| runtime_error(task, error))?;
-            match task.protocol_id.as_str() {
-                BOT_AGENT_ATTACH_BOUND_PERSONA_PROTOCOL_ID => {
-                    let mut event: BotEvent =
-                        serde_json::from_value(invocation.input.payload.value.clone())
-                            .map_err(|error| runtime_error(task, error))?;
-                    attach_bound_persona(self.store.as_ref(), &mut event)
+            if task.protocol_id.as_str() == BOT_AGENT_ATTACH_BOUND_PERSONA_PROTOCOL_ID {
+                let mut event: BotEvent =
+                    serde_json::from_value(invocation.input.payload.value.clone())
                         .map_err(|error| runtime_error(task, error))?;
-                    completed_event(task, &invocation, event)
-                }
-                _ => {
-                    let command: BotCommandEvent =
-                        serde_json::from_value(invocation.input.payload.value.clone())
-                            .map_err(|error| runtime_error(task, error))?;
-                    let (text, event) = handle_persona(self.store.as_ref(), command)
+                attach_bound_persona(self.store.as_ref(), &mut event)
+                    .map_err(|error| runtime_error(task, error))?;
+                completed_event(task, &invocation, event)
+            } else {
+                let command: BotCommandEvent =
+                    serde_json::from_value(invocation.input.payload.value.clone())
                         .map_err(|error| runtime_error(task, error))?;
-                    completed(task, &invocation, text, event)
-                }
+                let (text, event) = handle_persona(self.store.as_ref(), command)
+                    .map_err(|error| runtime_error(task, error))?;
+                completed(task, &invocation, text, event)
             }
         })
     }
@@ -251,6 +248,7 @@ fn attach_bound_persona(store: &dyn PersonaStore, event: &mut BotEvent) -> Resul
     Ok(())
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn completed(
     task: &Task,
     invocation: &BotNodeInvocation,
@@ -288,6 +286,7 @@ fn completed(
     Ok(result)
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn completed_event(
     task: &Task,
     invocation: &BotNodeInvocation,
@@ -369,7 +368,7 @@ mod tests {
             actor: None,
             message: None,
             raw: None,
-            ext: Default::default(),
+            ext: BTreeMap::default(),
         };
         let (_, event) = handle_persona(
             store.as_ref(),
@@ -413,7 +412,7 @@ mod tests {
             actor: None,
             message: None,
             raw: None,
-            ext: Default::default(),
+            ext: BTreeMap::default(),
         };
         attach_bound_persona(store.as_ref(), &mut event).unwrap();
         assert_eq!(

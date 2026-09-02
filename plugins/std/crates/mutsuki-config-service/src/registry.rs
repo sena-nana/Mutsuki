@@ -154,6 +154,9 @@ impl ConfigProviderRegistry {
         Ok((id, Arc::new(descriptor)))
     }
 
+    /// # Panics
+    ///
+    /// Panics if the provider registry write lock is poisoned.
     pub fn unregister(&self, provider_id: &str) -> bool {
         let mut guard = self.providers.write().unwrap();
         let removed = guard.remove(provider_id).is_some();
@@ -178,6 +181,9 @@ impl ConfigProviderRegistry {
         removed
     }
 
+    /// # Panics
+    ///
+    /// Panics if the provider registry read lock is poisoned.
     pub fn list(&self) -> Vec<ConfigProviderId> {
         self.providers
             .read()
@@ -188,6 +194,9 @@ impl ConfigProviderRegistry {
             .collect()
     }
 
+    /// # Panics
+    ///
+    /// Panics if the provider registry read lock is poisoned.
     pub fn get(&self, provider_id: &str) -> Result<ProviderEntry, ConfigError> {
         self.providers
             .read()

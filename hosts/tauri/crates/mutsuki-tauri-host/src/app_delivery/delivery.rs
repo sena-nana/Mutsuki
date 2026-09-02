@@ -288,10 +288,16 @@ where
         }
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn phase_for(&self, request_id: &str) -> Option<DeliveryPhase> {
         self.operations.lock().unwrap().phase_for(request_id)
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn operation_stats(&self) -> OperationHistoryStats {
         self.operations.lock().unwrap().stats()
     }

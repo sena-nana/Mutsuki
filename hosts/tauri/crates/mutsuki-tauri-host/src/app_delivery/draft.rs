@@ -48,6 +48,9 @@ impl DeliveryDraftStore {
         Self::default()
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn persistent(directory: impl Into<PathBuf>) -> std::io::Result<Self> {
         let directory = directory.into();
         fs::create_dir_all(&directory)?;
@@ -75,6 +78,9 @@ impl DeliveryDraftStore {
         Ok(store)
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn save(&self, draft: DeliveryDraft) -> std::io::Result<()> {
         if let Some(directory) = &self.directory {
             write_draft_file(directory, &draft)?;
@@ -86,10 +92,16 @@ impl DeliveryDraftStore {
         Ok(())
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn get(&self, request_id: &str) -> Option<DeliveryDraft> {
         self.inner.read().unwrap().get(request_id).cloned()
     }
 
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
     pub fn list_for_target(&self, target: &AppId) -> Vec<DeliveryDraft> {
         self.inner
             .read()

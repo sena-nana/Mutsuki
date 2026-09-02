@@ -134,12 +134,14 @@ pub struct BotFlowIngressRunner {
     source_index: Option<(u64, Arc<SourceIndex>)>,
 }
 
+type SelectorIndex = HashMap<(String, Option<(String, u32)>), Vec<usize>>;
+
 struct SourceIndex {
-    by_selector: HashMap<(String, Option<(String, u32)>), Vec<usize>>,
+    by_selector: SelectorIndex,
 }
 
 fn source_index_for(flow: &mutsuki_bot_protocol::BotFlowDocument) -> SourceIndex {
-    let mut by_selector = HashMap::<(String, Option<(String, u32)>), Vec<usize>>::new();
+    let mut by_selector = SelectorIndex::new();
     for (index, node) in flow.nodes.iter().enumerate() {
         let Some(selector) = node.source.as_ref() else {
             continue;
