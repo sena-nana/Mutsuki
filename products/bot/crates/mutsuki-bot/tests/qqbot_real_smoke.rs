@@ -41,11 +41,14 @@ async fn real_qqbot_product_process_is_healthy_and_shuts_down_cleanly() {
         .await
         .unwrap_or_else(|_| panic!("failed to load configured single-instance QQBot product"));
     let service = product.service;
-    let console = product.console;
+    let mut console = product.console;
     assert!(
         console.enabled,
         "real smoke requires the authenticated console"
     );
+    // A locally running product may hold the seeded console port; the smoke
+    // child gets a kernel-assigned port through the spawn environment.
+    console.listen = free_loopback_listen();
     let auth_token = service
         .host_secret_store()
         .resolve(
@@ -64,7 +67,11 @@ async fn real_qqbot_product_process_is_healthy_and_shuts_down_cleanly() {
         .prefix("mtk-qqbot-real-")
         .tempdir()
         .expect("create smoke output directory");
-    let mut process = ProductProcess::spawn(&executable, output_dir.path().join("product.log"));
+    let mut process = ProductProcess::spawn(
+        &executable,
+        &console.listen,
+        output_dir.path().join("product.log"),
+    );
 
     let health_result = tokio::time::timeout(Duration::from_secs(45), async {
         loop {
@@ -103,6 +110,14 @@ async fn real_qqbot_product_process_is_healthy_and_shuts_down_cleanly() {
     assert_clean("child output", &process.output_bytes(), &credentials);
     assert_clean("service log", &service_log.new_bytes(), &credentials);
     assert_clean("panic log", &panic_log.new_bytes(), &credentials);
+}
+
+fn free_loopback_listen() -> String {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("bind ephemeral console port")
+        .local_addr()
+        .expect("read ephemeral console port")
+        .to_string()
 }
 
 fn credentials(service: &ServiceConfig, console_token: &str) -> Vec<Vec<u8>> {

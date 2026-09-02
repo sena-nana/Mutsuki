@@ -12,6 +12,7 @@ use uuid::Uuid;
 pub struct ProductFixture {
     pub executable_path: PathBuf,
     pub console_address: String,
+    pub console_listen: String,
     pub console_token: String,
     _console_permit: tokio::sync::OwnedSemaphorePermit,
 }
@@ -71,18 +72,30 @@ pub async fn fake_qq_product_with_script(
         .expect("persist fake QQ owner config");
     drop(first);
 
-    let product = load_single_instance_product_for_test(&instance_root, "unused")
+    let _product = load_single_instance_product_for_test(&instance_root, "unused")
         .await
         .expect("restore fake QQ product config");
+    // Kernel-assigned port: the seeded console listen is a fixed address that
+    // collides across parallel test products and real running instances.
+    let console_listen = free_loopback_listen();
     (
         fake,
         ProductFixture {
             executable_path,
-            console_address: product.console.listen,
+            console_address: console_listen.clone(),
+            console_listen,
             console_token,
             _console_permit: console_permit,
         },
     )
+}
+
+fn free_loopback_listen() -> String {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("bind ephemeral console port")
+        .local_addr()
+        .expect("read ephemeral console port")
+        .to_string()
 }
 
 fn console_semaphore() -> std::sync::Arc<tokio::sync::Semaphore> {

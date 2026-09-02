@@ -12,6 +12,7 @@ from mutsuki_runner_kit.contracts.ids import (
     BatchId,
     BindingId,
     ExecutorId,
+    PluginId,
     ProtocolId,
     RefId,
     RunnerId,
@@ -106,8 +107,8 @@ def test_task_and_runner_descriptor_roundtrip() -> None:
     assert decoded.task_id == "task-1"
 
     descriptor = RunnerDescriptor(
-        runner_id="runner-a",
-        plugin_id="plugin-a",
+        runner_id=RunnerId("runner-a"),
+        plugin_id=PluginId("plugin-a"),
         plugin_generation=1,
         accepted_protocol_ids=(ProtocolId("raw.input"),),
         purity=RunnerPurity.PURE,
