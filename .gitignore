@@ -16,3 +16,6 @@ Thumbs.db
 !.env.example
 /artifacts/perf/issue35-macos-arm64-provisional/
 /artifacts/perf/reference-*/
+
+# Local ZCode session state
+/.zcode/
