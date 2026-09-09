@@ -323,27 +323,109 @@ fn glob_match(pattern: &str, path: &str) -> bool {
 
 pub struct WorkspaceFilesystemBackend;
 
+fn path_escape_error(detail: impl Into<String>) -> AgentError {
+    AgentError::new("agent.computer_use.path_escape", detail.into())
+}
+
+fn is_within_workspace(path: &Path, canonical_root: &Path) -> bool {
+    path == canonical_root || path.starts_with(canonical_root)
+}
+
+/// Resolve `root.join(relative)` and require the result stays under the
+/// canonical workspace root. Symlinks that escape are refused as path_escape
+/// (OutsideWorkspace). Non-existent create targets are checked via their
+/// deepest existing ancestor so parent-dir symlink escapes are denied too.
+///
+/// Residual risk note: `ComputerUseRisk::ReversibleWrite` still skips approval
+/// for create-only writes. With this jail solid, that short-circuit is
+/// acceptable; residual exposure is mainly TOCTOU between check and IO if an
+/// attacker can replace a path with an escaping symlink mid-call.
+fn resolve_inside_workspace(root: &Path, relative: &Path) -> Result<PathBuf, AgentError> {
+    let canonical_root = std::fs::canonicalize(root).map_err(io_error)?;
+    let joined = if relative.as_os_str().is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(relative)
+    };
+
+    let mut probe = joined.clone();
+    let mut missing: Vec<std::ffi::OsString> = Vec::new();
+    loop {
+        match std::fs::canonicalize(&probe) {
+            Ok(canon) => {
+                let mut resolved = canon;
+                for part in missing.iter().rev() {
+                    resolved.push(part);
+                }
+                if !is_within_workspace(&resolved, &canonical_root) {
+                    return Err(path_escape_error(format!(
+                        "path `{}` escapes workspace (OutsideWorkspace)",
+                        relative.display()
+                    )));
+                }
+                return Ok(resolved);
+            }
+            Err(_) => {
+                let Some(name) = probe.file_name().map(std::ffi::OsStr::to_os_string) else {
+                    return Err(path_escape_error(format!(
+                        "path `{}` escapes workspace (OutsideWorkspace)",
+                        relative.display()
+                    )));
+                };
+                missing.push(name);
+                if !probe.pop() {
+                    return Err(path_escape_error(format!(
+                        "path `{}` escapes workspace (OutsideWorkspace)",
+                        relative.display()
+                    )));
+                }
+            }
+        }
+    }
+}
+
 impl FilesystemGateway for WorkspaceFilesystemBackend {
     fn list(&self, root: &Path, relative: &Path) -> Result<Vec<FsEntry>, AgentError> {
-        let path = root.join(relative);
+        let path = resolve_inside_workspace(root, relative)?;
         let mut entries = Vec::new();
         for entry in std::fs::read_dir(&path).map_err(io_error)? {
             let entry = entry.map_err(io_error)?;
-            let meta = entry.metadata().map_err(io_error)?;
+            let file_type = entry.file_type().map_err(io_error)?;
             let name = entry.file_name().to_string_lossy().into_owned();
             let rel = if relative.as_os_str().is_empty() {
                 name
             } else {
                 format!("{}/{}", relative.to_string_lossy(), name)
             };
+            let kind = if file_type.is_dir() {
+                "dir"
+            } else if file_type.is_symlink() {
+                // Classify symlink targets without leaking outside contents.
+                match std::fs::canonicalize(entry.path()) {
+                    Ok(target) => {
+                        let canonical_root = std::fs::canonicalize(root).map_err(io_error)?;
+                        if !is_within_workspace(&target, &canonical_root) {
+                            "symlink"
+                        } else if target.is_dir() {
+                            "dir"
+                        } else {
+                            "file"
+                        }
+                    }
+                    Err(_) => "symlink",
+                }
+            } else {
+                "file"
+            };
+            let size = if file_type.is_file() {
+                entry.metadata().ok().map(|meta| meta.len())
+            } else {
+                None
+            };
             entries.push(FsEntry {
                 path: rel.replace('\\', "/"),
-                kind: if meta.is_dir() {
-                    "dir".into()
-                } else {
-                    "file".into()
-                },
-                size: meta.is_file().then_some(meta.len()),
+                kind: kind.into(),
+                size,
             });
         }
         entries.sort_by(|left, right| left.path.cmp(&right.path));
@@ -356,7 +438,8 @@ impl FilesystemGateway for WorkspaceFilesystemBackend {
         relative: &Path,
         max_bytes: u64,
     ) -> Result<(Vec<u8>, bool), AgentError> {
-        let bytes = std::fs::read(root.join(relative)).map_err(io_error)?;
+        let path = resolve_inside_workspace(root, relative)?;
+        let bytes = std::fs::read(path).map_err(io_error)?;
         let truncated = bytes.len() as u64 > max_bytes;
         Ok((
             if truncated {
@@ -369,7 +452,8 @@ impl FilesystemGateway for WorkspaceFilesystemBackend {
     }
 
     fn stat(&self, root: &Path, relative: &Path) -> Result<FsEntry, AgentError> {
-        let meta = std::fs::metadata(root.join(relative)).map_err(io_error)?;
+        let path = resolve_inside_workspace(root, relative)?;
+        let meta = std::fs::metadata(&path).map_err(io_error)?;
         Ok(FsEntry {
             path: relative.to_string_lossy().replace('\\', "/"),
             kind: if meta.is_dir() {
@@ -389,7 +473,7 @@ impl FilesystemGateway for WorkspaceFilesystemBackend {
         create: bool,
         overwrite: bool,
     ) -> Result<(), AgentError> {
-        let path = root.join(relative);
+        let path = resolve_inside_workspace(root, relative)?;
         let exists = path.exists();
         if exists && !overwrite {
             return Err(AgentError::invalid_input("file already exists"));
@@ -400,12 +484,26 @@ impl FilesystemGateway for WorkspaceFilesystemBackend {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(io_error)?;
         }
+        // Re-check after create_dir_all in case a racing symlink appeared.
+        let path = resolve_inside_workspace(root, relative)?;
         std::fs::write(path, content).map_err(io_error)
     }
 
     fn delete(&self, root: &Path, relative: &Path) -> Result<(), AgentError> {
-        let path = root.join(relative);
-        if path.is_dir() {
+        // Relative paths are already normalized by resolve_workspace_path, so
+        // root.join(relative) cannot lexically escape. Allow unlinking a
+        // symlink node even when its target is outside the jail.
+        let joined = if relative.as_os_str().is_empty() {
+            root.to_path_buf()
+        } else {
+            root.join(relative)
+        };
+        let meta = std::fs::symlink_metadata(&joined).map_err(io_error)?;
+        if meta.file_type().is_symlink() {
+            return std::fs::remove_file(joined).map_err(io_error);
+        }
+        let path = resolve_inside_workspace(root, relative)?;
+        if meta.is_dir() {
             std::fs::remove_dir_all(path).map_err(io_error)
         } else {
             std::fs::remove_file(path).map_err(io_error)
@@ -413,10 +511,20 @@ impl FilesystemGateway for WorkspaceFilesystemBackend {
     }
 
     fn rename(&self, root: &Path, from: &Path, to: &Path) -> Result<(), AgentError> {
-        std::fs::rename(root.join(from), root.join(to)).map_err(io_error)
+        let from_joined = root.join(from);
+        let from_meta = std::fs::symlink_metadata(&from_joined).map_err(io_error)?;
+        let from_path = if from_meta.file_type().is_symlink() {
+            // Move the symlink inode without following an escaping target.
+            from_joined
+        } else {
+            resolve_inside_workspace(root, from)?
+        };
+        let to_path = resolve_inside_workspace(root, to)?;
+        std::fs::rename(from_path, to_path).map_err(io_error)
     }
 
     fn glob(&self, root: &Path, pattern: &str) -> Result<Vec<String>, AgentError> {
+        let _ = resolve_inside_workspace(root, Path::new(""))?;
         let mut paths = Vec::new();
         walk(root, root, &mut paths)?;
         Ok(paths
@@ -433,17 +541,17 @@ impl FilesystemGateway for WorkspaceFilesystemBackend {
         relative: Option<&Path>,
     ) -> Result<Vec<GrepMatch>, AgentError> {
         let mut paths = Vec::new();
-        let start = relative
-            .map(|path| root.join(path))
-            .unwrap_or_else(|| root.to_path_buf());
-        if start.is_file() {
-            paths.push(start.strip_prefix(root).unwrap_or(&start).to_path_buf());
+        let start_rel = relative.unwrap_or(Path::new(""));
+        let start = resolve_inside_workspace(root, start_rel)?;
+        let meta = std::fs::symlink_metadata(&start).map_err(io_error)?;
+        if meta.is_file() || (meta.file_type().is_symlink() && start.is_file()) {
+            paths.push(start_rel.to_path_buf());
         } else {
             walk(root, &start, &mut paths)?;
         }
         let mut matches = Vec::new();
         for path in paths {
-            let bytes = std::fs::read(root.join(&path)).map_err(io_error)?;
+            let bytes = std::fs::read(resolve_inside_workspace(root, &path)?).map_err(io_error)?;
             let text = String::from_utf8_lossy(&bytes);
             for (index, line) in text.lines().enumerate() {
                 if line.contains(pattern) {
@@ -460,11 +568,37 @@ impl FilesystemGateway for WorkspaceFilesystemBackend {
 }
 
 fn walk(root: &Path, current: &Path, out: &mut Vec<PathBuf>) -> Result<(), AgentError> {
+    let canonical_root = std::fs::canonicalize(root).map_err(io_error)?;
+    walk_no_escape(&canonical_root, root, current, out)
+}
+
+/// Directory walk that does not follow escaping directory symlinks.
+fn walk_no_escape(
+    canonical_root: &Path,
+    root: &Path,
+    current: &Path,
+    out: &mut Vec<PathBuf>,
+) -> Result<(), AgentError> {
     for entry in std::fs::read_dir(current).map_err(io_error)? {
         let entry = entry.map_err(io_error)?;
         let path = entry.path();
-        if path.is_dir() {
-            walk(root, &path, out)?;
+        let file_type = entry.file_type().map_err(io_error)?;
+        if file_type.is_symlink() {
+            let Ok(target) = std::fs::canonicalize(&path) else {
+                // Broken symlink: ignore for walk/glob/grep.
+                continue;
+            };
+            if !is_within_workspace(&target, canonical_root) {
+                // Refuse escape: do not descend or emit outside paths.
+                continue;
+            }
+            if target.is_dir() {
+                walk_no_escape(canonical_root, root, &path, out)?;
+            } else {
+                out.push(path.strip_prefix(root).unwrap_or(&path).to_path_buf());
+            }
+        } else if file_type.is_dir() {
+            walk_no_escape(canonical_root, root, &path, out)?;
         } else {
             out.push(path.strip_prefix(root).unwrap_or(&path).to_path_buf());
         }
@@ -1316,6 +1450,103 @@ mod tests {
         assert!(descriptor.tools.iter().any(|tool| tool.requires_approval));
     }
 
+    #[test]
+    fn workspace_symlink_file_escape_denies_read_and_write() {
+        let dir = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let secret = outside.path().join("secret.txt");
+        std::fs::write(&secret, "top-secret").unwrap();
+        let link = dir.path().join("leak.txt");
+        std::os::unix::fs::symlink(&secret, &link).unwrap();
+
+        let backend = WorkspaceFilesystemBackend;
+        let rel = Path::new("leak.txt");
+        let read_err = backend.read(dir.path(), rel, 4096).unwrap_err();
+        assert_eq!(read_err.code, "agent.computer_use.path_escape");
+        let write_err = backend
+            .write(dir.path(), rel, b"pwned", true, true)
+            .unwrap_err();
+        assert_eq!(write_err.code, "agent.computer_use.path_escape");
+        // Outside file must remain untouched.
+        assert_eq!(std::fs::read_to_string(&secret).unwrap(), "top-secret");
+    }
+
+    #[test]
+    fn workspace_symlink_dir_escape_does_not_walk_or_glob() {
+        let dir = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        std::fs::write(outside.path().join("outside.txt"), "escaped").unwrap();
+        std::fs::write(dir.path().join("inside.txt"), "safe").unwrap();
+        let link = dir.path().join("escape_dir");
+        std::os::unix::fs::symlink(outside.path(), &link).unwrap();
+
+        let backend = WorkspaceFilesystemBackend;
+        let paths = backend.glob(dir.path(), "*").unwrap();
+        let normalized: Vec<_> = paths
+            .iter()
+            .map(|p| p.replace('\\', "/"))
+            .collect();
+        assert!(
+            normalized.iter().any(|p| p == "inside.txt" || p.ends_with("/inside.txt")),
+            "expected inside.txt in {normalized:?}"
+        );
+        assert!(
+            normalized.iter().all(|p| !p.contains("outside.txt")),
+            "walk/glob must not escape via dir symlink: {normalized:?}"
+        );
+        let matches = backend.grep(dir.path(), "escaped", None).unwrap();
+        assert!(
+            matches.iter().all(|m| !m.path.contains("outside")),
+            "grep must not escape via dir symlink: {matches:?}"
+        );
+    }
+
+    #[test]
+    fn workspace_in_tree_paths_still_work_with_jail() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/main.rs"), "fn main() {}").unwrap();
+        let backend = WorkspaceFilesystemBackend;
+        let (bytes, truncated) = backend
+            .read(dir.path(), Path::new("src/main.rs"), 4096)
+            .unwrap();
+        assert!(!truncated);
+        assert_eq!(bytes, b"fn main() {}");
+        backend
+            .write(dir.path(), Path::new("src/lib.rs"), b"pub fn x() {}", true, false)
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("src/lib.rs")).unwrap(),
+            "pub fn x() {}"
+        );
+        let paths = backend.glob(dir.path(), "src/*").unwrap();
+        assert!(paths.iter().any(|p| p.replace('\\', "/").ends_with("src/main.rs")));
+        assert!(paths.iter().any(|p| p.replace('\\', "/").ends_with("src/lib.rs")));
+        let listed = backend.list(dir.path(), Path::new("src")).unwrap();
+        assert!(listed.iter().any(|e| e.path.ends_with("main.rs")));
+    }
+
+    #[test]
+    fn workspace_write_through_escaping_parent_symlink_denied() {
+        let dir = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let link = dir.path().join("out");
+        std::os::unix::fs::symlink(outside.path(), &link).unwrap();
+        let backend = WorkspaceFilesystemBackend;
+        let err = backend
+            .write(
+                dir.path(),
+                Path::new("out/pwned.txt"),
+                b"nope",
+                true,
+                false,
+            )
+            .unwrap_err();
+        assert_eq!(err.code, "agent.computer_use.path_escape");
+        assert!(!outside.path().join("pwned.txt").exists());
+    }
+
+    #[test]
     #[test]
     fn performance_smoke_read_patch_shell_browser() {
         use std::time::Instant;
