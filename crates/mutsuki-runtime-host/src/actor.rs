@@ -189,14 +189,14 @@ impl CoreActor {
                 // message, it just has no reply to send yet.
                 match try_offload_resource_command(self, command, reply_tx) {
                     OffloadOutcome::Handled => false,
-                    OffloadOutcome::RunInline(inline) => {
-                        let result = handle_command(self, inline.command);
+                    OffloadOutcome::RunInline(command, reply_tx) => {
+                        let result = handle_command(self, command);
                         if let Some(started) = cancel_started {
                             self.config
                                 .actor_metrics
                                 .record_cancel_propagation(started.elapsed());
                         }
-                        send_command_reply(result, inline.reply_tx)
+                        send_command_reply(result, reply_tx)
                     }
                 }
             }
@@ -741,6 +741,10 @@ fn drain_worker_completions(
     false
 }
 
+// The command travels back out by value on the inline path, which is every
+// command the runtime handles. Boxing it to even out the variant sizes would
+// put a heap allocation on the actor's hottest path to satisfy a lint.
+#[allow(clippy::large_enum_variant)]
 enum OffloadOutcome {
     /// The actor is done with this command: either it is running on the async
     /// executor and its reply channel is parked, or the executor refused it and
@@ -748,12 +752,10 @@ enum OffloadOutcome {
     Handled,
     /// Not an offloadable resource command. Run it on the actor as before, with
     /// the command and its reply channel handed straight back.
-    RunInline(Box<InlineCommand>),
-}
-
-struct InlineCommand {
-    command: HostRuntimeCommand,
-    reply_tx: mpsc::Sender<RuntimeResult<HostRuntimeReply>>,
+    RunInline(
+        HostRuntimeCommand,
+        mpsc::Sender<RuntimeResult<HostRuntimeReply>>,
+    ),
 }
 
 /// Sends a resource command to the async executor when its provider says it
@@ -769,7 +771,7 @@ fn try_offload_resource_command(
     reply_tx: mpsc::Sender<RuntimeResult<HostRuntimeReply>>,
 ) -> OffloadOutcome {
     let Some(provider_id) = resource_router::resource_command_provider(&command) else {
-        return OffloadOutcome::RunInline(Box::new(InlineCommand { command, reply_tx }));
+        return OffloadOutcome::RunInline(command, reply_tx);
     };
     let Some(provider) = actor
         .config
@@ -778,13 +780,13 @@ fn try_offload_resource_command(
         .filter(|provider| provider.execution() == ResourceProviderExecution::Offloaded)
         .cloned()
     else {
-        return OffloadOutcome::RunInline(Box::new(InlineCommand { command, reply_tx }));
+        return OffloadOutcome::RunInline(command, reply_tx);
     };
     let (Some(executor), Some(events)) = (
         actor.config.async_executor.as_ref(),
         actor.config.async_event_sink.clone(),
     ) else {
-        return OffloadOutcome::RunInline(Box::new(InlineCommand { command, reply_tx }));
+        return OffloadOutcome::RunInline(command, reply_tx);
     };
     let (future, payload_bytes) =
         resource_router::prepare_offloaded_resource_command(command, provider_id.clone(), provider);
