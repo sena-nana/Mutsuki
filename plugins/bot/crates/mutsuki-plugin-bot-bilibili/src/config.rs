@@ -308,8 +308,10 @@ mod tests {
 
     #[test]
     fn config_value_projects_management_switches() {
-        let mut config = BilibiliConfig::default();
-        config.media_provider_id = "memory".into();
+        let mut config = BilibiliConfig {
+            media_provider_id: "memory".into(),
+            ..BilibiliConfig::default()
+        };
         config.management.enabled = true;
         config.management.admin_user_ids = vec!["admin".into()];
         let value = bilibili_config_value(true, &config).to_json();

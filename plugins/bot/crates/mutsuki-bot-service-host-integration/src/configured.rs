@@ -737,7 +737,7 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
             serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
         // The product assembly owns the media resource provider binding; the
         // owner document no longer carries a provider id.
-        config.media_provider_id = self.media_provider_id.clone();
+        config.media_provider_id.clone_from(&self.media_provider_id);
         // The product pre-registers the owner config provider before plugins
         // install; only fall back to a plugin-owned provider when no product
         // owns this provider id yet.
