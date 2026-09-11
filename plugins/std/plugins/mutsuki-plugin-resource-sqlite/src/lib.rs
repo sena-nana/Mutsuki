@@ -589,6 +589,51 @@ impl ResourceProviderGateway for SqliteResourceProvider {
             Vec::new(),
         )
     }
+
+    /// Every stored row, so the Host can put the rows written before a restart
+    /// back into the resource registry. The blob stays in the database:
+    /// `length(bytes)` is enough to rebuild the descriptor.
+    ///
+    /// Rows the retention sweep already reclaimed are simply absent, and the
+    /// generation stays `1` for the life of a row — this provider rewrites
+    /// bytes in place under a version guard and never re-generations a slot.
+    fn restore_descriptors(&self) -> RuntimeResult<Vec<ResourceRef>> {
+        const ROUTE: &str = "resource.sqlite.restore";
+        let state = self.lock_state(ROUTE)?;
+        let rows = state
+            .connection
+            .prepare_cached(
+                "SELECT ref_id, kind_id, semantic, schema, version, length(bytes)
+                 FROM resources ORDER BY slot ASC",
+            )
+            .and_then(|mut statement| {
+                statement
+                    .query_map([], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                            row.get::<_, i64>(4)?,
+                            row.get::<_, i64>(5)?,
+                        ))
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .map_err(|error| storage_failure(ROUTE, &error.to_string()))?;
+        rows.into_iter()
+            .map(|(ref_id, kind_id, semantic, schema, version, size)| {
+                Ok(resource_ref(
+                    &ref_id,
+                    &kind_id,
+                    semantic_from_key(&semantic, ROUTE)?,
+                    &schema,
+                    stored_u64(version, ROUTE, "version")?,
+                    Some(stored_u64(size, ROUTE, "length")?),
+                ))
+            })
+            .collect()
+    }
 }
 
 /// Manifest-only identity; the ServiceHost factory supplies the file-backed
@@ -1155,6 +1200,56 @@ mod tests {
         missing.args = json!({"ref_id": "sqlite-resource-9999"});
         let error = provider.execute_command_plan(&missing).unwrap_err();
         assert_eq!(error.error().code, ERR_RESOURCE_NOT_FOUND);
+    }
+
+    #[test]
+    fn restore_descriptors_reports_every_stored_row_without_its_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("resources.db");
+        let (blob, state, capability) = {
+            let provider = SqliteResourceProvider::open(&path).unwrap();
+            let blob = provider
+                .create_blob_resource("text.v1", b"persisted".to_vec())
+                .unwrap();
+            let state = provider
+                .create_cow_state_resource("text_buffer", "text.state.v1", b"v1".to_vec())
+                .unwrap();
+            provider
+                .commit_write_plan(&write_plan("write:1", state.clone()), b"v2".to_vec())
+                .unwrap();
+            let capability = provider
+                .create_capability_resource("sqlite_query", "sqlite.query.v1")
+                .unwrap();
+            (blob, state, capability)
+        };
+
+        // A fresh process sees the same descriptors, at the versions the rows
+        // were left at, without the Host having to have kept any of them.
+        let provider = SqliteResourceProvider::open(&path).unwrap();
+        let restored = provider.restore_descriptors().unwrap();
+        assert_eq!(
+            restored
+                .iter()
+                .map(|r| r.ref_id.clone())
+                .collect::<Vec<_>>(),
+            vec![blob.ref_id.clone(), state.ref_id.clone(), capability.ref_id]
+        );
+        assert_eq!(restored[0], blob);
+        assert_eq!(restored[1].version, 2, "the committed version is restored");
+        assert_eq!(restored[1].size_hint, Some(2));
+
+        // A restored descriptor is immediately usable as a plan target.
+        assert_eq!(
+            provider
+                .collect_read_plan(&ReadPlan {
+                    plan_id: "read:restored".into(),
+                    resource: restored[1].clone(),
+                    operation: "collect".into(),
+                    args: Value::Null,
+                })
+                .unwrap(),
+            b"v2"
+        );
     }
 
     #[test]

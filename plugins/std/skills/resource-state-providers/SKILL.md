@@ -14,6 +14,10 @@ description: Implement or change standard memory, shared-memory, database, state
   restore descriptors, versions and bytes, and stale writes keep failing with
   `resource.generation_mismatch`. One-shot outputs are cleaned through the
   capability `delete` command, not by silent eviction.
+- Persistence is only real once the descriptors come back: implement
+  `restore_descriptors` so the Host can re-register stored rows into the resource
+  registry at boot, and return descriptors at the versions the rows currently hold.
+  Read `length(bytes)` for the size hint rather than the blob itself.
 - A store whose rows are disposable carries explicit bounds instead of growing without
   limit. `mutsuki.std.resource.sqlite` takes an optional `retention` (`max_age_seconds`,
   `max_total_bytes`), reclaims on create so no timer thread is needed, and never

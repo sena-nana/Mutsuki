@@ -63,6 +63,20 @@ pub trait ResourceProviderGateway: ResourcePlanGateway {
     ) -> RuntimeResult<ResourceRef>;
     fn create_capability_resource(&self, kind_id: &str, schema: &str)
     -> RuntimeResult<ResourceRef>;
+
+    /// Descriptors the provider still holds from an earlier run. The Host
+    /// re-registers these once at boot so a persistent provider's resources
+    /// stay reachable through `open_resource` after a restart.
+    ///
+    /// A provider whose storage dies with the process returns nothing, which is
+    /// the default.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured failure when the stored descriptors cannot be read.
+    fn restore_descriptors(&self) -> RuntimeResult<Vec<ResourceRef>> {
+        Ok(Vec::new())
+    }
 }
 
 /// Native async resource plan boundary. Provider-owned futures are driven by
@@ -93,4 +107,14 @@ pub trait AsyncResourceProviderGateway: AsyncResourcePlanGateway {
     ) -> RuntimeResult<ResourceRef>;
     fn create_capability_resource(&self, kind_id: &str, schema: &str)
     -> RuntimeResult<ResourceRef>;
+
+    /// See [`ResourceProviderGateway::restore_descriptors`]. Boot-time recovery
+    /// runs before the actor starts, so it stays synchronous on both gateways.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured failure when the stored descriptors cannot be read.
+    fn restore_descriptors(&self) -> RuntimeResult<Vec<ResourceRef>> {
+        Ok(Vec::new())
+    }
 }
