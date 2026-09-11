@@ -84,11 +84,11 @@ impl SqliteResourceProvider {
     /// Returns a structured failure when the database cannot be opened or the
     /// schema cannot be prepared.
     pub fn open(path: &Path) -> RuntimeResult<Self> {
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|error| storage_failure("resource.sqlite.open", &error.to_string()))?;
-            }
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| storage_failure("resource.sqlite.open", &error.to_string()))?;
         }
         let connection = Connection::open(path)
             .map_err(|error| storage_failure("resource.sqlite.open", &error.to_string()))?;
@@ -167,199 +167,63 @@ impl SqliteResourceProvider {
         ))
     }
 
+    /// Reads the stored descriptor and its bytes. The blob is handed to `read`
+    /// by value: a `collect` of an 8 MiB cover must not copy the row twice.
     fn with_entry<T>(
         &self,
         resource: &ResourceRef,
         route: &str,
-        read: impl FnOnce(&ResourceRef, &[u8]) -> RuntimeResult<T>,
+        read: impl FnOnce(&ResourceRef, Vec<u8>) -> RuntimeResult<T>,
     ) -> RuntimeResult<T> {
         ensure_provider(resource, route)?;
         let state = self.lock_state(route)?;
-        let entry = state
+        let (kind_id, semantic, schema, version, bytes) = state
             .connection
-            .query_row(
+            .prepare_cached(
                 "SELECT kind_id, semantic, schema, version, bytes
                  FROM resources WHERE ref_id = ?1",
-                [resource.ref_id.as_str()],
-                |row| {
+            )
+            .and_then(|mut statement| {
+                statement.query_row([resource.ref_id.as_str()], |row| {
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
                         row.get::<_, String>(2)?,
-                        row.get::<_, i64>(3)? as u64,
+                        row.get::<_, i64>(3)?,
                         row.get::<_, Vec<u8>>(4)?,
                     ))
-                },
-            )
-            .map_err(|error| match error {
-                rusqlite::Error::QueryReturnedNoRows => runtime_failure(
-                    ERR_RESOURCE_NOT_FOUND,
-                    format!("{route}.{}", resource.ref_id),
-                ),
-                cause => storage_failure(route, &cause.to_string()),
-            })?;
-        let (kind_id, semantic, schema, version, bytes) = entry;
+                })
+            })
+            .map_err(|error| lookup_failure(&error, route, resource.ref_id.as_str()))?;
         let current = resource_ref(
             resource.ref_id.as_str(),
             &kind_id,
             semantic_from_key(&semantic, route)?,
             &schema,
-            version,
+            stored_u64(version, route, "version")?,
             Some(bytes.len() as u64),
         );
         ensure_descriptor_current(resource, &current, route)?;
-        read(&current, &bytes)
+        read(&current, bytes)
     }
-}
 
-impl ResourcePlanGateway for SqliteResourceProvider {
-    fn collect_read_plan(&self, plan: &ReadPlan) -> RuntimeResult<Vec<u8>> {
+    /// Runs one capability command against an already held connection so a
+    /// batch, a saga step and the capability check that precedes each of them
+    /// all observe the same database state.
+    fn command_locked(
+        state: &SqliteResourceState,
+        plan: &CommandPlan,
+    ) -> RuntimeResult<PlanReceipt> {
+        const ROUTE: &str = "resource.sqlite.command";
+        ensure_provider(&plan.capability, ROUTE)?;
+        let capability = load_descriptor(&state.connection, &plan.capability, ROUTE)?;
+        ensure_descriptor_current(&plan.capability, &capability, ROUTE)?;
+        if capability.semantic != ResourceSemantic::CapabilityResource {
+            return Err(unsupported(ROUTE, "non_capability_resource"));
+        }
         match plan.operation.as_str() {
-            "collect" | "get" => self.with_entry(
-                &plan.resource,
-                "resource.sqlite.read",
-                |_descriptor, bytes| Ok(bytes.to_vec()),
-            ),
-            operation => Err(unsupported("resource.sqlite.read", operation)),
-        }
-    }
-
-    fn snapshot_read_plan(
-        &self,
-        plan: &ReadPlan,
-        kind_id: &str,
-        schema: &str,
-    ) -> RuntimeResult<SnapshotDescriptor> {
-        let (source_ref, source_version, bytes) = self.with_entry(
-            &plan.resource,
-            "resource.sqlite.snapshot",
-            |descriptor, bytes| Ok((descriptor.clone(), descriptor.version, bytes.to_vec())),
-        )?;
-        let kind_id = if kind_id.is_empty() {
-            SNAPSHOT_KIND_ID
-        } else {
-            kind_id
-        };
-        let snapshot_ref =
-            self.create_resource(kind_id, ResourceSemantic::VersionedSnapshot, schema, bytes)?;
-        Ok(SnapshotDescriptor {
-            snapshot_ref,
-            source_ref,
-            source_version,
-            snapshot_version: 1,
-            is_stale: false,
-            is_latest: true,
-        })
-    }
-
-    fn open_stream_plan(&self, plan: &ReadPlan) -> RuntimeResult<StreamPlan> {
-        Err(unsupported("resource.sqlite.stream", &plan.operation))
-    }
-
-    fn execute_export_plan(&self, plan: &ExportPlan) -> RuntimeResult<PlanReceipt> {
-        if plan.target != "inline_utf8" {
-            return Err(unsupported("resource.sqlite.export", &plan.target));
-        }
-        let (resource_ref, text) = self.with_entry(
-            &plan.resource,
-            "resource.sqlite.export",
-            |descriptor, bytes| {
-                let text = std::str::from_utf8(bytes).map_err(|error| {
-                    let mut runtime_error = RuntimeError::new(
-                        ERR_RESOURCE_UNSUPPORTED,
-                        "runtime.resource_provider.sqlite",
-                        format!("resource.sqlite.export.{}", plan.resource.ref_id),
-                    );
-                    runtime_error
-                        .evidence
-                        .insert("detail".into(), ScalarValue::String(error.to_string()));
-                    RuntimeFailure::new(runtime_error)
-                })?;
-                Ok((descriptor.clone(), text.to_string()))
-            },
-        )?;
-        Ok(PlanReceipt {
-            plan_id: plan.plan_id.clone(),
-            status: "exported".into(),
-            resource_ref: Some(resource_ref),
-            snapshot: None,
-            descriptor_updates: Vec::new(),
-            new_version: None,
-            output: json!(text),
-        })
-    }
-
-    fn commit_write_plan(&self, plan: &WritePlan, bytes: Vec<u8>) -> RuntimeResult<PlanReceipt> {
-        ensure_provider(&plan.resource, "resource.sqlite.write")?;
-        let state = self.lock_state("resource.sqlite.write")?;
-        let current_version = state
-            .connection
-            .query_row(
-                "SELECT semantic, version FROM resources WHERE ref_id = ?1",
-                [plan.resource.ref_id.as_str()],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u64)),
-            )
-            .map_err(|error| match error {
-                rusqlite::Error::QueryReturnedNoRows => runtime_failure(
-                    ERR_RESOURCE_NOT_FOUND,
-                    format!("resource.sqlite.write.{}", plan.resource.ref_id),
-                ),
-                cause => storage_failure("resource.sqlite.write", &cause.to_string()),
-            })?;
-        let semantic = semantic_from_key(&current_version.0, "resource.sqlite.write")?;
-        if plan.resource.semantic != ResourceSemantic::CowVersionedState
-            || semantic != ResourceSemantic::CowVersionedState
-            || plan.base_version != current_version.1
-            || plan.patch.base_version != current_version.1
-        {
-            return Err(runtime_failure(
-                ERR_RESOURCE_GENERATION_MISMATCH,
-                format!("resource.sqlite.write.{}", plan.resource.ref_id),
-            ));
-        }
-
-        let new_version = current_version.1 + 1;
-        state
-            .connection
-            .execute(
-                "UPDATE resources SET version = ?2, bytes = ?3 WHERE ref_id = ?1",
-                rusqlite::params![plan.resource.ref_id.as_str(), new_version as i64, bytes],
-            )
-            .map_err(|error| storage_failure("resource.sqlite.write", &error.to_string()))?;
-        let descriptor = resource_ref(
-            plan.resource.ref_id.as_str(),
-            &plan.resource.resource_kind,
-            ResourceSemantic::CowVersionedState,
-            &plan.resource.schema,
-            new_version,
-            Some(bytes.len() as u64),
-        );
-        Ok(PlanReceipt {
-            plan_id: plan.plan_id.clone(),
-            status: "committed".into(),
-            resource_ref: Some(descriptor.clone()),
-            snapshot: None,
-            descriptor_updates: vec![descriptor],
-            new_version: Some(new_version),
-            output: Value::Null,
-        })
-    }
-
-    fn execute_command_plan(&self, plan: &CommandPlan) -> RuntimeResult<PlanReceipt> {
-        let capability = self.with_entry(
-            &plan.capability,
-            "resource.sqlite.command",
-            |descriptor, _| {
-                if descriptor.semantic != ResourceSemantic::CapabilityResource {
-                    return Err(unsupported(
-                        "resource.sqlite.command",
-                        "non_capability_resource",
-                    ));
-                }
-                Ok(descriptor.clone())
-            },
-        )?;
-        match plan.operation.as_str() {
+            // The provider does not deduplicate by `idempotency_key`; the key is
+            // echoed back as part of the request, not treated as a receipt id.
             "query" => Ok(PlanReceipt {
                 plan_id: plan.plan_id.clone(),
                 status: "commanded".into(),
@@ -381,13 +245,10 @@ impl ResourcePlanGateway for SqliteResourceProvider {
                     .and_then(Value::as_str)
                     .ok_or_else(|| unsupported("resource.sqlite.command.delete", "missing ref_id"))?
                     .to_string();
-                let state = self.lock_state("resource.sqlite.command.delete")?;
                 let deleted = state
                     .connection
-                    .execute(
-                        "DELETE FROM resources WHERE ref_id = ?1",
-                        [target_ref_id.as_str()],
-                    )
+                    .prepare_cached("DELETE FROM resources WHERE ref_id = ?1")
+                    .and_then(|mut statement| statement.execute([target_ref_id.as_str()]))
                     .map_err(|error| {
                         storage_failure("resource.sqlite.command.delete", &error.to_string())
                     })?;
@@ -407,8 +268,167 @@ impl ResourcePlanGateway for SqliteResourceProvider {
                     output: json!({ "deleted_ref_id": target_ref_id }),
                 })
             }
-            operation => Err(unsupported("resource.sqlite.command", operation)),
+            operation => Err(unsupported(ROUTE, operation)),
         }
+    }
+}
+
+impl ResourcePlanGateway for SqliteResourceProvider {
+    fn collect_read_plan(&self, plan: &ReadPlan) -> RuntimeResult<Vec<u8>> {
+        match plan.operation.as_str() {
+            "collect" | "get" => self.with_entry(
+                &plan.resource,
+                "resource.sqlite.read",
+                |_descriptor, bytes| Ok(bytes),
+            ),
+            operation => Err(unsupported("resource.sqlite.read", operation)),
+        }
+    }
+
+    fn snapshot_read_plan(
+        &self,
+        plan: &ReadPlan,
+        kind_id: &str,
+        schema: &str,
+    ) -> RuntimeResult<SnapshotDescriptor> {
+        let (source_ref, source_version, bytes) = self.with_entry(
+            &plan.resource,
+            "resource.sqlite.snapshot",
+            |descriptor, bytes| Ok((descriptor.clone(), descriptor.version, bytes)),
+        )?;
+        let kind_id = if kind_id.is_empty() {
+            SNAPSHOT_KIND_ID
+        } else {
+            kind_id
+        };
+        let snapshot_ref =
+            self.create_resource(kind_id, ResourceSemantic::VersionedSnapshot, schema, bytes)?;
+        // Every snapshot is a freshly created row copied from the source
+        // version just read, so it is current by construction. The provider
+        // keeps no snapshot chain, which is why `is_latest` cannot mean
+        // "newest of several" here.
+        Ok(SnapshotDescriptor {
+            snapshot_version: snapshot_ref.version,
+            snapshot_ref,
+            source_ref,
+            source_version,
+            is_stale: false,
+            is_latest: true,
+        })
+    }
+
+    fn open_stream_plan(&self, plan: &ReadPlan) -> RuntimeResult<StreamPlan> {
+        Err(unsupported("resource.sqlite.stream", &plan.operation))
+    }
+
+    fn execute_export_plan(&self, plan: &ExportPlan) -> RuntimeResult<PlanReceipt> {
+        if plan.target != "inline_utf8" {
+            return Err(unsupported("resource.sqlite.export", &plan.target));
+        }
+        let (resource_ref, text) = self.with_entry(
+            &plan.resource,
+            "resource.sqlite.export",
+            |descriptor, bytes| {
+                let text = String::from_utf8(bytes).map_err(|error| {
+                    let mut runtime_error = RuntimeError::new(
+                        ERR_RESOURCE_UNSUPPORTED,
+                        "runtime.resource_provider.sqlite",
+                        format!("resource.sqlite.export.{}", plan.resource.ref_id),
+                    );
+                    runtime_error
+                        .evidence
+                        .insert("detail".into(), ScalarValue::String(error.to_string()));
+                    RuntimeFailure::new(runtime_error)
+                })?;
+                Ok((descriptor.clone(), text))
+            },
+        )?;
+        Ok(PlanReceipt {
+            plan_id: plan.plan_id.clone(),
+            status: "exported".into(),
+            resource_ref: Some(resource_ref),
+            snapshot: None,
+            descriptor_updates: Vec::new(),
+            new_version: None,
+            output: json!(text),
+        })
+    }
+
+    fn commit_write_plan(&self, plan: &WritePlan, bytes: Vec<u8>) -> RuntimeResult<PlanReceipt> {
+        const ROUTE: &str = "resource.sqlite.write";
+        ensure_provider(&plan.resource, ROUTE)?;
+        let state = self.lock_state(ROUTE)?;
+        let (stored_semantic, stored_version) = state
+            .connection
+            .prepare_cached("SELECT semantic, version FROM resources WHERE ref_id = ?1")
+            .and_then(|mut statement| {
+                statement.query_row([plan.resource.ref_id.as_str()], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                })
+            })
+            .map_err(|error| lookup_failure(&error, ROUTE, plan.resource.ref_id.as_str()))?;
+        let semantic = semantic_from_key(&stored_semantic, ROUTE)?;
+        let current_version = stored_u64(stored_version, ROUTE, "version")?;
+        if plan.resource.semantic != ResourceSemantic::CowVersionedState
+            || semantic != ResourceSemantic::CowVersionedState
+            || plan.base_version != current_version
+            || plan.patch.base_version != current_version
+        {
+            return Err(runtime_failure(
+                ERR_RESOURCE_GENERATION_MISMATCH,
+                format!("{ROUTE}.{}", plan.resource.ref_id),
+            ));
+        }
+
+        let new_version = current_version + 1;
+        let next_version = stored_i64(new_version, ROUTE, "version")?;
+        // The version predicate makes the commit compare-and-swap rather than
+        // last-writer-wins. The provider mutex only orders writers inside one
+        // process; another process or another provider generation sharing the
+        // file can still commit between the read above and this update.
+        let updated = state
+            .connection
+            .prepare_cached(
+                "UPDATE resources SET version = ?2, bytes = ?3
+                 WHERE ref_id = ?1 AND version = ?4",
+            )
+            .and_then(|mut statement| {
+                statement.execute(rusqlite::params![
+                    plan.resource.ref_id.as_str(),
+                    next_version,
+                    bytes,
+                    stored_version
+                ])
+            })
+            .map_err(|error| storage_failure(ROUTE, &error.to_string()))?;
+        if updated == 0 {
+            return Err(runtime_failure(
+                ERR_RESOURCE_GENERATION_MISMATCH,
+                format!("{ROUTE}.{}", plan.resource.ref_id),
+            ));
+        }
+        let descriptor = resource_ref(
+            plan.resource.ref_id.as_str(),
+            &plan.resource.resource_kind,
+            ResourceSemantic::CowVersionedState,
+            &plan.resource.schema,
+            new_version,
+            Some(bytes.len() as u64),
+        );
+        Ok(PlanReceipt {
+            plan_id: plan.plan_id.clone(),
+            status: "committed".into(),
+            resource_ref: Some(descriptor.clone()),
+            snapshot: None,
+            descriptor_updates: vec![descriptor],
+            new_version: Some(new_version),
+            output: Value::Null,
+        })
+    }
+
+    fn execute_command_plan(&self, plan: &CommandPlan) -> RuntimeResult<PlanReceipt> {
+        let state = self.lock_state("resource.sqlite.command")?;
+        Self::command_locked(&state, plan)
     }
 
     fn execute_command_batch(&self, batch: &CommandBatch) -> RuntimeResult<Vec<PlanReceipt>> {
@@ -418,28 +438,54 @@ impl ResourcePlanGateway for SqliteResourceProvider {
                 "rollback_guarantee",
             ));
         }
+        // No rollback is promised (`rollback_guarantee` is rejected above), but
+        // the batch still runs under one guard so its commands cannot interleave
+        // with an unrelated plan.
+        let state = self.lock_state("resource.sqlite.command_batch")?;
         batch
             .commands
             .iter()
-            .map(|command| self.execute_command_plan(command))
+            .map(|command| Self::command_locked(&state, command))
             .collect()
     }
 
     fn execute_saga_plan(&self, saga: &SagaPlan) -> RuntimeResult<Vec<PlanReceipt>> {
+        let state = self.lock_state("resource.sqlite.saga")?;
         let mut receipts = Vec::new();
         for command in &saga.steps {
-            match self.execute_command_plan(command) {
+            match Self::command_locked(&state, command) {
                 Ok(receipt) => receipts.push(receipt),
                 Err(cause) => {
-                    for compensation in saga.compensations.iter().rev() {
-                        let _ = self.execute_command_plan(compensation);
-                    }
                     let mut runtime_error = RuntimeError::new(
                         "resource.saga_failed",
                         "runtime.resource_provider.sqlite",
                         format!("resource.sqlite.saga.{}", saga.saga_id),
                     );
                     runtime_error.cause = Some(Box::new(cause.error().clone()));
+                    // A compensation that itself fails leaves the saga partly
+                    // applied; surface it as evidence instead of dropping it.
+                    let failures = saga
+                        .compensations
+                        .iter()
+                        .rev()
+                        .filter_map(|compensation| {
+                            Self::command_locked(&state, compensation)
+                                .err()
+                                .map(|failure| {
+                                    format!(
+                                        "{}:{}",
+                                        compensation.plan_id,
+                                        failure.error().code.as_str()
+                                    )
+                                })
+                        })
+                        .collect::<Vec<_>>();
+                    if !failures.is_empty() {
+                        runtime_error.evidence.insert(
+                            "compensation_failures".into(),
+                            ScalarValue::String(failures.join(",")),
+                        );
+                    }
                     return Err(RuntimeFailure::new(runtime_error));
                 }
             }
@@ -577,6 +623,62 @@ fn resource_ref(
         lease: None,
         seal_state: ResourceSealState::Sealed,
     }
+}
+
+/// Loads a stored descriptor without transferring the blob: `length(bytes)`
+/// supplies the size hint while the bytes stay in the database.
+fn load_descriptor(
+    connection: &Connection,
+    resource: &ResourceRef,
+    route: &str,
+) -> RuntimeResult<ResourceRef> {
+    let (kind_id, semantic, schema, version, size) = connection
+        .prepare_cached(
+            "SELECT kind_id, semantic, schema, version, length(bytes)
+             FROM resources WHERE ref_id = ?1",
+        )
+        .and_then(|mut statement| {
+            statement.query_row([resource.ref_id.as_str()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                ))
+            })
+        })
+        .map_err(|error| lookup_failure(&error, route, resource.ref_id.as_str()))?;
+    Ok(resource_ref(
+        resource.ref_id.as_str(),
+        &kind_id,
+        semantic_from_key(&semantic, route)?,
+        &schema,
+        stored_u64(version, route, "version")?,
+        Some(stored_u64(size, route, "length")?),
+    ))
+}
+
+/// A missing row is `resource.not_found`; anything else is a storage failure.
+fn lookup_failure(error: &rusqlite::Error, route: &str, ref_id: &str) -> RuntimeFailure {
+    match error {
+        rusqlite::Error::QueryReturnedNoRows => {
+            runtime_failure(ERR_RESOURCE_NOT_FOUND, format!("{route}.{ref_id}"))
+        }
+        cause => storage_failure(route, &cause.to_string()),
+    }
+}
+
+/// SQLite columns are signed; a negative version or length means the row was
+/// corrupted or written by something that is not this provider.
+fn stored_u64(value: i64, route: &str, column: &str) -> RuntimeResult<u64> {
+    u64::try_from(value)
+        .map_err(|_| storage_failure(route, &format!("negative {column} column: {value}")))
+}
+
+fn stored_i64(value: u64, route: &str, column: &str) -> RuntimeResult<i64> {
+    i64::try_from(value)
+        .map_err(|_| storage_failure(route, &format!("{column} column overflows i64: {value}")))
 }
 
 /// Single-connection factory: busy timeout, prefer WAL, then `synchronous=NORMAL`.
@@ -989,6 +1091,88 @@ mod tests {
         assert_ne!(
             created.ref_id, recycled,
             "a deleted ref_id was reissued and now points at different bytes"
+        );
+    }
+
+    #[test]
+    fn a_commit_from_another_provider_instance_invalidates_the_pending_plan() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("resources.db");
+        let writer = SqliteResourceProvider::open(&path).unwrap();
+        let peer = SqliteResourceProvider::open(&path).unwrap();
+
+        let state = writer
+            .create_cow_state_resource("text_buffer", "text.state.v1", b"v1".to_vec())
+            .unwrap();
+        let plan = write_plan("write:contended", state);
+
+        // The peer commits first; the plan still pinned to v1 must not win.
+        assert_eq!(
+            peer.commit_write_plan(&plan, b"peer".to_vec())
+                .unwrap()
+                .new_version,
+            Some(2)
+        );
+        let error = writer
+            .commit_write_plan(&plan, b"writer".to_vec())
+            .unwrap_err();
+        assert_eq!(error.error().code, ERR_RESOURCE_GENERATION_MISMATCH);
+
+        let read = ReadPlan {
+            plan_id: "read:contended".into(),
+            resource: plan.resource.clone(),
+            operation: "collect".into(),
+            args: Value::Null,
+        };
+        let mut current = read.resource.clone();
+        current.version = 2;
+        current.resource_id.version = 2;
+        assert_eq!(
+            peer.collect_read_plan(&ReadPlan {
+                resource: current,
+                ..read
+            })
+            .unwrap(),
+            b"peer"
+        );
+    }
+
+    #[test]
+    fn saga_reports_compensation_failures_as_evidence() {
+        let provider = SqliteResourceProvider::open_in_memory().unwrap();
+        let capability = provider
+            .create_capability_resource("sqlite_query", "sqlite.query.v1")
+            .unwrap();
+        let failing_step = CommandPlan {
+            plan_id: "step:missing".into(),
+            capability: capability.clone(),
+            operation: "missing".into(),
+            args: Value::Null,
+            idempotency_key: None,
+        };
+        let failing_compensation = CommandPlan {
+            plan_id: "compensation:absent".into(),
+            capability,
+            operation: "delete".into(),
+            args: json!({ "ref_id": "sqlite-resource-absent" }),
+            idempotency_key: None,
+        };
+        let error = provider
+            .execute_saga_plan(&SagaPlan {
+                saga_id: "saga:compensation".into(),
+                steps: vec![failing_step],
+                compensations: vec![failing_compensation],
+            })
+            .unwrap_err();
+        assert_eq!(error.error().code, "resource.saga_failed");
+        let evidence = error
+            .error()
+            .evidence
+            .get("compensation_failures")
+            .expect("failed compensations are reported");
+        assert_eq!(
+            evidence,
+            &ScalarValue::String(format!("compensation:absent:{ERR_RESOURCE_NOT_FOUND}"))
         );
     }
 

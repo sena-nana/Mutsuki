@@ -14,6 +14,11 @@ description: Implement or change standard memory, shared-memory, database, state
   restore descriptors, versions and bytes, and stale writes keep failing with
   `resource.generation_mismatch`. One-shot outputs are cleaned through the
   capability `delete` command, not by silent eviction.
+- Commits are compare-and-swap against the stored version, not last-writer-wins: a
+  provider-held mutex only orders writers inside one process, so the write predicate
+  carries the base version and a zero-row update is `resource.generation_mismatch`.
+- `idempotency_key` is not a receipt id unless the provider actually stores receipts;
+  `mutsuki.std.resource.sqlite` echoes it and does not deduplicate.
 - Resource ids are allocated by the store, never by a provider-memory counter: a
   `ref_id` must stay monotonic and must never be reissued after a delete, a reopen,
   or while two provider generations share the same backing file during staged reload.
