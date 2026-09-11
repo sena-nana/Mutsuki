@@ -109,10 +109,6 @@ pub fn bilibili_config_value(enabled: bool, config: &BilibiliConfig) -> ConfigVa
         [
             ("enabled".into(), ConfigValue::Bool(enabled)),
             (
-                "media_provider_id".into(),
-                ConfigValue::String(config.media_provider_id.clone()),
-            ),
-            (
                 BILIBILI_COOKIE_FIELD.into(),
                 ConfigValue::Secret(SecretState::Keep),
             ),
@@ -318,7 +314,11 @@ mod tests {
         config.management.admin_user_ids = vec!["admin".into()];
         let value = bilibili_config_value(true, &config).to_json();
         assert_eq!(value["enabled"], true);
-        assert_eq!(value["media_provider_id"], "memory");
+        // The product assembly owns the media provider binding; the owner
+        // document has no node for one, so it must not project one either. The
+        // runtime config still round-trips whatever the assembly injected.
+        assert!(value.get("media_provider_id").is_none());
+        assert_eq!(value["runtime_config"]["media_provider_id"], "memory");
         assert_eq!(value["management_enabled"], true);
         assert_eq!(value["management_admin_user_ids"][0], "admin");
         assert_eq!(

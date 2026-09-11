@@ -614,7 +614,9 @@ pub(crate) fn configured_plugin_selection_from_value(
             Ok(ConfiguredPluginSelection {
                 id: provider_id.into(),
                 enabled,
-                config: serde_json::json!({ "enabled": enabled }),
+                // `enabled` already lives on the selection; the link-card
+                // plugins take no configuration of their own.
+                config: serde_json::Value::Null,
             })
         }
         _ => Err(ConfigError::ApplyRejected {
@@ -849,7 +851,7 @@ mod tests {
 
             let enabled = select_plugin(provider_id, link_card_config_value(true)).unwrap();
             assert!(enabled.enabled);
-            assert_eq!(enabled.config, serde_json::json!({ "enabled": true }));
+            assert_eq!(enabled.config, serde_json::Value::Null);
         }
     }
 
