@@ -737,7 +737,7 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
             serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
         // The product assembly owns the media resource provider binding; the
         // owner document no longer carries a provider id.
-        config.media_provider_id = self.media_provider_id.clone();
+        config.media_provider_id.clone_from(&self.media_provider_id);
         // The product pre-registers the owner config provider before plugins
         // install; only fall back to a plugin-owned provider when no product
         // owns this provider id yet.
@@ -932,12 +932,6 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
     }
 }
 
-/// Owner-document shape kept for backward compatibility: legacy documents may
-/// still carry a `media_provider_id` field, which the product assembly now
-/// ignores in favor of its own provider binding.
-#[derive(Clone, Debug, Deserialize)]
-struct LinkCardPluginConfig {}
-
 pub struct WorkshopConfiguredPlugin {
     media_provider_id: String,
 }
@@ -952,8 +946,10 @@ impl ConfiguredPluginFactory for WorkshopConfiguredPlugin {
         config: &Value,
         builder: ServiceRuntimeBuilder,
     ) -> Result<ServiceRuntimeBuilder, String> {
-        let _config: LinkCardPluginConfig =
-            serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
+        // The owner document only carries the enable switch, which the catalog
+        // already applied by calling this factory; the media provider binding
+        // comes from the product assembly.
+        let _ = config;
         let mut manifest = mutsuki_plugin_bot_bilibili_workshop::manifest();
         manifest.requires.push(SurfaceRequirement::new(
             ContractSurfaceKind::ResourceProvider,
@@ -989,8 +985,10 @@ impl ConfiguredPluginFactory for MihuashiConfiguredPlugin {
         config: &Value,
         builder: ServiceRuntimeBuilder,
     ) -> Result<ServiceRuntimeBuilder, String> {
-        let _config: LinkCardPluginConfig =
-            serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
+        // The owner document only carries the enable switch, which the catalog
+        // already applied by calling this factory; the media provider binding
+        // comes from the product assembly.
+        let _ = config;
         let mut manifest = mutsuki_plugin_bot_mihuashi::manifest();
         manifest.requires.push(SurfaceRequirement::new(
             ContractSurfaceKind::ResourceProvider,

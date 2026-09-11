@@ -59,6 +59,18 @@ async fn production_binary_runs_fake_qq_from_config_repository_and_shuts_down_cl
     assert_gateway_only_task_surface(&tasks);
 
     shutdown(&product).await.unwrap();
+    // What an orderly shutdown owes us is checked below: the console stops
+    // accepting, the process then exits successfully, and the port is gone
+    // afterwards.
+    //
+    // It used to also assert the process was *still running* the moment the
+    // listener closed, as a proxy for "the console closes before the process
+    // exits". That cannot be sampled: the whole drain routinely completes
+    // inside one 20ms poll interval, so the assertion failed on perfectly
+    // correct shutdowns (~3 in 8 runs on `main`). Moving it inside the loop
+    // only made it vacuous — measured, the loop body runs 0 or 1 times. A
+    // real ordering check needs an observable signal from the product, not a
+    // wall-clock race in the test.
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             if tokio::net::TcpStream::connect(&product.console_address)
@@ -72,7 +84,6 @@ async fn production_binary_runs_fake_qq_from_config_repository_and_shuts_down_cl
     })
     .await
     .expect("console still accepted connections while Runtime was draining");
-    process.assert_running();
     let status = process.wait_for_exit(Duration::from_secs(30)).await;
     assert!(
         status.success(),

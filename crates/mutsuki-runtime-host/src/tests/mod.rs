@@ -10,6 +10,7 @@ mod host_runtime;
 mod management;
 mod multiplexer;
 mod resolver;
+mod restored_resources;
 mod runtime_group;
 mod scheduler;
 mod task_clients;

@@ -13,6 +13,7 @@ use mutsuki_runtime_core::{
 };
 
 use crate::async_executor::AsyncExecutorEvent;
+use crate::commands::HostRuntimeReply;
 use crate::error::host_failure;
 use crate::host::HostRuntimeConfig;
 use crate::management::ManagementExecutor;
@@ -127,46 +128,67 @@ pub(super) fn handle_async_event(
     pending_cancels: &mut BTreeMap<mutsuki_runtime_contracts::RunnerId, Vec<String>>,
     running_batches_by_task: &mut BTreeMap<TaskId, RunningBatch>,
     draining_invocations: &mut BTreeMap<String, DrainingInvocation>,
+    offloaded_resource_replies: &mut BTreeMap<
+        String,
+        std::sync::mpsc::Sender<RuntimeResult<HostRuntimeReply>>,
+    >,
 ) -> RuntimeResult<RunnerLoopReport> {
     let (invocation, result) = match event {
         AsyncExecutorEvent::ResourceCompleted {
-            invocation: _,
+            invocation,
             reply,
             result,
         } => {
+            // Core state changes only here, on the actor thread, however the
+            // plan was executed.
             let result = match *result {
                 Ok(value) => {
                     resource_router::sync_async_resource_reply(core, &value).map(|()| value)
                 }
                 Err(failure) => Err(failure),
             };
-            let _ = reply.send(result);
+            answer_resource_caller(
+                &invocation.invocation_id,
+                result,
+                reply,
+                offloaded_resource_replies,
+            );
             return Ok(RunnerLoopReport {
                 claimed_tasks: 0,
                 completed_tasks: 0,
             });
         }
         AsyncExecutorEvent::ResourceTimedOut { invocation, reply } => {
-            let _ = reply.send(Err(host_failure(
-                "host.async_resource.timeout",
-                format!(
-                    "async resource invocation {} timed out",
-                    invocation.invocation_id
-                ),
-            )));
+            answer_resource_caller(
+                &invocation.invocation_id,
+                Err(host_failure(
+                    "host.async_resource.timeout",
+                    format!(
+                        "async resource invocation {} timed out",
+                        invocation.invocation_id
+                    ),
+                )),
+                reply,
+                offloaded_resource_replies,
+            );
             return Ok(RunnerLoopReport {
                 claimed_tasks: 0,
                 completed_tasks: 0,
             });
         }
         AsyncExecutorEvent::ResourcePanicked { invocation, reply } => {
-            let _ = reply.send(Err(host_failure(
-                "host.async_resource.panic",
-                format!(
-                    "async resource invocation {} panicked",
-                    invocation.invocation_id
-                ),
-            )));
+            answer_resource_caller(
+                &invocation.invocation_id,
+                Err(host_failure(
+                    "host.async_resource.panic",
+                    format!(
+                        "async resource invocation {} panicked",
+                        invocation.invocation_id
+                    ),
+                )),
+                reply,
+                offloaded_resource_replies,
+            );
             return Ok(RunnerLoopReport {
                 claimed_tasks: 0,
                 completed_tasks: 0,
@@ -428,4 +450,26 @@ pub(super) fn cancel_async_invocation(
         .async_executor
         .as_ref()
         .is_some_and(|executor| executor.cancel(&handle).unwrap_or(false))
+}
+
+/// Answers whoever is waiting on a resource invocation. An offloaded command
+/// came in on the synchronous mailbox and its caller waits on a parked channel;
+/// a natively async one waits on the executor's own oneshot.
+fn answer_resource_caller(
+    invocation_id: &str,
+    result: RuntimeResult<HostRuntimeReply>,
+    reply: tokio::sync::oneshot::Sender<RuntimeResult<HostRuntimeReply>>,
+    offloaded_resource_replies: &mut BTreeMap<
+        String,
+        std::sync::mpsc::Sender<RuntimeResult<HostRuntimeReply>>,
+    >,
+) {
+    match offloaded_resource_replies.remove(invocation_id) {
+        Some(parked) => {
+            let _ = parked.send(result);
+        }
+        None => {
+            let _ = reply.send(result);
+        }
+    }
 }

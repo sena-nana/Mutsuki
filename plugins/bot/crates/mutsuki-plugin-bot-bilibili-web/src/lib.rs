@@ -37,6 +37,13 @@ pub const CAPABILITY_RUNTIME_WRITE: &str = "runtime.write";
 /// Fixed actor id used for console-initiated QR sessions.
 pub const CONSOLE_LOGIN_ACTOR: &str = "web-console";
 
+/// Administrator reach is a property of the session, not of the request body:
+/// a console session that may mutate the runtime is the administrator surface.
+/// Read-only sessions see and act on the operator's own subscriptions.
+fn console_is_admin(context: &mutsuki_web_extension_api::RpcCallContext) -> bool {
+    context.require(CAPABILITY_RUNTIME_WRITE).is_ok()
+}
+
 pub struct BilibiliWebExtension {
     service: Arc<dyn BilibiliManagementApi>,
     assets_root: Option<PathBuf>,
@@ -84,26 +91,33 @@ impl WebExtension for BilibiliWebExtension {
             }
         });
 
+        // The QR session is keyed by actor, so the console always uses its own
+        // key: a caller must not be able to drive, or take over, a session that
+        // a chat administrator started.
         ctx.register_async_contextual("login.start", {
             let service = service.clone();
-            move |context, params| {
+            move |context, _params| {
                 let service = service.clone();
                 async move {
                     context.require(CAPABILITY_RUNTIME_WRITE)?;
-                    let actor =
-                        optional_str(&params, "actor_id").unwrap_or(CONSOLE_LOGIN_ACTOR.into());
-                    let result = service.login_start(&actor).await.map_err(map_bili_error)?;
+                    let result = service
+                        .login_start(CONSOLE_LOGIN_ACTOR)
+                        .await
+                        .map_err(map_bili_error)?;
                     Ok(json!({ "qr_png_base64": result.qr_png_base64 }))
                 }
             }
         });
 
+        // Polling a confirmed QR session rotates the stored credential, so this
+        // is a write however much it reads like a status check.
         ctx.register_contextual("login.poll", {
             let service = service.clone();
-            move |context, params| {
-                context.require(CAPABILITY_RUNTIME_READ)?;
-                let actor = optional_str(&params, "actor_id").unwrap_or(CONSOLE_LOGIN_ACTOR.into());
-                let result = service.login_poll(&actor).map_err(map_bili_error)?;
+            move |context, _params| {
+                context.require(CAPABILITY_RUNTIME_WRITE)?;
+                let result = service
+                    .login_poll(CONSOLE_LOGIN_ACTOR)
+                    .map_err(map_bili_error)?;
                 encode_json(result)
             }
         });
@@ -123,10 +137,7 @@ impl WebExtension for BilibiliWebExtension {
             move |context, params| {
                 context.require(CAPABILITY_RUNTIME_READ)?;
                 let actor = optional_str(&params, "operator_user_id").unwrap_or_default();
-                let is_admin = params
-                    .get("is_admin")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true);
+                let is_admin = console_is_admin(&context);
                 let list = service.list(&actor, is_admin).map_err(map_bili_error)?;
                 Ok(json!({ "subscriptions": list }))
             }
@@ -172,10 +183,7 @@ impl WebExtension for BilibiliWebExtension {
             move |context, params| {
                 context.require(CAPABILITY_RUNTIME_WRITE)?;
                 let actor = optional_str(&params, "operator_user_id").unwrap_or_default();
-                let is_admin = params
-                    .get("is_admin")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true);
+                let is_admin = console_is_admin(&context);
                 let selector = optional_str(&params, "selector");
                 let paused = params
                     .get("paused")
@@ -193,10 +201,7 @@ impl WebExtension for BilibiliWebExtension {
             move |context, params| {
                 context.require(CAPABILITY_RUNTIME_READ)?;
                 let actor = optional_str(&params, "operator_user_id").unwrap_or_default();
-                let is_admin = params
-                    .get("is_admin")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true);
+                let is_admin = console_is_admin(&context);
                 let selector = optional_str(&params, "selector");
                 let card = service
                     .preview(&actor, is_admin, selector.as_deref())

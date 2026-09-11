@@ -590,6 +590,7 @@ impl HostRuntime {
                 "actor queue limits and control quota must be positive",
             ));
         }
+        restore_resource_descriptors(&mut core, &config)?;
         let metrics = Arc::new(HostRuntimeMetrics::default());
         config.actor_metrics = metrics.clone();
         let (wake_tx, wake_rx) = mpsc::channel();
@@ -1184,6 +1185,40 @@ impl HostRuntime {
             )),
         }
     }
+}
+
+/// Re-registers the descriptors persistent providers still hold, so resources
+/// written before a restart stay reachable through `open_resource` instead of
+/// living on as unreferenced rows.
+///
+/// Boot only. The registry outlives staged reloads, so a reload must not
+/// re-register what is already there — a duplicate `ref_id` is a hard failure.
+fn restore_resource_descriptors(
+    core: &mut CoreRuntime,
+    config: &HostRuntimeConfig,
+) -> RuntimeResult<()> {
+    let restored = config
+        .resource_providers
+        .iter()
+        .map(|(provider_id, provider)| (provider_id, provider.restore_descriptors()))
+        .chain(
+            config
+                .async_resource_providers
+                .iter()
+                .map(|(provider_id, provider)| (provider_id, provider.restore_descriptors())),
+        );
+    for (provider_id, descriptors) in restored {
+        for descriptor in descriptors? {
+            if descriptor.provider_id != *provider_id {
+                return Err(crate::error::resource_provider_unsupported(format!(
+                    "provider {provider_id} restored descriptor owned by {}",
+                    descriptor.provider_id
+                )));
+            }
+            core.register_resource_descriptor(descriptor)?;
+        }
+    }
+    Ok(())
 }
 
 fn retire_scope(

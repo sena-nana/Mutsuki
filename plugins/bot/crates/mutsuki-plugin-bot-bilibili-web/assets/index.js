@@ -193,7 +193,7 @@ export function mountBilibiliPanel(host, rpc, events) {
       }));
       return;
     }
-    const body = await rpc.read("bilibili", "subscriptions.list", { is_admin: true });
+    const body = await rpc.read("bilibili", "subscriptions.list", {});
     const items = body?.subscriptions || [];
     if (!items.length) {
       listBox.appendChild(Object.assign(document.createElement("p"), {
@@ -227,7 +227,6 @@ export function mountBilibiliPanel(host, rpc, events) {
           await rpc.write("bilibili", "subscriptions.set_paused", {
             selector: item.subscription_id,
             paused: !item.paused,
-            is_admin: true,
           });
           await refreshAll();
         } catch (err) {
@@ -239,7 +238,6 @@ export function mountBilibiliPanel(host, rpc, events) {
         try {
           const cardView = await rpc.read("bilibili", "subscriptions.preview", {
             selector: item.subscription_id,
-            is_admin: true,
           });
           let preview = listBox.querySelector(".preview");
           if (!preview) {

@@ -53,6 +53,25 @@ pub trait ResourceRegistryGateway: ResourcePlanGateway {
     ) -> RuntimeResult<ResourceRef>;
 }
 
+/// Where the Host runs a synchronous provider's plans.
+///
+/// Core executes resource commands on its actor thread, which is also the only
+/// thread that schedules tasks. That is the right place for a provider that
+/// only touches memory, and the wrong place for one that blocks on a disk or a
+/// socket: the whole runtime stalls for as long as the call takes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ResourceProviderExecution {
+    /// Run on the actor thread. Correct for providers whose calls are
+    /// microseconds of in-memory work.
+    #[default]
+    Inline,
+    /// Run on the Host async executor so the actor keeps scheduling. The
+    /// calling worker still waits for its reply; only the actor is released.
+    /// Falls back to `Inline` when no async executor is configured, or when the
+    /// executor rejects the work because its in-flight bounds are exhausted.
+    Offloaded,
+}
+
 pub trait ResourceProviderGateway: ResourcePlanGateway {
     fn create_blob_resource(&self, schema: &str, bytes: Vec<u8>) -> RuntimeResult<ResourceRef>;
     fn create_cow_state_resource(
@@ -63,6 +82,27 @@ pub trait ResourceProviderGateway: ResourcePlanGateway {
     ) -> RuntimeResult<ResourceRef>;
     fn create_capability_resource(&self, kind_id: &str, schema: &str)
     -> RuntimeResult<ResourceRef>;
+
+    /// Descriptors the provider still holds from an earlier run. The Host
+    /// re-registers these once at boot so a persistent provider's resources
+    /// stay reachable through `open_resource` after a restart.
+    ///
+    /// A provider whose storage dies with the process returns nothing, which is
+    /// the default.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured failure when the stored descriptors cannot be read.
+    fn restore_descriptors(&self) -> RuntimeResult<Vec<ResourceRef>> {
+        Ok(Vec::new())
+    }
+
+    /// Where the Host should run this provider's plans. A provider that blocks
+    /// returns [`ResourceProviderExecution::Offloaded`]; the default keeps
+    /// in-memory providers on the actor thread where they are cheapest.
+    fn execution(&self) -> ResourceProviderExecution {
+        ResourceProviderExecution::Inline
+    }
 }
 
 /// Native async resource plan boundary. Provider-owned futures are driven by
@@ -93,4 +133,14 @@ pub trait AsyncResourceProviderGateway: AsyncResourcePlanGateway {
     ) -> RuntimeResult<ResourceRef>;
     fn create_capability_resource(&self, kind_id: &str, schema: &str)
     -> RuntimeResult<ResourceRef>;
+
+    /// See [`ResourceProviderGateway::restore_descriptors`]. Boot-time recovery
+    /// runs before the actor starts, so it stays synchronous on both gateways.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured failure when the stored descriptors cannot be read.
+    fn restore_descriptors(&self) -> RuntimeResult<Vec<ResourceRef>> {
+        Ok(Vec::new())
+    }
 }

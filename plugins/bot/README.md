@@ -35,7 +35,8 @@ target 取自订阅），推送卡片渲染与投递由 Flow 子图
 `backend.cookie_secret_key` 进入共享 credential boundary，WBI 请求使用运行时获取的
 mixin key 和注入式签名函数。
 
-图片通过显式 `media_provider_id` 创建 `ResourceRef`，单资源上限 8 MiB。QQ adapter
+图片通过产品装配注入的媒体 Provider 绑定创建 `ResourceRef`，单资源上限 8 MiB；
+owner 配置文档不再携带 `media_provider_id`。QQ adapter
 从 Host registry 打开最新版 descriptor、读取并校验摘要、分块上传，随后按 segment
 顺序发送 image/text。米画师 runner 使用 `TaskAwaitRunnerAdapter` 调用
 `mutsuki.browser.snapshot`，不拥有 Chromium 生命周期。

@@ -10,5 +10,9 @@ description: Change Mutsuki task scheduling, TaskPool, RunnerRegistry, batch exe
 - Preserve lease, generation, ordering, cancellation, trace and correlation invariants through dispatch and routing.
 - Inject time, IDs and host services; do not call ambient global sources from deterministic kernel paths.
 - Reject unplanned protocols or runners through structured failures instead of fallback dispatch.
+- The actor thread is the scheduler. Nothing that blocks on a disk, a socket or a lock may
+  run inside it: hand such work to the async executor and apply the result to Core when the
+  completion event arrives. Resource providers declare this with
+  `ResourceProviderExecution`; anything else added to the actor loop answers to the same rule.
 
 Test single and multi-entry batches, partial failure, cancellation, lease expiry and routing generation mismatches.

@@ -1623,8 +1623,9 @@ async fn run_management_task(
             .as_ref()
             .expect("management config is installed with the API")
             .snapshot();
-        // QR login is the only credential path.
-        if action != "login" && !config.management.enabled {
+        // Only `login` and `preview` reach this block; QR login is the sole
+        // credential path and stays available with management switched off.
+        if action == "preview" && !config.management.enabled {
             return Ok(RunnerResult::completed(task.task_id));
         }
         let actor_id = command
@@ -2035,16 +2036,20 @@ fn poll_cursor_key(kind: &BilibiliPollKind, request: &PollRequest) -> String {
 }
 
 pub fn manifest() -> mutsuki_runtime_contracts::PluginManifest {
-    manifest_for_backend(false, false)
+    manifest_with_surfaces(false, false)
 }
 
 pub fn manifest_for_config(config: &BilibiliConfig) -> mutsuki_runtime_contracts::PluginManifest {
-    manifest_for_backend(config.management.enabled, config.risk_control.is_some())
+    manifest_with_surfaces(config.management.enabled, config.risk_control.is_some())
 }
 
+/// Builds the manifest for the single (web-cookie) backend. `management_nodes`
+/// only adds the subscription-management node descriptors: the management
+/// command protocol and the QR renderer requirement are unconditional because
+/// QR login does not depend on the management switch.
 #[must_use]
-pub fn manifest_for_backend(
-    management_enabled: bool,
+pub fn manifest_with_surfaces(
+    management_nodes: bool,
     risk_control_enabled: bool,
 ) -> mutsuki_runtime_contracts::PluginManifest {
     let mut builder = PluginBuilder::new(PLUGIN_ID)
@@ -2144,7 +2149,7 @@ pub fn manifest_for_backend(
             }
         }),
     });
-    if management_enabled {
+    if management_nodes {
         nodes.push(BotNodeDescriptor {
             node_type_id: "mutsuki.bot.bilibili.management".into(),
             version: 1,
@@ -4235,7 +4240,7 @@ mod tests {
         use mutsuki_bot_flow::BotNodeCatalog;
         use mutsuki_bot_protocol::BotFlowSnapshot;
 
-        let manifest = manifest_for_backend(false, false);
+        let manifest = manifest_with_surfaces(false, false);
         Arc::new(
             BotFlowRegistry::with_snapshot(
                 BotNodeCatalog::from_manifests(&[manifest]).unwrap(),

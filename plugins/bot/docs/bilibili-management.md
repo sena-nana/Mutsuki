@@ -30,8 +30,17 @@ The management contract contains only product fields:
 QR login is the only credential path and is available regardless of `management.enabled`: chat
 `/bili login` / `/bili login-status` still require an administrator, and the Web Console QR panel
 is always shown, while subscription management, self-binding and other management commands keep
-requiring `management.enabled`. The Web Console never offers a manual cookie field; the owner
-config descriptor hides `cookie` and the value is only rotated through QR login.
+requiring `management.enabled`. Because the administrator list also authorises login, the
+`management_admin_user_ids` node stays editable with management switched off — otherwise a fresh
+deployment could never reach chat login. The Web Console never offers a manual cookie field; the
+owner config descriptor hides `cookie` and the value is only rotated through QR login.
+
+Console RPC authority comes from the session, never from the request body. `login.start` and
+`login.poll` always act on the console's own QR session (`web-console`) so a caller cannot drive
+or take over a session a chat administrator started, and `login.poll` requires `runtime.write`
+because polling a confirmed session rotates the stored credential. Administrator reach for
+`subscriptions.list` / `set_paused` / `preview` is derived from holding `runtime.write`; a
+client-supplied `is_admin` is ignored.
 
 Push delivery is a Flow concern: the polling runner submits a `mutsuki.bot.event.bilibili`
 trigger event per fresh item and never sends a message itself. The active graph must wire

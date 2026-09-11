@@ -54,13 +54,16 @@ impl ConfiguredPluginFactory for SqliteResourcePluginFactory {
                 .map_err(|error| format!("invalid sqlite resource provider config: {error}"))?;
         config.validate()?;
         let database_path = config.database_path.clone();
+        let retention = config.retention.unwrap_or_default();
         let manifest = std_plugin_catalog().sqlite_resource_manifest(&config)?;
         Ok(
             builder.register_builtin_loaded_plugin_factory(manifest, move || {
-                let provider = mutsuki_plugin_resource_sqlite::SqliteResourceProvider::open(
-                    std::path::Path::new(&database_path),
-                )
-                .map_err(|error| format!("{}: {}", error.error().code, error.error().route))?;
+                let provider =
+                    mutsuki_plugin_resource_sqlite::SqliteResourceProvider::open_with_retention(
+                        std::path::Path::new(&database_path),
+                        retention,
+                    )
+                    .map_err(|error| format!("{}: {}", error.error().code, error.error().route))?;
                 Ok::<_, String>(mutsuki_plugin_resource_sqlite::loaded_plugin_with_provider(
                     provider,
                 ))

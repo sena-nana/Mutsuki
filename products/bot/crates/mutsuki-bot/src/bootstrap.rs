@@ -208,12 +208,33 @@ const LILIA_FONT_FILES: &[&str] = &[
     "noto-sans-sc-chinese-simplified-600-normal.woff2",
 ];
 
+/// Media resources this product stores are one-shot payloads: a link-card cover
+/// is downloaded, rendered and never read again. Nothing in the runtime reclaims
+/// them, so the product bounds the database it owns.
+const MEDIA_RESOURCE_MAX_AGE_SECONDS: u64 = 24 * 60 * 60;
+const MEDIA_RESOURCE_MAX_TOTAL_BYTES: u64 = 512 * 1024 * 1024;
+
 /// Seeds the persistent media resource provider every product plugin binds to.
-/// An existing selection keeps its configured database path; only a missing
-/// path falls back to the instance data directory.
+/// An existing selection keeps its configured database path and its enable
+/// switch; only a missing path falls back to the instance data directory.
+///
+/// Disabling the selection is the owner's call: the media plugins declare the
+/// provider surface as a hard requirement, so the LoadPlan then fails with a
+/// missing capability instead of silently running without media.
 fn ensure_sqlite_resource_plugin(service: &mut ServiceConfig, root: &Path) -> Result<(), String> {
+    let database_path = root.join("data").join("resources.sqlite");
+    let database_path = database_path.to_str().ok_or_else(|| {
+        format!(
+            "instance data directory is not valid UTF-8: {}",
+            database_path.display()
+        )
+    })?;
     let config = serde_json::json!({
-        "database_path": root.join("data").join("resources.sqlite").to_string_lossy(),
+        "database_path": database_path,
+        "retention": {
+            "max_age_seconds": MEDIA_RESOURCE_MAX_AGE_SECONDS,
+            "max_total_bytes": MEDIA_RESOURCE_MAX_TOTAL_BYTES,
+        },
     });
     if let Some(plugin) = service
         .plugins
@@ -221,7 +242,6 @@ fn ensure_sqlite_resource_plugin(service: &mut ServiceConfig, root: &Path) -> Re
         .iter_mut()
         .find(|plugin| plugin.id == mutsuki_plugin_resource_sqlite::PLUGIN_ID)
     {
-        plugin.enabled = true;
         if plugin
             .config
             .get("database_path")
@@ -537,6 +557,56 @@ mod tests {
         assert_eq!(
             single_instance_root(Path::new("/opt/mutsuki/mutsuki-bot")).unwrap(),
             PathBuf::from("/opt/mutsuki/.mutsuki-bot")
+        );
+    }
+
+    #[test]
+    fn seeded_media_resource_provider_carries_retention_bounds() {
+        let root = tempfile::tempdir().unwrap();
+        let mut service = ServiceConfig::default();
+        ensure_sqlite_resource_plugin(&mut service, root.path()).unwrap();
+        let seeded = service
+            .plugins
+            .configured
+            .iter()
+            .find(|plugin| plugin.id == mutsuki_plugin_resource_sqlite::PLUGIN_ID)
+            .expect("the product seeds its media resource provider");
+        assert!(seeded.enabled);
+        let config: mutsuki_plugin_resource_sqlite::SqliteResourceConfig =
+            serde_json::from_value(seeded.config.clone()).unwrap();
+        config.validate().unwrap();
+        let retention = config.retention.expect("the seeded database is bounded");
+        assert_eq!(
+            retention.max_age_seconds,
+            Some(MEDIA_RESOURCE_MAX_AGE_SECONDS)
+        );
+        assert_eq!(
+            retention.max_total_bytes,
+            Some(MEDIA_RESOURCE_MAX_TOTAL_BYTES)
+        );
+    }
+
+    #[test]
+    fn an_owner_disabled_media_resource_provider_stays_disabled() {
+        let root = tempfile::tempdir().unwrap();
+        let mut service = ServiceConfig::default();
+        service
+            .plugins
+            .configured
+            .push(mutsuki_service_config::ConfiguredPluginSelection {
+                id: mutsuki_plugin_resource_sqlite::PLUGIN_ID.into(),
+                enabled: false,
+                config: serde_json::json!({ "database_path": "/var/lib/mutsuki/resources.sqlite" }),
+            });
+        ensure_sqlite_resource_plugin(&mut service, root.path()).unwrap();
+        let selection = &service.plugins.configured[0];
+        assert!(
+            !selection.enabled,
+            "the product must not re-enable a provider the owner turned off"
+        );
+        assert_eq!(
+            selection.config["database_path"], "/var/lib/mutsuki/resources.sqlite",
+            "an owner-configured path is preserved"
         );
     }
 
