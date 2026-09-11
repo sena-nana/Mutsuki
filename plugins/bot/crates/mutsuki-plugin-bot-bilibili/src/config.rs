@@ -82,11 +82,14 @@ pub fn bilibili_config_descriptor() -> ConfigDescriptor {
                          扫码登录与凭据轮换不依赖此开关，需要 Host security.secret_file。",
                     ),
                 ),
-                when_management(array_node(
+                // Not gated on `management_enabled`: this list also authorises
+                // `/bili login`, which stays available with subscription
+                // management switched off.
+                array_node(
                     "management_admin_user_ids",
                     "管理员用户 ID",
-                    "允许使用 B 站管理指令的用户 ID。",
-                )),
+                    "允许使用 B 站管理指令的用户 ID；扫码登录指令同样只对该列表开放。",
+                ),
                 when_management(string_node_with(
                     "management_self_binding_outbound_binding",
                     "自绑消息绑定",
@@ -273,6 +276,24 @@ mod tests {
                 "management_self_binding_outbound_binding",
                 "runtime_config",
             ]
+        );
+        let node = |key: &str| {
+            descriptor
+                .root
+                .children
+                .iter()
+                .find(|node| node.key.as_str() == key)
+                .unwrap_or_else(|| panic!("{key} stays in the schema"))
+                .clone()
+        };
+        // The admin list authorises `/bili login` as well, so it must stay
+        // editable while subscription management is switched off.
+        assert!(node("management_admin_user_ids").enabled_if.is_none());
+        assert_eq!(
+            node("management_self_binding_outbound_binding").enabled_if,
+            Some(ConfigExpr::Field {
+                key: ConfigKey::new("management_enabled"),
+            })
         );
         let cookie = descriptor
             .root

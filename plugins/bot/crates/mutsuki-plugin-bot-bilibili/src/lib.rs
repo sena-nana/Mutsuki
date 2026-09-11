@@ -1623,8 +1623,9 @@ async fn run_management_task(
             .as_ref()
             .expect("management config is installed with the API")
             .snapshot();
-        // QR login is the only credential path.
-        if action != "login" && !config.management.enabled {
+        // Only `login` and `preview` reach this block; QR login is the sole
+        // credential path and stays available with management switched off.
+        if action == "preview" && !config.management.enabled {
             return Ok(RunnerResult::completed(task.task_id));
         }
         let actor_id = command
