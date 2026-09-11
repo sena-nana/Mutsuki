@@ -56,7 +56,7 @@ pub use abi::{
 };
 pub use backend::{
     AsyncResourcePlanGateway, AsyncResourceProviderGateway, BoxRuntimeFuture, ResourcePlanGateway,
-    ResourceProviderGateway, ResourceRegistryGateway,
+    ResourceProviderExecution, ResourceProviderGateway, ResourceRegistryGateway,
 };
 pub use batch::{BatchPayloadBuilder, TaskBatchBuilder, TaskOptions};
 pub use descriptor::{

@@ -32,6 +32,10 @@ description: Implement or change standard memory, shared-memory, database, state
 - Resource ids are allocated by the store, never by a provider-memory counter: a
   `ref_id` must stay monotonic and must never be reissued after a delete, a reopen,
   or while two provider generations share the same backing file during staged reload.
+- A provider that blocks declares `ResourceProviderExecution::Offloaded`; leaving the
+  default `Inline` on a disk- or socket-backed provider stalls the whole runtime for the
+  length of every call. `mutsuki.std.resource.sqlite` is offloaded, the memory and
+  shared-memory providers stay inline.
 - SQLite-backed providers configure the connection the same way `mutsuki-bot-state-db`
   does: `busy_timeout`, prefer `journal_mode=WAL` with a recorded fallback for
   in-memory or shared-memory-less file systems, then `synchronous=NORMAL`. Schema

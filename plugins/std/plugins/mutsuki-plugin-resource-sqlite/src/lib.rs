@@ -23,7 +23,8 @@ use mutsuki_runtime_contracts::{
 };
 use mutsuki_runtime_core::{RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
-    LoadedPlugin, PluginBuilder, ResourcePlanGateway, ResourceProviderGateway,
+    LoadedPlugin, PluginBuilder, ResourcePlanGateway, ResourceProviderExecution,
+    ResourceProviderGateway,
 };
 use rusqlite::Connection;
 use serde::Deserialize;
@@ -633,6 +634,12 @@ impl ResourceProviderGateway for SqliteResourceProvider {
                 ))
             })
             .collect()
+    }
+
+    /// Every plan here reaches a SQLite file, so none of them belong on the
+    /// Core actor thread.
+    fn execution(&self) -> ResourceProviderExecution {
+        ResourceProviderExecution::Offloaded
     }
 }
 

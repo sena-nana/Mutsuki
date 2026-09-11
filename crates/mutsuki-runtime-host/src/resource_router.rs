@@ -124,6 +124,134 @@ pub(crate) fn handle_resource_command(
     }
 }
 
+/// Provider id a resource command targets, or `None` for commands that are not
+/// resource commands.
+pub(crate) fn resource_command_provider(command: &HostRuntimeCommand) -> Option<String> {
+    match command {
+        HostRuntimeCommand::CreateBlobResource { provider_id, .. }
+        | HostRuntimeCommand::CreateCowStateResource { provider_id, .. }
+        | HostRuntimeCommand::CreateCapabilityResource { provider_id, .. } => {
+            Some(provider_id.clone())
+        }
+        HostRuntimeCommand::CollectReadPlan(plan)
+        | HostRuntimeCommand::SnapshotReadPlan { plan, .. }
+        | HostRuntimeCommand::OpenStreamPlan(plan) => Some(plan.resource.provider_id.clone()),
+        HostRuntimeCommand::ExecuteExportPlan(plan) => Some(plan.resource.provider_id.clone()),
+        HostRuntimeCommand::CommitWritePlan { plan, .. } => Some(plan.resource.provider_id.clone()),
+        HostRuntimeCommand::ExecuteCommandPlan(plan) => Some(plan.capability.provider_id.clone()),
+        HostRuntimeCommand::ExecuteCommandBatch(batch) => {
+            single_command_provider(batch.commands.iter()).ok()
+        }
+        HostRuntimeCommand::ExecuteSagaPlan(saga) => {
+            single_command_provider(saga.steps.iter().chain(saga.compensations.iter())).ok()
+        }
+        _ => None,
+    }
+}
+
+/// Wraps a synchronous provider call in a future the async executor can drive,
+/// so a provider that blocks on disk or a socket does not hold the Core actor.
+///
+/// The call itself still blocks a thread — `spawn_blocking` keeps it off the
+/// executor's async workers — but the actor is free the moment this is spawned.
+/// Core state is not touched here: the caller syncs the registry from the reply
+/// once the actor observes completion.
+pub(crate) fn prepare_offloaded_resource_command(
+    command: HostRuntimeCommand,
+    provider_id: String,
+    provider: std::sync::Arc<dyn ResourceProviderGateway>,
+) -> (BoxRuntimeFuture<HostRuntimeReply>, usize) {
+    let payload_bytes = offloaded_payload_bytes(&command);
+    (
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || execute_offloaded(&provider, &provider_id, command))
+                .await
+                .map_err(|error| {
+                    crate::error::host_failure(
+                        "host.async_resource.join",
+                        format!("offloaded resource call failed to join: {error}"),
+                    )
+                })?
+        }),
+        payload_bytes,
+    )
+}
+
+/// Mirrors [`handle_resource_command`] minus the Core mutations, which only the
+/// actor may perform.
+fn execute_offloaded(
+    provider: &std::sync::Arc<dyn ResourceProviderGateway>,
+    provider_id: &str,
+    command: HostRuntimeCommand,
+) -> RuntimeResult<HostRuntimeReply> {
+    match command {
+        HostRuntimeCommand::CreateBlobResource { schema, bytes, .. } => {
+            let descriptor = provider.create_blob_resource(&schema, bytes)?;
+            validate_created_provider(provider_id, &descriptor)?;
+            Ok(HostRuntimeReply::ResourceCreated(descriptor))
+        }
+        HostRuntimeCommand::CreateCowStateResource {
+            kind_id,
+            schema,
+            bytes,
+            ..
+        } => {
+            let descriptor = provider.create_cow_state_resource(&kind_id, &schema, bytes)?;
+            validate_created_provider(provider_id, &descriptor)?;
+            Ok(HostRuntimeReply::ResourceCreated(descriptor))
+        }
+        HostRuntimeCommand::CreateCapabilityResource {
+            kind_id, schema, ..
+        } => {
+            let descriptor = provider.create_capability_resource(&kind_id, &schema)?;
+            validate_created_provider(provider_id, &descriptor)?;
+            Ok(HostRuntimeReply::ResourceCreated(descriptor))
+        }
+        HostRuntimeCommand::CollectReadPlan(plan) => Ok(HostRuntimeReply::ResourceBytes(
+            provider.collect_read_plan(&plan)?,
+        )),
+        HostRuntimeCommand::SnapshotReadPlan {
+            plan,
+            kind_id,
+            schema,
+        } => Ok(HostRuntimeReply::Snapshot(
+            provider.snapshot_read_plan(&plan, &kind_id, &schema)?,
+        )),
+        HostRuntimeCommand::OpenStreamPlan(plan) => Ok(HostRuntimeReply::StreamPlan(
+            provider.open_stream_plan(&plan)?,
+        )),
+        HostRuntimeCommand::ExecuteExportPlan(plan) => Ok(HostRuntimeReply::PlanReceipt(
+            provider.execute_export_plan(&plan)?,
+        )),
+        HostRuntimeCommand::CommitWritePlan { plan, bytes } => Ok(HostRuntimeReply::PlanReceipt(
+            provider.commit_write_plan(&plan, bytes)?,
+        )),
+        HostRuntimeCommand::ExecuteCommandPlan(plan) => Ok(HostRuntimeReply::PlanReceipt(
+            provider.execute_command_plan(&plan)?,
+        )),
+        HostRuntimeCommand::ExecuteCommandBatch(batch) => Ok(HostRuntimeReply::PlanReceipts(
+            provider.execute_command_batch(&batch)?,
+        )),
+        HostRuntimeCommand::ExecuteSagaPlan(saga) => Ok(HostRuntimeReply::PlanReceipts(
+            provider.execute_saga_plan(&saga)?,
+        )),
+        _ => Err(resource_provider_unsupported(
+            "command is not a resource command",
+        )),
+    }
+}
+
+/// Only payload-carrying commands count against the executor's byte budget; a
+/// read reserves nothing because its size is not known until it returns.
+fn offloaded_payload_bytes(command: &HostRuntimeCommand) -> usize {
+    match command {
+        HostRuntimeCommand::CreateBlobResource { bytes, .. }
+        | HostRuntimeCommand::CreateCowStateResource { bytes, .. }
+        | HostRuntimeCommand::CommitWritePlan { bytes, .. } => bytes.len(),
+        _ => 0,
+    }
+}
+
 pub(crate) fn sync_async_resource_reply(
     core: &mut CoreRuntime,
     reply: &HostRuntimeReply,
@@ -141,6 +269,13 @@ pub(crate) fn sync_async_resource_reply(
                 new_version: Some(snapshot.snapshot_ref.version),
                 output: serde_json::Value::Null,
             })
+            .map(|_| ()),
+        // An offloaded create built the descriptor on the executor; registering
+        // it is a Core mutation, so it lands here on the actor thread. The
+        // registry returns the descriptor unchanged, which is what the caller
+        // already has in this reply.
+        HostRuntimeReply::ResourceCreated(descriptor) => core
+            .register_resource_descriptor(descriptor.clone())
             .map(|_| ()),
         _ => Ok(()),
     }
