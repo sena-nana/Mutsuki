@@ -14,6 +14,12 @@ description: Implement or change standard memory, shared-memory, database, state
   restore descriptors, versions and bytes, and stale writes keep failing with
   `resource.generation_mismatch`. One-shot outputs are cleaned through the
   capability `delete` command, not by silent eviction.
+- A store whose rows are disposable carries explicit bounds instead of growing without
+  limit. `mutsuki.std.resource.sqlite` takes an optional `retention` (`max_age_seconds`,
+  `max_total_bytes`), reclaims on create so no timer thread is needed, and never
+  reclaims capability resources because those are handles rather than payloads. The
+  deployment that owns the file sets the policy; the provider only supplies the
+  mechanism and defaults to unbounded.
 - Commits are compare-and-swap against the stored version, not last-writer-wins: a
   provider-held mutex only orders writers inside one process, so the write predicate
   carries the base version and a zero-row update is `resource.generation_mismatch`.

@@ -40,7 +40,7 @@ const CAPABILITY_KIND_ID: &str = "mutsuki.resource.sqlite.capability";
 /// database file holds the write lock.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 /// Schema revision stored in `PRAGMA user_version`; bump alongside a migration.
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 /// Plugin configuration accepted through the ServiceHost configured-plugin
 /// document. `database_path` must point to a writable SQLite database file;
@@ -49,15 +49,51 @@ const SCHEMA_VERSION: i64 = 2;
 #[serde(deny_unknown_fields)]
 pub struct SqliteResourceConfig {
     pub database_path: String,
+    /// Absent means the database grows without bound; the deployment that owns
+    /// the file decides whether its resources are disposable.
+    #[serde(default)]
+    pub retention: Option<SqliteRetentionConfig>,
+}
+
+/// Bounds on a resource database whose rows are disposable. Both limits are
+/// optional and applied together; capability resources are never reclaimed
+/// because they are long-lived handles rather than payloads.
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SqliteRetentionConfig {
+    #[serde(default)]
+    pub max_age_seconds: Option<u64>,
+    #[serde(default)]
+    pub max_total_bytes: Option<u64>,
+}
+
+impl SqliteRetentionConfig {
+    fn is_empty(self) -> bool {
+        self.max_age_seconds.is_none() && self.max_total_bytes.is_none()
+    }
+
+    fn validate(self) -> Result<(), String> {
+        if self.max_age_seconds == Some(0) {
+            return Err("retention.max_age_seconds must be greater than zero".into());
+        }
+        if self.max_total_bytes == Some(0) {
+            return Err("retention.max_total_bytes must be greater than zero".into());
+        }
+        Ok(())
+    }
 }
 
 impl SqliteResourceConfig {
     /// # Errors
     ///
-    /// Returns an error when the database path is empty.
+    /// Returns an error when the database path is empty or a retention bound is
+    /// present but zero.
     pub fn validate(&self) -> Result<(), String> {
         if self.database_path.trim().is_empty() {
             return Err("database_path is required".into());
+        }
+        if let Some(retention) = self.retention {
+            retention.validate()?;
         }
         Ok(())
     }
@@ -74,6 +110,7 @@ pub struct SqliteResourceProvider {
     /// Effective `journal_mode` after open (`wal`, or a non-WAL fallback such
     /// as `memory` for in-memory databases).
     journal_mode: String,
+    retention: SqliteRetentionConfig,
 }
 
 impl SqliteResourceProvider {
@@ -84,6 +121,20 @@ impl SqliteResourceProvider {
     /// Returns a structured failure when the database cannot be opened or the
     /// schema cannot be prepared.
     pub fn open(path: &Path) -> RuntimeResult<Self> {
+        Self::open_with_retention(path, SqliteRetentionConfig::default())
+    }
+
+    /// Opens the database and bounds it with `retention`. An empty retention
+    /// keeps every row until a `delete` command removes it.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured failure when the database cannot be opened or the
+    /// schema cannot be prepared.
+    pub fn open_with_retention(
+        path: &Path,
+        retention: SqliteRetentionConfig,
+    ) -> RuntimeResult<Self> {
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
         {
@@ -92,7 +143,7 @@ impl SqliteResourceProvider {
         }
         let connection = Connection::open(path)
             .map_err(|error| storage_failure("resource.sqlite.open", &error.to_string()))?;
-        Self::prepare(connection)
+        Self::prepare(connection, retention)
     }
 
     /// Opens a throwaway in-database provider; mainly for tests and default
@@ -104,10 +155,10 @@ impl SqliteResourceProvider {
     pub fn open_in_memory() -> RuntimeResult<Self> {
         let connection = Connection::open_in_memory()
             .map_err(|error| storage_failure("resource.sqlite.open", &error.to_string()))?;
-        Self::prepare(connection)
+        Self::prepare(connection, SqliteRetentionConfig::default())
     }
 
-    fn prepare(connection: Connection) -> RuntimeResult<Self> {
+    fn prepare(connection: Connection, retention: SqliteRetentionConfig) -> RuntimeResult<Self> {
         let journal_mode = configure_connection(&connection)
             .map_err(|error| storage_failure("resource.sqlite.open", &error.to_string()))?;
         migrate_schema(&connection)
@@ -115,6 +166,7 @@ impl SqliteResourceProvider {
         Ok(Self {
             state: Mutex::new(SqliteResourceState { connection }),
             journal_mode,
+            retention,
         })
     }
 
@@ -138,25 +190,37 @@ impl SqliteResourceProvider {
         schema: &str,
         bytes: Vec<u8>,
     ) -> RuntimeResult<ResourceRef> {
-        let state = self.lock_state("resource.sqlite.create")?;
+        const ROUTE: &str = "resource.sqlite.create";
+        let state = self.lock_state(ROUTE)?;
+        // Reclaiming on create keeps the bound enforced without a timer thread:
+        // the database only grows here, so this is the only place it can pass
+        // its limits.
+        if !self.retention.is_empty() {
+            sweep_retention(&state.connection, self.retention, ROUTE)?;
+        }
+        let created_at = stored_i64(now_unix_ms(ROUTE)?, ROUTE, "created_at_unix_ms")?;
         let slot = allocate_slot(&state.connection)
-            .map_err(|error| storage_failure("resource.sqlite.create", &error.to_string()))?;
+            .map_err(|error| storage_failure(ROUTE, &error.to_string()))?;
         let ref_id = RefId::from(format!("sqlite-resource-{slot}"));
         state
             .connection
-            .execute(
-                "INSERT INTO resources (ref_id, slot, kind_id, semantic, schema, version, bytes)
-                 VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6)",
-                rusqlite::params![
+            .prepare_cached(
+                "INSERT INTO resources
+                     (ref_id, slot, kind_id, semantic, schema, version, bytes, created_at_unix_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?7)",
+            )
+            .and_then(|mut statement| {
+                statement.execute(rusqlite::params![
                     ref_id.as_str(),
                     slot,
                     kind_id,
                     semantic_key(&semantic),
                     schema,
-                    bytes
-                ],
-            )
-            .map_err(|error| storage_failure("resource.sqlite.create", &error.to_string()))?;
+                    bytes,
+                    created_at
+                ])
+            })
+            .map_err(|error| storage_failure(ROUTE, &error.to_string()))?;
         Ok(resource_ref(
             ref_id.as_str(),
             kind_id,
@@ -700,6 +764,9 @@ fn migrate_schema(connection: &Connection) -> rusqlite::Result<()> {
     if user_version >= SCHEMA_VERSION {
         return Ok(());
     }
+    // Only effective on a database created with this pragma in place; an
+    // existing file keeps `none` and reuses freed pages instead of shrinking.
+    connection.pragma_update(None, "auto_vacuum", "INCREMENTAL")?;
     // v2 seeds the sequence from `MAX(slot)`, the best bound available: ids
     // deleted before the migration leave no record and can still be handed out
     // once. Every id allocated from v2 onwards is monotonic and never reused.
@@ -722,8 +789,113 @@ fn migrate_schema(connection: &Connection) -> rusqlite::Result<()> {
              SELECT 1, COALESCE(MAX(slot), 0) FROM resources;
          COMMIT;",
     )?;
+    if user_version < 3 {
+        // Rows written before v3 have no creation time. `0` keeps them outside
+        // the age sweep rather than making them instantly expired.
+        if !column_exists(connection, "resources", "created_at_unix_ms")? {
+            connection.execute(
+                "ALTER TABLE resources ADD COLUMN created_at_unix_ms INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+        connection.execute_batch(
+            "CREATE INDEX IF NOT EXISTS resources_created_at
+                 ON resources(created_at_unix_ms);",
+        )?;
+    }
     connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     Ok(())
+}
+
+fn column_exists(connection: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info(\"{table}\")"))?;
+    let mut columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+    Ok(columns.any(|name| name.is_ok_and(|name| name == column)))
+}
+
+/// Reclaims disposable rows under `retention`. Capability resources are skipped:
+/// they are handles the runtime keeps for the lifetime of the plugin, not
+/// payloads. Rows without a creation time (written before schema v3) are only
+/// reachable through the size bound.
+fn sweep_retention(
+    connection: &Connection,
+    retention: SqliteRetentionConfig,
+    route: &str,
+) -> RuntimeResult<usize> {
+    let mut removed = 0;
+    if let Some(max_age_seconds) = retention.max_age_seconds {
+        let cutoff = now_unix_ms(route)?.saturating_sub(max_age_seconds.saturating_mul(1_000));
+        let cutoff = stored_i64(cutoff, route, "cutoff")?;
+        removed += connection
+            .prepare_cached(
+                "DELETE FROM resources
+                 WHERE semantic <> 'capability_resource'
+                   AND created_at_unix_ms > 0
+                   AND created_at_unix_ms < ?1",
+            )
+            .and_then(|mut statement| statement.execute([cutoff]))
+            .map_err(|error| storage_failure(route, &error.to_string()))?;
+    }
+    if let Some(max_total_bytes) = retention.max_total_bytes {
+        removed += sweep_total_bytes(connection, max_total_bytes, route)?;
+    }
+    if removed > 0 {
+        // No-op when auto_vacuum is `none`, which is the case for databases
+        // created before the pragma was introduced.
+        connection
+            .execute_batch("PRAGMA incremental_vacuum;")
+            .map_err(|error| storage_failure(route, &error.to_string()))?;
+    }
+    Ok(removed)
+}
+
+/// Drops the oldest disposable rows until the stored payload fits the bound.
+fn sweep_total_bytes(
+    connection: &Connection,
+    max_total_bytes: u64,
+    route: &str,
+) -> RuntimeResult<usize> {
+    let total = connection
+        .prepare_cached("SELECT COALESCE(SUM(length(bytes)), 0) FROM resources")
+        .and_then(|mut statement| statement.query_row([], |row| row.get::<_, i64>(0)))
+        .map_err(|error| storage_failure(route, &error.to_string()))?;
+    let mut over = stored_u64(total, route, "length")?.saturating_sub(max_total_bytes);
+    if over == 0 {
+        return Ok(0);
+    }
+    let candidates = connection
+        .prepare_cached(
+            "SELECT ref_id, length(bytes) FROM resources
+             WHERE semantic <> 'capability_resource'
+             ORDER BY slot ASC",
+        )
+        .and_then(|mut statement| {
+            statement
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .map_err(|error| storage_failure(route, &error.to_string()))?;
+    let mut removed = 0;
+    for (ref_id, size) in candidates {
+        if over == 0 {
+            break;
+        }
+        removed += connection
+            .prepare_cached("DELETE FROM resources WHERE ref_id = ?1")
+            .and_then(|mut statement| statement.execute([ref_id.as_str()]))
+            .map_err(|error| storage_failure(route, &error.to_string()))?;
+        over = over.saturating_sub(stored_u64(size, route, "length")?);
+    }
+    Ok(removed)
+}
+
+fn now_unix_ms(route: &str) -> RuntimeResult<u64> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
+        .map_err(|error| storage_failure(route, &error.to_string()))
 }
 
 /// Hands out the next resource slot from the shared sequence row. The counter
@@ -1242,15 +1414,153 @@ mod tests {
     }
 
     #[test]
-    fn config_validation_requires_database_path() {
+    fn config_validation_requires_database_path_and_positive_retention() {
         let config = SqliteResourceConfig {
             database_path: "  ".into(),
+            retention: None,
         };
         assert!(config.validate().unwrap_err().contains("database_path"));
         let config = SqliteResourceConfig {
             database_path: "/tmp/resources.db".into(),
+            retention: None,
         };
         assert!(config.validate().is_ok());
+
+        let config = SqliteResourceConfig {
+            database_path: "/tmp/resources.db".into(),
+            retention: Some(SqliteRetentionConfig {
+                max_age_seconds: Some(0),
+                max_total_bytes: None,
+            }),
+        };
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .contains("retention.max_age_seconds")
+        );
+
+        // Retention is optional in the document and defaults to unbounded.
+        let config: SqliteResourceConfig =
+            serde_json::from_value(json!({ "database_path": "/tmp/resources.db" })).unwrap();
+        assert!(config.retention.is_none());
+        let config: SqliteResourceConfig = serde_json::from_value(json!({
+            "database_path": "/tmp/resources.db",
+            "retention": { "max_total_bytes": 1024 }
+        }))
+        .unwrap();
+        assert_eq!(
+            config.retention.unwrap().max_total_bytes,
+            Some(1024),
+            "retention bounds round-trip through the plugin document"
+        );
+    }
+
+    #[test]
+    fn retention_reclaims_aged_and_oversized_payloads_but_keeps_capabilities() {
+        fn collect(
+            provider: &SqliteResourceProvider,
+            resource: &ResourceRef,
+        ) -> RuntimeResult<Vec<u8>> {
+            provider.collect_read_plan(&ReadPlan {
+                plan_id: format!("read:{}", resource.ref_id),
+                resource: resource.clone(),
+                operation: "collect".into(),
+                args: Value::Null,
+            })
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("resources.db");
+
+        // No age bound yet: seed rows that the size bound will have to reclaim.
+        let provider = SqliteResourceProvider::open_with_retention(
+            &path,
+            SqliteRetentionConfig {
+                max_age_seconds: None,
+                max_total_bytes: Some(16),
+            },
+        )
+        .unwrap();
+        let capability = provider
+            .create_capability_resource("sqlite_query", "sqlite.query.v1")
+            .unwrap();
+        let oldest = provider
+            .create_blob_resource("text.v1", vec![b'a'; 10])
+            .unwrap();
+        let newest = provider
+            .create_blob_resource("text.v1", vec![b'b'; 10])
+            .unwrap();
+        // The third insert pushes the total past 16 bytes, so the oldest
+        // payload goes and the capability handle stays.
+        let third = provider
+            .create_blob_resource("text.v1", vec![b'c'; 10])
+            .unwrap();
+
+        assert_eq!(
+            collect(&provider, &oldest).unwrap_err().error().code,
+            ERR_RESOURCE_NOT_FOUND
+        );
+        assert!(collect(&provider, &newest).is_ok());
+        assert!(collect(&provider, &third).is_ok());
+        assert!(
+            provider
+                .execute_command_plan(&CommandPlan {
+                    plan_id: "command:after-sweep".into(),
+                    capability: capability.clone(),
+                    operation: "query".into(),
+                    args: Value::Null,
+                    idempotency_key: None,
+                })
+                .is_ok(),
+            "capability handles survive reclamation"
+        );
+
+        // An age bound of one second expires everything already written.
+        drop(provider);
+        let provider = SqliteResourceProvider::open_with_retention(
+            &path,
+            SqliteRetentionConfig {
+                max_age_seconds: Some(1),
+                max_total_bytes: None,
+            },
+        )
+        .unwrap();
+        provider
+            .state
+            .lock()
+            .unwrap()
+            .connection
+            .execute("UPDATE resources SET created_at_unix_ms = 1", [])
+            .unwrap();
+        let fresh = provider
+            .create_blob_resource("text.v1", b"fresh".to_vec())
+            .unwrap();
+        assert_eq!(
+            provider
+                .collect_read_plan(&ReadPlan {
+                    plan_id: "read:expired".into(),
+                    resource: newest,
+                    operation: "collect".into(),
+                    args: Value::Null,
+                })
+                .unwrap_err()
+                .error()
+                .code,
+            ERR_RESOURCE_NOT_FOUND
+        );
+        assert!(collect(&provider, &fresh).is_ok());
+        assert!(
+            provider
+                .execute_command_plan(&CommandPlan {
+                    plan_id: "command:after-age-sweep".into(),
+                    capability,
+                    operation: "query".into(),
+                    args: Value::Null,
+                    idempotency_key: None,
+                })
+                .is_ok(),
+            "capability handles are exempt from the age bound too"
+        );
     }
 
     fn write_plan(plan_id: &str, resource: ResourceRef) -> WritePlan {
