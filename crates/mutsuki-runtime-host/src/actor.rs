@@ -18,7 +18,7 @@ use tokio::sync::oneshot;
 
 use mutsuki_runtime_contracts::{AsyncInvocation, RunnerId, TaskId};
 use mutsuki_runtime_core::{CoreRuntime, RunnerLoopReport, RuntimeResult, TaskRecord};
-use mutsuki_runtime_sdk::{HostTaskFailureSummary, HostTaskSnapshot};
+use mutsuki_runtime_sdk::{HostTaskFailureSummary, HostTaskSnapshot, ResourceProviderExecution};
 
 use crate::commands::{HostRuntimeCommand, HostRuntimeReply};
 use crate::error::host_failure;
@@ -49,6 +49,11 @@ struct CoreActor {
     control_burst: usize,
     submitted_at: BTreeMap<TaskId, Instant>,
     pending_task_waits: Vec<PendingTaskWait>,
+    /// Reply channels for resource commands that arrived on the synchronous
+    /// mailbox but were handed to the async executor. The executor answers on
+    /// its own oneshot, so the caller's channel is parked here until the
+    /// completion event comes back keyed by invocation id.
+    offloaded_resource_replies: BTreeMap<String, mpsc::Sender<RuntimeResult<HostRuntimeReply>>>,
 }
 
 struct ActorExecution {
@@ -85,6 +90,7 @@ impl CoreActor {
             control_burst: 0,
             submitted_at: BTreeMap::new(),
             pending_task_waits: Vec::new(),
+            offloaded_resource_replies: BTreeMap::new(),
         }
     }
 
@@ -178,13 +184,21 @@ impl CoreActor {
                 }
                 let cancel_started =
                     matches!(&command, HostRuntimeCommand::CancelTask(_)).then(Instant::now);
-                let result = handle_command(self, command);
-                if let Some(started) = cancel_started {
-                    self.config
-                        .actor_metrics
-                        .record_cancel_propagation(started.elapsed());
+                // An offloaded command is already on its way; the actor still
+                // falls through to the publishing tail below like every other
+                // message, it just has no reply to send yet.
+                match try_offload_resource_command(self, command, reply_tx) {
+                    OffloadOutcome::Handled => false,
+                    OffloadOutcome::RunInline(command, reply_tx) => {
+                        let result = handle_command(self, command);
+                        if let Some(started) = cancel_started {
+                            self.config
+                                .actor_metrics
+                                .record_cancel_propagation(started.elapsed());
+                        }
+                        send_command_reply(result, reply_tx)
+                    }
                 }
-                send_command_reply(result, reply_tx)
             }
             CoreActorMsg::AsyncResourceCommand(command, reply_tx) => {
                 start_async_resource_command(command, reply_tx, &self.config);
@@ -247,6 +261,7 @@ impl CoreActor {
                     &mut self.pending_cancels,
                     &mut self.running_batches_by_task,
                     &mut self.draining_invocations,
+                    &mut self.offloaded_resource_replies,
                 );
                 self.publish_terminal_changes();
                 let _ = schedule_ready(
@@ -407,6 +422,7 @@ fn handle_command(
         pending_cancels,
         running_batches_by_task,
         draining_invocations,
+        offloaded_resource_replies,
         driver,
         ..
     } = actor;
@@ -558,6 +574,7 @@ fn handle_command(
                 pending_cancels,
                 running_batches_by_task,
                 draining_invocations,
+                offloaded_resource_replies,
             )?;
             if config.event_driven {
                 schedule_ready(core, config, pools, running_batches_by_task)?;
@@ -670,6 +687,7 @@ fn drain_worker_completions(
                     &mut actor.pending_cancels,
                     &mut actor.running_batches_by_task,
                     &mut actor.draining_invocations,
+                    &mut actor.offloaded_resource_replies,
                 ) {
                     aggregate.completed_tasks += report.completed_tasks;
                 }
@@ -721,6 +739,102 @@ fn drain_worker_completions(
         }
     }
     false
+}
+
+// The command travels back out by value on the inline path, which is every
+// command the runtime handles. Boxing it to even out the variant sizes would
+// put a heap allocation on the actor's hottest path to satisfy a lint.
+#[allow(clippy::large_enum_variant)]
+enum OffloadOutcome {
+    /// The actor is done with this command: either it is running on the async
+    /// executor and its reply channel is parked, or the executor refused it and
+    /// the caller has already been answered.
+    Handled,
+    /// Not an offloadable resource command. Run it on the actor as before, with
+    /// the command and its reply channel handed straight back.
+    RunInline(
+        HostRuntimeCommand,
+        mpsc::Sender<RuntimeResult<HostRuntimeReply>>,
+    ),
+}
+
+/// Sends a resource command to the async executor when its provider says it
+/// blocks, so the actor is not held for the length of a disk or socket call.
+///
+/// A command whose provider runs inline, or any command at all when no async
+/// executor is configured, takes the original path untouched. Once offloaded it
+/// is subject to the executor's in-flight bounds like every other async
+/// resource plan: exceeding them is a structured failure, not a hang.
+fn try_offload_resource_command(
+    actor: &mut CoreActor,
+    command: HostRuntimeCommand,
+    reply_tx: mpsc::Sender<RuntimeResult<HostRuntimeReply>>,
+) -> OffloadOutcome {
+    let Some(provider_id) = resource_router::resource_command_provider(&command) else {
+        return OffloadOutcome::RunInline(command, reply_tx);
+    };
+    let Some(provider) = actor
+        .config
+        .resource_providers
+        .get(&provider_id)
+        .filter(|provider| provider.execution() == ResourceProviderExecution::Offloaded)
+        .cloned()
+    else {
+        return OffloadOutcome::RunInline(command, reply_tx);
+    };
+    let (Some(executor), Some(events)) = (
+        actor.config.async_executor.as_ref(),
+        actor.config.async_event_sink.clone(),
+    ) else {
+        return OffloadOutcome::RunInline(command, reply_tx);
+    };
+    let (future, payload_bytes) =
+        resource_router::prepare_offloaded_resource_command(command, provider_id.clone(), provider);
+    let invocation = offloaded_invocation(&actor.config, &provider_id, payload_bytes);
+    let invocation_id = invocation.invocation_id.clone();
+    actor
+        .offloaded_resource_replies
+        .insert(invocation_id.clone(), reply_tx);
+    // The executor answers on its own oneshot; the parked sender above is what
+    // actually reaches the caller, keyed by invocation id.
+    let (discard, _) = oneshot::channel();
+    if let Err(failure) = executor.spawn_resource(invocation, future, discard, events)
+        && let Some(parked) = actor.offloaded_resource_replies.remove(&invocation_id)
+    {
+        let _ = parked.send(Err(failure));
+    }
+    OffloadOutcome::Handled
+}
+
+fn offloaded_invocation(
+    config: &HostRuntimeConfig,
+    provider_id: &str,
+    payload_bytes: usize,
+) -> AsyncInvocation {
+    let sequence = config
+        .async_resource_sequence
+        .fetch_add(1, AtomicOrdering::Relaxed)
+        .saturating_add(1);
+    let invocation_id = format!("offloaded-resource-{sequence}-{provider_id}");
+    AsyncInvocation {
+        invocation_id: invocation_id.clone(),
+        batch_id: invocation_id.clone().into(),
+        runner_id: format!("resource:{provider_id}").into(),
+        task_ids: Vec::new(),
+        task_lease_ids: Vec::new(),
+        attempt_generations: Vec::new(),
+        task_leases: Vec::new(),
+        expected_entries: Vec::new(),
+        registry_generation: 0,
+        plugin_generation: 0,
+        cancel_token: invocation_id,
+        deadline_after_ms: config
+            .default_runner_limits
+            .wall_clock_deadline
+            .and_then(|deadline| u64::try_from(deadline.as_millis()).ok()),
+        entry_count: 0,
+        payload_bytes,
+    }
 }
 
 fn start_async_resource_command(

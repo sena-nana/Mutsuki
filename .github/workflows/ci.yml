@@ -65,7 +65,12 @@ jobs:
       - name: Test locked workspace
         run: cargo test --workspace --all-targets --locked
 
+      # Independent of the test result: a failing test used to skip this step,
+      # so one flaky test silently switched the lint gate off for as long as it
+      # kept failing. `!cancelled()` rather than `always()` so a superseded run
+      # still stops immediately under the concurrency group above.
       - name: Lint
+        if: ${{ !cancelled() }}
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Performance smoke gate

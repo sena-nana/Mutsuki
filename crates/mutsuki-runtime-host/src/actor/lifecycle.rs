@@ -150,6 +150,10 @@ pub(super) fn reload_runtime(
     pending_cancels: &mut BTreeMap<RunnerId, Vec<String>>,
     running_batches_by_task: &mut BTreeMap<TaskId, RunningBatch>,
     draining_invocations: &mut BTreeMap<String, DrainingInvocation>,
+    offloaded_resource_replies: &mut BTreeMap<
+        String,
+        std::sync::mpsc::Sender<RuntimeResult<crate::commands::HostRuntimeReply>>,
+    >,
 ) -> RuntimeResult<ReloadDecision> {
     let affected_runner_ids = prepared.affected_plugins.as_ref().map(|affected_plugins| {
         core.registry_snapshot()
@@ -168,6 +172,7 @@ pub(super) fn reload_runtime(
         pending_cancels,
         running_batches_by_task,
         draining_invocations,
+        offloaded_resource_replies,
         drain_timeout,
         affected_runner_ids.as_ref(),
     )?;
@@ -213,6 +218,10 @@ fn drain_for_reload(
     pending_cancels: &mut BTreeMap<RunnerId, Vec<String>>,
     running_batches_by_task: &mut BTreeMap<TaskId, RunningBatch>,
     draining_invocations: &mut BTreeMap<String, DrainingInvocation>,
+    offloaded_resource_replies: &mut BTreeMap<
+        String,
+        std::sync::mpsc::Sender<RuntimeResult<crate::commands::HostRuntimeReply>>,
+    >,
     drain_timeout: Duration,
     affected_runner_ids: Option<&BTreeSet<RunnerId>>,
 ) -> RuntimeResult<()> {
@@ -269,6 +278,7 @@ fn drain_for_reload(
                     pending_cancels,
                     running_batches_by_task,
                     draining_invocations,
+                    offloaded_resource_replies,
                 )?;
             }
             Ok(CoreActorMsg::WorkerExited(exited)) => {

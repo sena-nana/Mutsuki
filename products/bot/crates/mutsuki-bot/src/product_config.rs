@@ -592,11 +592,14 @@ pub(crate) fn configured_plugin_selection_from_value(
                     .map(str::to_owned)
                     .collect();
             }
-            if let Some(binding) = object.get("management_self_binding_outbound_binding") {
-                config.management.self_binding_outbound_binding = binding
-                    .as_str()
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| config.management.self_binding_outbound_binding.clone());
+            // A present-but-not-a-string value keeps whatever the runtime
+            // config already carried, which is what the previous assign-a-clone
+            // -of-itself spelling did.
+            if let Some(binding) = object
+                .get("management_self_binding_outbound_binding")
+                .and_then(serde_json::Value::as_str)
+            {
+                binding.clone_into(&mut config.management.self_binding_outbound_binding);
             }
             if enabled {
                 config
@@ -614,7 +617,9 @@ pub(crate) fn configured_plugin_selection_from_value(
             Ok(ConfiguredPluginSelection {
                 id: provider_id.into(),
                 enabled,
-                config: serde_json::json!({ "enabled": enabled }),
+                // `enabled` already lives on the selection; the link-card
+                // plugins take no configuration of their own.
+                config: serde_json::Value::Null,
             })
         }
         _ => Err(ConfigError::ApplyRejected {
@@ -849,7 +854,7 @@ mod tests {
 
             let enabled = select_plugin(provider_id, link_card_config_value(true)).unwrap();
             assert!(enabled.enabled);
-            assert_eq!(enabled.config, serde_json::json!({ "enabled": true }));
+            assert_eq!(enabled.config, serde_json::Value::Null);
         }
     }
 

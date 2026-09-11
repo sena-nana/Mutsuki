@@ -82,11 +82,14 @@ pub fn bilibili_config_descriptor() -> ConfigDescriptor {
                          扫码登录与凭据轮换不依赖此开关，需要 Host security.secret_file。",
                     ),
                 ),
-                when_management(array_node(
+                // Not gated on `management_enabled`: this list also authorises
+                // `/bili login`, which stays available with subscription
+                // management switched off.
+                array_node(
                     "management_admin_user_ids",
                     "管理员用户 ID",
-                    "允许使用 B 站管理指令的用户 ID。",
-                )),
+                    "允许使用 B 站管理指令的用户 ID；扫码登录指令同样只对该列表开放。",
+                ),
                 when_management(string_node_with(
                     "management_self_binding_outbound_binding",
                     "自绑消息绑定",
@@ -105,10 +108,6 @@ pub fn bilibili_config_value(enabled: bool, config: &BilibiliConfig) -> ConfigVa
     ConfigValue::Object(
         [
             ("enabled".into(), ConfigValue::Bool(enabled)),
-            (
-                "media_provider_id".into(),
-                ConfigValue::String(config.media_provider_id.clone()),
-            ),
             (
                 BILIBILI_COOKIE_FIELD.into(),
                 ConfigValue::Secret(SecretState::Keep),
@@ -274,6 +273,24 @@ mod tests {
                 "runtime_config",
             ]
         );
+        let node = |key: &str| {
+            descriptor
+                .root
+                .children
+                .iter()
+                .find(|node| node.key.as_str() == key)
+                .unwrap_or_else(|| panic!("{key} stays in the schema"))
+                .clone()
+        };
+        // The admin list authorises `/bili login` as well, so it must stay
+        // editable while subscription management is switched off.
+        assert!(node("management_admin_user_ids").enabled_if.is_none());
+        assert_eq!(
+            node("management_self_binding_outbound_binding").enabled_if,
+            Some(ConfigExpr::Field {
+                key: ConfigKey::new("management_enabled"),
+            })
+        );
         let cookie = descriptor
             .root
             .children
@@ -291,13 +308,19 @@ mod tests {
 
     #[test]
     fn config_value_projects_management_switches() {
-        let mut config = BilibiliConfig::default();
-        config.media_provider_id = "memory".into();
+        let mut config = BilibiliConfig {
+            media_provider_id: "memory".into(),
+            ..BilibiliConfig::default()
+        };
         config.management.enabled = true;
         config.management.admin_user_ids = vec!["admin".into()];
         let value = bilibili_config_value(true, &config).to_json();
         assert_eq!(value["enabled"], true);
-        assert_eq!(value["media_provider_id"], "memory");
+        // The product assembly owns the media provider binding; the owner
+        // document has no node for one, so it must not project one either. The
+        // runtime config still round-trips whatever the assembly injected.
+        assert!(value.get("media_provider_id").is_none());
+        assert_eq!(value["runtime_config"]["media_provider_id"], "memory");
         assert_eq!(value["management_enabled"], true);
         assert_eq!(value["management_admin_user_ids"][0], "admin");
         assert_eq!(
