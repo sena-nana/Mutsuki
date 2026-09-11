@@ -40,7 +40,7 @@ const CAPABILITY_KIND_ID: &str = "mutsuki.resource.sqlite.capability";
 /// database file holds the write lock.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 /// Schema revision stored in `PRAGMA user_version`; bump alongside a migration.
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 /// Plugin configuration accepted through the ServiceHost configured-plugin
 /// document. `database_path` must point to a writable SQLite database file;
@@ -66,7 +66,6 @@ impl SqliteResourceConfig {
 #[derive(Debug)]
 struct SqliteResourceState {
     connection: Connection,
-    next_slot: u64,
 }
 
 #[derive(Debug)]
@@ -113,17 +112,8 @@ impl SqliteResourceProvider {
             .map_err(|error| storage_failure("resource.sqlite.open", &error.to_string()))?;
         migrate_schema(&connection)
             .map_err(|error| storage_failure("resource.sqlite.open", &error.to_string()))?;
-        let next_slot = connection
-            .query_row("SELECT COALESCE(MAX(slot), 0) FROM resources", [], |row| {
-                row.get::<_, i64>(0)
-            })
-            .map(|slot| slot as u64)
-            .map_err(|error| storage_failure("resource.sqlite.open", &error.to_string()))?;
         Ok(Self {
-            state: Mutex::new(SqliteResourceState {
-                connection,
-                next_slot,
-            }),
+            state: Mutex::new(SqliteResourceState { connection }),
             journal_mode,
         })
     }
@@ -148,9 +138,9 @@ impl SqliteResourceProvider {
         schema: &str,
         bytes: Vec<u8>,
     ) -> RuntimeResult<ResourceRef> {
-        let mut state = self.lock_state("resource.sqlite.create")?;
-        state.next_slot += 1;
-        let slot = state.next_slot;
+        let state = self.lock_state("resource.sqlite.create")?;
+        let slot = allocate_slot(&state.connection)
+            .map_err(|error| storage_failure("resource.sqlite.create", &error.to_string()))?;
         let ref_id = RefId::from(format!("sqlite-resource-{slot}"));
         state
             .connection
@@ -159,7 +149,7 @@ impl SqliteResourceProvider {
                  VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6)",
                 rusqlite::params![
                     ref_id.as_str(),
-                    slot as i64,
+                    slot,
                     kind_id,
                     semantic_key(&semantic),
                     schema,
@@ -608,6 +598,9 @@ fn migrate_schema(connection: &Connection) -> rusqlite::Result<()> {
     if user_version >= SCHEMA_VERSION {
         return Ok(());
     }
+    // v2 seeds the sequence from `MAX(slot)`, the best bound available: ids
+    // deleted before the migration leave no record and can still be handed out
+    // once. Every id allocated from v2 onwards is monotonic and never reused.
     connection.execute_batch(
         "BEGIN IMMEDIATE;
          CREATE TABLE IF NOT EXISTS resources (
@@ -619,10 +612,29 @@ fn migrate_schema(connection: &Connection) -> rusqlite::Result<()> {
              version INTEGER NOT NULL,
              bytes BLOB NOT NULL
          );
+         CREATE TABLE IF NOT EXISTS resource_slot_sequence (
+             singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+             next_slot INTEGER NOT NULL
+         );
+         INSERT OR IGNORE INTO resource_slot_sequence(singleton, next_slot)
+             SELECT 1, COALESCE(MAX(slot), 0) FROM resources;
          COMMIT;",
     )?;
     connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     Ok(())
+}
+
+/// Hands out the next resource slot from the shared sequence row. The counter
+/// lives in the database rather than in provider memory, so ids stay monotonic
+/// across reopen, across deletes and across provider instances that share the
+/// same file (staged reload keeps two generations alive at once).
+fn allocate_slot(connection: &Connection) -> rusqlite::Result<i64> {
+    connection.query_row(
+        "UPDATE resource_slot_sequence SET next_slot = next_slot + 1
+         WHERE singleton = 1 RETURNING next_slot",
+        [],
+        |row| row.get(0),
+    )
 }
 
 fn semantic_key(semantic: &ResourceSemantic) -> &'static str {
@@ -933,10 +945,82 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.error().code, ERR_RESOURCE_GENERATION_MISMATCH);
 
+        // The sequence continues past the ids already handed out before reopen
+        // instead of restarting from whatever rows happen to survive.
         let created = provider
             .create_blob_resource("text.v1", b"after".to_vec())
             .unwrap();
-        assert_eq!(created.ref_id.as_str(), "sqlite-resource-3");
+        assert!(
+            !["sqlite-resource-1", "sqlite-resource-2"].contains(&created.ref_id.as_str()),
+            "reopened provider reused {}",
+            created.ref_id
+        );
+    }
+
+    #[test]
+    fn deleted_ref_ids_are_never_handed_out_again_after_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("resources.db");
+        let recycled;
+        {
+            let provider = SqliteResourceProvider::open(&path).unwrap();
+            let capability = provider
+                .create_capability_resource("sqlite_query", "sqlite.query.v1")
+                .unwrap();
+            let doomed = provider
+                .create_blob_resource("text.v1", b"first".to_vec())
+                .unwrap();
+            recycled = doomed.ref_id.clone();
+            provider
+                .execute_command_plan(&CommandPlan {
+                    plan_id: "command:delete".into(),
+                    capability,
+                    operation: "delete".into(),
+                    args: json!({ "ref_id": doomed.ref_id }),
+                    idempotency_key: None,
+                })
+                .unwrap();
+        }
+
+        let provider = SqliteResourceProvider::open(&path).unwrap();
+        let created = provider
+            .create_blob_resource("text.v1", b"second".to_vec())
+            .unwrap();
+        assert_ne!(
+            created.ref_id, recycled,
+            "a deleted ref_id was reissued and now points at different bytes"
+        );
+    }
+
+    #[test]
+    fn coexisting_providers_on_one_file_allocate_distinct_ref_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("resources.db");
+        // Staged reload keeps the outgoing generation alive while the incoming
+        // one already opened the same file.
+        let outgoing = SqliteResourceProvider::open(&path).unwrap();
+        let incoming = SqliteResourceProvider::open(&path).unwrap();
+
+        let first = incoming
+            .create_blob_resource("text.v1", b"incoming".to_vec())
+            .unwrap();
+        let second = outgoing
+            .create_blob_resource("text.v1", b"outgoing".to_vec())
+            .unwrap();
+        assert_ne!(first.ref_id, second.ref_id);
+
+        for (provider, resource, expected) in [
+            (&incoming, &first, b"incoming".as_slice()),
+            (&outgoing, &second, b"outgoing".as_slice()),
+        ] {
+            let read = ReadPlan {
+                plan_id: format!("read:{}", resource.ref_id),
+                resource: resource.clone(),
+                operation: "collect".into(),
+                args: Value::Null,
+            };
+            assert_eq!(provider.collect_read_plan(&read).unwrap(), expected);
+        }
     }
 
     #[test]
