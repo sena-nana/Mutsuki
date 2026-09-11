@@ -14,5 +14,10 @@ description: Implement or change standard memory, shared-memory, database, state
   restore descriptors, versions and bytes, and stale writes keep failing with
   `resource.generation_mismatch`. One-shot outputs are cleaned through the
   capability `delete` command, not by silent eviction.
+- SQLite-backed providers configure the connection the same way `mutsuki-bot-state-db`
+  does: `busy_timeout`, prefer `journal_mode=WAL` with a recorded fallback for
+  in-memory or shared-memory-less file systems, then `synchronous=NORMAL`. Schema
+  changes go through `PRAGMA user_version` migrations, never through
+  `CREATE TABLE IF NOT EXISTS` alone.
 
 Test create/read/update, sealing, lease expiry, restart persistence and invalid descriptor behavior.

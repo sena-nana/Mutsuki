@@ -2,6 +2,7 @@
 // package. They are listed explicitly so the remaining debt stays auditable and
 // every other pedantic lint keeps failing the build.
 #![allow(
+    clippy::doc_markdown,
     clippy::must_use_candidate,
     clippy::needless_pass_by_value,
     clippy::similar_names,
@@ -10,6 +11,7 @@
 
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 
 use mutsuki_runtime_contracts::resource::experimental::{CommandBatch, SagaPlan};
 use mutsuki_runtime_contracts::{
@@ -33,6 +35,12 @@ pub const PROVIDER_ID: &str = "mutsuki.std.resource.sqlite";
 const BLOB_KIND_ID: &str = "mutsuki.resource.sqlite.blob";
 const SNAPSHOT_KIND_ID: &str = "mutsuki.resource.sqlite.snapshot";
 const CAPABILITY_KIND_ID: &str = "mutsuki.resource.sqlite.capability";
+
+/// Waited out instead of failing a plan when another connection to the same
+/// database file holds the write lock.
+const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+/// Schema revision stored in `PRAGMA user_version`; bump alongside a migration.
+const SCHEMA_VERSION: i64 = 1;
 
 /// Plugin configuration accepted through the ServiceHost configured-plugin
 /// document. `database_path` must point to a writable SQLite database file;
@@ -64,6 +72,9 @@ struct SqliteResourceState {
 #[derive(Debug)]
 pub struct SqliteResourceProvider {
     state: Mutex<SqliteResourceState>,
+    /// Effective `journal_mode` after open (`wal`, or a non-WAL fallback such
+    /// as `memory` for in-memory databases).
+    journal_mode: String,
 }
 
 impl SqliteResourceProvider {
@@ -98,18 +109,9 @@ impl SqliteResourceProvider {
     }
 
     fn prepare(connection: Connection) -> RuntimeResult<Self> {
-        connection
-            .execute_batch(
-                "CREATE TABLE IF NOT EXISTS resources (
-                    ref_id TEXT PRIMARY KEY,
-                    slot INTEGER NOT NULL UNIQUE,
-                    kind_id TEXT NOT NULL,
-                    semantic TEXT NOT NULL,
-                    schema TEXT NOT NULL,
-                    version INTEGER NOT NULL,
-                    bytes BLOB NOT NULL
-                );",
-            )
+        let journal_mode = configure_connection(&connection)
+            .map_err(|error| storage_failure("resource.sqlite.open", &error.to_string()))?;
+        migrate_schema(&connection)
             .map_err(|error| storage_failure("resource.sqlite.open", &error.to_string()))?;
         let next_slot = connection
             .query_row("SELECT COALESCE(MAX(slot), 0) FROM resources", [], |row| {
@@ -122,7 +124,15 @@ impl SqliteResourceProvider {
                 connection,
                 next_slot,
             }),
+            journal_mode,
         })
+    }
+
+    /// Effective SQLite `journal_mode` after open. Prefer `wal`; an in-memory
+    /// database or a file system without shared memory keeps a fallback mode.
+    #[must_use]
+    pub fn journal_mode(&self) -> &str {
+        &self.journal_mode
     }
 
     fn lock_state(&self, route: &str) -> RuntimeResult<MutexGuard<'_, SqliteResourceState>> {
@@ -579,6 +589,42 @@ fn resource_ref(
     }
 }
 
+/// Single-connection factory: busy timeout, prefer WAL, then `synchronous=NORMAL`.
+/// When WAL is unavailable SQLite keeps another mode and open still succeeds, so
+/// the effective mode is returned instead of being asserted.
+fn configure_connection(connection: &Connection) -> rusqlite::Result<String> {
+    connection.busy_timeout(BUSY_TIMEOUT)?;
+    let journal_mode: String =
+        connection.query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))?;
+    connection.pragma_update(None, "synchronous", "NORMAL")?;
+    Ok(journal_mode.to_ascii_lowercase())
+}
+
+/// Applies the schema at `SCHEMA_VERSION` and records it in `PRAGMA user_version`
+/// so later revisions have a migration anchor instead of relying on
+/// `CREATE TABLE IF NOT EXISTS` alone.
+fn migrate_schema(connection: &Connection) -> rusqlite::Result<()> {
+    let user_version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    if user_version >= SCHEMA_VERSION {
+        return Ok(());
+    }
+    connection.execute_batch(
+        "BEGIN IMMEDIATE;
+         CREATE TABLE IF NOT EXISTS resources (
+             ref_id TEXT PRIMARY KEY,
+             slot INTEGER NOT NULL UNIQUE,
+             kind_id TEXT NOT NULL,
+             semantic TEXT NOT NULL,
+             schema TEXT NOT NULL,
+             version INTEGER NOT NULL,
+             bytes BLOB NOT NULL
+         );
+         COMMIT;",
+    )?;
+    connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    Ok(())
+}
+
 fn semantic_key(semantic: &ResourceSemantic) -> &'static str {
     match semantic {
         ResourceSemantic::FrozenValue => "frozen_value",
@@ -827,10 +873,8 @@ mod tests {
 
     #[test]
     fn resources_persist_across_reopen() {
-        let file = tempfile::tempdir()
-            .unwrap()
-            .into_path()
-            .join("resources.db");
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("resources.db");
         let stale_write;
         {
             let provider = SqliteResourceProvider::open(&file).unwrap();
@@ -893,6 +937,40 @@ mod tests {
             .create_blob_resource("text.v1", b"after".to_vec())
             .unwrap();
         assert_eq!(created.ref_id.as_str(), "sqlite-resource-3");
+    }
+
+    #[test]
+    fn file_databases_open_in_wal_and_record_the_schema_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("resources.db");
+        let provider = SqliteResourceProvider::open(&path).unwrap();
+        assert_eq!(provider.journal_mode(), "wal");
+        let recorded = |provider: &SqliteResourceProvider| -> i64 {
+            provider
+                .state
+                .lock()
+                .unwrap()
+                .connection
+                .query_row("PRAGMA user_version", [], |row| row.get(0))
+                .unwrap()
+        };
+        assert_eq!(recorded(&provider), SCHEMA_VERSION);
+
+        let blob = provider
+            .create_blob_resource("text.v1", b"kept".to_vec())
+            .unwrap();
+        drop(provider);
+
+        // Reopening an already migrated database keeps the data and the version.
+        let provider = SqliteResourceProvider::open(&path).unwrap();
+        assert_eq!(recorded(&provider), SCHEMA_VERSION);
+        let read = ReadPlan {
+            plan_id: "read:after-migrate".into(),
+            resource: blob,
+            operation: "collect".into(),
+            args: Value::Null,
+        };
+        assert_eq!(provider.collect_read_plan(&read).unwrap(), b"kept");
     }
 
     #[test]
