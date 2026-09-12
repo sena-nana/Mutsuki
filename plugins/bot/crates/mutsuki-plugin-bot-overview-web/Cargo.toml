@@ -10,17 +10,15 @@ mutsuki-plugin-bot-control-web = { workspace = true }
 mutsuki-service-control = { workspace = true }
 mutsuki-web-protocol = { workspace = true }
 mutsuki-web-extension-api = { workspace = true }
-serde = { workspace = true }
 serde_json = { workspace = true }
-futures-executor = "0.3"
 
 [dev-dependencies]
 mutsuki-web-host = { workspace = true }
 mutsuki-web-bridge = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
-uuid = { version = "1", features = ["v4"] }
-tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect"] }
+uuid.workspace = true
+tokio-tungstenite.workspace = true
 futures.workspace = true
 
 [lints]

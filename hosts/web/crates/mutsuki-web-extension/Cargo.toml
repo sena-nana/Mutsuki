@@ -8,7 +8,6 @@ description = "WebExtension descriptors, manifest validation and asset registrat
 [dependencies]
 mutsuki-web-extension-api.workspace = true
 mutsuki-web-protocol.workspace = true
-serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 

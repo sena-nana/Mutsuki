@@ -17,15 +17,15 @@
     "test": "pnpm build && node --test tests/*.test.mjs"
   },
   "peerDependencies": {
-    "pinia": "^2.2.0",
-    "vue": "^3.5.0",
+    "pinia": "^3.0.4",
+    "vue": "^3.5.42",
     "vue-router": "^4.4.0"
   },
   "devDependencies": {
-    "esbuild": "^0.25.0",
-    "pinia": "^2.2.0",
-    "typescript": "^5.6.3",
-    "vue": "^3.5.0",
+    "esbuild": "^0.28.2",
+    "pinia": "^3.0.4",
+    "typescript": "^5.9.3",
+    "vue": "^3.5.42",
     "vue-router": "^4.4.0"
   },
   "dependencies": {

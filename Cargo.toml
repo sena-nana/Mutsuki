@@ -47,55 +47,60 @@ anyhow = "1.0"
 async-trait = "0.1"
 axum = { version = "0.8", features = ["ws"] }
 bot-echo = { path = "plugins/bot/examples/bot-echo" }
-bytes = "1.11.1"
-clap = { version = "4.6.5", features = ["derive", "env"] }
+bytes = "1.12.1"
+clap = { version = "4.6.6", features = ["derive", "env"] }
+criterion = { version = "0.8.2", features = ["html_reports"] }
 crossbeam-channel = "0.5"
-fastrand = "2.4"
+crossterm = "0.29"
+fastrand = "2.5"
 futures = "0.3"
+futures-executor = "0.3"
+headless_chrome = "=1.0.22"
 hex = "0.4"
 hmac = "0.13.0"
 html-escape = "0.2.15"
 image = { version = "0.25", default-features = false, features = ["png"] }
-interprocess = { version = "2.4.3", default-features = false, features = ["tokio"] }
-keyring = { version = "4.1.6", default-features = false }
+interprocess = { version = "2.4.4", default-features = false, features = ["tokio"] }
+keyring = { version = "4.2.0", default-features = false }
 libc = "0.2"
 libloading = "0.9.0"
-md5 = "0.8"
-mdns-sd = { version = "0.20.1", default-features = false }
+md5 = "0.8.1"
+mdns-sd = { version = "0.21.3", default-features = false }
 mime_guess = "2.0"
-nana-tracking-protocol = { version = "0.1.0", git = "https://github.com/sena-nana/NanaTracking.git", rev = "919f7f23c246c64c0ea36742a5813899903dadb4", default-features = false, features = ["std"] }
+nana-tracking-protocol = { version = "0.1.0", git = "https://github.com/sena-nana/NanaTracking.git", rev = "785654745c71558aaaafc7a39e5b15cef74f75ad", default-features = false, features = ["std"] }
 plist = "1.7"
 proc-macro2 = "1.0"
 qrcode = { version = "0.14", default-features = false, features = ["image"] }
 quinn = { version = "0.11.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 quote = "1.0"
-rcgen = "0.14.8"
-regex = "1.11"
+ratatui = "0.30.2"
+rcgen = "0.14.10"
+regex = "1.13.1"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls-no-provider", "stream"] }
-rpassword = "7.4"
-rmp-serde = "1.3"
-rusqlite = { version = "0.40.1", features = ["bundled"] }
-rustls = { version = "0.23.43", default-features = false, features = ["ring", "std"] }
+rpassword = "7.5.4"
+rmp-serde = "1.3.1"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+rustls = { version = "0.23.44", default-features = false, features = ["ring", "std"] }
 scraper = "0.27.0"
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = { version = "1.0.149", features = ["raw_value"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.151", features = ["raw_value"] }
 sha2 = "0.11.0"
 socket2 = "0.6.5"
 stats_alloc = "0.1.10"
-syn = { version = "3.0.3", features = ["full", "parsing"] }
+syn = { version = "3.0.5", features = ["full", "parsing"] }
 tauri = { version = "2", default-features = false }
-tempfile = "3.23"
+tempfile = "3.27"
 thiserror = "2.0"
 time = { version = "=0.3.55", features = ["parsing"] }
-tokio = { version = "1.52.3", features = ["fs", "io-util", "macros", "net", "process", "rt", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "1.53.1", features = ["fs", "io-util", "macros", "net", "process", "rt", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 tokio-util = { version = "0.7", features = ["rt"] }
-toml = "1.1.4"
+toml = "1.1.6"
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 url = "2.5"
-uuid = { version = "1.10", features = ["v4", "serde"] }
+uuid = { version = "1.26", features = ["v4", "serde"] }
 windows-service = "0.8.1"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
@@ -109,8 +114,14 @@ mutsuki-plugin-host = { path = "crates/mutsuki-plugin-host" }
 
 mutsuki-link = { path = "crates/link/crates/mutsuki-link", features = ["local"] }
 mutsuki-link-core = { path = "crates/link/crates/mutsuki-link-core" }
+mutsuki-link-discovery = { path = "crates/link/crates/mutsuki-link-discovery" }
+mutsuki-link-io = { path = "crates/link/crates/mutsuki-link-io" }
 mutsuki-link-local = { path = "crates/link/crates/mutsuki-link-local" }
+mutsuki-link-pairing = { path = "crates/link/crates/mutsuki-link-pairing" }
 mutsuki-link-quic = { path = "crates/link/crates/mutsuki-link-quic" }
+mutsuki-link-runtime = { path = "crates/link/crates/mutsuki-link-runtime" }
+mutsuki-link-tcp = { path = "crates/link/crates/mutsuki-link-tcp" }
+mutsuki-link-transport-testkit = { path = "crates/link/crates/mutsuki-link-transport-testkit" }
 
 mutsuki-service-benchmarks = { path = "hosts/service/crates/mutsuki-service-benchmarks" }
 mutsuki-service-config = { path = "hosts/service/crates/mutsuki-service-config" }
@@ -160,11 +171,18 @@ mutsuki-agent-plugin-web-search = { path = "kits/agent/crates/mutsuki-agent-plug
 mutsuki-agent-runtime = { path = "kits/agent/crates/mutsuki-agent-runtime" }
 mutsuki-agent-service-host-integration = { path = "kits/agent/crates/mutsuki-agent-service-host-integration" }
 mutsuki-agent-sdk = { path = "kits/agent/crates/mutsuki-agent-sdk" }
+mutsuki-agent-testkit = { path = "kits/agent/crates/mutsuki-agent-testkit" }
+mutsuki-plugin-agent-context = { path = "kits/agent/crates/mutsuki-plugin-agent-context" }
 mutsuki-plugin-agent-credential = { path = "kits/agent/crates/mutsuki-plugin-agent-credential" }
 mutsuki-plugin-agent-knowledge = { path = "kits/agent/crates/mutsuki-plugin-agent-knowledge" }
+mutsuki-plugin-agent-loop = { path = "kits/agent/crates/mutsuki-plugin-agent-loop" }
+mutsuki-plugin-agent-memory-router = { path = "kits/agent/crates/mutsuki-plugin-agent-memory-router" }
 mutsuki-plugin-agent-model-gateway = { path = "kits/agent/crates/mutsuki-plugin-agent-model-gateway" }
 mutsuki-plugin-agent-proactive = { path = "kits/agent/crates/mutsuki-plugin-agent-proactive" }
+mutsuki-plugin-agent-prompt = { path = "kits/agent/crates/mutsuki-plugin-agent-prompt" }
+mutsuki-plugin-agent-session = { path = "kits/agent/crates/mutsuki-plugin-agent-session" }
 mutsuki-plugin-agent-skills = { path = "kits/agent/crates/mutsuki-plugin-agent-skills" }
+mutsuki-plugin-agent-tool-router = { path = "kits/agent/crates/mutsuki-plugin-agent-tool-router" }
 
 mutsuki-config-service = { path = "plugins/std/crates/mutsuki-config-service" }
 mutsuki-config-derive = { path = "plugins/std/crates/mutsuki-config-derive" }
@@ -213,6 +231,9 @@ mutsuki-protocol-config = { path = "plugins/std/protocols/mutsuki-protocol-confi
 mutsuki-protocol-http = { path = "plugins/std/protocols/mutsuki-protocol-http" }
 mutsuki-protocol-image = { path = "plugins/std/protocols/mutsuki-protocol-image" }
 mutsuki-plugin-image-render = { path = "plugins/std/plugins/mutsuki-plugin-image-render-takumi" }
+mutsuki-plugin-io-browser-chromium = { path = "plugins/std/plugins/mutsuki-plugin-io-browser-chromium" }
+mutsuki-plugin-io-http-client = { path = "plugins/std/plugins/mutsuki-plugin-io-http-client" }
+mutsuki-plugin-resource-memory = { path = "plugins/std/plugins/mutsuki-plugin-resource-memory" }
 mutsuki-plugin-resource-sqlite = { path = "plugins/std/plugins/mutsuki-plugin-resource-sqlite" }
 mutsuki-plugin-config-sqlite = { path = "plugins/std/plugins/mutsuki-plugin-config-sqlite" }
 mutsuki-std-effect = { path = "plugins/std/crates/mutsuki-std-effect" }

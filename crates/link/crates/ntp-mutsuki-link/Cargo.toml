@@ -8,12 +8,12 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-mutsuki-link-core = { version = "0.1.0", path = "../mutsuki-link-core" }
-mutsuki-link-pairing = { version = "0.1.0", path = "../mutsuki-link-pairing" }
+mutsuki-link-core.workspace = true
+mutsuki-link-pairing.workspace = true
 nana-tracking-protocol.workspace = true
 
 [dev-dependencies]
-mutsuki-link-quic = { version = "0.1.0", path = "../mutsuki-link-quic" }
+mutsuki-link-quic.workspace = true
 quinn.workspace = true
 rcgen.workspace = true
 rustls.workspace = true

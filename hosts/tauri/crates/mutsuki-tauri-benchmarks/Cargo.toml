@@ -13,11 +13,11 @@ mutsuki-tauri-host.workspace = true
 serde_json.workspace = true
 hex.workspace = true
 sha2.workspace = true
-tempfile = "3.10"
+tempfile.workspace = true
 tokio.workspace = true
 
 [target.'cfg(unix)'.dependencies]
-libc = "0.2"
+libc.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true }

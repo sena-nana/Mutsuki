@@ -19,13 +19,13 @@ tcp = ["dep:mutsuki-link-tcp"]
 system-keyring = ["pairing", "mutsuki-link-pairing/system-keyring"]
 
 [dependencies]
-mutsuki-link-core = { version = "0.1.0", path = "../mutsuki-link-core" }
-mutsuki-link-discovery = { version = "0.1.0", path = "../mutsuki-link-discovery", optional = true }
-mutsuki-link-local = { version = "0.1.0", path = "../mutsuki-link-local", optional = true }
-mutsuki-link-pairing = { version = "0.1.0", path = "../mutsuki-link-pairing", optional = true }
-mutsuki-link-quic = { version = "0.1.0", path = "../mutsuki-link-quic", optional = true }
-mutsuki-link-runtime = { version = "0.1.0", path = "../mutsuki-link-runtime", optional = true }
-mutsuki-link-tcp = { version = "0.1.0", path = "../mutsuki-link-tcp", optional = true }
+mutsuki-link-core.workspace = true
+mutsuki-link-discovery = { workspace = true, optional = true }
+mutsuki-link-local = { workspace = true, optional = true }
+mutsuki-link-pairing = { workspace = true, optional = true }
+mutsuki-link-quic = { workspace = true, optional = true }
+mutsuki-link-runtime = { workspace = true, optional = true }
+mutsuki-link-tcp = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 
 [dev-dependencies]

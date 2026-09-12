@@ -6,9 +6,7 @@ license.workspace = true
 
 [dependencies]
 async-trait.workspace = true
-fastrand.workspace = true
 md5.workspace = true
-hmac.workspace = true
 mutsuki-bot-flow.workspace = true
 mutsuki-bot-link-parser.workspace = true
 mutsuki-bot-management.workspace = true
@@ -25,7 +23,6 @@ rusqlite.workspace = true
 scraper.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 url.workspace = true

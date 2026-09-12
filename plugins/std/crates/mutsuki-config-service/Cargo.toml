@@ -13,7 +13,7 @@ async-trait = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
-criterion = { version = "0.8.2", features = ["html_reports"] }
+criterion.workspace = true
 rmp-serde = { workspace = true }
 
 [lints]

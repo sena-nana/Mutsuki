@@ -14,7 +14,7 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
-mutsuki-agent-testkit = { path = "../mutsuki-agent-testkit" }
+mutsuki-agent-testkit.workspace = true
 
 [lints]
 workspace = true

@@ -28,7 +28,7 @@ mutsuki-bot-service-host-integration.workspace = true
 mutsuki-plugin-bot-command.workspace = true
 mutsuki-plugin-bot-event-router.workspace = true
 tokio.workspace = true
-tempfile = "3"
+tempfile.workspace = true
 
 [lints]
 workspace = true
