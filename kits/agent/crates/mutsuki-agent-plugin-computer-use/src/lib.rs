@@ -315,6 +315,16 @@ fn glob_match(pattern: &str, path: &str) -> bool {
     if let Some(suffix) = pattern.strip_prefix("**/") {
         return path.ends_with(suffix) || path.contains(&format!("/{suffix}"));
     }
+    if let Some(prefix) = pattern.strip_suffix("/*") {
+        if prefix.is_empty() {
+            return !path.contains('/');
+        }
+        let Some(rest) = path.strip_prefix(prefix) else {
+            return false;
+        };
+        let rest = rest.strip_prefix('/').unwrap_or(rest);
+        return !rest.is_empty() && !rest.contains('/');
+    }
     if let Some(suffix) = pattern.strip_prefix('*') {
         return path.ends_with(suffix);
     }
@@ -1284,6 +1294,31 @@ mod tests {
         }
     }
 
+    fn try_create_symlink(original: &Path, link: &Path, is_dir: bool) -> bool {
+        let result = {
+            #[cfg(unix)]
+            {
+                let _ = is_dir;
+                std::os::unix::fs::symlink(original, link)
+            }
+            #[cfg(windows)]
+            {
+                if is_dir {
+                    std::os::windows::fs::symlink_dir(original, link)
+                } else {
+                    std::os::windows::fs::symlink_file(original, link)
+                }
+            }
+        };
+        match result {
+            Ok(()) => true,
+            Err(error) => {
+                eprintln!("skipping symlink jail test: {error}");
+                false
+            }
+        }
+    }
+
     #[test]
     fn path_normalization_blocks_escape() {
         let ws = AgentWorkspaceRef {
@@ -1457,7 +1492,9 @@ mod tests {
         let secret = outside.path().join("secret.txt");
         std::fs::write(&secret, "top-secret").unwrap();
         let link = dir.path().join("leak.txt");
-        std::os::unix::fs::symlink(&secret, &link).unwrap();
+        if !try_create_symlink(&secret, &link, false) {
+            return;
+        }
 
         let backend = WorkspaceFilesystemBackend;
         let rel = Path::new("leak.txt");
@@ -1478,16 +1515,17 @@ mod tests {
         std::fs::write(outside.path().join("outside.txt"), "escaped").unwrap();
         std::fs::write(dir.path().join("inside.txt"), "safe").unwrap();
         let link = dir.path().join("escape_dir");
-        std::os::unix::fs::symlink(outside.path(), &link).unwrap();
+        if !try_create_symlink(outside.path(), &link, true) {
+            return;
+        }
 
         let backend = WorkspaceFilesystemBackend;
         let paths = backend.glob(dir.path(), "*").unwrap();
-        let normalized: Vec<_> = paths
-            .iter()
-            .map(|p| p.replace('\\', "/"))
-            .collect();
+        let normalized: Vec<_> = paths.iter().map(|p| p.replace('\\', "/")).collect();
         assert!(
-            normalized.iter().any(|p| p == "inside.txt" || p.ends_with("/inside.txt")),
+            normalized
+                .iter()
+                .any(|p| p == "inside.txt" || p.ends_with("/inside.txt")),
             "expected inside.txt in {normalized:?}"
         );
         assert!(
@@ -1513,15 +1551,29 @@ mod tests {
         assert!(!truncated);
         assert_eq!(bytes, b"fn main() {}");
         backend
-            .write(dir.path(), Path::new("src/lib.rs"), b"pub fn x() {}", true, false)
+            .write(
+                dir.path(),
+                Path::new("src/lib.rs"),
+                b"pub fn x() {}",
+                true,
+                false,
+            )
             .unwrap();
         assert_eq!(
             std::fs::read_to_string(dir.path().join("src/lib.rs")).unwrap(),
             "pub fn x() {}"
         );
         let paths = backend.glob(dir.path(), "src/*").unwrap();
-        assert!(paths.iter().any(|p| p.replace('\\', "/").ends_with("src/main.rs")));
-        assert!(paths.iter().any(|p| p.replace('\\', "/").ends_with("src/lib.rs")));
+        assert!(
+            paths
+                .iter()
+                .any(|p| p.replace('\\', "/").ends_with("src/main.rs"))
+        );
+        assert!(
+            paths
+                .iter()
+                .any(|p| p.replace('\\', "/").ends_with("src/lib.rs"))
+        );
         let listed = backend.list(dir.path(), Path::new("src")).unwrap();
         assert!(listed.iter().any(|e| e.path.ends_with("main.rs")));
     }
@@ -1531,22 +1583,17 @@ mod tests {
         let dir = tempdir().unwrap();
         let outside = tempdir().unwrap();
         let link = dir.path().join("out");
-        std::os::unix::fs::symlink(outside.path(), &link).unwrap();
+        if !try_create_symlink(outside.path(), &link, true) {
+            return;
+        }
         let backend = WorkspaceFilesystemBackend;
         let err = backend
-            .write(
-                dir.path(),
-                Path::new("out/pwned.txt"),
-                b"nope",
-                true,
-                false,
-            )
+            .write(dir.path(), Path::new("out/pwned.txt"), b"nope", true, false)
             .unwrap_err();
         assert_eq!(err.code, "agent.computer_use.path_escape");
         assert!(!outside.path().join("pwned.txt").exists());
     }
 
-    #[test]
     #[test]
     fn performance_smoke_read_patch_shell_browser() {
         use std::time::Instant;
