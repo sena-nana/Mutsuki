@@ -17,24 +17,24 @@ mutsuki-agent-runtime.workspace = true
 mutsuki-agent-sdk.workspace = true
 mutsuki-runtime-core.workspace = true
 mutsuki-runtime-sdk.workspace = true
-mutsuki-plugin-agent-context = { path = "../mutsuki-plugin-agent-context" }
+mutsuki-plugin-agent-context.workspace = true
 mutsuki-plugin-agent-credential.workspace = true
 mutsuki-plugin-agent-knowledge.workspace = true
-mutsuki-plugin-agent-loop = { path = "../mutsuki-plugin-agent-loop" }
-mutsuki-plugin-agent-memory-router = { path = "../mutsuki-plugin-agent-memory-router" }
-mutsuki-plugin-agent-model-gateway = { path = "../mutsuki-plugin-agent-model-gateway" }
+mutsuki-plugin-agent-loop.workspace = true
+mutsuki-plugin-agent-memory-router.workspace = true
+mutsuki-plugin-agent-model-gateway.workspace = true
 mutsuki-plugin-agent-proactive.workspace = true
-mutsuki-plugin-agent-prompt = { path = "../mutsuki-plugin-agent-prompt" }
-mutsuki-plugin-agent-session = { path = "../mutsuki-plugin-agent-session" }
+mutsuki-plugin-agent-prompt.workspace = true
+mutsuki-plugin-agent-session.workspace = true
 mutsuki-plugin-agent-skills.workspace = true
-mutsuki-plugin-agent-tool-router = { path = "../mutsuki-plugin-agent-tool-router" }
+mutsuki-plugin-agent-tool-router.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
 mutsuki-agent-adapter-api.workspace = true
 mutsuki-agent-adapter-anthropic.workspace = true
-mutsuki-agent-testkit = { path = "../mutsuki-agent-testkit" }
+mutsuki-agent-testkit.workspace = true
 mutsuki-runtime-host.workspace = true
 serde_json.workspace = true
 

@@ -6,7 +6,7 @@ license.workspace = true
 
 [dependencies]
 async-trait.workspace = true
-futures-executor = "0.3"
+futures-executor.workspace = true
 hex.workspace = true
 mutsuki-agent-adapter-api.workspace = true
 mutsuki-agent-adapter-openai.workspace = true

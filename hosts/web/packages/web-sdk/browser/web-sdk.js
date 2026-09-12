@@ -1487,6 +1487,7 @@ var WebBridgeError = class extends Error {
     this.code = code;
     this.name = "WebBridgeError";
   }
+  code;
 };
 var WebBridgeClient = class {
   constructor(url, options = {}) {
@@ -1500,6 +1501,7 @@ var WebBridgeClient = class {
     this.reconnectMaxDelayMs = positive(options.reconnectMaxDelayMs, 1e4);
     this.webSocketFactory = options.webSocketFactory ?? ((url2) => new WebSocket(url2));
   }
+  url;
   ws = null;
   sessionId = null;
   pending = /* @__PURE__ */ new Map();

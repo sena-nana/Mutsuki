@@ -10,8 +10,8 @@ futures.workspace = true
 mutsuki-plugin-api.workspace = true
 mutsuki-plugin-host.workspace = true
 mutsuki-runtime-contracts.workspace = true
-mutsuki-runtime-core = { path = "../mutsuki-runtime-core" }
-mutsuki-runtime-sdk = { path = "../mutsuki-runtime-sdk" }
+mutsuki-runtime-core.workspace = true
+mutsuki-runtime-sdk.workspace = true
 mutsuki-runtime-wire.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -22,7 +22,7 @@ libc.workspace = true
 mutsuki-runtime-host-abi-v2-fixture = { path = "fixtures/abi-v2-plugin" }
 
 [target.'cfg(windows)'.dev-dependencies]
-windows-sys = { version = "0.61", features = [
+windows-sys = { workspace = true, features = [
     "Wdk_System_SystemInformation",
     "Win32_Foundation",
     "Win32_System_WindowsProgramming",

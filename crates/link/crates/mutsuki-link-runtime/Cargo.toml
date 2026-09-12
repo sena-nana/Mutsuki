@@ -8,8 +8,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-mutsuki-link-core = { version = "0.1.0", path = "../mutsuki-link-core" }
-mutsuki-link-quic = { version = "0.1.0", path = "../mutsuki-link-quic" }
+mutsuki-link-core.workspace = true
+mutsuki-link-quic.workspace = true
 quinn.workspace = true
 tokio.workspace = true
 

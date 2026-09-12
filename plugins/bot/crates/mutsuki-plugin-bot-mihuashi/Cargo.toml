@@ -22,9 +22,9 @@ url.workspace = true
 async-trait.workspace = true
 image.workspace = true
 mutsuki-plugin-image-render.workspace = true
-mutsuki-plugin-io-browser-chromium = { path = "../../../std/plugins/mutsuki-plugin-io-browser-chromium" }
-mutsuki-plugin-io-http-client = { path = "../../../std/plugins/mutsuki-plugin-io-http-client" }
-mutsuki-plugin-resource-memory = { path = "../../../std/plugins/mutsuki-plugin-resource-memory" }
+mutsuki-plugin-io-browser-chromium.workspace = true
+mutsuki-plugin-io-http-client.workspace = true
+mutsuki-plugin-resource-memory.workspace = true
 mutsuki-service-config.workspace = true
 mutsuki-service-control.workspace = true
 mutsuki-service-runtime.workspace = true

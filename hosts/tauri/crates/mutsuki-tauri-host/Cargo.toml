@@ -31,7 +31,7 @@ mutsuki-plugin-agent-model-gateway.workspace = true
 mutsuki-tauri-abi-fixture = { path = "../../fixtures/abi-plugin" }
 
 [target.'cfg(unix)'.dev-dependencies]
-libc = "0.2"
+libc.workspace = true
 
 [target.'cfg(windows)'.dev-dependencies]
 windows-sys = { workspace = true }

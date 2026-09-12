@@ -5,14 +5,14 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-headless_chrome = "=1.0.22"
-mutsuki-protocol-browser = { path = "../../protocols/mutsuki-protocol-browser" }
+headless_chrome.workspace = true
+mutsuki-protocol-browser.workspace = true
 mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-core.workspace = true
 mutsuki-runtime-sdk.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-url = "2.5"
+url.workspace = true
 
 [lints]
 workspace = true

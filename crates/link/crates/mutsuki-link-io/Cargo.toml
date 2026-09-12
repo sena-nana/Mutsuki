@@ -9,7 +9,7 @@ description = "Internal bounded Tokio I/O bridge for MutsukiLink transports"
 publish = false
 
 [dependencies]
-mutsuki-link-core = { version = "0.1.0", path = "../mutsuki-link-core" }
+mutsuki-link-core.workspace = true
 tokio.workspace = true
 
 [lints]

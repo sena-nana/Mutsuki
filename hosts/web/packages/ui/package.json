@@ -20,13 +20,13 @@
     "build": "tsc && node ./scripts/bundle-css.mjs"
   },
   "dependencies": {
-    "@lilia/theme": "github:sena-nana/LiliaUI#4dab5476073468c4da24a39cf4b85cad6464e83a&path:/packages/theme"
+    "@lilia/theme": "github:sena-nana/LiliaUI#804c427ed72e424753d1cc220fcbe2313c8e20fb&path:/packages/theme"
   },
   "peerDependencies": {
-    "vue": "^3.5.0"
+    "vue": "^3.5.42"
   },
   "devDependencies": {
-    "typescript": "^5.6.3",
-    "vue": "^3.5.0"
+    "typescript": "^5.9.3",
+    "vue": "^3.5.42"
   }
 }

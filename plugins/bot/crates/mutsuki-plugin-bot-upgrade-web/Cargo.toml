@@ -18,8 +18,8 @@ mutsuki-plugin-catalog = { workspace = true }
 mutsuki-web-host = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "time"] }
-tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect"] }
-uuid = { version = "1", features = ["v4"] }
+tokio-tungstenite.workspace = true
+uuid.workspace = true
 
 [lints]
 workspace = true

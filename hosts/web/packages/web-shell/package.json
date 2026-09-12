@@ -21,15 +21,15 @@
     "@mutsuki/web-sdk": "workspace:*"
   },
   "peerDependencies": {
-    "vue": "^3.5.0",
+    "vue": "^3.5.42",
     "vue-router": "^4.4.0",
-    "pinia": "^2.2.0"
+    "pinia": "^3.0.4"
   },
   "devDependencies": {
-    "esbuild": "^0.25.0",
-    "typescript": "^5.6.3",
-    "vue": "^3.5.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.9.3",
+    "vue": "^3.5.42",
     "vue-router": "^4.4.0",
-    "pinia": "^2.2.0"
+    "pinia": "^3.0.4"
   }
 }
