@@ -196,19 +196,20 @@ test("activity registration retains the first descriptor and is refcounted", () 
   assert.equal(state.activities.list().length, 0);
 });
 
-test("finalizePluginActivity adds hub pages for extra plugin-owned pages", () => {
+function withPluginHome(extraActivities = []) {
   const state = createShellState();
   state.activities.register({ id: "plugins", label: "插件", icon: "config" });
-  state.activities.register({ id: "bot", label: "Bot", icon: "bot" });
+  for (const activity of extraActivities) state.activities.register(activity);
   state.slots.register({
     id: "plugin.home",
     slot: "plugin.home",
-    component: {
-      mount() {
-        return { dispose() {} };
-      },
-    },
+    component: { mount() { return { dispose() {} }; } },
   });
+  return state;
+}
+
+test("finalizePluginActivity adds hub pages for extra plugin-owned pages", () => {
+  const state = withPluginHome([{ id: "bot", label: "Bot", icon: "bot" }]);
   state.pages.register({
     id: "bilibili.page",
     path: "/bilibili",
@@ -233,6 +234,74 @@ test("finalizePluginActivity adds hub pages for extra plugin-owned pages", () =>
   validateShellState(state);
   disposable.dispose();
   assert.equal(state.pages.list().some((page) => page.id === "mutsuki.bot.bilibili"), false);
+});
+
+test("finalizePluginActivity upgrades id hubs and keeps named hubs", () => {
+  const state = withPluginHome([
+    { id: "sandbox", label: "沙盒", icon: "sandbox" },
+    { id: "automation", label: "自动化", icon: "flow" },
+  ]);
+  state.pages.register({
+    id: "mutsuki.bot.sandbox",
+    path: "/plugins/mutsuki.bot.sandbox",
+    title: "mutsuki.bot.sandbox",
+    pluginId: "mutsuki.bot.sandbox",
+    component: { mount() {} },
+  });
+  state.navigation.register({
+    id: "mutsuki.bot.sandbox.nav",
+    activityId: "plugins",
+    pageId: "mutsuki.bot.sandbox",
+    label: "mutsuki.bot.sandbox",
+  });
+  state.pages.register({
+    id: "sandbox.page",
+    path: "/sandbox",
+    title: "沙盒",
+    pluginId: "mutsuki.bot.sandbox",
+    component: { mount() {} },
+  });
+  state.navigation.register({
+    id: "sandbox.nav",
+    activityId: "sandbox",
+    pageId: "sandbox.page",
+    label: "沙盒",
+  });
+  state.pages.register({
+    id: "mutsuki.bot.router.flow",
+    path: "/plugins/mutsuki.bot.router.flow",
+    title: "流程编辑器",
+    pluginId: "mutsuki.bot.router.flow",
+    component: { mount() {} },
+  });
+  state.navigation.register({
+    id: "mutsuki.bot.router.flow.nav",
+    activityId: "plugins",
+    pageId: "mutsuki.bot.router.flow",
+    label: "流程编辑器",
+  });
+  state.pages.register({
+    id: "bot-flow.page",
+    path: "/flows",
+    title: "流程编排",
+    pluginId: "mutsuki.bot.router.flow",
+    component: { mount() {} },
+  });
+  state.navigation.register({
+    id: "bot-flow.nav",
+    activityId: "automation",
+    pageId: "bot-flow.page",
+    label: "流程编排",
+  });
+
+  finalizePluginActivity(state);
+  const byId = Object.fromEntries(state.pages.list().map((page) => [page.id, page]));
+  const nav = Object.fromEntries(state.navigation.list().map((item) => [item.pageId, item]));
+  assert.equal(byId["mutsuki.bot.sandbox"].title, "沙盒");
+  assert.equal(nav["mutsuki.bot.sandbox"].label, "沙盒");
+  assert.equal(byId["mutsuki.bot.router.flow"].title, "流程编辑器");
+  assert.equal(nav["mutsuki.bot.router.flow"].label, "流程编辑器");
+  validateShellState(state);
 });
 
 function configExtensionUrl() {
@@ -328,11 +397,30 @@ test("config extension keeps schema-less hubs enabled when the plugin provides c
       ),
   );
   assert.deepEqual(state.failures, []);
+  finalizePluginActivity(state);
   const nav = Object.fromEntries(state.navigation.list().map((item) => [item.pageId, item]));
   assert.equal(nav["mutsuki.bot.bilibili"].group, "已加载");
+  assert.equal(nav["mutsuki.bot.bilibili"].label, "B站推送");
   assert.equal(nav["mutsuki.bot.bilibili"].disabled, undefined);
   assert.equal(nav["mutsuki.bot.sandbox"].disabled, undefined);
   assert.equal(nav["mutsuki.bot.empty"].disabled, true);
+  assert.equal(nav["mutsuki.bot.empty"].label, "mutsuki.bot.empty");
+  validateShellState(state);
+});
+
+test("config extension uses navigation labels for schema-less plugin ids", async () => {
+  const state = await loadConfigExtension(pluginRpc({
+    navigation: [{
+      label: "扩展",
+      items: [{ provider_id: "mutsuki.bot.command", label: "命令" }],
+    }],
+    plugins: [
+      { plugin_id: "mutsuki.bot.command", configured: true, active_deployment: "builtin" },
+    ],
+  }));
+  const nav = Object.fromEntries(state.navigation.list().map((item) => [item.pageId, item]));
+  assert.equal(nav["mutsuki.bot.command"].label, "命令");
+  assert.equal(nav["mutsuki.bot.command"].group, "扩展");
   validateShellState(state);
 });
 

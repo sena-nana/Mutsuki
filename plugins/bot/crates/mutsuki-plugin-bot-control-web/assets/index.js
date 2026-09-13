@@ -1,3 +1,5 @@
+import { pluginDisplayName } from "@mutsuki/web-sdk";
+
 const RECONCILE_MS = 60_000;
 const EVENT_DEBOUNCE_MS = 50;
 
@@ -156,7 +158,8 @@ function mountPlugins(host, rpc, events, ctx) {
       for (const plugin of plugins) {
         const card = document.createElement("section");
         card.className = "card";
-        card.innerHTML = `<h2>${escapeHtml(plugin.plugin_id)}</h2><p class="muted">当前部署：${escapeHtml(plugin.active_deployment || "—")}</p>`;
+        const title = pluginDisplayName(ctx, plugin.plugin_id);
+        card.innerHTML = `<h2>${escapeHtml(title)}</h2><p class="muted">${escapeHtml(plugin.plugin_id)} · 当前部署：${escapeHtml(plugin.active_deployment || "—")}</p>`;
         if (ctx?.pages?.list?.().some((page) => page.id === plugin.plugin_id)) {
           const open = document.createElement("button");
           open.type = "button";

@@ -689,6 +689,27 @@ export function pluginIdsOf(item: {
   return [...new Set([item?.pluginId, ...(item?.pluginIds || [])].filter(Boolean) as string[])];
 }
 
+export function pluginDisplayName(
+  state: Pick<ExtensionContext, "pages" | "navigation"> | null | undefined,
+  pluginId?: string | null,
+): string {
+  const id = String(pluginId || "");
+  if (!id) return id;
+  const pages = state?.pages?.list() ?? [];
+  const navByPage = new Map((state?.navigation?.list() ?? []).map((item) => [item.pageId, item]));
+  const named = (value?: string) => (value && value !== id ? value : undefined);
+
+  const hubNamed = named(navByPage.get(id)?.label) || named(pages.find((page) => page.id === id)?.title);
+  if (hubNamed) return hubNamed;
+
+  for (const page of pages) {
+    if (page.id === id || !pluginIdsOf(page).includes(id)) continue;
+    const extra = named(navByPage.get(page.id)?.label) || named(page.title);
+    if (extra) return extra;
+  }
+  return id;
+}
+
 export function createRegistry<T extends { id: string }>(
   options: { onDuplicate?: "throw" | "retain" } = {},
 ): Registry<T> & {
