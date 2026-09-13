@@ -206,6 +206,13 @@ pub struct AgentContextBuildRequest {
     pub knowledge: Option<crate::RetrievalQuery>,
     #[serde(default)]
     pub discover_skills: bool,
+    /// Explicit skill ids to load. `None` keeps the default discovery cap.
+    /// `Some(ids)` loads those ids without the default cap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill_ids: Option<Vec<String>>,
+    /// Persona few-shot turns, even length, alternating user/assistant.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub begin_dialogs: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_version: Option<SessionVersion>,
 }
@@ -227,6 +234,8 @@ impl AgentContextBuildRequest {
             providers: Vec::new(),
             knowledge: None,
             discover_skills: false,
+            skill_ids: None,
+            begin_dialogs: Vec::new(),
             session_version: None,
         }
     }

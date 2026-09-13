@@ -9,5 +9,8 @@ description: Define or change Mutsuki standard config, database, filesystem, HTT
 - Use `mutsuki.<domain>.<action>` protocol IDs and keep schema, manifest provider/consumer declarations and exports aligned.
 - Reuse Core contracts for task, resource, effect, trace and error semantics.
 - Version breaking wire changes and update every standard plugin consumer in the same change.
+- `ConfigProvider::present` projects a stored or default value for readers (live catalogs,
+  derived fields). `ConfigService::read` calls it; apply/restore persist the unprojected
+  document. Do not persist presentation-only fields.
 
 Test serialization, validation and manifest surface consistency.

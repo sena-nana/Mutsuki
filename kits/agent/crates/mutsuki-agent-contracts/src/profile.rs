@@ -142,4 +142,7 @@ pub struct AgentRuntimeProfile {
     pub skill: AgentSkillPolicy,
     #[serde(default)]
     pub knowledge: AgentKnowledgePolicy,
+    /// Persona few-shot turns, even length, alternating user/assistant.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub begin_dialogs: Vec<String>,
 }

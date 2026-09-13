@@ -121,7 +121,9 @@ impl ConfigService {
         self.registry
             .metrics()
             .observe_read(started.elapsed().as_millis() as u64);
-        result
+        let mut snapshot = result?;
+        snapshot.value = entry.provider.present(snapshot.value, &context)?;
+        Ok(snapshot)
     }
 
     pub async fn validate(

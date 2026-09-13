@@ -6,7 +6,8 @@ use std::sync::Arc;
 use mutsuki_agent_service_host_integration::{
     AGENT_CONNECTIONS_PLUGIN_ID, AgentConnectionsConfig, LOCAL_AGENT_API_KEY,
     LOCAL_AGENT_API_KEY_FIELD, LOCAL_AGENT_CONFIG_PROVIDER_ID, LOCAL_AGENT_PLUGIN_ID,
-    LocalAgentConfig, local_agent_config_descriptor, local_agent_config_value,
+    LocalAgentConfig, LocalAgentConfigProvider, local_agent_config_descriptor,
+    local_agent_config_value, persona_from_config_json,
 };
 use mutsuki_bot_service_host_integration::{
     BOT_COMMAND_PLUGIN_ID, BOT_INTERACTION_PLUGIN_ID, SANDBOX_SERVICE_ID,
@@ -289,12 +290,12 @@ pub(crate) async fn register_configured_product_providers(
         .map_err(register_error)?;
 
     let local_config = LocalAgentConfig::default();
-    let local_provider = secret_backed_provider(
+    let local_provider = LocalAgentConfigProvider::new(secret_backed_provider(
         local_agent_config_descriptor(),
         local_agent_config_value(false, &local_config),
         &secrets,
         &[(LOCAL_AGENT_API_KEY_FIELD, LOCAL_AGENT_API_KEY)],
-    );
+    ));
     service
         .registry()
         .register(Arc::new(local_provider))
@@ -547,7 +548,17 @@ pub(crate) fn configured_plugin_selection_from_value(
             config.endpoint = string_field(object, "endpoint")?;
             config.model = string_field(object, "model")?;
             config.api_key_key = LOCAL_AGENT_API_KEY.into();
-            config.assistant_instruction = string_field(object, "assistant_instruction")?;
+            let fallback_prompt = object
+                .get("assistant_instruction")
+                .and_then(serde_json::Value::as_str);
+            if let Some(persona_value) = object.get("persona") {
+                config.persona = persona_from_config_json(persona_value, fallback_prompt)
+                    .map_err(|reason| ConfigError::ApplyRejected { reason })?;
+                config.assistant_instruction = config.persona.system_prompt.clone();
+            } else {
+                config.assistant_instruction = string_field(object, "assistant_instruction")?;
+                config.persona.system_prompt = config.assistant_instruction.clone();
+            }
             let enabled = bool_field(object, "enabled")?;
             if enabled {
                 config

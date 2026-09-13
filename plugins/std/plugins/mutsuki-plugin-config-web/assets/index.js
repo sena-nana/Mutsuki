@@ -10,6 +10,208 @@ export function registerConfigRenderer(format, renderer) {
   rendererRegistry.set(String(format), renderer);
 }
 
+function stringList(value) {
+  return Array.isArray(value) ? value.map((item) => String(item ?? "")) : [];
+}
+
+function uniqueIds(values) {
+  const seen = new Set();
+  const ids = [];
+  for (const value of values) {
+    const id = String(value ?? "").trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
+function personaCardState(value) {
+  const src = value && typeof value === "object" ? value : {};
+  const dialogs = stringList(src.begin_dialogs);
+  if (dialogs.length % 2 === 1) dialogs.push("");
+  return {
+    persona_id: src.persona_id || "default",
+    system_prompt: src.system_prompt || "",
+    custom_error_message: src.custom_error_message || "",
+    begin_dialogs: dialogs,
+    tools_mode: src.tools_mode || "all",
+    allowed_tools: uniqueIds(src.allowed_tools),
+    skills_mode: src.skills_mode || "all",
+    allowed_skills: uniqueIds(src.allowed_skills),
+    available_tools: uniqueIds(src.available_tools),
+    available_skills: uniqueIds(src.available_skills),
+  };
+}
+
+function personaField(title, hint) {
+  const wrap = document.createElement("div");
+  wrap.className = "persona-card__field";
+  const heading = document.createElement("strong");
+  heading.textContent = title;
+  wrap.appendChild(heading);
+  if (hint) {
+    const help = document.createElement("div");
+    help.className = "persona-card__hint";
+    help.textContent = hint;
+    wrap.appendChild(help);
+  }
+  return wrap;
+}
+
+function personaTextControl(multiline, value, onChange) {
+  const input = document.createElement(multiline ? "textarea" : "input");
+  if (!multiline) input.type = "text";
+  input.className = multiline ? "ui-input ui-textarea" : "ui-input";
+  input.value = value ?? "";
+  input.addEventListener("change", () => onChange(input.value));
+  return input;
+}
+
+function personaLabeledInput(title, hint, multiline, value, onChange) {
+  const wrap = personaField(title, hint);
+  wrap.appendChild(personaTextControl(multiline, value, onChange));
+  return wrap;
+}
+
+function personaModeControl(title, current, onChange) {
+  const wrap = personaField(title);
+  const group = document.createElement("div");
+  group.className = "persona-card__mode segmented";
+  group.setAttribute("role", "group");
+  for (const [value, label] of [
+    ["all", "全部可用"],
+    ["none", "全部关闭"],
+    ["selected", "选定"],
+  ]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    if (current === value) button.classList.add("is-active");
+    button.addEventListener("click", () => onChange(value));
+    group.appendChild(button);
+  }
+  wrap.appendChild(group);
+  return wrap;
+}
+
+function personaCheckList(title, hint, emptyHint, catalog, selected, onChange) {
+  const wrap = personaField(title, hint);
+  const ids = uniqueIds([...(catalog || []), ...(selected || [])]);
+  const chosen = new Set(selected || []);
+  if (!ids.length) {
+    const empty = document.createElement("div");
+    empty.className = "persona-card__hint";
+    empty.textContent = emptyHint;
+    wrap.appendChild(empty);
+    return wrap;
+  }
+  const list = document.createElement("div");
+  list.className = "persona-card__chips";
+  for (const id of ids) {
+    const row = document.createElement("label");
+    row.className = "persona-card__chip-row";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = chosen.has(id);
+    input.addEventListener("change", () => {
+      const next = new Set(chosen);
+      if (input.checked) next.add(id);
+      else next.delete(id);
+      onChange([...next]);
+    });
+    row.append(input, document.createTextNode(id));
+    list.appendChild(row);
+  }
+  wrap.appendChild(list);
+  return wrap;
+}
+
+function renderPersonaCard({ value, setValue, host }) {
+  const state = personaCardState(value);
+  const emit = (patch) => setValue({ ...state, ...patch });
+  host.className = "persona-card custom-renderer";
+  host.replaceChildren();
+
+  const left = document.createElement("div");
+  left.className = "persona-card__col";
+  left.append(
+    personaLabeledInput("人设 ID", "", false, state.persona_id, (persona_id) => emit({ persona_id })),
+    personaLabeledInput("系统提示", "助手的默认人设和规则。", true, state.system_prompt, (system_prompt) => emit({ system_prompt })),
+    personaLabeledInput("自定义错误文案", "模型调用失败或超时时发给用户。留空则使用默认错误。", true, state.custom_error_message, (custom_error_message) => emit({ custom_error_message })),
+  );
+
+  const right = document.createElement("div");
+  right.className = "persona-card__col";
+  right.appendChild(personaModeControl("工具", state.tools_mode, (tools_mode) => emit({ tools_mode })));
+  if (state.tools_mode === "selected") {
+    right.appendChild(personaCheckList(
+      "工具白名单",
+      "勾选当前已注册工具。未列出的名称会在保存后从白名单去掉。",
+      "还没有已注册工具。启用模型并重载后再选。",
+      state.available_tools,
+      state.allowed_tools,
+      (allowed_tools) => emit({ allowed_tools }),
+    ));
+  }
+  right.appendChild(personaModeControl("Skills", state.skills_mode, (skills_mode) => emit({ skills_mode })));
+  if (state.skills_mode === "selected") {
+    right.appendChild(personaCheckList(
+      "技能白名单",
+      "勾选 agent/local/skills 里已发现的技能。选定模式会注入全部勾选项。",
+      "未发现技能包。每个目录放一份 SKILL.md 后重载模型。",
+      state.available_skills,
+      state.allowed_skills,
+      (allowed_skills) => emit({ allowed_skills }),
+    ));
+  } else {
+    const hint = document.createElement("div");
+    hint.className = "persona-card__hint";
+    hint.textContent = "技能包放在 agent/local/skills。全部可用最多注入 16 个已发现技能；全部关闭则不注入。";
+    right.appendChild(hint);
+  }
+
+  const dialogs = personaField("预设对话", "用户 / 助手成对。条数必须为偶数。");
+  const dialogBox = document.createElement("div");
+  dialogBox.className = "persona-card__dialogs";
+  for (let index = 0; index < state.begin_dialogs.length; index += 2) {
+    const pair = document.createElement("div");
+    pair.className = "persona-card__dialog-pair";
+    pair.append(
+      personaLabeledInput("用户", "", true, state.begin_dialogs[index] || "", (next) => {
+        const copy = [...state.begin_dialogs];
+        copy[index] = next;
+        emit({ begin_dialogs: copy });
+      }),
+      personaLabeledInput("助手", "", true, state.begin_dialogs[index + 1] || "", (next) => {
+        const copy = [...state.begin_dialogs];
+        copy[index + 1] = next;
+        emit({ begin_dialogs: copy });
+      }),
+    );
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "删除这对";
+    remove.addEventListener("click", () => {
+      const copy = state.begin_dialogs.filter((_, i) => i !== index && i !== index + 1);
+      emit({ begin_dialogs: copy });
+    });
+    pair.appendChild(remove);
+    dialogBox.appendChild(pair);
+  }
+  const addPair = document.createElement("button");
+  addPair.type = "button";
+  addPair.textContent = "添加对话对";
+  addPair.addEventListener("click", () => emit({ begin_dialogs: [...state.begin_dialogs, "", ""] }));
+  dialogBox.appendChild(addPair);
+  dialogs.appendChild(dialogBox);
+  right.appendChild(dialogs);
+
+  host.append(left, right);
+}
+
+registerConfigRenderer("persona-card", renderPersonaCard);
+
 function configEditorForProvider(slots, providerId) {
   for (const item of slots?.list?.() || []) {
     if (item.slot === "config.editor" && item.component?.providerId === providerId) {
@@ -173,13 +375,38 @@ function wireToPlain(v) {
 
 function snapshotToDraft(value) {
   if (!value) return {};
+  let out = {};
   if (value.type === "object") {
-    const out = {};
     for (const [k, v] of Object.entries(value.value || {})) out[k] = wireToPlain(v);
-    return out;
+  } else if (typeof value === "object" && !value.type) {
+    out = { ...value };
   }
-  if (typeof value === "object" && !value.type) return { ...value };
-  return {};
+  migrateLegacyPersona(out);
+  return out;
+}
+
+function migrateLegacyPersona(draft) {
+  const prompt = typeof draft.assistant_instruction === "string" ? draft.assistant_instruction : "";
+  if (!draft.persona || typeof draft.persona !== "object") {
+    draft.persona = {
+      persona_id: "default",
+      system_prompt: prompt,
+      custom_error_message: "",
+      begin_dialogs: [],
+      tools_mode: "all",
+      skills_mode: "all",
+      allowed_tools: [],
+      allowed_skills: [],
+    };
+    return;
+  }
+  if (!draft.persona.system_prompt && prompt) draft.persona.system_prompt = prompt;
+  if (!draft.persona.persona_id) draft.persona.persona_id = "default";
+  if (!draft.persona.tools_mode) draft.persona.tools_mode = "all";
+  if (!draft.persona.skills_mode) draft.persona.skills_mode = "all";
+  if (!Array.isArray(draft.persona.begin_dialogs)) draft.persona.begin_dialogs = [];
+  if (!Array.isArray(draft.persona.allowed_tools)) draft.persona.allowed_tools = [];
+  if (!Array.isArray(draft.persona.allowed_skills)) draft.persona.allowed_skills = [];
 }
 
 function plainToWire(node, plain) {

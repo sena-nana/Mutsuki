@@ -3005,3 +3005,113 @@ button:disabled {
     border-block-start: 1px solid var(--border-soft);
   }
 }
+
+/* Stacked settings rows: label stays left; control fills width. */
+.settings-row--stacked,
+.settings-page .settings-row--stacked {
+  align-items: stretch;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 6px;
+}
+
+.settings-row--stacked .settings-row__label,
+.settings-page .settings-row--stacked .settings-row__label {
+  flex: none;
+  width: 100%;
+  text-align: left;
+}
+
+.settings-row--stacked .settings-row__control,
+.settings-page .settings-row--stacked .settings-row__control {
+  margin-left: 0;
+  justify-content: flex-start;
+  width: 100%;
+  max-width: 100%;
+}
+
+.persona-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  width: 100%;
+  text-align: left;
+}
+
+.persona-card__col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.persona-card__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+}
+
+.persona-card__field > span,
+.persona-card__field > strong {
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.persona-card__hint {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.persona-card__field .ui-input,
+.persona-card__field .ui-textarea {
+  width: 100%;
+  max-width: 100%;
+}
+
+.persona-card .ui-textarea {
+  min-height: 140px;
+}
+
+.persona-card__mode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.persona-card__chips {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.persona-card__chip-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.persona-card__chip-row .ui-input {
+  flex: 1;
+}
+
+.persona-card__dialogs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.persona-card__dialog-pair {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0;
+  border-top: 1px solid var(--divider-soft, var(--border-soft));
+}
+
+@media (max-width: 900px) {
+  .persona-card {
+    grid-template-columns: 1fr;
+  }
+}

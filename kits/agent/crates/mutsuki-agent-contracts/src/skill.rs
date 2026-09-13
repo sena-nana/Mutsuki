@@ -164,6 +164,10 @@ pub struct AgentSkillPolicy {
     /// Sources treated as trusted for side-effect tools. Empty → workspace + plugin.
     #[serde(default)]
     pub trusted_sources: Vec<SkillSourceKind>,
+    /// `None` uses every discovered skill. `Some([])` disables injection.
+    /// `Some(ids)` keeps only those skill ids.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowlist: Option<Vec<String>>,
 }
 
 impl Default for AgentSkillPolicy {
@@ -172,7 +176,15 @@ impl Default for AgentSkillPolicy {
             enabled: true,
             allow_script_resources: false,
             trusted_sources: Vec::new(),
+            allowlist: None,
         }
+    }
+}
+
+impl AgentSkillPolicy {
+    #[must_use]
+    pub fn discover_enabled(&self) -> bool {
+        self.enabled && !matches!(self.allowlist.as_deref(), Some([]))
     }
 }
 

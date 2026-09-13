@@ -558,6 +558,8 @@ mod tests {
             providers: Vec::new(),
             knowledge: None,
             discover_skills: false,
+            skill_ids: None,
+            begin_dialogs: Vec::new(),
             session_version: None,
         }
     }
