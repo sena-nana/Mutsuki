@@ -799,6 +799,10 @@
   font-size: 13px;
 }
 
+.mutsuki-console .message.error {
+  color: var(--err);
+}
+
 .mutsuki-console .flash-banner {
   margin: 0 0 16px;
   padding: 10px 14px;

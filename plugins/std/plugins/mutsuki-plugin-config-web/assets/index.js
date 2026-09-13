@@ -732,6 +732,7 @@ export function mountConfigPanel(host, rpc, events, fixedProviderId = null, slot
     snapshot: null,
     draft: {},
     message: "",
+    messageError: false,
     conflict: null,
     applyInFlight: false,
     pendingRevision: null,
@@ -886,6 +887,7 @@ export function mountConfigPanel(host, rpc, events, fixedProviderId = null, slot
           context,
         });
         state.message = result.ok ? "验证通过" : formatValidationIssues(result);
+        state.messageError = !result.ok;
         renderMessage();
       };
       const applyBtn = document.createElement("button");
@@ -911,6 +913,7 @@ export function mountConfigPanel(host, rpc, events, fixedProviderId = null, slot
           const restartRequired = pendingActions.includes("application_restart_scheduled") ||
             pendingActions.includes("host_restart_scheduled");
           state.message = restartRequired ? "配置已保存，请重启应用后继续设置。" : "配置已生效";
+          state.messageError = false;
           const selected = state.providers.find((provider) => provider.id === state.selected);
           await openProvider(selected || { id: state.selected, schema: state.schema });
           state.applyInFlight = false;
@@ -920,6 +923,7 @@ export function mountConfigPanel(host, rpc, events, fixedProviderId = null, slot
           if (pendingRevision != null && currentRevision != null && Number(pendingRevision) !== Number(currentRevision)) {
             state.conflict = { current: pendingRevision, expected: currentRevision };
             state.message = "检测到配置已在其他页面更新";
+            state.messageError = true;
             render();
             return;
           }
@@ -933,6 +937,7 @@ export function mountConfigPanel(host, rpc, events, fixedProviderId = null, slot
             if (parsed.kind === "revision_conflict") {
               state.conflict = parsed;
               state.message = "配置已发生变化，请重新加载";
+              state.messageError = true;
               render();
               return;
             }
@@ -940,6 +945,7 @@ export function mountConfigPanel(host, rpc, events, fixedProviderId = null, slot
             /* not structured */
           }
           state.message = text;
+          state.messageError = true;
           renderMessage();
         }
       };
@@ -948,13 +954,15 @@ export function mountConfigPanel(host, rpc, events, fixedProviderId = null, slot
     if (actions.childNodes.length) root.appendChild(actions);
     const msg = document.createElement("div");
     msg.id = "message";
-    msg.className = "message";
+    msg.className = state.messageError ? "message error" : "message";
     msg.textContent = state.message;
     root.appendChild(msg);
 
     function renderMessage() {
       const el = root.querySelector("#message");
-      if (el) el.textContent = state.message;
+      if (!el) return;
+      el.className = state.messageError ? "message error" : "message";
+      el.textContent = state.message;
     }
   }
 
@@ -971,6 +979,7 @@ export function mountConfigPanel(host, rpc, events, fixedProviderId = null, slot
       if (remote != null && local != null && Number(remote) !== Number(local)) {
         state.conflict = { current: remote, expected: local };
         state.message = "检测到配置已在其他页面更新";
+        state.messageError = true;
         render();
       }
     }, "config.schema.read");
@@ -983,6 +992,7 @@ export function mountConfigPanel(host, rpc, events, fixedProviderId = null, slot
   };
   boot().catch(() => {
     state.message = "配置加载失败，请稍后重试";
+    state.messageError = true;
     render();
   });
   root.destroy = () => {
