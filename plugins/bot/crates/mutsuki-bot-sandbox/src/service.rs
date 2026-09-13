@@ -1401,7 +1401,7 @@ fn seed_simulate(store: &mut Store, account_id: &str) {
             "系统",
             SandboxSpeakerRole::System,
             vec![MessageSegment::text(
-                "这是虚拟 QQ 会话。以群成员身份发言会进入 Bot 流程；以机器人身份发送的消息只出现在会话中，不会触发流程。",
+                "这是虚拟 QQ 会话。选择自己的身份给机器人发消息，消息会进入 Bot 流程。",
             )],
             None,
             None,

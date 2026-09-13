@@ -128,14 +128,20 @@ Domain plugins and durable services:
 - `mutsuki-bot-sandbox`: QQ conversation sandbox with durable history in `BotStateDb`.
   Simulate mode is a Koishi-style closed loop (virtual users always enter `mutsuki.bot.flow/ingress@1`,
   outbound `message/send` for `sandbox:` conversations is intercepted back into the
-  console). Simulate roster includes a non-editable bot identity; speaking as the bot
-  only appends a bubble and does not enter Flow. Roster OpenID/nickname can be edited, and observed live members
+  console). Simulate compose is always a virtual user talking to the bot: private
+  chats pick identity from the left session list and edit it on the right,
+  group chats pick it from the right-hand roster, and the bot identity is visible
+  but not selectable as "me".
+  Current-identity bubbles sit on the right; bot and other members sit on the left.
+  `ingest_as_bot` remains an RPC-only way to append a bot bubble without Flow.
+  Roster OpenID/nickname can be edited, and observed live members
   can be imported into simulate together with their avatar URL. Simulate compose
   can send mentions, local media (file picker or clipboard paste),
   custom stickers and official faces into Flow. Compose puts image, file, sticker,
   Markdown and keyboard icons left of the input in both simulate and live.
   Markdown sends `MessageSegment::Markdown`; keyboard is optional `qqbot`
-  PlatformSpecific on the same message. Reply is an icon on the bubble. The console
+  PlatformSpecific on the same message. Simulate reply quotes bot or other-member
+  bubbles; live reply stays on user bubbles because outbound is `send_as_bot`. The console
   still renders live inbound attachments/ark/markdown/keyboard. Live outbound stays on Adapter-supported
   text, mention, media and custom Markdown (optional keyboard). Messages persist as
   plain text plus a compact hash index.
