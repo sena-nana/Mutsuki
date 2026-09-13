@@ -495,3 +495,86 @@ async fn repository_commit_failure_rolls_back_the_runtime_lifecycle() {
         (value("default", "safe"), value("candidate", "fast"))
     );
 }
+
+struct PresentingProvider {
+    inner: MemoryConfigProvider,
+}
+
+#[async_trait::async_trait]
+impl ConfigProvider for PresentingProvider {
+    fn descriptor(&self) -> ConfigDescriptor {
+        self.inner.descriptor()
+    }
+
+    fn default_value(&self, context: &ConfigContext) -> Result<ConfigValue, ConfigError> {
+        self.inner.default_value(context)
+    }
+
+    fn present(
+        &self,
+        value: ConfigValue,
+        _context: &ConfigContext,
+    ) -> Result<ConfigValue, ConfigError> {
+        let mut map = value.as_object().cloned().unwrap_or_default();
+        map.insert("presented".into(), ConfigValue::Bool(true));
+        Ok(ConfigValue::Object(map))
+    }
+
+    async fn validate(
+        &self,
+        candidate: ConfigValue,
+        context: ConfigContext,
+    ) -> Result<ValidationResult, ConfigError> {
+        self.inner.validate(candidate, context).await
+    }
+
+    async fn prepare_activation(
+        &self,
+        candidate: ConfigValue,
+        current: ConfigSnapshot,
+        next_revision: ConfigRevision,
+        context: ConfigContext,
+    ) -> Result<PreparedConfigActivation, ConfigError> {
+        self.inner
+            .prepare_activation(candidate, current, next_revision, context)
+            .await
+    }
+}
+
+#[tokio::test]
+async fn read_projects_provider_present_fields() {
+    let registry = Arc::new(ConfigProviderRegistry::default());
+    registry
+        .register(Arc::new(PresentingProvider {
+            inner: MemoryConfigProvider::new(
+                ExampleConfig::schema(),
+                value("default", "safe"),
+                ConfigApplyMode::HotReload,
+            ),
+        }))
+        .unwrap();
+    let service =
+        ConfigService::new(registry, Arc::new(InMemoryConfigRepository::default())).unwrap();
+    let snapshot = service
+        .read(
+            "example.settings",
+            ConfigContext::plugin_instance("test"),
+            &capabilities(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        snapshot
+            .value
+            .as_object()
+            .and_then(|object| object.get("presented")),
+        Some(&ConfigValue::Bool(true))
+    );
+    assert_eq!(
+        snapshot
+            .value
+            .as_object()
+            .and_then(|object| object.get("name")),
+        Some(&ConfigValue::String("default".into()))
+    );
+}

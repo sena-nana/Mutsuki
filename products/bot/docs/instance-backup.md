@@ -13,6 +13,7 @@
 | `data/bot/state.sqlite3` | `BotStateDb`：会话、投递、交互、persona、conversation-context、沙盒历史。WAL、`busy_timeout` 5s、`synchronous=NORMAL`；owner catalog 共享一个 actor。 |
 | `data/bilibili/state.sqlite3` | B 站 cursor、未完成 QR / 绑定 challenge、cooldown。不是订阅关系权威（订阅在配置仓库 + Host secret）。 |
 | `data/agent/local/state.sqlite3` | Local Agent 会话。WAL。 |
+| `data/agent/local/skills/` | Local Agent 用户技能包根（每目录一份 `SKILL.md`）。空目录合法。 |
 | `data/resources.sqlite` | 媒体 `ResourceRef` 字节。retention 24 小时 / 512 MiB。WAL、`busy_timeout` 5s、`synchronous=NORMAL`。 |
 | `instance.boundary` | 启动时作为 `ServiceConfig::finalize_bootstrap` 的边界路径；当前实现不写入该文件。 |
 | `logs/`、`run/`、`plugins/` | 日志、运行时（含 `run/control.token`）、动态插件 `installed` / `disabled`。 |

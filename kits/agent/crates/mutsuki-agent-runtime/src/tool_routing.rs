@@ -12,6 +12,8 @@ use mutsuki_agent_contracts::{
 pub struct ToolRegistry {
     tools: Arc<Mutex<BTreeMap<String, AgentToolDescriptor>>>,
     profile_allowlists: Arc<Mutex<BTreeMap<String, BTreeSet<String>>>>,
+    /// `None` = all registered tools. `Some(set)` restricts list/get, including empty = none.
+    execution_allowlist: Arc<Mutex<Option<BTreeSet<String>>>>,
 }
 
 impl ToolRegistry {
@@ -46,6 +48,26 @@ impl ToolRegistry {
         }
     }
 
+    pub fn set_execution_allowlist(&self, allowlist: Option<Vec<String>>) {
+        *self
+            .execution_allowlist
+            .lock()
+            .expect("tool registry mutex poisoned") =
+            allowlist.map(|ids| ids.into_iter().collect());
+    }
+
+    fn execution_allows(&self, name: &str) -> bool {
+        match self
+            .execution_allowlist
+            .lock()
+            .expect("tool registry mutex poisoned")
+            .as_ref()
+        {
+            None => true,
+            Some(allowlist) => allowlist.contains(name),
+        }
+    }
+
     pub fn list(&self, request: AgentToolListRequest) -> AgentToolListResult {
         let tools = self
             .tools
@@ -70,10 +92,20 @@ impl ToolRegistry {
             }
             None => tools,
         };
+        let tools = tools
+            .into_iter()
+            .filter(|tool| self.execution_allows(&tool.name))
+            .collect();
         AgentToolListResult { tools }
     }
 
     pub fn get(&self, name: &str) -> AgentResult<AgentToolDescriptor> {
+        if !self.execution_allows(name) {
+            return Err(AgentError::new(
+                "agent.tool.denied",
+                format!("tool `{name}` is not allowed for this persona"),
+            ));
+        }
         self.tools
             .lock()
             .expect("tool registry mutex poisoned")
@@ -126,5 +158,31 @@ mod tests {
             registry.list(AgentToolListRequest::default()).tools.len(),
             2
         );
+    }
+
+    #[test]
+    fn execution_allowlist_none_blocks_list_and_get() {
+        let registry = ToolRegistry::default();
+        registry
+            .register(AgentToolDescriptor::new(
+                "git.status",
+                "mutsuki.agent.git/call@1",
+                "status",
+            ))
+            .unwrap();
+        registry.set_execution_allowlist(Some(Vec::new()));
+        assert!(
+            registry
+                .list(AgentToolListRequest::default())
+                .tools
+                .is_empty()
+        );
+        assert!(registry.get("git.status").is_err());
+        registry.set_execution_allowlist(Some(vec!["git.status".into()]));
+        assert_eq!(
+            registry.list(AgentToolListRequest::default()).tools.len(),
+            1
+        );
+        assert!(registry.get("git.status").is_ok());
     }
 }

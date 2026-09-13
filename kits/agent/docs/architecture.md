@@ -70,9 +70,10 @@ LSP 语义。
 ## 产品边界
 
 产品拥有 workspace/file/selection/cursor、Persona、默认 Provider、Secret、diff preview、
-approval UI、session 列表和业务 command。Persona 可编译为 system instructions、prompt
-fragments、allowlist 和 policy，但 AgentKit 不定义 Persona 类型，也不需要
-`LiliaCodeCore`。
+approval UI、session 列表和业务 command。Persona 可编译为 system instructions、few-shot
+`begin_dialogs`、tool/skill allowlist 和 `AgentSkillPolicy`。Local Agent 的默认人设卡在
+产品配置里，技能包根目录是 `agent/local/skills`（user `SkillRoots`）。AgentKit 不定义
+产品 Persona 类型，也不需要 `LiliaCodeCore`。
 
 ## 不变量
 

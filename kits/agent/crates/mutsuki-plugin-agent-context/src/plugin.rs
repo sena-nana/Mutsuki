@@ -203,6 +203,7 @@ async fn enrich_context(
             );
         }
     }
+    inject_begin_dialogs(&mut injections, request, PLUGIN_ID, &source_version);
     if request.discover_skills {
         let outcome = ctx
             .call::<AgentSkillDiscoverProtocol>(SkillDiscoverRequest {
@@ -212,12 +213,26 @@ async fn enrich_context(
             .map_err(|error| AgentError::provider_unavailable(error.to_string()))?;
         let discovered: SkillDiscoverResult = completed_output(PLUGIN_ID, task_id, outcome)
             .map_err(|error| AgentError::provider_unavailable(error.to_string()))?;
-        for entry in discovered
+        let available = discovered
             .catalog
             .into_iter()
-            .filter(|entry| entry.available)
-            .take(4)
-        {
+            .filter(|entry| entry.available);
+        let selected: Vec<_> = match request.skill_ids.as_ref() {
+            Some(ids) => available
+                .filter(|entry| ids.iter().any(|id| id == &entry.skill_id))
+                .collect(),
+            None => available
+                .take(
+                    request
+                        .metadata
+                        .as_ref()
+                        .and_then(|value| value.get("skill_limit"))
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(16) as usize,
+                )
+                .collect(),
+        };
+        for entry in selected {
             push_injection(
                 &mut injections,
                 format!("skill {}: {}", entry.skill_id, entry.summary),
@@ -282,6 +297,36 @@ async fn enrich_context(
         });
     }
     Ok(context)
+}
+
+fn inject_begin_dialogs(
+    injections: &mut Vec<ContextInjection>,
+    request: &AgentContextBuildRequest,
+    provider_id: &str,
+    source_version: &str,
+) {
+    if request.begin_dialogs.is_empty() {
+        return;
+    }
+    let mut lines = Vec::new();
+    for (index, turn) in request.begin_dialogs.iter().enumerate() {
+        if turn.trim().is_empty() {
+            continue;
+        }
+        let speaker = if index % 2 == 0 { "用户" } else { "助手" };
+        lines.push(format!("{speaker}：{turn}"));
+    }
+    if lines.is_empty() {
+        return;
+    }
+    push_injection(
+        injections,
+        format!("预设对话：\n{}", lines.join("\n")),
+        provider_id,
+        CONTEXT_SOURCE_PERSONA,
+        "persona.begin_dialogs",
+        source_version,
+    );
 }
 
 fn push_injection(

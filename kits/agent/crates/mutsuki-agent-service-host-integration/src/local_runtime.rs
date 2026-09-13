@@ -20,19 +20,23 @@ use mutsuki_agent_client::{
     InProcessAgentClient, InProcessAgentService,
 };
 use mutsuki_agent_contracts::{
-    AGENT_RUN_PROTOCOL, AgentBudget, AgentEventEnvelope, AgentMessage, AgentModelGenerateRequest,
-    AgentRunRequest, AgentRunResult, AgentRunStatus, AgentSession, AgentSessionCreateRequest,
-    AgentSessionForkRequest, AgentSessionGetRequest, AgentSessionState, AgentSessionStatus,
-    AgentToolCall, AgentToolDescriptor, AgentToolListRequest, AgentTurnState, AgentTurnStatus,
-    AgentUsage, AgentWireError, AgentWireNegotiation, AgentWireRequestEnvelope,
-    AgentWireResponseEnvelope, CredentialRef, InteractionResolution, ModelGenerateRequest,
-    PendingApproval, PermissionDecision, ProviderInstanceDescriptor, ResourceRef, SessionVersion,
+    AGENT_RUN_PROTOCOL, AgentBudget, AgentEvent, AgentEventEnvelope, AgentEventMeta, AgentMessage,
+    AgentModelGenerateRequest, AgentRunRequest, AgentRunResult, AgentRunStatus, AgentSession,
+    AgentSessionAppendRequest, AgentSessionCreateRequest, AgentSessionForkRequest,
+    AgentSessionGetRequest, AgentSessionState, AgentSessionStatus, AgentSkillPolicy, AgentToolCall,
+    AgentToolDescriptor, AgentToolListRequest, AgentTurnState, AgentTurnStatus, AgentUsage,
+    AgentWireError, AgentWireNegotiation, AgentWireRequestEnvelope, AgentWireResponseEnvelope,
+    CredentialRef, InteractionResolution, ModelGenerateRequest, PendingApproval,
+    PermissionDecision, ProviderInstanceDescriptor, ResourceRef, SessionVersion,
+    SkillDiscoverRequest, SkillReloadRequest,
 };
-use mutsuki_agent_runtime::SessionPersistence;
+use mutsuki_agent_runtime::{AgentRuntimeProfileBuilder, SessionPersistence, SkillRoots};
 use mutsuki_config_service::{
-    ConfigConstraints, ConfigDescriptor, ConfigExpr, ConfigKey, ConfigMutability, ConfigNode,
-    ConfigPresentation, ConfigProviderId, ConfigScope, ConfigValue, ConfigValueType, LocalizedText,
-    RestartPolicy, SecretState,
+    ConfigConstraints, ConfigContext, ConfigDescriptor, ConfigError, ConfigExpr, ConfigKey,
+    ConfigMutability, ConfigNode, ConfigPresentation, ConfigProvider, ConfigProviderId,
+    ConfigRevision, ConfigScope, ConfigSnapshot, ConfigValue, ConfigValueType, EnumOption,
+    LocalizedText, MemoryConfigProvider, PreparedConfigActivation, RestartPolicy, SecretState,
+    ValidationResult,
 };
 use mutsuki_runtime_contracts::{
     PluginDeploymentKind, PluginManifest, RuntimeError, RuntimeProfile, RuntimeProfileMode, Task,
@@ -67,6 +71,105 @@ pub const LOCAL_AGENT_PROFILE_ID: &str = "default";
 pub const LOCAL_AGENT_PROVIDER_ID: &str = "local-openai";
 pub const LOCAL_AGENT_API_KEY: &str = "OPENAI_API_KEY";
 pub const LOCAL_AGENT_API_KEY_FIELD: &str = "api_key";
+pub const DEFAULT_ASSISTANT_INSTRUCTION: &str = "你是一个可靠、简洁的 QQ 助手。";
+
+#[derive(Clone, Debug, Default)]
+struct PersonaCapabilityCatalog {
+    tools: Vec<String>,
+    skills: Vec<String>,
+}
+
+static PERSONA_CAPABILITY_CATALOG: Mutex<PersonaCapabilityCatalog> =
+    Mutex::new(PersonaCapabilityCatalog {
+        tools: Vec::new(),
+        skills: Vec::new(),
+    });
+
+thread_local! {
+    static PERSONA_CAPABILITY_CATALOG_OVERRIDE: std::cell::RefCell<Option<PersonaCapabilityCatalog>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn persona_capability_catalog() -> PersonaCapabilityCatalog {
+    if let Some(catalog) = PERSONA_CAPABILITY_CATALOG_OVERRIDE
+        .with(|override_catalog| override_catalog.borrow().clone())
+    {
+        return catalog;
+    }
+    PERSONA_CAPABILITY_CATALOG
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .clone()
+}
+
+fn set_persona_capability_catalog(tools: Vec<String>, skills: Vec<String>) {
+    *PERSONA_CAPABILITY_CATALOG
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner()) = PersonaCapabilityCatalog { tools, skills };
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct LocalAgentPersona {
+    pub persona_id: String,
+    pub system_prompt: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub custom_error_message: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub begin_dialogs: Vec<String>,
+    /// `None` = all registered tools, `Some([])` = none, `Some(ids)` = allowlist.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_tools: Option<Vec<String>>,
+    /// `None` = all discovered skills, `Some([])` = none, `Some(ids)` = allowlist.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_skills: Option<Vec<String>>,
+}
+
+impl Default for LocalAgentPersona {
+    fn default() -> Self {
+        Self {
+            persona_id: "default".into(),
+            system_prompt: String::new(),
+            custom_error_message: String::new(),
+            begin_dialogs: Vec::new(),
+            allowed_tools: None,
+            allowed_skills: None,
+        }
+    }
+}
+
+impl LocalAgentPersona {
+    fn validate(&self) -> Result<(), String> {
+        if self.persona_id.trim().is_empty() {
+            return Err("persona_id is required".into());
+        }
+        if self.begin_dialogs.len() % 2 != 0 {
+            return Err("begin_dialogs must be even-length user/assistant pairs".into());
+        }
+        if self.begin_dialogs.iter().any(|turn| turn.trim().is_empty()) {
+            return Err("begin_dialogs entries cannot be empty".into());
+        }
+        if let Some(tools) = &self.allowed_tools
+            && tools.iter().any(|id| id.trim().is_empty())
+        {
+            return Err("allowed_tools entries cannot be empty".into());
+        }
+        if let Some(skills) = &self.allowed_skills
+            && skills.iter().any(|id| id.trim().is_empty())
+        {
+            return Err("allowed_skills entries cannot be empty".into());
+        }
+        Ok(())
+    }
+
+    fn skill_policy(&self) -> AgentSkillPolicy {
+        AgentSkillPolicy {
+            enabled: !matches!(self.allowed_skills.as_deref(), Some([])),
+            allowlist: self.allowed_skills.clone(),
+            ..AgentSkillPolicy::default()
+        }
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -75,6 +178,8 @@ pub struct LocalAgentConfig {
     pub model: String,
     pub api_key_key: String,
     pub assistant_instruction: String,
+    #[serde(default)]
+    pub persona: LocalAgentPersona,
 }
 
 impl Default for LocalAgentConfig {
@@ -83,12 +188,36 @@ impl Default for LocalAgentConfig {
             endpoint: "https://api.openai.com/v1".into(),
             model: "gpt-5-mini".into(),
             api_key_key: LOCAL_AGENT_API_KEY.into(),
-            assistant_instruction: "你是一个可靠、简洁的 QQ 助手。".into(),
+            assistant_instruction: DEFAULT_ASSISTANT_INSTRUCTION.into(),
+            persona: LocalAgentPersona::default(),
         }
     }
 }
 
 impl LocalAgentConfig {
+    #[must_use]
+    pub fn resolved_system_prompt(&self) -> &str {
+        if !self.persona.system_prompt.trim().is_empty() {
+            return self.persona.system_prompt.as_str();
+        }
+        if !self.assistant_instruction.trim().is_empty() {
+            return self.assistant_instruction.as_str();
+        }
+        DEFAULT_ASSISTANT_INSTRUCTION
+    }
+
+    #[must_use]
+    pub fn resolved_persona(&self) -> LocalAgentPersona {
+        let mut persona = self.persona.clone();
+        if persona.persona_id.trim().is_empty() {
+            persona.persona_id = "default".into();
+        }
+        if persona.system_prompt.trim().is_empty() {
+            persona.system_prompt = self.resolved_system_prompt().to_owned();
+        }
+        persona
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         if self.model.trim().is_empty() {
             return Err("model is required".into());
@@ -96,9 +225,10 @@ impl LocalAgentConfig {
         if self.api_key_key != LOCAL_AGENT_API_KEY {
             return Err(format!("api_key_key must be `{LOCAL_AGENT_API_KEY}`"));
         }
-        if self.assistant_instruction.trim().is_empty() {
-            return Err("assistant_instruction is required".into());
+        if self.resolved_system_prompt().trim().is_empty() {
+            return Err("system_prompt is required".into());
         }
+        self.persona.validate()?;
         let endpoint = Url::parse(&self.endpoint).map_err(|_| "endpoint is invalid")?;
         let loopback = matches!(endpoint.host_str(), Some("localhost" | "127.0.0.1" | "::1"));
         if endpoint.scheme() != "https" && !loopback {
@@ -117,7 +247,7 @@ pub fn local_agent_config_descriptor() -> ConfigDescriptor {
     ConfigDescriptor {
         provider_id: ConfigProviderId::new(LOCAL_AGENT_CONFIG_PROVIDER_ID),
         schema_version: 1,
-        value_version: 1,
+        value_version: 2,
         title: LocalizedText::new("模型"),
         description: None,
         scopes: vec![ConfigScope::global()],
@@ -150,13 +280,7 @@ pub fn local_agent_config_descriptor() -> ConfigDescriptor {
                     None,
                 ),
                 when_enabled(local_agent_secret_field()),
-                gated_field(
-                    "assistant_instruction",
-                    "系统提示",
-                    ConfigValueType::String { multiline: true },
-                    Some("助手的默认人设和规则。"),
-                    None,
-                ),
+                local_agent_persona_node(),
             ],
         },
         groups: Vec::new(),
@@ -165,7 +289,7 @@ pub fn local_agent_config_descriptor() -> ConfigDescriptor {
 
 #[must_use]
 pub fn local_agent_config_value(enabled: bool, config: &LocalAgentConfig) -> ConfigValue {
-    ConfigValue::Object(
+    migrate_legacy_local_agent_value(ConfigValue::Object(
         [
             ("enabled".into(), ConfigValue::Bool(enabled)),
             (
@@ -178,13 +302,425 @@ pub fn local_agent_config_value(enabled: bool, config: &LocalAgentConfig) -> Con
                 ConfigValue::Secret(SecretState::Keep),
             ),
             (
-                "assistant_instruction".into(),
-                ConfigValue::String(config.assistant_instruction.clone()),
+                "persona".into(),
+                persona_config_value(&config.resolved_persona()),
+            ),
+        ]
+        .into_iter()
+        .collect(),
+    ))
+}
+
+fn hydrate_local_agent_config_value(value: ConfigValue) -> ConfigValue {
+    attach_persona_catalog(migrate_legacy_local_agent_value(value))
+}
+
+fn migrate_legacy_local_agent_value(value: ConfigValue) -> ConfigValue {
+    let ConfigValue::Object(mut map) = value else {
+        return value;
+    };
+    let fallback_prompt = match map.get("assistant_instruction") {
+        Some(ConfigValue::String(value)) => value.clone(),
+        _ => String::new(),
+    };
+    let mut persona = match map.remove("persona") {
+        Some(ConfigValue::Object(object)) => object,
+        _ => BTreeMap::new(),
+    };
+    if !persona.contains_key("persona_id") {
+        persona.insert("persona_id".into(), ConfigValue::String("default".into()));
+    }
+    let system_prompt_empty = match persona.get("system_prompt") {
+        Some(ConfigValue::String(value)) => value.trim().is_empty(),
+        _ => true,
+    };
+    if system_prompt_empty {
+        let prompt = if fallback_prompt.trim().is_empty() {
+            DEFAULT_ASSISTANT_INSTRUCTION.to_owned()
+        } else {
+            fallback_prompt
+        };
+        persona.insert("system_prompt".into(), ConfigValue::String(prompt));
+    }
+    persona
+        .entry("tools_mode".into())
+        .or_insert_with(|| ConfigValue::String("all".into()));
+    persona
+        .entry("skills_mode".into())
+        .or_insert_with(|| ConfigValue::String("all".into()));
+    persona
+        .entry("begin_dialogs".into())
+        .or_insert_with(|| ConfigValue::Array(Vec::new()));
+    persona
+        .entry("allowed_tools".into())
+        .or_insert_with(|| ConfigValue::Array(Vec::new()));
+    persona
+        .entry("allowed_skills".into())
+        .or_insert_with(|| ConfigValue::Array(Vec::new()));
+    persona
+        .entry("custom_error_message".into())
+        .or_insert_with(|| ConfigValue::String(String::new()));
+    map.insert("persona".into(), ConfigValue::Object(persona));
+    ConfigValue::Object(map)
+}
+
+fn attach_persona_catalog(value: ConfigValue) -> ConfigValue {
+    let ConfigValue::Object(mut map) = value else {
+        return value;
+    };
+    let Some(ConfigValue::Object(mut persona)) = map.remove("persona") else {
+        return ConfigValue::Object(map);
+    };
+    let catalog = persona_capability_catalog();
+    persona.insert(
+        "available_tools".into(),
+        ConfigValue::Array(catalog.tools.into_iter().map(ConfigValue::String).collect()),
+    );
+    persona.insert(
+        "available_skills".into(),
+        ConfigValue::Array(
+            catalog
+                .skills
+                .into_iter()
+                .map(ConfigValue::String)
+                .collect(),
+        ),
+    );
+    map.insert("persona".into(), ConfigValue::Object(persona));
+    ConfigValue::Object(map)
+}
+
+fn strip_persona_catalog(value: ConfigValue) -> ConfigValue {
+    let ConfigValue::Object(mut map) = value else {
+        return value;
+    };
+    if let Some(ConfigValue::Object(mut persona)) = map.remove("persona") {
+        persona.remove("available_tools");
+        persona.remove("available_skills");
+        map.insert("persona".into(), ConfigValue::Object(persona));
+    }
+    ConfigValue::Object(map)
+}
+
+pub struct LocalAgentConfigProvider {
+    inner: MemoryConfigProvider,
+}
+
+impl LocalAgentConfigProvider {
+    #[must_use]
+    pub fn new(inner: MemoryConfigProvider) -> Self {
+        Self { inner }
+    }
+}
+
+#[async_trait::async_trait]
+impl ConfigProvider for LocalAgentConfigProvider {
+    fn descriptor(&self) -> ConfigDescriptor {
+        self.inner.descriptor()
+    }
+
+    fn default_value(&self, context: &ConfigContext) -> Result<ConfigValue, ConfigError> {
+        self.inner.default_value(context)
+    }
+
+    fn present(
+        &self,
+        value: ConfigValue,
+        _context: &ConfigContext,
+    ) -> Result<ConfigValue, ConfigError> {
+        Ok(hydrate_local_agent_config_value(value))
+    }
+
+    async fn validate(
+        &self,
+        candidate: ConfigValue,
+        context: ConfigContext,
+    ) -> Result<ValidationResult, ConfigError> {
+        let candidate = canonicalize_local_agent_candidate(candidate)
+            .map_err(|reason| ConfigError::ApplyRejected { reason })?;
+        self.inner.validate(candidate, context).await
+    }
+
+    async fn prepare_activation(
+        &self,
+        candidate: ConfigValue,
+        current: ConfigSnapshot,
+        next_revision: ConfigRevision,
+        context: ConfigContext,
+    ) -> Result<PreparedConfigActivation, ConfigError> {
+        let candidate = canonicalize_local_agent_candidate(candidate)
+            .map_err(|reason| ConfigError::ApplyRejected { reason })?;
+        self.inner
+            .prepare_activation(candidate, current, next_revision, context)
+            .await
+    }
+}
+
+fn local_agent_persona_node() -> ConfigNode {
+    let mut node = when_enabled(local_agent_field(
+        "persona",
+        "人设",
+        ConfigValueType::Object,
+        false,
+    ));
+    node.description = Some(LocalizedText::new(
+        "默认人设卡：提示词、预设对话、工具和技能。",
+    ));
+    node.presentation.format = Some("persona-card".into());
+    node.children = vec![
+        local_agent_field(
+            "persona_id",
+            "人设 ID",
+            ConfigValueType::String { multiline: false },
+            true,
+        ),
+        {
+            let mut prompt = local_agent_field(
+                "system_prompt",
+                "系统提示",
+                ConfigValueType::String { multiline: true },
+                true,
+            );
+            prompt.description = Some(LocalizedText::new("助手的默认人设和规则。"));
+            prompt
+        },
+        {
+            let mut error = local_agent_field(
+                "custom_error_message",
+                "自定义错误文案",
+                ConfigValueType::String { multiline: true },
+                false,
+            );
+            error.description = Some(LocalizedText::new(
+                "模型调用失败时发给用户的文本。留空则使用默认错误。",
+            ));
+            error
+        },
+        {
+            let mut dialogs = local_agent_field(
+                "begin_dialogs",
+                "预设对话",
+                ConfigValueType::Array {
+                    item: Box::new(ConfigValueType::String { multiline: true }),
+                },
+                false,
+            );
+            dialogs.description = Some(LocalizedText::new(
+                "用户/助手成对的开场示例，条数必须为偶数。",
+            ));
+            dialogs
+        },
+        capability_mode_field("tools_mode", "工具"),
+        {
+            let mut tools = local_agent_field(
+                "allowed_tools",
+                "工具白名单",
+                ConfigValueType::Array {
+                    item: Box::new(ConfigValueType::String { multiline: false }),
+                },
+                false,
+            );
+            tools.description = Some(LocalizedText::new("选定模式下生效的工具名。"));
+            tools
+        },
+        capability_mode_field("skills_mode", "Skills"),
+        {
+            let mut skills = local_agent_field(
+                "allowed_skills",
+                "技能白名单",
+                ConfigValueType::Array {
+                    item: Box::new(ConfigValueType::String { multiline: false }),
+                },
+                false,
+            );
+            skills.description = Some(LocalizedText::new(
+                "选定模式下生效的技能 id。技能包放在 agent/local/skills，每个目录一份 SKILL.md。",
+            ));
+            skills
+        },
+    ];
+    node
+}
+
+fn capability_mode_field(key: &str, title: &str) -> ConfigNode {
+    local_agent_field(
+        key,
+        title,
+        ConfigValueType::Enum {
+            options: vec![
+                enum_option("all", "全部可用"),
+                enum_option("none", "全部关闭"),
+                enum_option("selected", "选定"),
+            ],
+            multi: false,
+        },
+        true,
+    )
+}
+
+fn enum_option(value: &str, label: &str) -> EnumOption {
+    EnumOption {
+        value: value.into(),
+        label: LocalizedText::new(label),
+    }
+}
+
+fn persona_config_value(persona: &LocalAgentPersona) -> ConfigValue {
+    ConfigValue::Object(
+        [
+            (
+                "persona_id".into(),
+                ConfigValue::String(persona.persona_id.clone()),
+            ),
+            (
+                "system_prompt".into(),
+                ConfigValue::String(persona.system_prompt.clone()),
+            ),
+            (
+                "custom_error_message".into(),
+                ConfigValue::String(persona.custom_error_message.clone()),
+            ),
+            (
+                "begin_dialogs".into(),
+                ConfigValue::Array(
+                    persona
+                        .begin_dialogs
+                        .iter()
+                        .cloned()
+                        .map(ConfigValue::String)
+                        .collect(),
+                ),
+            ),
+            (
+                "tools_mode".into(),
+                ConfigValue::String(allowlist_mode(&persona.allowed_tools).into()),
+            ),
+            (
+                "allowed_tools".into(),
+                ConfigValue::Array(
+                    persona
+                        .allowed_tools
+                        .clone()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(ConfigValue::String)
+                        .collect(),
+                ),
+            ),
+            (
+                "skills_mode".into(),
+                ConfigValue::String(allowlist_mode(&persona.allowed_skills).into()),
+            ),
+            (
+                "allowed_skills".into(),
+                ConfigValue::Array(
+                    persona
+                        .allowed_skills
+                        .clone()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(ConfigValue::String)
+                        .collect(),
+                ),
             ),
         ]
         .into_iter()
         .collect(),
     )
+}
+
+fn allowlist_mode(list: &Option<Vec<String>>) -> &'static str {
+    match list {
+        None => "all",
+        Some(ids) if ids.is_empty() => "none",
+        Some(_) => "selected",
+    }
+}
+
+fn allowlist_from_mode(mode: &str, selected: Vec<String>) -> Option<Vec<String>> {
+    match mode {
+        "none" => Some(Vec::new()),
+        "selected" => Some(selected),
+        _ => None,
+    }
+}
+
+fn canonicalize_local_agent_candidate(value: ConfigValue) -> Result<ConfigValue, String> {
+    let mut map = match strip_persona_catalog(value) {
+        ConfigValue::Object(map) => map,
+        other => return Ok(other),
+    };
+    let Some(persona_value) = map.get("persona") else {
+        return Ok(ConfigValue::Object(map));
+    };
+    let persona_json = persona_value.to_json();
+    let fallback = match map.get("assistant_instruction") {
+        Some(ConfigValue::String(prompt)) => Some(prompt.clone()),
+        _ => None,
+    };
+    let persona = persona_from_config_json(&persona_json, fallback.as_deref())?;
+    map.insert("persona".into(), persona_config_value(&persona));
+    Ok(ConfigValue::Object(map))
+}
+
+/// Parses a config-form persona object into the runtime DTO.
+pub fn persona_from_config_json(
+    value: &serde_json::Value,
+    fallback_prompt: Option<&str>,
+) -> Result<LocalAgentPersona, String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| "persona must be an object".to_string())?;
+    let mut persona = LocalAgentPersona {
+        persona_id: object
+            .get("persona_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("default")
+            .trim()
+            .to_owned(),
+        system_prompt: object
+            .get("system_prompt")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_owned(),
+        custom_error_message: object
+            .get("custom_error_message")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_owned(),
+        begin_dialogs: string_list(object.get("begin_dialogs")),
+        allowed_tools: allowlist_from_mode(
+            object
+                .get("tools_mode")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("all"),
+            string_list(object.get("allowed_tools")),
+        ),
+        allowed_skills: allowlist_from_mode(
+            object
+                .get("skills_mode")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("all"),
+            string_list(object.get("allowed_skills")),
+        ),
+    };
+    if persona.system_prompt.trim().is_empty()
+        && let Some(fallback) = fallback_prompt
+    {
+        persona.system_prompt = fallback.to_owned();
+    }
+    persona.validate()?;
+    Ok(persona)
+}
+
+fn string_list(value: Option<&serde_json::Value>) -> Vec<String> {
+    value
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .map(str::to_owned)
+        .collect()
 }
 
 fn local_agent_field(
@@ -541,6 +1077,7 @@ struct LocalAgentEngine {
     adapter: Arc<dyn ModelProtocolAdapter>,
     provider: ProviderInstanceDescriptor,
     model: String,
+    custom_error_message: String,
     active: Arc<Mutex<BTreeMap<(String, String), TaskHandle>>>,
     cancelled: Arc<Mutex<BTreeSet<(String, String)>>>,
     next_task: Arc<AtomicU64>,
@@ -574,6 +1111,7 @@ impl LocalAgentEngine {
             AdapterBackedModelProvider::new(provider.clone(), adapter.clone(), Vec::new())
                 .map_err(|error| error.to_string())?,
         ));
+        let persona = config.resolved_persona();
         let bundle = AgentPluginBundle {
             agent_loop: AgentLoop::default().with_default_model(config.model.clone()),
             model,
@@ -582,20 +1120,63 @@ impl LocalAgentEngine {
         };
         bundle
             .context
-            .set_system_prompt(config.assistant_instruction.clone());
+            .set_system_prompt(persona.system_prompt.clone());
+        if let Some(parent) = state_path.parent() {
+            let skills_root = parent.join("skills");
+            std::fs::create_dir_all(&skills_root).map_err(|error| error.to_string())?;
+            bundle.skills.set_roots(SkillRoots {
+                user: Some(skills_root),
+                ..SkillRoots::default()
+            });
+        }
+        bundle.skills.set_policy(AgentSkillPolicy {
+            enabled: true,
+            allowlist: None,
+            ..persona.skill_policy()
+        });
+        bundle
+            .skills
+            .reload(SkillReloadRequest {})
+            .map_err(|error| error.to_string())?;
+        let profile = AgentRuntimeProfileBuilder::new(LOCAL_AGENT_PROFILE_ID)
+            .skill_policy(persona.skill_policy())
+            .begin_dialogs(persona.begin_dialogs.clone())
+            .build()
+            .map_err(|error| error.to_string())?;
+        bundle
+            .agent_loop
+            .configure_profile(&profile)
+            .map_err(|error| error.to_string())?;
         for tool in extensions.iter().flat_map(|extension| &extension.tools) {
             bundle
                 .tools
                 .register(tool.clone())
                 .map_err(|error| error.to_string())?;
         }
-        if extensions
-            .iter()
-            .any(|extension| !extension.tools.is_empty())
-        {
-            bundle
-                .context
-                .set_tools(bundle.tools.list(AgentToolListRequest::default()).tools);
+        let listed = bundle.tools.list(AgentToolListRequest::default()).tools;
+        let skill_ids = bundle
+            .skills
+            .discover(SkillDiscoverRequest {
+                include_unavailable: true,
+            })
+            .map(|result| {
+                result
+                    .catalog
+                    .into_iter()
+                    .map(|entry| entry.skill_id)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        set_persona_capability_catalog(
+            listed.iter().map(|tool| tool.name.clone()).collect(),
+            skill_ids,
+        );
+        bundle
+            .tools
+            .set_execution_allowlist(persona.allowed_tools.clone());
+        let prompt_tools = bundle.tools.list(AgentToolListRequest::default()).tools;
+        if !prompt_tools.is_empty() || persona.allowed_tools.is_some() {
+            bundle.context.set_tools(prompt_tools);
         }
 
         let deferred = Arc::new(DeferredAgentClient::default());
@@ -660,6 +1241,7 @@ impl LocalAgentEngine {
             adapter,
             provider,
             model: config.model.clone(),
+            custom_error_message: persona.custom_error_message.clone(),
             active: Arc::new(Mutex::new(BTreeMap::new())),
             cancelled: Arc::new(Mutex::new(BTreeSet::new())),
             next_task: Arc::new(AtomicU64::new(0)),
@@ -699,6 +1281,9 @@ impl LocalAgentEngine {
                     .lock()
                     .unwrap()
                     .remove(&(session_id.into(), turn_id.into()));
+                if !self.custom_error_message.trim().is_empty() {
+                    return self.persist_custom_error(session_id, turn_id);
+                }
                 return Err(wire_error(
                     "agent.local.turn_timeout",
                     "Agent turn exceeded its time budget".into(),
@@ -726,6 +1311,9 @@ impl LocalAgentEngine {
                 ));
             }
             TaskOutcome::Failed { error, .. } => {
+                if !self.custom_error_message.trim().is_empty() {
+                    return self.persist_custom_error(session_id, turn_id);
+                }
                 return Err(wire_error(&error.code, format!("{error:?}"), false));
             }
             TaskOutcome::Cancelled { reason, .. } => {
@@ -799,6 +1387,57 @@ impl LocalAgentEngine {
                 session_id: session_id.into(),
             })
             .map_err(agent_wire_error)
+    }
+
+    fn persist_custom_error(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+    ) -> Result<AgentRunResult, AgentWireError> {
+        let result = self.publish_custom_error(session_id, turn_id)?;
+        self.repository
+            .store_run_result(session_id, turn_id, &result)
+            .map_err(|error| wire_error("agent.session.persistence_failed", error, false))?;
+        Ok(result)
+    }
+
+    fn publish_custom_error(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+    ) -> Result<AgentRunResult, AgentWireError> {
+        let message = self.custom_error_message.clone();
+        let session = self.session(session_id)?;
+        let sequence = session.next_event_sequence.saturating_add(1);
+        let envelope = AgentEventEnvelope {
+            session_id: session_id.into(),
+            sequence,
+            meta: AgentEventMeta::default(),
+            event: AgentEvent::FinalResponse {
+                turn_id: turn_id.into(),
+                summary: message.clone(),
+                result: None,
+            },
+        };
+        self.sessions
+            .append(AgentSessionAppendRequest {
+                session_id: session_id.into(),
+                messages: vec![AgentMessage::assistant(message.clone())],
+                events: vec![envelope.clone()],
+                advance_turn: true,
+            })
+            .map_err(agent_wire_error)?;
+        Ok(AgentRunResult {
+            status: AgentRunStatus::Completed,
+            messages: vec![AgentMessage::assistant(message)],
+            steps: Vec::new(),
+            usage: AgentUsage::default(),
+            cost_microunits: 0,
+            output_resource: None,
+            pending_approvals: Vec::new(),
+            pending_interactions: Vec::new(),
+            events: vec![envelope],
+        })
     }
 
     fn test_provider(&self) -> Result<(), AgentWireError> {
@@ -1606,6 +2245,177 @@ mod tests {
     use std::net::TcpListener;
     use std::sync::mpsc;
     use tempfile::tempdir;
+
+    #[test]
+    fn legacy_assistant_instruction_fills_persona_prompt() {
+        let config = LocalAgentConfig {
+            assistant_instruction: "旧人设".into(),
+            persona: LocalAgentPersona::default(),
+            ..Default::default()
+        };
+        assert_eq!(config.resolved_system_prompt(), "旧人设");
+        let persona = config.resolved_persona();
+        assert_eq!(persona.persona_id, "default");
+        assert_eq!(persona.system_prompt, "旧人设");
+    }
+
+    #[test]
+    fn persona_rejects_odd_begin_dialogs() {
+        let mut config = LocalAgentConfig::default();
+        config.persona.system_prompt = "ok".into();
+        config.persona.begin_dialogs = vec!["user only".into()];
+        assert!(config.validate().unwrap_err().contains("even-length"));
+    }
+
+    #[test]
+    fn hydrate_legacy_snapshot_fills_persona() {
+        let hydrated = hydrate_local_agent_config_value(ConfigValue::Object(
+            [
+                ("enabled".into(), ConfigValue::Bool(true)),
+                (
+                    "assistant_instruction".into(),
+                    ConfigValue::String("旧人设".into()),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        ));
+        let persona = hydrated
+            .as_object()
+            .and_then(|object| object.get("persona"))
+            .and_then(ConfigValue::as_object)
+            .expect("persona object");
+        assert_eq!(
+            persona.get("system_prompt"),
+            Some(&ConfigValue::String("旧人设".into()))
+        );
+        assert_eq!(
+            persona.get("persona_id"),
+            Some(&ConfigValue::String("default".into()))
+        );
+    }
+
+    fn with_thread_catalog<R>(tools: Vec<String>, skills: Vec<String>, f: impl FnOnce() -> R) -> R {
+        PERSONA_CAPABILITY_CATALOG_OVERRIDE.with(|override_catalog| {
+            *override_catalog.borrow_mut() = Some(PersonaCapabilityCatalog { tools, skills });
+        });
+        let result = f();
+        PERSONA_CAPABILITY_CATALOG_OVERRIDE.with(|override_catalog| {
+            *override_catalog.borrow_mut() = None;
+        });
+        result
+    }
+
+    #[test]
+    fn present_attaches_live_catalog() {
+        with_thread_catalog(vec!["echo".into()], vec!["guide".into()], || {
+            let provider = LocalAgentConfigProvider::new(MemoryConfigProvider::new(
+                local_agent_config_descriptor(),
+                local_agent_config_value(false, &LocalAgentConfig::default()),
+                mutsuki_config_service::ConfigApplyMode::HotReload,
+            ));
+            let presented = provider
+                .present(
+                    local_agent_config_value(false, &LocalAgentConfig::default()),
+                    &ConfigContext::global(),
+                )
+                .unwrap();
+            let persona = presented
+                .as_object()
+                .and_then(|object| object.get("persona"))
+                .and_then(ConfigValue::as_object)
+                .expect("persona object");
+            assert_eq!(
+                persona.get("available_tools"),
+                Some(&ConfigValue::Array(vec![ConfigValue::String(
+                    "echo".into()
+                )]))
+            );
+            assert_eq!(
+                persona.get("available_skills"),
+                Some(&ConfigValue::Array(vec![ConfigValue::String(
+                    "guide".into()
+                )]))
+            );
+        });
+    }
+
+    #[test]
+    fn selected_empty_allowlist_is_none() {
+        let persona = persona_from_config_json(
+            &json!({
+                "persona_id": "default",
+                "system_prompt": "x",
+                "tools_mode": "selected",
+                "allowed_tools": [],
+                "skills_mode": "selected",
+                "allowed_skills": []
+            }),
+            None,
+        )
+        .unwrap();
+        assert_eq!(persona.allowed_tools.as_deref(), Some(&[][..]));
+        assert_eq!(persona.allowed_skills.as_deref(), Some(&[][..]));
+    }
+
+    #[test]
+    fn canonicalize_rewrites_selected_empty_to_none() {
+        let canonical = canonicalize_local_agent_candidate(ConfigValue::Object(
+            [(
+                "persona".into(),
+                ConfigValue::Object(
+                    [
+                        ("persona_id".into(), ConfigValue::String("default".into())),
+                        ("system_prompt".into(), ConfigValue::String("x".into())),
+                        ("tools_mode".into(), ConfigValue::String("selected".into())),
+                        ("allowed_tools".into(), ConfigValue::Array(Vec::new())),
+                        ("skills_mode".into(), ConfigValue::String("selected".into())),
+                        ("allowed_skills".into(), ConfigValue::Array(Vec::new())),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+            )]
+            .into_iter()
+            .collect(),
+        ))
+        .unwrap();
+        let persona = canonical
+            .as_object()
+            .and_then(|object| object.get("persona"))
+            .and_then(ConfigValue::as_object)
+            .expect("persona object");
+        assert_eq!(
+            persona.get("tools_mode"),
+            Some(&ConfigValue::String("none".into()))
+        );
+        assert_eq!(
+            persona.get("skills_mode"),
+            Some(&ConfigValue::String("none".into()))
+        );
+    }
+
+    #[test]
+    fn persona_from_config_json_maps_allowlist_modes() {
+        let persona = persona_from_config_json(
+            &json!({
+                "persona_id": "guide",
+                "system_prompt": "你是向导。",
+                "tools_mode": "none",
+                "skills_mode": "selected",
+                "allowed_skills": ["keep-skill"],
+                "begin_dialogs": ["你好", "你好，我是向导。"]
+            }),
+            None,
+        )
+        .unwrap();
+        assert_eq!(persona.allowed_tools.as_deref(), Some(&[][..]));
+        assert_eq!(
+            persona.allowed_skills.as_deref(),
+            Some(["keep-skill".to_string()].as_slice())
+        );
+        assert_eq!(persona.begin_dialogs.len(), 2);
+    }
 
     #[test]
     fn local_config_rejects_plaintext_remote_endpoints() {

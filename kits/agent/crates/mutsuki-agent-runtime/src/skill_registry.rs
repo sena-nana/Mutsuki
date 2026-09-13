@@ -234,28 +234,56 @@ impl SkillRegistry {
             .clone();
 
         let mut by_id: HashMap<String, Vec<ParsedSkillPackage>> = HashMap::new();
+        let mut invalids: Vec<ResolvedSkillPackage> = Vec::new();
         for (source_kind, root) in roots.entries() {
             let Some(root) = root else { continue };
             if !root.is_dir() {
                 continue;
             }
             for entry in discover_skill_dirs(&root)? {
-                let parsed = parse_skill_package(&entry, source_kind)?;
-                by_id
-                    .entry(parsed.skill_id.clone())
-                    .or_default()
-                    .push(parsed);
+                match parse_skill_package(&entry, source_kind) {
+                    Ok(parsed) => {
+                        by_id
+                            .entry(parsed.skill_id.clone())
+                            .or_default()
+                            .push(parsed);
+                    }
+                    Err(error) => invalids.push(unavailable_skill_package(
+                        entry
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .unwrap_or("invalid"),
+                        source_kind,
+                        &entry,
+                        generation,
+                        error.message,
+                    )),
+                }
             }
         }
         for package in &roots.registered_packages {
             if !package.path.is_dir() || !package.path.join("SKILL.md").is_file() {
                 continue;
             }
-            let parsed = parse_skill_package(&package.path, package.source_kind)?;
-            by_id
-                .entry(parsed.skill_id.clone())
-                .or_default()
-                .push(parsed);
+            match parse_skill_package(&package.path, package.source_kind) {
+                Ok(parsed) => {
+                    by_id
+                        .entry(parsed.skill_id.clone())
+                        .or_default()
+                        .push(parsed);
+                }
+                Err(error) => invalids.push(unavailable_skill_package(
+                    package
+                        .path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("invalid"),
+                    package.source_kind,
+                    &package.path,
+                    generation,
+                    error.message,
+                )),
+            }
         }
 
         let mut overrides = Vec::new();
@@ -307,6 +335,11 @@ impl SkillRegistry {
                     instructions_text,
                 },
             );
+        }
+        for invalid in invalids {
+            packages
+                .entry(invalid.descriptor.skill_id.clone())
+                .or_insert(invalid);
         }
         Ok(SkillSnapshot {
             packages,
@@ -491,6 +524,43 @@ fn finalize_package(
         }),
     };
     Ok((descriptor, parsed.instructions_text))
+}
+
+fn unavailable_skill_package(
+    skill_id: &str,
+    source_kind: SkillSourceKind,
+    path: &Path,
+    generation: u64,
+    reason: String,
+) -> ResolvedSkillPackage {
+    let skill_id = skill_id.to_owned();
+    ResolvedSkillPackage {
+        descriptor: SkillDescriptor {
+            skill_id: skill_id.clone(),
+            version: "0.0.0".into(),
+            title: skill_id.clone(),
+            summary: reason.clone(),
+            instructions: skill_resource_ref(SKILL_OWNER_ID, &skill_id, "instructions"),
+            required_tools: Vec::new(),
+            optional_tools: Vec::new(),
+            required_capabilities: Vec::new(),
+            required_services: Vec::new(),
+            bundled_resources: Vec::new(),
+            compatibility: SkillCompatibility::default(),
+            security: SkillSecurityMetadata::default(),
+            provenance: SkillProvenance {
+                source_kind,
+                source_path: path.display().to_string(),
+                package_hash: String::new(),
+                generation,
+            },
+            metadata: serde_json::json!({
+                "available": false,
+                "unavailable_reasons": [reason],
+            }),
+        },
+        instructions_text: String::new(),
+    }
 }
 
 fn catalog_entry_from_package(descriptor: &SkillDescriptor, generation: u64) -> SkillCatalogEntry {
@@ -1049,5 +1119,89 @@ mod tests {
             first.descriptor.provenance.package_hash,
             again.descriptor.provenance.package_hash
         );
+    }
+
+    #[test]
+    fn discover_lists_the_full_catalog_even_with_a_persona_allowlist() {
+        let user = TempDir::new().unwrap();
+        write_skill(
+            user.path(),
+            "keep-skill",
+            "id: keep-skill\nversion: 1.0.0\ntitle: Keep\nsummary: keep",
+            "keep body",
+            &[],
+        );
+        write_skill(
+            user.path(),
+            "drop-skill",
+            "id: drop-skill\nversion: 1.0.0\ntitle: Drop\nsummary: drop",
+            "drop body",
+            &[],
+        );
+        let registry = registry_with_roots(SkillRoots {
+            user: Some(user.path().to_path_buf()),
+            ..Default::default()
+        });
+        registry.set_policy(AgentSkillPolicy {
+            allowlist: Some(vec!["keep-skill".into()]),
+            ..AgentSkillPolicy::default()
+        });
+        let mut ids: Vec<_> = registry
+            .discover(SkillDiscoverRequest::default())
+            .unwrap()
+            .catalog
+            .into_iter()
+            .map(|entry| entry.skill_id)
+            .collect();
+        ids.sort();
+        assert_eq!(
+            ids,
+            vec!["drop-skill".to_string(), "keep-skill".to_string()]
+        );
+        assert!(
+            registry
+                .load(SkillLoadRequest {
+                    skill_id: "drop-skill".into(),
+                    generation: None,
+                })
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn invalid_skill_package_does_not_fail_reload() {
+        let user = TempDir::new().unwrap();
+        write_skill(
+            user.path(),
+            "keep-skill",
+            "id: keep-skill\nversion: 1.0.0\ntitle: Keep\nsummary: keep",
+            "keep body",
+            &[],
+        );
+        let broken = user.path().join("broken-skill");
+        fs::create_dir_all(&broken).unwrap();
+        fs::write(broken.join("SKILL.md"), "---\n---\nmissing id\n").unwrap();
+        let registry = registry_with_roots(SkillRoots {
+            user: Some(user.path().to_path_buf()),
+            ..Default::default()
+        });
+        let result = registry
+            .discover(SkillDiscoverRequest {
+                include_unavailable: true,
+            })
+            .unwrap();
+        assert!(
+            result
+                .catalog
+                .iter()
+                .any(|entry| entry.skill_id == "keep-skill" && entry.available)
+        );
+        let broken_entry = result
+            .catalog
+            .iter()
+            .find(|entry| entry.skill_id == "broken-skill")
+            .expect("invalid package remains in catalog");
+        assert!(!broken_entry.available);
+        assert!(!broken_entry.unavailable_reasons.is_empty());
     }
 }

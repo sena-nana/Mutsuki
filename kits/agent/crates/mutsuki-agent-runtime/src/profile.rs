@@ -29,6 +29,7 @@ impl AgentRuntimeProfileBuilder {
                 persistence_distribution: AgentPersistenceDistributionPolicy::default(),
                 skill: Default::default(),
                 knowledge: Default::default(),
+                begin_dialogs: Vec::new(),
             },
         }
     }
@@ -90,6 +91,11 @@ impl AgentRuntimeProfileBuilder {
 
     pub fn skill_policy(mut self, policy: AgentSkillPolicy) -> Self {
         self.profile.skill = policy;
+        self
+    }
+
+    pub fn begin_dialogs(mut self, dialogs: Vec<String>) -> Self {
+        self.profile.begin_dialogs = dialogs;
         self
     }
 
@@ -205,6 +211,16 @@ pub fn validate_agent_runtime_profile(profile: &AgentRuntimeProfile) -> Result<(
     {
         return Err(AgentError::invalid_input(
             "system instructions and prompt fragments cannot be empty",
+        ));
+    }
+    if profile.begin_dialogs.len() % 2 != 0
+        || profile
+            .begin_dialogs
+            .iter()
+            .any(|turn| turn.trim().is_empty())
+    {
+        return Err(AgentError::invalid_input(
+            "begin_dialogs must be even-length user/assistant pairs",
         ));
     }
     unique_ids(

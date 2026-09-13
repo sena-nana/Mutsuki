@@ -1304,7 +1304,13 @@ fn context_build_request(
             max_excerpt_chars: Some(512),
         });
     }
-    build.discover_skills = profile.skill.enabled;
+    build.discover_skills = profile.skill.discover_enabled();
+    build.skill_ids = profile
+        .skill
+        .allowlist
+        .clone()
+        .filter(|ids| !ids.is_empty());
+    build.begin_dialogs = profile.begin_dialogs.clone();
     build
 }
 

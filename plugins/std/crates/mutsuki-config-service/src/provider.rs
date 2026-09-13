@@ -97,6 +97,16 @@ pub trait ConfigProvider: Send + Sync {
 
     fn default_value(&self, context: &ConfigContext) -> Result<ConfigValue, ConfigError>;
 
+    /// Projects a stored or default value for readers. Must not be persisted.
+    fn present(
+        &self,
+        value: ConfigValue,
+        context: &ConfigContext,
+    ) -> Result<ConfigValue, ConfigError> {
+        let _ = context;
+        Ok(value)
+    }
+
     async fn validate(
         &self,
         candidate: ConfigValue,
