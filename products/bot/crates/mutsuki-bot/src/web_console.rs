@@ -7,8 +7,9 @@ use mutsuki_agent_service_host_integration::{
 };
 use mutsuki_bot_flow::BOT_FLOW_CONFIG_PROVIDER_ID;
 use mutsuki_bot_service_host_integration::{
-    AgentConnectionConsoleBridge, BilibiliConsoleBridge, BotDatabaseConsoleBridge,
-    BotFlowConsoleBridge, LocalAgentConsoleBridge, QqConsoleBridge, SandboxConsoleBridge,
+    AgentConnectionConsoleBridge, BOT_COMMAND_PLUGIN_ID, BOT_INTERACTION_PLUGIN_ID,
+    BilibiliConsoleBridge, BotDatabaseConsoleBridge, BotFlowConsoleBridge, LocalAgentConsoleBridge,
+    QqConsoleBridge, SANDBOX_SERVICE_ID, SandboxConsoleBridge,
 };
 use mutsuki_bot_web_console::{
     BotAgentConsoleServices, ConfigNavigationGroup, ConfigNavigationItem, ConsoleAssetDirs,
@@ -21,6 +22,7 @@ use mutsuki_plugin_bot_adapter_qqbot::QQBOT_ADAPTER_PLUGIN_ID;
 use mutsuki_plugin_bot_agent::BOT_AGENT_BRIDGE_PLUGIN_ID;
 use mutsuki_plugin_bot_bilibili::PLUGIN_ID as BILIBILI_PLUGIN_ID;
 use mutsuki_plugin_bot_bilibili_workshop::PLUGIN_ID as WORKSHOP_PLUGIN_ID;
+use mutsuki_plugin_bot_event_router::BOT_FLOW_ROUTER_PLUGIN_ID;
 use mutsuki_plugin_bot_mihuashi::PLUGIN_ID as MIHUASHI_PLUGIN_ID;
 use mutsuki_service_config::ServiceConfig;
 use mutsuki_service_runtime::ServiceRuntime;
@@ -242,10 +244,12 @@ fn config_navigation_groups() -> Vec<ConfigNavigationGroup> {
                 item("qq-bot", "QQ 机器人"),
                 item("bot-agent", "连接管理"),
                 item("bilibili", "B 站管理"),
-                item("bot-flow-editor", "流程编辑器"),
+                item(BOT_FLOW_ROUTER_PLUGIN_ID, "流程编辑器"),
                 item("control", "运行控制"),
                 item("database", "数据库"),
-                item("sandbox", "沙盒"),
+                item(SANDBOX_SERVICE_ID, "沙盒"),
+                item(BOT_COMMAND_PLUGIN_ID, "命令"),
+                item(BOT_INTERACTION_PLUGIN_ID, "交互"),
                 item("secret", "密钥"),
                 item("upgrade", "升级"),
             ],
@@ -274,12 +278,16 @@ mod tests {
         "qq-bot",
         "bot-agent",
         "bilibili",
-        "bot-flow-editor",
         "control",
         "database",
-        "sandbox",
         "secret",
         "upgrade",
+    ];
+    const SCHEMA_LESS_PLUGIN_IDS: &[&str] = &[
+        BOT_FLOW_ROUTER_PLUGIN_ID,
+        SANDBOX_SERVICE_ID,
+        BOT_COMMAND_PLUGIN_ID,
+        BOT_INTERACTION_PLUGIN_ID,
     ];
 
     #[test]
@@ -290,7 +298,9 @@ mod tests {
                 "config navigation must not keep an empty group"
             );
             for item in group.items {
-                if WEB_EXTENSION_PAGE_IDS.contains(&item.provider_id.as_str()) {
+                if WEB_EXTENSION_PAGE_IDS.contains(&item.provider_id.as_str())
+                    || SCHEMA_LESS_PLUGIN_IDS.contains(&item.provider_id.as_str())
+                {
                     continue;
                 }
                 assert!(
@@ -300,5 +310,29 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn schema_less_plugin_navigation_uses_plugin_ids_and_labels() {
+        let items: Vec<_> = config_navigation_groups()
+            .into_iter()
+            .flat_map(|group| group.items)
+            .collect();
+        let label = |id: &str| {
+            items
+                .iter()
+                .find(|item| item.provider_id == id)
+                .and_then(|item| item.label.as_deref())
+        };
+        assert_eq!(label(BOT_FLOW_ROUTER_PLUGIN_ID), Some("流程编辑器"));
+        assert_eq!(label(SANDBOX_SERVICE_ID), Some("沙盒"));
+        assert_eq!(label(BOT_COMMAND_PLUGIN_ID), Some("命令"));
+        assert_eq!(label(BOT_INTERACTION_PLUGIN_ID), Some("交互"));
+        assert!(items.iter().all(|item| item.provider_id != "sandbox"));
+        assert!(
+            items
+                .iter()
+                .all(|item| item.provider_id != "bot-flow-editor")
+        );
     }
 }

@@ -3,6 +3,7 @@ import {
   WebBridgeClient,
   DisposableScope,
   createRegistry,
+  pluginDisplayName,
   pluginIdsOf
 } from "./web-sdk.js";
 
@@ -217,7 +218,14 @@ function finalizePluginActivity(state) {
   const covered = /* @__PURE__ */ new Set();
   for (const nav of state.navigation.list()) {
     if (nav.activityId !== PLUGIN_ACTIVITY_ID) continue;
-    for (const pluginId of pluginIdsOf(pages.get(nav.pageId))) covered.add(pluginId);
+    for (const pluginId of pluginIdsOf(pages.get(nav.pageId))) {
+      covered.add(pluginId);
+      const label = pluginDisplayName(state, pluginId);
+      if (label === pluginId) continue;
+      if (nav.label === pluginId) nav.label = label;
+      const page = pages.get(nav.pageId);
+      if (page && page.title === pluginId) page.title = label;
+    }
   }
   const discovered = /* @__PURE__ */ new Map();
   const remember = (pluginId, label, requiredCapability) => {

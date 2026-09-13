@@ -1896,6 +1896,21 @@ function asError(error) {
 function pluginIdsOf(item) {
   return [...new Set([item?.pluginId, ...item?.pluginIds || []].filter(Boolean))];
 }
+function pluginDisplayName(state, pluginId) {
+  const id = String(pluginId || "");
+  if (!id) return id;
+  const pages = state?.pages?.list() ?? [];
+  const navByPage = new Map((state?.navigation?.list() ?? []).map((item) => [item.pageId, item]));
+  const named = (value) => value && value !== id ? value : void 0;
+  const hubNamed = named(navByPage.get(id)?.label) || named(pages.find((page) => page.id === id)?.title);
+  if (hubNamed) return hubNamed;
+  for (const page of pages) {
+    if (page.id === id || !pluginIdsOf(page).includes(id)) continue;
+    const extra = named(navByPage.get(page.id)?.label) || named(page.title);
+    if (extra) return extra;
+  }
+  return id;
+}
 function createRegistry(options = {}) {
   const onDuplicate = options.onDuplicate ?? "throw";
   const items = /* @__PURE__ */ new Map();
@@ -1946,6 +1961,7 @@ export {
   WebBridgeClient,
   WebBridgeError,
   createRegistry,
+  pluginDisplayName,
   pluginIdsOf,
   withExtensionBoundary
 };
