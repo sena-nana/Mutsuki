@@ -19,10 +19,24 @@ use mutsuki_web_protocol::{
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-#[derive(Default)]
 struct Api {
+    management_enabled: bool,
     clears: Mutex<u32>,
     unsubs: Mutex<u32>,
+    login_actors: Mutex<Vec<String>>,
+    list_is_admin: Mutex<Vec<bool>>,
+}
+
+impl Default for Api {
+    fn default() -> Self {
+        Self {
+            management_enabled: true,
+            clears: Mutex::new(0),
+            unsubs: Mutex::new(0),
+            login_actors: Mutex::new(Vec::new()),
+            list_is_admin: Mutex::new(Vec::new()),
+        }
+    }
 }
 
 fn unused() -> BilibiliManagementError {
@@ -37,7 +51,7 @@ impl BilibiliManagementApi for Api {
     fn status(&self) -> BilibiliManagementStatus {
         BilibiliManagementStatus {
             backend: "web_cookie".into(),
-            management_enabled: true,
+            management_enabled: self.management_enabled,
             allow_self_binding: false,
             cookie_secret_key: Some("BILIBILI_COOKIE".into()),
             cookie_secret_state: Some(BilibiliCredentialSecretState::Present),
@@ -50,8 +64,12 @@ impl BilibiliManagementApi for Api {
 
     fn login_start_session(
         &self,
-        _actor_id: &str,
+        actor_id: &str,
     ) -> Result<BilibiliLoginSession, BilibiliManagementError> {
+        self.login_actors
+            .lock()
+            .unwrap()
+            .push(format!("session:{actor_id}"));
         Ok(BilibiliLoginSession {
             url: "https://passport.bilibili.com/qr".into(),
             key: "secret-qr-key".into(),
@@ -60,8 +78,12 @@ impl BilibiliManagementApi for Api {
 
     async fn login_start(
         &self,
-        _actor_id: &str,
+        actor_id: &str,
     ) -> Result<BilibiliLoginStartResult, BilibiliManagementError> {
+        self.login_actors
+            .lock()
+            .unwrap()
+            .push(format!("start:{actor_id}"));
         Ok(BilibiliLoginStartResult {
             url: "https://passport.bilibili.com/qr".into(),
             key: "secret-qr-key".into(),
@@ -72,8 +94,12 @@ impl BilibiliManagementApi for Api {
 
     fn login_poll(
         &self,
-        _actor_id: &str,
+        actor_id: &str,
     ) -> Result<BilibiliLoginPollResult, BilibiliManagementError> {
+        self.login_actors
+            .lock()
+            .unwrap()
+            .push(format!("poll:{actor_id}"));
         Ok(BilibiliLoginPollResult {
             status: BilibiliQrLoginStatus::Pending,
             message: "waiting".into(),
@@ -88,8 +114,12 @@ impl BilibiliManagementApi for Api {
     fn list(
         &self,
         _actor_id: &str,
-        _is_admin: bool,
+        is_admin: bool,
     ) -> Result<Vec<BilibiliSubscriptionView>, BilibiliManagementError> {
+        self.list_is_admin.lock().unwrap().push(is_admin);
+        if !self.management_enabled {
+            return Err(unused());
+        }
         Ok(Vec::new())
     }
 
@@ -151,24 +181,11 @@ impl BilibiliManagementApi for Api {
     }
 }
 
-#[tokio::test]
-async fn bilibili_management_rpc_strips_qr_secrets_and_requires_confirmation() {
-    let api = Arc::new(Api::default());
+async fn start_host(api: Arc<Api>) -> (MutsukiWebHost, String) {
     let assets_dir = tempfile::tempdir().unwrap();
     let shell_dir = tempfile::tempdir().unwrap();
     let assets = materialize_frontend_assets(assets_dir.path()).unwrap();
-    let extension = BilibiliWebExtension::new(api.clone()).with_frontend_assets(&assets);
-    // The manifest is what the Host serves and what the client integrity-checks, so it — not the
-    // bundle's rendered copy — is the contract this test can hold.
-    let descriptor = extension.descriptor();
-    let entry = descriptor
-        .assets
-        .iter()
-        .find(|asset| asset.path == descriptor.entry)
-        .expect("manifest declares its entry asset");
-    let bytes = std::fs::read(assets.join(&descriptor.entry)).unwrap();
-    assert_eq!(entry.bytes, bytes.len() as u64);
-    assert_eq!(entry.content_hash, content_hash(&bytes));
+    let extension = BilibiliWebExtension::new(api).with_frontend_assets(&assets);
     std::fs::write(
         shell_dir.path().join("index.html"),
         "<!doctype html><main></main>",
@@ -198,17 +215,61 @@ async fn bilibili_management_rpc_strips_qr_secrets_and_requires_confirmation() {
         .unwrap();
     host.start().await.unwrap();
     let address = host.listen_addr().unwrap().to_string();
+    std::mem::forget(assets_dir);
+    std::mem::forget(shell_dir);
+    (host, address)
+}
+
+#[tokio::test]
+async fn bilibili_management_rpc_strips_qr_secrets_and_requires_confirmation() {
+    let api = Arc::new(Api::default());
+    let assets_dir = tempfile::tempdir().unwrap();
+    let assets = materialize_frontend_assets(assets_dir.path()).unwrap();
+    let extension = BilibiliWebExtension::new(api.clone()).with_frontend_assets(&assets);
+    // The manifest is what the Host serves and what the client integrity-checks, so it — not the
+    // bundle's rendered copy — is the contract this test can hold.
+    let descriptor = extension.descriptor();
+    let entry = descriptor
+        .assets
+        .iter()
+        .find(|asset| asset.path == descriptor.entry)
+        .expect("manifest declares its entry asset");
+    let bytes = std::fs::read(assets.join(&descriptor.entry)).unwrap();
+    assert_eq!(entry.bytes, bytes.len() as u64);
+    assert_eq!(entry.content_hash, content_hash(&bytes));
+
+    let (mut host, address) = start_host(api.clone()).await;
 
     assert_eq!(
         rpc(&address, "status", json!({})).await.unwrap()["backend"],
         "web_cookie"
     );
 
-    let started = rpc(&address, "login.start", json!({})).await.unwrap();
+    let started = rpc(&address, "login.start", json!({ "actor_id": "chat-admin" }))
+        .await
+        .unwrap();
     assert_eq!(started["qr_png_base64"], "cWFy");
     assert!(started.get("url").is_none());
     assert!(started.get("key").is_none());
     assert!(!started.to_string().contains("secret-qr-key"));
+
+    let polled = rpc(&address, "login.poll", json!({ "actor_id": "chat-admin" }))
+        .await
+        .unwrap();
+    assert_eq!(polled["status"], "pending");
+    assert_eq!(
+        api.login_actors.lock().unwrap().as_slice(),
+        ["start:web-console", "poll:web-console"]
+    );
+
+    rpc(
+        &address,
+        "subscriptions.list",
+        json!({ "is_admin": false, "operator_user_id": "alice" }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(api.list_is_admin.lock().unwrap().as_slice(), [true]);
 
     let missing = rpc(
         &address,
@@ -254,6 +315,37 @@ async fn bilibili_management_rpc_strips_qr_secrets_and_requires_confirmation() {
     .await
     .unwrap();
     assert_eq!(*api.unsubs.lock().unwrap(), 1);
+
+    host.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn web_login_stays_available_when_subscription_management_is_disabled() {
+    let api = Arc::new(Api {
+        management_enabled: false,
+        ..Api::default()
+    });
+    let (mut host, address) = start_host(api.clone()).await;
+
+    let status = rpc(&address, "status", json!({})).await.unwrap();
+    assert_eq!(status["management_enabled"], false);
+
+    let started = rpc(&address, "login.start", json!({})).await.unwrap();
+    assert_eq!(started["qr_png_base64"], "cWFy");
+    let polled = rpc(&address, "login.poll", json!({})).await.unwrap();
+    assert_eq!(polled["status"], "pending");
+    assert_eq!(
+        api.login_actors.lock().unwrap().as_slice(),
+        ["start:web-console", "poll:web-console"]
+    );
+
+    let listed = rpc(&address, "subscriptions.list", json!({}))
+        .await
+        .unwrap_err();
+    assert!(
+        listed.contains("bilibili.management_unavailable"),
+        "{listed}"
+    );
 
     host.stop().await.unwrap();
 }

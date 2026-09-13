@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Self
 
 from mutsuki_runner_kit.contracts.codec import (
@@ -12,6 +12,7 @@ from mutsuki_runner_kit.contracts.codec import (
     as_json_value,
     as_mapping,
     as_str,
+    as_str_tuple,
     field_value,
     optional_int,
     optional_str,
@@ -265,6 +266,10 @@ class PlanReceipt:
     descriptor_updates: tuple[ResourceRef, ...]
     new_version: int | None
     output: JsonValue
+    descriptor_removals: tuple[str, ...] = field(
+        default=(),
+        metadata={"skip_serializing_if_empty": True},
+    )
 
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
@@ -285,4 +290,8 @@ class PlanReceipt:
             descriptor_updates=tuple_from_json(raw, "descriptor_updates", ResourceRef),
             new_version=optional_int(field_value(raw, "new_version"), "new_version"),
             output=as_json_value(field_value(raw, "output")),
+            descriptor_removals=as_str_tuple(
+                raw.get("descriptor_removals", ()),
+                "descriptor_removals",
+            ),
         )

@@ -382,6 +382,7 @@ impl ResourcePlanGateway for SharedMemoryResourceProvider {
             resource_ref: Some(resource_ref),
             snapshot: None,
             descriptor_updates: Vec::new(),
+            descriptor_removals: Vec::new(),
             new_version: None,
             output: json!(text),
         })
@@ -457,6 +458,7 @@ impl ResourcePlanGateway for SharedMemoryResourceProvider {
             resource_ref: Some(descriptor.clone()),
             snapshot: None,
             descriptor_updates: vec![descriptor],
+            descriptor_removals: Vec::new(),
             new_version: Some(new_version),
             output: Value::Null,
         })

@@ -135,6 +135,7 @@ fn resource_manager_syncs_provider_receipt_descriptor_updates() {
         resource_ref: Some(resource.clone()),
         snapshot: None,
         descriptor_updates: vec![updated.clone()],
+        descriptor_removals: Vec::new(),
         new_version: Some(2),
         output: json!({"accepted_bytes": 3}),
     };
@@ -153,6 +154,7 @@ fn resource_manager_syncs_provider_receipt_descriptor_updates() {
         resource_ref: Some(stale),
         snapshot: None,
         descriptor_updates: Vec::new(),
+        descriptor_removals: Vec::new(),
         new_version: Some(1),
         output: json!(null),
     };
@@ -163,6 +165,68 @@ fn resource_manager_syncs_provider_receipt_descriptor_updates() {
             .error()
             .code,
         ERR_RESOURCE_GENERATION_MISMATCH
+    );
+}
+
+#[test]
+fn resource_manager_unregisters_descriptors_and_receipt_removals() {
+    let mut resources = ResourceManager::new();
+    let resource = resources
+        .register_resource_descriptor(external_resource_ref(
+            "resource:bytes",
+            "bytes",
+            "bytes.v1",
+            "mutsuki.std.resource.memory",
+        ))
+        .unwrap();
+    resources.unregister_resource(&resource.ref_id).unwrap();
+    assert_eq!(
+        resources
+            .open_resource(&resource.ref_id)
+            .unwrap_err()
+            .error()
+            .code,
+        ERR_RESOURCE_NOT_FOUND
+    );
+    resources
+        .unregister_resource(&resource.ref_id)
+        .expect("missing ids are idempotent success");
+
+    let kept = resources
+        .register_resource_descriptor(external_resource_ref(
+            "resource:kept",
+            "bytes",
+            "bytes.v1",
+            "mutsuki.std.resource.memory",
+        ))
+        .unwrap();
+    let dropped = resources
+        .register_resource_descriptor(external_resource_ref(
+            "resource:dropped",
+            "bytes",
+            "bytes.v1",
+            "mutsuki.std.resource.memory",
+        ))
+        .unwrap();
+    let receipt = PlanReceipt {
+        plan_id: "command:delete".into(),
+        status: "deleted".into(),
+        resource_ref: Some(kept.clone()),
+        snapshot: None,
+        descriptor_updates: Vec::new(),
+        descriptor_removals: vec![dropped.ref_id.to_string()],
+        new_version: None,
+        output: json!({"deleted_ref_id": dropped.ref_id}),
+    };
+    resources.sync_plan_receipt(&receipt).unwrap();
+    assert_eq!(resources.open_resource(&kept.ref_id).unwrap(), kept);
+    assert_eq!(
+        resources
+            .open_resource(&dropped.ref_id)
+            .unwrap_err()
+            .error()
+            .code,
+        ERR_RESOURCE_NOT_FOUND
     );
 }
 

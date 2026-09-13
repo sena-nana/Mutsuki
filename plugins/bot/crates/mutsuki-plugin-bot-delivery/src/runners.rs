@@ -81,6 +81,21 @@ pub fn delivery_runner(
     client: RuntimeClientRef,
     service: ActiveDeliveryService,
 ) -> Box<dyn Runner> {
+    delivery_runner_for(
+        client,
+        service,
+        BOT_DELIVERY_PLUGIN_ID,
+        BOT_DELIVERY_RUNNER_ID,
+    )
+}
+
+#[must_use]
+pub fn delivery_runner_for(
+    client: RuntimeClientRef,
+    service: ActiveDeliveryService,
+    plugin_id: &str,
+    runner_id: &str,
+) -> Box<dyn Runner> {
     let factory = Box::new(move |_ctx, task: Task| {
         let service = service.clone();
         Box::pin(async move { delivery_result(&service, &task).await })
@@ -89,14 +104,26 @@ pub fn delivery_runner(
             >
     });
     Box::new(
-        TaskAwaitRunnerAdapter::new(delivery_descriptor(), client, factory)
-            .with_self_call_policy(false),
+        TaskAwaitRunnerAdapter::new(
+            delivery_descriptor_for(plugin_id, runner_id),
+            client,
+            factory,
+        )
+        .with_self_call_policy(false),
     )
 }
 
 #[must_use]
 pub fn delivery_descriptor() -> mutsuki_runtime_contracts::RunnerDescriptor {
-    RunnerDescriptorBuilder::new(BOT_DELIVERY_RUNNER_ID, BOT_DELIVERY_PLUGIN_ID)
+    delivery_descriptor_for(BOT_DELIVERY_PLUGIN_ID, BOT_DELIVERY_RUNNER_ID)
+}
+
+#[must_use]
+pub fn delivery_descriptor_for(
+    plugin_id: &str,
+    runner_id: &str,
+) -> mutsuki_runtime_contracts::RunnerDescriptor {
+    RunnerDescriptorBuilder::new(runner_id, plugin_id)
         .accepted_protocol(BOT_ACTIVE_DELIVERY_PROTOCOL_ID)
         .execution_class(ExecutionClass::Blocking)
         .build()

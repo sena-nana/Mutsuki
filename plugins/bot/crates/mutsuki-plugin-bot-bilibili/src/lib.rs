@@ -2747,6 +2747,7 @@ mod tests {
     #[derive(Default)]
     struct FakeTransportState {
         signature: String,
+        qr_starts: u64,
     }
 
     struct FakeTransport(Arc<Mutex<FakeTransportState>>);
@@ -2774,6 +2775,7 @@ mod tests {
         }
 
         fn qr_start(&mut self) -> Result<BilibiliQrCode, BilibiliError> {
+            self.0.lock().unwrap().qr_starts += 1;
             Ok(BilibiliQrCode {
                 url: "https://passport.bilibili.com/qr".into(),
                 key: "qr-key".into(),
@@ -3541,6 +3543,90 @@ mod tests {
     }
 
     #[test]
+    fn chat_login_is_forbidden_when_management_is_off_and_admin_list_is_empty() {
+        let mut config = managed_config();
+        config.management.enabled = false;
+        config.management.admin_user_ids.clear();
+        let (state, mut runner) = login_runtime_runner(config);
+        let batch = command_batch(vec![command_task("login-empty", "admin", &["login"])]);
+        let context =
+            RunnerContext::new(1, 1, "executor", None::<&str>, "invocation").with_batch("batch", 1);
+        let completed = runner.run_batch(context, batch).unwrap();
+        let error = completed.results[0]
+            .error
+            .as_ref()
+            .expect("empty admin list must reject chat login");
+        assert_eq!(error.code, "bilibili.management_forbidden");
+        assert_eq!(state.lock().unwrap().qr_starts, 0);
+    }
+
+    #[test]
+    fn chat_login_start_is_allowed_for_admins_when_management_is_off() {
+        let mut config = managed_config();
+        config.management.enabled = false;
+        let (state, mut runner) = login_runtime_runner(config);
+        let batch = command_batch(vec![command_task("login-admin", "admin", &["login"])]);
+        let context =
+            RunnerContext::new(1, 1, "executor", None::<&str>, "invocation").with_batch("batch", 1);
+        let waiting = runner.run_batch(context, batch).unwrap();
+        let waiting = waiting.results[0]
+            .result
+            .as_ref()
+            .expect("chat admin login must reach QR render");
+        assert_eq!(waiting.tasks[0].protocol_id, QR_RENDER);
+        assert_eq!(state.lock().unwrap().qr_starts, 1);
+    }
+
+    #[test]
+    fn chat_login_status_requires_admin_even_when_management_is_off() {
+        let mut config = managed_config();
+        config.management.enabled = false;
+        let shared = SharedBilibiliConfig::new(config);
+        let state = Arc::new(Mutex::new(FakeTransportState::default()));
+        let repository = Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap());
+        let management = Arc::new(BilibiliManagementService::new(
+            shared.clone(),
+            SharedBilibiliCredential::default(),
+            Box::new(FakeTransport(state)),
+            repository.clone(),
+            Arc::new(RecordingCredentialStore::default()),
+            Arc::new(RecordingConfigStore::default()),
+            Arc::new(AlwaysPresentSecrets),
+        ));
+        let mut runner = BilibiliRunner::new(
+            Box::new(FakeTransport(Arc::new(Mutex::new(
+                FakeTransportState::default(),
+            )))),
+            repository.clone(),
+            Arc::new(UnusedResources),
+            "memory",
+        )
+        .with_management(shared.clone(), management);
+        repository.set_qr_session("admin", "qr-key").unwrap();
+        runner
+            .run_command(&command_task(
+                "login-status-admin",
+                "admin",
+                &["login-status"],
+            ))
+            .unwrap();
+
+        shared.replace({
+            let mut next = shared.snapshot();
+            next.management.admin_user_ids.clear();
+            next
+        });
+        let forbidden = runner
+            .run_command(&command_task(
+                "login-status-empty",
+                "admin",
+                &["login-status"],
+            ))
+            .unwrap_err();
+        assert_eq!(forbidden.code, "bilibili.management_forbidden");
+    }
+
+    #[test]
     fn multiple_fresh_items_are_emitted_as_flow_events_in_order() {
         let repository = Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap());
         repository.set_cursor("Dynamic:7:sub", "1").unwrap();
@@ -3963,7 +4049,7 @@ mod tests {
             credential_store.0.lock().unwrap().last().unwrap(),
             &("BILIBILI_COOKIE".into(), "SESSDATA=ROTATED".into())
         );
-        assert!(
+        for code in [
             management
                 .subscribe(
                     "sub-1".into(),
@@ -3974,7 +4060,21 @@ mod tests {
                     },
                     "qq-main".into(),
                 )
-                .is_err()
+                .unwrap_err()
+                .code,
+            management.list("admin", true).unwrap_err().code,
+            management
+                .set_paused("admin", true, None, true)
+                .unwrap_err()
+                .code,
+            management.preview("admin", true, None).unwrap_err().code,
+            management.unbind("admin").unwrap_err().code,
+        ] {
+            assert_eq!(code, "bilibili.management_unavailable");
+        }
+        assert_eq!(
+            management.bind_start("admin", 7, "seed").unwrap_err().code,
+            "bilibili.management_forbidden"
         );
     }
 
@@ -4007,6 +4107,32 @@ mod tests {
                 self_binding_outbound_binding: "qq-main".into(),
             },
         }
+    }
+
+    fn login_runtime_runner(
+        config: BilibiliConfig,
+    ) -> (Arc<Mutex<FakeTransportState>>, Box<dyn Runner>) {
+        let state = Arc::new(Mutex::new(FakeTransportState::default()));
+        let repository = Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap());
+        let shared = SharedBilibiliConfig::new(config);
+        let management = Arc::new(BilibiliManagementService::new(
+            shared.clone(),
+            SharedBilibiliCredential::default(),
+            Box::new(FakeTransport(state.clone())),
+            repository.clone(),
+            Arc::new(RecordingCredentialStore::default()),
+            Arc::new(RecordingConfigStore::default()),
+            Arc::new(AlwaysPresentSecrets),
+        ));
+        let runner = BilibiliRunner::new(
+            Box::new(FakeTransport(state.clone())),
+            repository,
+            Arc::new(UnusedResources),
+            "memory",
+        )
+        .with_management(shared, management)
+        .into_runtime_runner(Arc::new(RenderedChildClient), None);
+        (state, runner)
     }
 
     fn command_task(task_id: &str, actor_id: &str, args: &[&str]) -> Task {

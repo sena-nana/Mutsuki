@@ -6,7 +6,9 @@ use mutsuki_bot_delivery::{
     ActiveDeliveryService, DeliveryFailure, DeliveryGateway, DeliveryPolicyResolver,
     DeliverySuccess,
 };
-use mutsuki_bot_interaction::{InteractionConditionMatcher, InteractionError, InteractionService};
+use mutsuki_bot_interaction::{
+    InteractionError, InteractionService, UnavailableInteractionMatcher,
+};
 use mutsuki_bot_protocol::{
     BOT_EVENT_INGEST_PROTOCOL_ID, BOT_FLOW_BOT_EVENT_TYPE, BOT_FLOW_INGRESS_PROTOCOL_ID,
     BOT_MESSAGE_SEND_PROTOCOL_ID, BotActiveDeliveryRequest, BotDeliveryContent,
@@ -21,7 +23,7 @@ use mutsuki_bot_state_db::{
     BotManagementAuditRecord, BotManagementOperationReservation, BotStateDbRepository,
 };
 use mutsuki_runtime_contracts::{
-    ContractSurfaceKind, SurfaceRequirement, Task, TaskOutcome, TaskPayload,
+    ContractSurfaceKind, PluginManifest, SurfaceRequirement, Task, TaskOutcome, TaskPayload,
 };
 use mutsuki_runtime_sdk::ResourceRegistryGateway;
 use mutsuki_runtime_sdk::RuntimeClientRef;
@@ -34,16 +36,19 @@ use mutsuki_bot_management::{
     QqManagementProvider, QqManagementStateStore, account_view_from_config,
 };
 use mutsuki_plugin_bot_adapter_qqbot::{
-    QqAuthManager, QqBotClients, QqBotConfig, QqGatewayMapRunner, QqGatewayMediaHandler,
-    QqIdSource, QqMediaProvider, QqOpenApiError, QqOpenApiRunner, ReqwestQqHttpClient,
-    ResourceGatewayQqMediaProvider, SharedQqCredentials, qqbot_adapter_manifest,
+    QQBOT_ADAPTER_PLUGIN_ID, QqAuthManager, QqBotClients, QqBotConfig, QqGatewayMapRunner,
+    QqGatewayMediaHandler, QqIdSource, QqMediaProvider, QqOpenApiError, QqOpenApiRunner,
+    ReqwestQqHttpClient, ResourceGatewayQqMediaProvider, SharedQqCredentials,
+    qqbot_adapter_manifest,
 };
+use mutsuki_plugin_bot_delivery::{bot_delivery_manifest_for, delivery_runner_for};
 use mutsuki_runtime_sdk::{LoadedPlugin, RuntimeBootstrapperService};
 use serde_json::Value;
 
 use crate::console_bridge::{
     BOT_STATE_DB_SERVICE_ID, QQ_MANAGEMENT_SERVICE_ID, bot_state_db_host_service,
 };
+use crate::delivery_recovery::BotTaskRecoveryEventSource;
 use crate::event_source::{QqGatewayControlHandle, QqGatewayEventSource, QqGatewayHealthHandle};
 use crate::sandbox_intercept::{
     SandboxAwareDeliveryGateway, SandboxAwareOpenApiRunner, SandboxInterceptHandle,
@@ -71,6 +76,7 @@ pub struct QqBotPluginBundle {
     media_provider_id: Option<String>,
     id_factory: IdFactory,
     workspace_sandbox: Option<Arc<SandboxService>>,
+    state_repository: Option<Arc<BotStateDbRepository>>,
 }
 
 impl QqBotPluginBundle {
@@ -94,6 +100,7 @@ impl QqBotPluginBundle {
             media_provider_id: None,
             id_factory: Arc::new(|| Box::new(SystemQqIdSource::new())),
             workspace_sandbox: None,
+            state_repository: None,
         })
     }
 
@@ -130,6 +137,11 @@ impl QqBotPluginBundle {
         self
     }
 
+    pub(crate) fn with_state_repository(mut self, repository: Arc<BotStateDbRepository>) -> Self {
+        self.state_repository = Some(repository);
+        self
+    }
+
     pub fn health_handle(&self) -> QqGatewayHealthHandle {
         self.health.clone()
     }
@@ -161,14 +173,24 @@ impl QqBotPluginBundle {
         let management_health = self.health.clone();
         let management_credentials = self.credentials.clone();
         let workspace_sandbox = self.workspace_sandbox.clone();
-        let state_dir = builder.data_dir().join("bot");
-        std::fs::create_dir_all(&state_dir).map_err(|error| {
-            QqOpenApiError::InvalidPayload(format!(
-                "failed to create QQ management state directory: {error}"
-            ))
-        })?;
-        let state_path = state_dir.join("state.sqlite3");
-        let mut manifest = qqbot_adapter_manifest(1, media_enabled);
+        let repository = match self.state_repository.clone() {
+            Some(repository) => repository,
+            None => {
+                let state_dir = builder.data_dir().join("bot");
+                std::fs::create_dir_all(&state_dir).map_err(|error| {
+                    QqOpenApiError::InvalidPayload(format!(
+                        "failed to create QQ management state directory: {error}"
+                    ))
+                })?;
+                Arc::new(
+                    BotStateDbRepository::open(state_dir.join("state.sqlite3"))
+                        .map_err(|error| QqOpenApiError::InvalidPayload(error.to_string()))?,
+                )
+            }
+        };
+        let repository_for_factory = repository.clone();
+        let repository_for_delivery = repository.clone();
+        let mut manifest = merge_qq_active_delivery(qqbot_adapter_manifest(1, media_enabled));
         manifest
             .provides
             .services
@@ -195,9 +217,7 @@ impl QqBotPluginBundle {
         let loaded_manifest = manifest.clone();
         let builder =
             builder.register_runtime_client_loaded_plugin_factory(manifest, move |runtime| {
-                let repository = Arc::new(
-                    BotStateDbRepository::open(&state_path).map_err(|error| error.to_string())?,
-                );
+                let repository = repository_for_factory.clone();
                 let gateway = Arc::new(SandboxAwareDeliveryGateway::new(
                     Arc::new(RuntimeDeliveryGateway {
                         runtime: runtime.clone(),
@@ -214,7 +234,7 @@ impl QqBotPluginBundle {
                 );
                 let interaction = InteractionService::new(
                     repository.clone(),
-                    Arc::new(ManagementInteractionMatcher),
+                    Arc::new(UnavailableInteractionMatcher),
                 );
                 let provider = Arc::new(OwnerBackedQqManagementProvider {
                     config: management_config.clone(),
@@ -293,7 +313,35 @@ impl QqBotPluginBundle {
                 ))
             })
         };
+        let delivery_account_id = openapi_config.account_id.clone();
+        let delivery_intercept = intercept_for_runner.clone();
         Ok(builder
+            .register_runtime_client_runner(move |client| {
+                let gateway = Arc::new(SandboxAwareDeliveryGateway::new(
+                    Arc::new(RuntimeDeliveryGateway {
+                        runtime: client.clone(),
+                    }),
+                    delivery_intercept.clone(),
+                    delivery_account_id.clone(),
+                ));
+                let delivery = ActiveDeliveryService::new(
+                    repository_for_delivery.clone(),
+                    gateway,
+                    Arc::new(ConfiguredAccountDeliveryPolicy {
+                        account_id: delivery_account_id.clone(),
+                    }),
+                );
+                delivery_runner_for(
+                    client,
+                    delivery,
+                    QQBOT_ADAPTER_PLUGIN_ID,
+                    QQ_ACTIVE_DELIVERY_RUNNER_ID,
+                )
+            })
+            .register_event_source(Box::new(BotTaskRecoveryEventSource::active_delivery(
+                BotTaskRecoveryEventSource::default_interval(),
+                QQBOT_ADAPTER_PLUGIN_ID,
+            )))
             .register_fallible_runtime_services_runner(move |_runtime, resources| {
                 let http = ReqwestQqHttpClient::new(&openapi_config)
                     .map_err(|error| error.redacted_message())?;
@@ -346,6 +394,35 @@ impl QqBotPluginBundle {
             })
             .register_event_source(Box::new(source)))
     }
+}
+
+const QQ_ACTIVE_DELIVERY_RUNNER_ID: &str = "mutsuki.bot.qq.delivery.runner";
+
+fn merge_qq_active_delivery(left: PluginManifest) -> PluginManifest {
+    merge_plugin_manifests(
+        left,
+        bot_delivery_manifest_for(QQBOT_ADAPTER_PLUGIN_ID, QQ_ACTIVE_DELIVERY_RUNNER_ID),
+    )
+}
+
+pub(crate) fn merge_plugin_manifests(
+    mut left: PluginManifest,
+    right: PluginManifest,
+) -> PluginManifest {
+    debug_assert_eq!(left.plugin_id, right.plugin_id);
+    left.provides
+        .capabilities
+        .extend(right.provides.capabilities);
+    left.provides.runners.extend(right.provides.runners);
+    left.provides.protocols.extend(right.provides.protocols);
+    left.provides
+        .protocol_classes
+        .extend(right.provides.protocol_classes);
+    left.provides
+        .handler_bindings
+        .extend(right.provides.handler_bindings);
+    left.provides.extensions.extend(right.provides.extensions);
+    left
 }
 
 struct OwnerBackedQqManagementProvider {
@@ -806,26 +883,6 @@ impl DeliveryPolicyResolver for ConfiguredAccountDeliveryPolicy {
     }
 }
 
-struct ManagementInteractionMatcher;
-
-impl InteractionConditionMatcher for ManagementInteractionMatcher {
-    fn command_matches(
-        &self,
-        _command: &str,
-        _event: &mutsuki_bot_protocol::BotEvent,
-    ) -> Result<bool, InteractionError> {
-        Ok(false)
-    }
-
-    fn predicate_matches(
-        &self,
-        _service_id: &str,
-        _event: &mutsuki_bot_protocol::BotEvent,
-    ) -> Result<bool, InteractionError> {
-        Ok(false)
-    }
-}
-
 fn delivery_error(error: mutsuki_bot_delivery::DeliveryError) -> QqManagementError {
     let code = match error {
         mutsuki_bot_delivery::DeliveryError::NotFound => "not_found",
@@ -1090,6 +1147,30 @@ mod tests {
         assert_eq!(source.next_msg_seq(), u64::from(u16::MAX));
         assert_eq!(source.next_msg_seq(), 0);
         assert_eq!(source.next_msg_seq(), 1);
+    }
+
+    #[test]
+    fn qq_adapter_manifest_owns_active_delivery_protocol() {
+        let merged = merge_qq_active_delivery(qqbot_adapter_manifest(1, false));
+        assert_eq!(merged.plugin_id, QQBOT_ADAPTER_PLUGIN_ID);
+        assert!(
+            merged.provides.handler_bindings.iter().any(|binding| {
+                binding.protocol_id == mutsuki_bot_protocol::BOT_ACTIVE_DELIVERY_PROTOCOL_ID
+            }),
+            "QQ adapter must bind mutsuki.bot.delivery/submit@1"
+        );
+        let runner = merged
+            .provides
+            .runners
+            .iter()
+            .find(|runner| {
+                runner.accepted_protocol_ids.iter().any(|protocol| {
+                    protocol == mutsuki_bot_protocol::BOT_ACTIVE_DELIVERY_PROTOCOL_ID
+                })
+            })
+            .expect("QQ adapter must declare an active-delivery runner");
+        assert_eq!(runner.plugin_id, QQBOT_ADAPTER_PLUGIN_ID);
+        assert_eq!(runner.runner_id, QQ_ACTIVE_DELIVERY_RUNNER_ID);
     }
 
     #[test]

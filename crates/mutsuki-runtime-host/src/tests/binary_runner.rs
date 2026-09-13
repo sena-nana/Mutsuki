@@ -176,6 +176,7 @@ fn binary_runner_uses_resource_plan_method_surface() {
         resource_ref: Some(capability),
         snapshot: None,
         descriptor_updates: Vec::new(),
+        descriptor_removals: Vec::new(),
         new_version: None,
         output: json!({"ok": true}),
     };

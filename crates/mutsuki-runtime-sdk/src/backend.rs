@@ -103,6 +103,17 @@ pub trait ResourceProviderGateway: ResourcePlanGateway {
     fn execution(&self) -> ResourceProviderExecution {
         ResourceProviderExecution::Inline
     }
+
+    /// Hub `ref_id`s this provider reclaimed while creating `created_ref_id`.
+    ///
+    /// Create still returns only the new [`ResourceRef`]. A provider that
+    /// deletes older rows during create records those ids keyed by the new
+    /// ref so concurrent offloaded creates cannot mix reclamations. The Host
+    /// takes the list after create and unregisters each id. The default is
+    /// empty. Poison or storage failure must not swallow reclamations.
+    fn take_reclaimed_ref_ids(&self, _created_ref_id: &str) -> RuntimeResult<Vec<String>> {
+        Ok(Vec::new())
+    }
 }
 
 /// Native async resource plan boundary. Provider-owned futures are driven by
@@ -141,6 +152,11 @@ pub trait AsyncResourceProviderGateway: AsyncResourcePlanGateway {
     ///
     /// Returns a structured failure when the stored descriptors cannot be read.
     fn restore_descriptors(&self) -> RuntimeResult<Vec<ResourceRef>> {
+        Ok(Vec::new())
+    }
+
+    /// See [`ResourceProviderGateway::take_reclaimed_ref_ids`].
+    fn take_reclaimed_ref_ids(&self, _created_ref_id: &str) -> RuntimeResult<Vec<String>> {
         Ok(Vec::new())
     }
 }

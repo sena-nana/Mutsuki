@@ -2,7 +2,10 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 
-use mutsuki_agent_service_host_integration::LOCAL_AGENT_CONFIG_PROVIDER_ID;
+use mutsuki_agent_service_host_integration::{
+    AGENT_CONNECTIONS_PLUGIN_ID, LOCAL_AGENT_CONFIG_PROVIDER_ID,
+};
+use mutsuki_bot_flow::BOT_FLOW_CONFIG_PROVIDER_ID;
 use mutsuki_bot_service_host_integration::{
     AgentConnectionConsoleBridge, BilibiliConsoleBridge, BotDatabaseConsoleBridge,
     BotFlowConsoleBridge, LocalAgentConsoleBridge, QqConsoleBridge, SandboxConsoleBridge,
@@ -201,9 +204,6 @@ fn build_secret_monitor(
 }
 
 fn config_navigation_groups() -> Vec<ConfigNavigationGroup> {
-    // Formal display names for every plugin the product may load. The 接入
-    // entries keep owner config providers, so they render even before their
-    // plugin is enabled; web-extension pages appear once their plugin loads.
     let item = |provider_id: &str, label: &str| ConfigNavigationItem {
         provider_id: provider_id.into(),
         label: Some(label.into()),
@@ -217,41 +217,23 @@ fn config_navigation_groups() -> Vec<ConfigNavigationGroup> {
             label: Some("接入".into()),
             items: vec![
                 item(QQBOT_ADAPTER_PLUGIN_ID, "QQ 登录"),
-                item("mutsuki.bot.mihuashi", "米画师"),
-                item("mutsuki.bot.bilibili", "B 站"),
-                item("mutsuki.bot.bilibili.workshop", "B 站工房"),
+                item(MIHUASHI_PLUGIN_ID, "米画师"),
+                item(BILIBILI_PLUGIN_ID, "B 站"),
+                item(WORKSHOP_PLUGIN_ID, "B 站工房"),
             ],
         },
         ConfigNavigationGroup {
             label: Some("助手".into()),
             items: vec![
                 item(LOCAL_AGENT_CONFIG_PROVIDER_ID, "模型"),
-                item("mutsuki.agent.connections", "助手连接"),
+                item(AGENT_CONNECTIONS_PLUGIN_ID, "助手连接"),
                 item(BOT_AGENT_BRIDGE_PLUGIN_ID, "回复"),
-                item("mutsuki.plugin.bot.persona", "人设"),
-                item("mutsuki.plugin.bot.conversation.context", "会话上下文"),
-                item("mutsuki.plugin.bot.interaction", "互动"),
-                item("mutsuki.plugin.bot.media", "媒体"),
-                item("mutsuki.bot.command", "指令"),
-                item("mutsuki.bot.router.flow", "流程路由"),
-                item("mutsuki.bot.flow", "流程编排"),
-            ],
-        },
-        ConfigNavigationGroup {
-            label: Some("投递".into()),
-            items: vec![
-                item("mutsuki.plugin.bot.reply", "自动回复"),
-                item("mutsuki.plugin.bot.delivery", "消息投递"),
-                item("mutsuki.plugin.bot.delivery.reply", "回复投递"),
-                item("mutsuki.plugin.bot.delivery.scheduled", "定时投递"),
+                item(BOT_FLOW_CONFIG_PROVIDER_ID, "流程编排"),
             ],
         },
         ConfigNavigationGroup {
             label: Some("服务".into()),
-            items: vec![
-                item(crate::SERVICE_CONFIG_PROVIDER_ID, "服务运行时"),
-                item("mutsuki.std.image.render", "图像渲染"),
-            ],
+            items: vec![item(crate::SERVICE_CONFIG_PROVIDER_ID, "服务运行时")],
         },
         ConfigNavigationGroup {
             label: Some("扩展".into()),
@@ -269,4 +251,54 @@ fn config_navigation_groups() -> Vec<ConfigNavigationGroup> {
             ],
         },
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PRODUCT_CONFIG_PROVIDER_IDS: &[&str] = &[
+        PRODUCT_CONFIG_PROVIDER_ID,
+        QQBOT_ADAPTER_PLUGIN_ID,
+        MIHUASHI_PLUGIN_ID,
+        BILIBILI_PLUGIN_ID,
+        WORKSHOP_PLUGIN_ID,
+        LOCAL_AGENT_CONFIG_PROVIDER_ID,
+        AGENT_CONNECTIONS_PLUGIN_ID,
+        BOT_AGENT_BRIDGE_PLUGIN_ID,
+        BOT_FLOW_CONFIG_PROVIDER_ID,
+        crate::SERVICE_CONFIG_PROVIDER_ID,
+    ];
+    const WEB_EXTENSION_PAGE_IDS: &[&str] = &[
+        "overview",
+        "qq-bot",
+        "bot-agent",
+        "bilibili",
+        "bot-flow-editor",
+        "control",
+        "database",
+        "sandbox",
+        "secret",
+        "upgrade",
+    ];
+
+    #[test]
+    fn non_extension_config_navigation_uses_product_providers() {
+        for group in config_navigation_groups() {
+            assert!(
+                !group.items.is_empty(),
+                "config navigation must not keep an empty group"
+            );
+            for item in group.items {
+                if WEB_EXTENSION_PAGE_IDS.contains(&item.provider_id.as_str()) {
+                    continue;
+                }
+                assert!(
+                    PRODUCT_CONFIG_PROVIDER_IDS.contains(&item.provider_id.as_str()),
+                    "config navigation provider `{}` is not a product ConfigProvider",
+                    item.provider_id
+                );
+            }
+        }
+    }
 }

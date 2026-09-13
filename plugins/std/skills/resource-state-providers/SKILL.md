@@ -24,6 +24,18 @@ description: Implement or change standard memory, shared-memory, database, state
   reclaims capability resources because those are handles rather than payloads. The
   deployment that owns the file sets the policy; the provider only supplies the
   mechanism and defaults to unbounded.
+- Create-time size sweep counts the incoming write: existing disposable payload plus the
+  new bytes must be `<= max_total_bytes` after insert. A single disposable payload larger
+  than `max_total_bytes` fails loud with a structured resource error and is not inserted.
+  Capability resources are exempt from that size bound. Sweep DELETE and INSERT share one
+  IMMEDIATE transaction so a failed insert rolls back reclamations. Age sweep still runs
+  before insert.
+- Retention DELETE and the capability `delete` command must invalidate Core hub
+  descriptors. `delete` receipts carry the removed `ref_id` in
+  `PlanReceipt.descriptor_removals`; create-time sweep records reclaimed ids keyed by the
+  new `ref_id` and the Host takes them via `take_reclaimed_ref_ids` then
+  `unregister_resource`. `take_reclaimed_ref_ids` fails loud on storage/mutex poison so
+  reclamations cannot be dropped. `open_resource` after reclaim is `resource.not_found`.
 - Commits are compare-and-swap against the stored version, not last-writer-wins: a
   provider-held mutex only orders writers inside one process, so the write predicate
   carries the base version and a zero-row update is `resource.generation_mismatch`.

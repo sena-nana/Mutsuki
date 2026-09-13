@@ -17,9 +17,9 @@ use mutsuki_runtime_sdk::{PluginBuilder, ProtocolDescriptorBuilder};
 pub use runners::{
     BOT_DELIVERY_PLUGIN_ID, BOT_DELIVERY_RUNNER_ID, BOT_REPLY_DELIVERY_PLUGIN_ID,
     BOT_REPLY_DELIVERY_RUNNER_ID, BOT_SCHEDULED_DELIVERY_PLUGIN_ID,
-    BOT_SCHEDULED_DELIVERY_RUNNER_ID, delivery_descriptor, delivery_runner,
-    reply_delivery_descriptor, reply_delivery_runner, reply_delivery_runner_for,
-    scheduled_delivery_descriptor, scheduled_delivery_runner,
+    BOT_SCHEDULED_DELIVERY_RUNNER_ID, delivery_descriptor, delivery_descriptor_for,
+    delivery_runner, delivery_runner_for, reply_delivery_descriptor, reply_delivery_runner,
+    reply_delivery_runner_for, scheduled_delivery_descriptor, scheduled_delivery_runner,
 };
 
 #[must_use]
@@ -49,15 +49,20 @@ pub fn bot_scheduled_delivery_manifest() -> PluginManifest {
 
 #[must_use]
 pub fn bot_delivery_manifest() -> PluginManifest {
-    PluginBuilder::new(BOT_DELIVERY_PLUGIN_ID)
-        .runner_descriptor(delivery_descriptor())
+    bot_delivery_manifest_for(BOT_DELIVERY_PLUGIN_ID, BOT_DELIVERY_RUNNER_ID)
+}
+
+#[must_use]
+pub fn bot_delivery_manifest_for(plugin_id: &str, runner_id: &str) -> PluginManifest {
+    PluginBuilder::new(plugin_id)
+        .runner_descriptor(delivery_descriptor_for(plugin_id, runner_id))
         .protocol_handler(
             delivery_protocol_descriptor(
                 BOT_ACTIVE_DELIVERY_PROTOCOL_ID,
                 &["action"],
                 &["delivery_id", "status"],
             ),
-            BOT_DELIVERY_RUNNER_ID,
+            runner_id,
             "bot-delivery",
         )
         .build()
@@ -116,6 +121,31 @@ pub fn bot_reply_delivery_manifest_for(plugin_id: &str, runner_id: &str) -> Plug
         )
         .build()
         .manifest
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mutsuki_bot_protocol::BOT_ACTIVE_DELIVERY_PROTOCOL_ID;
+
+    #[test]
+    fn delivery_manifest_for_uses_the_owner_plugin_id() {
+        let manifest = bot_delivery_manifest_for("owner.plugin", "owner.delivery.runner");
+        assert_eq!(manifest.plugin_id, "owner.plugin");
+        let runner = manifest
+            .provides
+            .runners
+            .iter()
+            .find(|runner| {
+                runner
+                    .accepted_protocol_ids
+                    .iter()
+                    .any(|protocol| protocol == BOT_ACTIVE_DELIVERY_PROTOCOL_ID)
+            })
+            .expect("active delivery runner");
+        assert_eq!(runner.plugin_id, "owner.plugin");
+        assert_eq!(runner.runner_id, "owner.delivery.runner");
+    }
 }
 
 fn delivery_protocol_descriptor(

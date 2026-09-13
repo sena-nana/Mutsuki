@@ -9,7 +9,8 @@ use mutsuki_agent_service_host_integration::{
     LocalAgentConfig, local_agent_config_descriptor, local_agent_config_value,
 };
 use mutsuki_bot_service_host_integration::{
-    SANDBOX_SERVICE_ID, link_card_config_descriptor, link_card_config_value,
+    BOT_COMMAND_PLUGIN_ID, BOT_INTERACTION_PLUGIN_ID, SANDBOX_SERVICE_ID,
+    link_card_config_descriptor, link_card_config_value,
 };
 use mutsuki_config_service::{
     ConfigApplyMode, ConfigConstraints, ConfigContext, ConfigDescriptor, ConfigError, ConfigExpr,
@@ -405,6 +406,16 @@ pub(crate) fn configured_product_selections(
             enabled: workspace_enabled,
             config: serde_json::json!({}),
         },
+        ConfiguredPluginSelection {
+            id: BOT_COMMAND_PLUGIN_ID.into(),
+            enabled: workspace_enabled,
+            config: serde_json::json!({}),
+        },
+        ConfiguredPluginSelection {
+            id: BOT_INTERACTION_PLUGIN_ID.into(),
+            enabled: workspace_enabled,
+            config: serde_json::json!({}),
+        },
     ]);
     selections.extend(owner_selections);
     // The local engine rides on the workspace-provided Agent connections and
@@ -455,6 +466,8 @@ pub(crate) fn is_product_owner_plugin(id: &str) -> bool {
         AGENT_CONNECTIONS_PLUGIN_ID
             | BOT_FLOW_ROUTER_PLUGIN_ID
             | SANDBOX_SERVICE_ID
+            | BOT_COMMAND_PLUGIN_ID
+            | BOT_INTERACTION_PLUGIN_ID
             | QQBOT_ADAPTER_PLUGIN_ID
             | LOCAL_AGENT_PLUGIN_ID
             | BOT_AGENT_BRIDGE_PLUGIN_ID
@@ -860,7 +873,13 @@ mod tests {
 
     #[test]
     fn builtin_platform_plugins_are_rejected_from_runtime_plugins() {
-        for plugin_id in [BILIBILI_PLUGIN_ID, WORKSHOP_PLUGIN_ID, MIHUASHI_PLUGIN_ID] {
+        for plugin_id in [
+            BILIBILI_PLUGIN_ID,
+            WORKSHOP_PLUGIN_ID,
+            MIHUASHI_PLUGIN_ID,
+            BOT_COMMAND_PLUGIN_ID,
+            BOT_INTERACTION_PLUGIN_ID,
+        ] {
             let product = serde_json::json!({
                 "runtime_plugins": {
                     plugin_id: { "enabled": true, "config": {} },

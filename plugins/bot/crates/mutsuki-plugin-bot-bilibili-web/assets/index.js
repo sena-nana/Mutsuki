@@ -314,7 +314,7 @@ export function mountBilibiliPanel(host, rpc, events) {
         state.textContent = "等待扫码…";
         loginPollTimer = setInterval(async () => {
           try {
-            const polled = await rpc.read("bilibili", "login.poll");
+            const polled = await rpc.write("bilibili", "login.poll");
             state.textContent = polled.message || polled.status;
             if (polled.status === "confirmed" || polled.status === "expired") {
               clearInterval(loginPollTimer);

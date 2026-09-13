@@ -74,7 +74,7 @@ Identity 字段是 branded 类型，不是 typestate，也不编码 generation /
 | `ResourceLease` | task step 临时使用 ResourceCell 的租约 |
 | `LeaseToken` | ref_id、owner、mode、expires_at_step、generation |
 | `ReadPlan` / `WritePlan` / `StreamPlan` / `ExportPlan` / `CommandPlan` | 可序列化资源操作计划，构造阶段不执行真实读写 |
-| `SnapshotDescriptor` / `PatchDescriptor` / `PlanReceipt` | 版本化 snapshot、patch 与 provider plan commit receipt；receipt 只能携带 descriptor 更新和小型结构化输出，不携带资源 bytes |
+| `SnapshotDescriptor` / `PatchDescriptor` / `PlanReceipt` | 版本化 snapshot、patch 与 provider plan commit receipt；receipt 只能携带 descriptor 更新、`descriptor_removals` 与小型结构化输出，不携带资源 bytes。缺省 JSON 字段反序列化为空列表 |
 | `TransactionPlan` / `CommandBatch` / `SagaPlan` | Experimental provider/workflow descriptor；CoreRuntime 不解释事务、批处理或 saga 执行语义 |
 | `RuntimeProfile` | 本次运行启用哪些插件、发行 profile mode、runner 绑定、公共 surface provider 绑定、支持的 contribution namespace，以及是否允许热重载 |
 | `PluginDeploymentKind` | RuntimeProfile / RuntimeLoadPlan 中声明插件本次部署形态：Builtin、Abi、Wasm、Process、Python |
@@ -530,8 +530,15 @@ handle，`version` 用于 snapshot、冲突检测和回放。`ResourceRef.genera
 - Provider 执行 `WritePlan` commit、`CommandPlan`、`CommandBatch` 或 `SagaPlan` 后，必须通过
   `PlanReceipt.descriptor_updates` 返回需要进入 ResourceManager registry 的新
   `ResourceRef` descriptor；包括原 ref 的新 generation/version、copy-on-write 产生的新 ref、
-  command 创建的 capability/snapshot/transaction ref。Host 只把这些 descriptor 回写
-  ResourceManager，bytes 数据面不得回流 Core。
+  command 创建的 capability/snapshot/transaction ref。删除或 retention 回收的 `ref_id` 必须
+  通过 `PlanReceipt.descriptor_removals` 回写，Core 在 actor 线程上从 hub 注销这些
+  descriptor，使随后的 `open_resource` 返回 `resource.not_found`。Host 只把这些 descriptor
+  回写或移除 ResourceManager，bytes 数据面不得回流 Core。
+- 创建路径没有 `PlanReceipt`：provider 在 create 时若回收旧行，通过
+  `ResourceProviderGateway::take_reclaimed_ref_ids(created_ref_id)` 交出被回收的
+  `ref_id`（按新资源 id 分键，避免并发 offloaded create 串单）。Host 先注册新 descriptor，
+  再 `unregister_resource` 每一条回收 id。单个 disposable payload 超过 `max_total_bytes`
+  必须结构化失败且不得插入；capability 资源不参与该尺寸上界。
 - `ExportPlan` v1 的标准 memory provider 支持 `target = "inline_utf8"`：执行时读取
   provider 资源 bytes，经 UTF-8 解码后放入 `PlanReceipt.output`；未知 target、非 UTF-8
   bytes 或 stale descriptor 必须结构化失败。

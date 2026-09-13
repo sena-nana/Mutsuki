@@ -756,6 +756,7 @@ fn resource_plan_contracts_roundtrip_json() {
         resource_ref: Some(resource),
         snapshot: Some(snapshot),
         descriptor_updates: Vec::new(),
+        descriptor_removals: Vec::new(),
         new_version: Some(2),
         output: serde_json::Value::Null,
     };
@@ -813,7 +814,27 @@ fn resource_plan_contracts_roundtrip_json() {
     );
     assert_eq!(
         serde_json::from_str::<PlanReceipt>(&serde_json::to_string(&receipt).unwrap()).unwrap(),
-        receipt
+        receipt.clone()
+    );
+
+    let mut without_removals = serde_json::to_value(&receipt).unwrap();
+    without_removals
+        .as_object_mut()
+        .unwrap()
+        .remove("descriptor_removals");
+    let decoded = serde_json::from_value::<PlanReceipt>(without_removals).unwrap();
+    assert!(decoded.descriptor_removals.is_empty());
+
+    let mut with_removals = receipt.clone();
+    with_removals.descriptor_removals = vec!["resource:dropped".into()];
+    let encoded = serde_json::to_value(&with_removals).unwrap();
+    assert_eq!(
+        encoded["descriptor_removals"],
+        serde_json::json!(["resource:dropped"])
+    );
+    assert_eq!(
+        serde_json::from_value::<PlanReceipt>(encoded).unwrap(),
+        with_removals
     );
 }
 

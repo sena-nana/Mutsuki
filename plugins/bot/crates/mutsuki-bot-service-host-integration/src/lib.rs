@@ -46,17 +46,20 @@ pub use console_bridge::{
     SandboxConsoleBridge, bot_state_db_host_service,
 };
 pub use delivery_recovery::{
+    BOT_ACTIVE_DELIVERY_RECOVERY_SOURCE_ID, BOT_INTERACTION_RECOVERY_SOURCE_ID,
     BOT_REPLY_DELIVERY_RECOVERY_SOURCE_ID, BotReplyDeliveryRecoveryEventSource,
+    BotTaskRecoveryEventSource,
 };
 pub use event_source::{
     QQBOT_GATEWAY_SOURCE_ID, QqGatewayControlHandle, QqGatewayEventSource, QqGatewayHealthHandle,
     QqGatewayHealthSnapshot, QqInboundObserveHandle,
 };
+pub use mutsuki_plugin_bot_command::BOT_COMMAND_PLUGIN_ID;
 pub use mutsuki_plugin_bot_delivery::{
-    bot_delivery_manifest, bot_reply_delivery_manifest, bot_reply_delivery_manifest_for,
-    bot_scheduled_delivery_manifest,
+    bot_delivery_manifest, bot_delivery_manifest_for, bot_reply_delivery_manifest,
+    bot_reply_delivery_manifest_for, bot_scheduled_delivery_manifest,
 };
-pub use mutsuki_plugin_bot_interaction::bot_interaction_manifest;
+pub use mutsuki_plugin_bot_interaction::{BOT_INTERACTION_PLUGIN_ID, bot_interaction_manifest};
 pub use orchestrated_flow::{
     QQ_AI_PRESENTATION_FAILURE_TEXT, bilibili_push_flow, qq_ai_orchestrated_flow,
     qq_ai_orchestrated_flow_with_source, qq_full_business_flow, qq_link_resolve_flow,

@@ -40,6 +40,8 @@ async fn empty_single_instance_is_seeded_once_and_restored() {
         "mutsuki.agent.connections",
         "mutsuki.bot.router.flow",
         "mutsuki.bot.sandbox",
+        "mutsuki.bot.command",
+        "mutsuki.plugin.bot.interaction",
     ] {
         assert!(
             first

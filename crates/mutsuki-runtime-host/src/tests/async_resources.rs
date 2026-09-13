@@ -101,6 +101,7 @@ impl AsyncResourcePlanGateway for FakeAsyncProvider {
                 resource_ref: None,
                 snapshot: None,
                 descriptor_updates: Vec::new(),
+                descriptor_removals: Vec::new(),
                 new_version: None,
                 output: json!({
                     "provider": provider_id,

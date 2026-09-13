@@ -6,6 +6,24 @@ use crate::commands::{HostRuntimeCommand, HostRuntimeReply};
 use crate::error::{resource_provider_missing, resource_provider_unsupported};
 use crate::host::HostRuntimeConfig;
 
+macro_rules! create_and_reclaim {
+    ($config:expr, $provider_id:expr, $method:ident($($arg:expr),+ $(,)?)) => {{
+        if let Some(provider) = $config.resource_providers.get($provider_id) {
+            let descriptor = provider.$method($($arg),+)?;
+            let descriptor_removals =
+                provider.take_reclaimed_ref_ids(descriptor.ref_id.as_str())?;
+            (descriptor, descriptor_removals)
+        } else if let Some(provider) = $config.async_resource_providers.get($provider_id) {
+            let descriptor = provider.$method($($arg),+)?;
+            let descriptor_removals =
+                provider.take_reclaimed_ref_ids(descriptor.ref_id.as_str())?;
+            (descriptor, descriptor_removals)
+        } else {
+            return Err(resource_provider_missing($provider_id));
+        }
+    }};
+}
+
 pub(crate) fn handle_resource_command(
     command: HostRuntimeCommand,
     core: &mut CoreRuntime,
@@ -17,16 +35,9 @@ pub(crate) fn handle_resource_command(
             schema,
             bytes,
         } => {
-            let descriptor = if let Some(provider) = config.resource_providers.get(&provider_id) {
-                provider.create_blob_resource(&schema, bytes)?
-            } else if let Some(provider) = config.async_resource_providers.get(&provider_id) {
-                provider.create_blob_resource(&schema, bytes)?
-            } else {
-                return Err(resource_provider_missing(&provider_id));
-            };
-            validate_created_provider(&provider_id, &descriptor)?;
-            let descriptor = core.register_resource_descriptor(descriptor)?;
-            Ok(HostRuntimeReply::ResourceCreated(descriptor))
+            let (descriptor, descriptor_removals) =
+                create_and_reclaim!(config, &provider_id, create_blob_resource(&schema, bytes));
+            created_resource_reply(core, &provider_id, descriptor, descriptor_removals)
         }
         HostRuntimeCommand::CreateCowStateResource {
             provider_id,
@@ -34,32 +45,24 @@ pub(crate) fn handle_resource_command(
             schema,
             bytes,
         } => {
-            let descriptor = if let Some(provider) = config.resource_providers.get(&provider_id) {
-                provider.create_cow_state_resource(&kind_id, &schema, bytes)?
-            } else if let Some(provider) = config.async_resource_providers.get(&provider_id) {
-                provider.create_cow_state_resource(&kind_id, &schema, bytes)?
-            } else {
-                return Err(resource_provider_missing(&provider_id));
-            };
-            validate_created_provider(&provider_id, &descriptor)?;
-            let descriptor = core.register_resource_descriptor(descriptor)?;
-            Ok(HostRuntimeReply::ResourceCreated(descriptor))
+            let (descriptor, descriptor_removals) = create_and_reclaim!(
+                config,
+                &provider_id,
+                create_cow_state_resource(&kind_id, &schema, bytes)
+            );
+            created_resource_reply(core, &provider_id, descriptor, descriptor_removals)
         }
         HostRuntimeCommand::CreateCapabilityResource {
             provider_id,
             kind_id,
             schema,
         } => {
-            let descriptor = if let Some(provider) = config.resource_providers.get(&provider_id) {
-                provider.create_capability_resource(&kind_id, &schema)?
-            } else if let Some(provider) = config.async_resource_providers.get(&provider_id) {
-                provider.create_capability_resource(&kind_id, &schema)?
-            } else {
-                return Err(resource_provider_missing(&provider_id));
-            };
-            validate_created_provider(&provider_id, &descriptor)?;
-            let descriptor = core.register_resource_descriptor(descriptor)?;
-            Ok(HostRuntimeReply::ResourceCreated(descriptor))
+            let (descriptor, descriptor_removals) = create_and_reclaim!(
+                config,
+                &provider_id,
+                create_capability_resource(&kind_id, &schema)
+            );
+            created_resource_reply(core, &provider_id, descriptor, descriptor_removals)
         }
         HostRuntimeCommand::CollectReadPlan(plan) => Ok(HostRuntimeReply::ResourceBytes(
             require_resource_provider(config, &plan.resource.provider_id)?
@@ -70,18 +73,15 @@ pub(crate) fn handle_resource_command(
             kind_id,
             schema,
         } => {
-            let snapshot = require_resource_provider(config, &plan.resource.provider_id)?
-                .snapshot_read_plan(&plan, &kind_id, &schema)?;
-            core.sync_plan_receipt(&mutsuki_runtime_contracts::PlanReceipt {
-                plan_id: format!("snapshot-receipt:{}", snapshot.snapshot_ref.ref_id),
-                status: "snapshotted".into(),
-                resource_ref: None,
-                snapshot: Some(snapshot.clone()),
-                descriptor_updates: Vec::new(),
-                new_version: Some(snapshot.snapshot_ref.version),
-                output: serde_json::Value::Null,
-            })?;
-            Ok(HostRuntimeReply::Snapshot(snapshot))
+            let provider = require_resource_provider(config, &plan.resource.provider_id)?;
+            let snapshot = provider.snapshot_read_plan(&plan, &kind_id, &schema)?;
+            let descriptor_removals =
+                provider.take_reclaimed_ref_ids(snapshot.snapshot_ref.ref_id.as_str())?;
+            core.sync_plan_receipt(&snapshot_receipt(&snapshot, descriptor_removals))?;
+            Ok(HostRuntimeReply::Snapshot {
+                snapshot,
+                descriptor_removals: Vec::new(),
+            })
         }
         HostRuntimeCommand::OpenStreamPlan(plan) => Ok(HostRuntimeReply::StreamPlan(
             require_resource_provider(config, &plan.resource.provider_id)?
@@ -185,28 +185,28 @@ fn execute_offloaded(
     command: HostRuntimeCommand,
 ) -> RuntimeResult<HostRuntimeReply> {
     match command {
-        HostRuntimeCommand::CreateBlobResource { schema, bytes, .. } => {
-            let descriptor = provider.create_blob_resource(&schema, bytes)?;
-            validate_created_provider(provider_id, &descriptor)?;
-            Ok(HostRuntimeReply::ResourceCreated(descriptor))
-        }
+        HostRuntimeCommand::CreateBlobResource { schema, bytes, .. } => offloaded_created_reply(
+            provider.as_ref(),
+            provider_id,
+            provider.create_blob_resource(&schema, bytes)?,
+        ),
         HostRuntimeCommand::CreateCowStateResource {
             kind_id,
             schema,
             bytes,
             ..
-        } => {
-            let descriptor = provider.create_cow_state_resource(&kind_id, &schema, bytes)?;
-            validate_created_provider(provider_id, &descriptor)?;
-            Ok(HostRuntimeReply::ResourceCreated(descriptor))
-        }
+        } => offloaded_created_reply(
+            provider.as_ref(),
+            provider_id,
+            provider.create_cow_state_resource(&kind_id, &schema, bytes)?,
+        ),
         HostRuntimeCommand::CreateCapabilityResource {
             kind_id, schema, ..
-        } => {
-            let descriptor = provider.create_capability_resource(&kind_id, &schema)?;
-            validate_created_provider(provider_id, &descriptor)?;
-            Ok(HostRuntimeReply::ResourceCreated(descriptor))
-        }
+        } => offloaded_created_reply(
+            provider.as_ref(),
+            provider_id,
+            provider.create_capability_resource(&kind_id, &schema)?,
+        ),
         HostRuntimeCommand::CollectReadPlan(plan) => Ok(HostRuntimeReply::ResourceBytes(
             provider.collect_read_plan(&plan)?,
         )),
@@ -214,9 +214,15 @@ fn execute_offloaded(
             plan,
             kind_id,
             schema,
-        } => Ok(HostRuntimeReply::Snapshot(
-            provider.snapshot_read_plan(&plan, &kind_id, &schema)?,
-        )),
+        } => {
+            let snapshot = provider.snapshot_read_plan(&plan, &kind_id, &schema)?;
+            let descriptor_removals =
+                provider.take_reclaimed_ref_ids(snapshot.snapshot_ref.ref_id.as_str())?;
+            Ok(HostRuntimeReply::Snapshot {
+                snapshot,
+                descriptor_removals,
+            })
+        }
         HostRuntimeCommand::OpenStreamPlan(plan) => Ok(HostRuntimeReply::StreamPlan(
             provider.open_stream_plan(&plan)?,
         )),
@@ -259,23 +265,16 @@ pub(crate) fn sync_async_resource_reply(
     match reply {
         HostRuntimeReply::PlanReceipt(receipt) => core.sync_plan_receipt(receipt).map(|_| ()),
         HostRuntimeReply::PlanReceipts(receipts) => core.sync_plan_receipts(receipts).map(|_| ()),
-        HostRuntimeReply::Snapshot(snapshot) => core
-            .sync_plan_receipt(&mutsuki_runtime_contracts::PlanReceipt {
-                plan_id: format!("snapshot-receipt:{}", snapshot.snapshot_ref.ref_id),
-                status: "snapshotted".into(),
-                resource_ref: None,
-                snapshot: Some(snapshot.clone()),
-                descriptor_updates: Vec::new(),
-                new_version: Some(snapshot.snapshot_ref.version),
-                output: serde_json::Value::Null,
-            })
+        HostRuntimeReply::Snapshot {
+            snapshot,
+            descriptor_removals,
+        } => core
+            .sync_plan_receipt(&snapshot_receipt(snapshot, descriptor_removals.clone()))
             .map(|_| ()),
-        // An offloaded create built the descriptor on the executor; registering
-        // it is a Core mutation, so it lands here on the actor thread. The
-        // registry returns the descriptor unchanged, which is what the caller
-        // already has in this reply.
-        HostRuntimeReply::ResourceCreated(descriptor) => core
-            .register_resource_descriptor(descriptor.clone())
+        HostRuntimeReply::ResourceCreated {
+            descriptor,
+            descriptor_removals,
+        } => register_created_resource(core, descriptor.clone(), descriptor_removals.clone())
             .map(|_| ()),
         _ => Ok(()),
     }
@@ -323,10 +322,13 @@ pub(crate) fn prepare_async_resource_command(
             Ok((
                 provider_id,
                 Box::pin(async move {
-                    provider
-                        .snapshot_read_plan(*plan, kind_id, schema)
-                        .await
-                        .map(HostRuntimeReply::Snapshot)
+                    let snapshot = provider.snapshot_read_plan(*plan, kind_id, schema).await?;
+                    let descriptor_removals =
+                        provider.take_reclaimed_ref_ids(snapshot.snapshot_ref.ref_id.as_str())?;
+                    Ok(HostRuntimeReply::Snapshot {
+                        snapshot,
+                        descriptor_removals,
+                    })
                 }),
                 payload_bytes,
             ))
@@ -447,6 +449,61 @@ fn require_async_resource_provider(
         .get(provider_id)
         .cloned()
         .ok_or_else(|| resource_provider_missing(provider_id))
+}
+
+fn created_resource_reply(
+    core: &mut CoreRuntime,
+    provider_id: &str,
+    descriptor: ResourceRef,
+    descriptor_removals: Vec<String>,
+) -> RuntimeResult<HostRuntimeReply> {
+    validate_created_provider(provider_id, &descriptor)?;
+    let descriptor = register_created_resource(core, descriptor, descriptor_removals)?;
+    Ok(HostRuntimeReply::ResourceCreated {
+        descriptor,
+        descriptor_removals: Vec::new(),
+    })
+}
+
+fn offloaded_created_reply(
+    provider: &dyn ResourceProviderGateway,
+    provider_id: &str,
+    descriptor: ResourceRef,
+) -> RuntimeResult<HostRuntimeReply> {
+    validate_created_provider(provider_id, &descriptor)?;
+    let descriptor_removals = provider.take_reclaimed_ref_ids(descriptor.ref_id.as_str())?;
+    Ok(HostRuntimeReply::ResourceCreated {
+        descriptor,
+        descriptor_removals,
+    })
+}
+
+fn register_created_resource(
+    core: &mut CoreRuntime,
+    descriptor: ResourceRef,
+    descriptor_removals: Vec<String>,
+) -> RuntimeResult<ResourceRef> {
+    let descriptor = core.register_resource_descriptor(descriptor)?;
+    for ref_id in descriptor_removals {
+        core.unregister_resource(ref_id)?;
+    }
+    Ok(descriptor)
+}
+
+fn snapshot_receipt(
+    snapshot: &mutsuki_runtime_contracts::SnapshotDescriptor,
+    descriptor_removals: Vec<String>,
+) -> mutsuki_runtime_contracts::PlanReceipt {
+    mutsuki_runtime_contracts::PlanReceipt {
+        plan_id: format!("snapshot-receipt:{}", snapshot.snapshot_ref.ref_id),
+        status: "snapshotted".into(),
+        resource_ref: None,
+        snapshot: Some(snapshot.clone()),
+        descriptor_updates: Vec::new(),
+        descriptor_removals,
+        new_version: Some(snapshot.snapshot_ref.version),
+        output: serde_json::Value::Null,
+    }
 }
 
 fn validate_created_provider(provider_id: &str, descriptor: &ResourceRef) -> RuntimeResult<()> {

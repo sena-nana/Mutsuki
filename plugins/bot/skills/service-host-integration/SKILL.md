@@ -11,6 +11,14 @@ description: Change Bot plugin bundles, manifests, native runner factories, heal
 - Keep ServiceHost dependencies in the dedicated integration crate, never in platform adapter crates.
 - Ensure declared capabilities and deployment match installed implementations.
 - Return unavailable on missing upstream capability instead of registering placeholder health or runners.
+- Open `data/bot/state.sqlite3` once per runtime and share the `BotStateDbRepository` actor
+  across Sandbox, QQ, Agent and interaction factories. Do not call `BotStateDbRepository::open`
+  again on the same path.
+- Register Host recovery EventSources for reply delivery `ResumeDue`, active delivery
+  `ResumeDue`, and interaction `Recover`. Completion paths drain persisted work; they do not
+  originate new business behavior. Active-delivery runner and recovery source share the QQ
+  adapter plugin id so the product load plan keeps them; do not register
+  `mutsuki.plugin.bot.delivery` as a separate configured plugin.
 - Business EventSources submit through `BotSubmissionGate` (their own poll/ingest protocols only,
   never platform business protocols), business manifests pass
   `BotSubmissionGate::ensure_manifest_business_surface` before registration, and the Flow router
