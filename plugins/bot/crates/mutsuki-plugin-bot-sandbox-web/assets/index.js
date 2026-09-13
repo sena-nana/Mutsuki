@@ -61,13 +61,18 @@ img.sandbox-avatar { display: block; object-fit: cover; object-position: center;
 .sandbox-session-time { font-size: 10px; white-space: nowrap; min-width: max-content; justify-self: end; align-self: start; padding-top: 1px; }
 .sandbox-messages { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; background: var(--bg-subtle, transparent); }
 .sandbox-row { display: flex; gap: 8px; max-width: 78%; align-items: flex-end; }
-.sandbox-row--user { align-self: flex-start; }
-.sandbox-row--bot { align-self: flex-end; flex-direction: row-reverse; }
+.sandbox-row--in { align-self: flex-start; }
+.sandbox-row--out { align-self: flex-end; flex-direction: row-reverse; }
 .sandbox-row--system { align-self: center; max-width: 90%; }
 .sandbox-row-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .sandbox-bubble { position: relative; border-radius: 12px; padding: 8px 12px; background: var(--bg-elev, transparent); min-width: 0; }
-.sandbox-row--bot .sandbox-bubble { background: var(--accent-soft, var(--bg-hover, transparent)); }
+.sandbox-row--out .sandbox-bubble { background: var(--accent-soft, var(--bg-hover, transparent)); }
 .sandbox-row--system .sandbox-bubble { background: transparent; }
+.sandbox-identity { padding: 12px 10px; display: flex; flex-direction: column; gap: 10px; overflow: auto; }
+.sandbox-identity-save { align-self: flex-end; }
+.sandbox-member.is-bot { cursor: default; }
+.sandbox-member.is-bot:hover { background: transparent; }
+.sandbox-member-note { margin: 1px 0 0; font-size: 11px; }
 .sandbox-client .sandbox-reply { position: absolute; top: 6px; right: 6px; opacity: 0; pointer-events: none; }
 .sandbox-bubble:hover .sandbox-reply, .sandbox-bubble:focus-within .sandbox-reply { opacity: 1; pointer-events: auto; }
 .sandbox-quote { margin: 0 0 6px; padding: 4px 8px; border-left: 3px solid var(--accent, #7aa2ff); opacity: 0.8; font-size: 12px; }
@@ -193,6 +198,15 @@ function liliaInput(type = "text") {
   return input;
 }
 
+function labeledField(label, value) {
+  const input = liliaInput("text");
+  input.placeholder = label;
+  input.value = value || "";
+  const field = element("label", "sandbox-dialog-field", label);
+  field.append(input);
+  return { field, input };
+}
+
 function liliaTextarea() {
   return element("textarea", "ui-textarea");
 }
@@ -290,13 +304,40 @@ function memberRoster(conversation, snapshot, simulate) {
   if (!simulate) return users;
   const bot = botProfile(snapshot);
   if (!users.some((user) => user.user_id === bot.user_id)) {
-    users.unshift({
+    users.push({
       user_id: bot.user_id,
       display_name: bot.display_name || "机器人",
       avatar_url: bot.avatar_url,
     });
   }
   return users;
+}
+
+function isPrivateConversation(conversation) {
+  return conversation?.kind === "private";
+}
+
+function resolveIdentity(conversation, snapshot, identityId) {
+  const users = conversation?.users || [];
+  if (!users.length) return "";
+  if (isPrivateConversation(conversation)) return users[0].user_id;
+  const botId = botProfile(snapshot).user_id;
+  if (identityId && identityId !== botId && users.some((user) => user.user_id === identityId)) {
+    return identityId;
+  }
+  return users[0].user_id;
+}
+
+function rowLayout(message, identityId, live) {
+  if (message.role === "system") return "system";
+  if (live) return message.role === "bot" ? "out" : "in";
+  return message.sender_id === identityId ? "out" : "in";
+}
+
+function canQuoteMessage(message, identityId, live) {
+  if (message.role === "system") return false;
+  if (live) return message.role === "user";
+  return message.sender_id !== identityId;
 }
 
 function groupConsecutiveMessages(messages) {
@@ -484,7 +525,7 @@ function renderPlatform(body, segment, rpc) {
 
 /** Mount the QQ sandbox conversation console. */
 export function mountSandboxPanel(host, rpc, events) {
-  const state = { snapshot: null, messages: [], selectedId: null, draft: "", draftSegments: [], speakerId: "", query: "", quote: null, dialog: "", menu: null, stickerOpen: false, stickers: [], markdown: false };
+  const state = { snapshot: null, messages: [], selectedId: null, draft: "", draftSegments: [], identityId: "", identityEdit: null, query: "", quote: null, dialog: "", menu: null, stickerOpen: false, stickers: [], markdown: false };
   host.innerHTML = "";
   const style = document.createElement("style");
   style.textContent = STYLE;
@@ -507,6 +548,15 @@ export function mountSandboxPanel(host, rpc, events) {
     confirmed: confirm,
     request: { operation_id: crypto.randomUUID(), expected_revision: state.snapshot?.revision ?? 0, action },
   });
+  const dropIllegalQuote = () => {
+    const quote = state.quote;
+    if (!quote) return;
+    if (quote.conversation_id !== state.selectedId
+      || !state.messages.some((item) => item.message_id === quote.message_id)
+      || !canQuoteMessage(quote, state.identityId, mode() === "live")) {
+      state.quote = null;
+    }
+  };
 
   function renderSessions(pane) {
     const tabs = element("div", "segmented sandbox-mode-tabs");
@@ -579,7 +629,9 @@ export function mountSandboxPanel(host, rpc, events) {
     else if (!state.messages.length) messages.append(element("p", "muted sandbox-empty", "暂无消息"));
     else groupConsecutiveMessages(state.messages).forEach((group) => {
       const first = group[0];
-      const row = element("div", `sandbox-row sandbox-row--${first.role}`);
+      const live = mode() === "live";
+      const layout = rowLayout(first, state.identityId, live);
+      const row = element("div", `sandbox-row sandbox-row--${layout}`);
       const sender = first.role === "bot" ? botProfile(state.snapshot) : userById(conversation.users, first.sender_id);
       const name = sender?.display_name || first.sender_name;
       if (first.role !== "system") row.append(avatar(name, "sandbox-avatar sandbox-avatar--sm", sender?.avatar_url));
@@ -590,7 +642,7 @@ export function mountSandboxPanel(host, rpc, events) {
           bubble.append(element("p", "muted", `${name} · ${formatTime(message.time_ms)}`));
         }
         bubble.append(renderSegments(message, state.messages, rpc));
-        if (message.role === "user") {
+        if (canQuoteMessage(message, state.identityId, live)) {
           const reply = iconButton("回复", ICONS.reply);
           reply.classList.add("sandbox-reply");
           reply.onclick = (event) => {
@@ -662,11 +714,15 @@ export function mountSandboxPanel(host, rpc, events) {
     const field = element("div", "sandbox-compose-field");
     const input = state.markdown ? liliaTextarea() : liliaInput("text");
     const canActive = conversation.active_message !== false;
+    const identity = userById(conversation.users, state.identityId);
+    const identityName = identity?.display_name || identity?.user_id || "";
     input.placeholder = state.markdown
       ? "输入 Markdown，Ctrl/Cmd+Enter 发送"
       : mode() === "live"
       ? (canActive ? "可直接发送主动消息，或悬停消息后回复" : "请先悬停用户消息并点击回复")
-      : "输入消息，Enter 发送";
+      : (!isPrivateConversation(conversation) && identityName
+        ? `以 ${identityName} 的身份发给机器人，Enter 发送`
+        : "发给机器人，Enter 发送");
     input.value = state.draft;
     const refreshPicker = () => {
       const match = /@([^\s@]*)$/.exec(state.draft);
@@ -691,32 +747,25 @@ export function mountSandboxPanel(host, rpc, events) {
     const submit = async () => {
       const payload = buildComposePayload();
       if (!payload) return;
-      if (mode() === "live" && !state.quote?.message_id && conversation.active_message === false) {
+      const live = mode() === "live";
+      if (!live) {
+        state.identityId = resolveIdentity(conversation, state.snapshot, state.identityId);
+        if (!state.identityId) { showStatus("请先添加用户"); return; }
+      }
+      dropIllegalQuote();
+      if (live && !state.quote?.message_id && conversation.active_message === false) {
         showStatus("当前会话没有主动消息权限，请先悬停用户消息并点击回复");
         return;
       }
       try {
-        if (mode() === "live") {
-          await write({
-            action: "send_as_bot",
-            conversation_id: conversation.conversation_id,
-            text: payload.text,
-            segments: payload.segments,
-            reply_to: state.quote?.message_id || null,
-          }, true);
-        } else {
-          const speaker = state.speakerId || conversation.users?.[0]?.user_id;
-          if (!speaker) { showStatus("请先添加用户"); return; }
-          const asBot = speaker === botProfile(state.snapshot).user_id;
-          await write({
-            action: asBot ? "ingest_as_bot" : "ingest_as_user",
-            conversation_id: conversation.conversation_id,
-            ...(asBot ? {} : { user_id: speaker }),
-            text: payload.text,
-            segments: payload.segments,
-            reply_to: state.quote?.message_id || null,
-          });
-        }
+        await write({
+          action: live ? "send_as_bot" : "ingest_as_user",
+          conversation_id: conversation.conversation_id,
+          ...(live ? {} : { user_id: state.identityId }),
+          text: payload.text,
+          segments: payload.segments,
+          reply_to: state.quote?.message_id || null,
+        }, live);
         state.draft = "";
         state.draftSegments = [];
         state.quote = null;
@@ -981,7 +1030,7 @@ export function mountSandboxPanel(host, rpc, events) {
           const written = await write({ action: "import_live_users", user_ids: [user.user_id] });
           if (state.snapshot) state.snapshot.revision = written.revision;
           if (!written.result?.imported?.length) { showStatus("该成员已在模拟花名册中"); return; }
-          state.speakerId = user.user_id;
+          state.identityId = user.user_id;
           await write({ action: "set_mode", mode: "simulate" });
           showStatus("已导入为模拟用户");
           await refresh();
@@ -1018,40 +1067,20 @@ export function mountSandboxPanel(host, rpc, events) {
       if (!user) { closeDialog(); return; }
       card.setAttribute("aria-label", "编辑成员");
       head.append(element("h2", "", "编辑成员"));
-      const openid = liliaInput("text");
-      openid.placeholder = "OpenID";
-      openid.value = user.user_id;
-      const nickname = liliaInput("text");
-      nickname.placeholder = "昵称";
-      nickname.value = user.display_name || "";
-      const openidField = element("label", "sandbox-dialog-field", "OpenID");
-      const nicknameField = element("label", "sandbox-dialog-field", "昵称");
-      openidField.append(openid);
-      nicknameField.append(nickname);
-      body.append(openidField, nicknameField);
+      const openid = labeledField("OpenID", user.user_id);
+      const nickname = labeledField("昵称", user.display_name);
+      body.append(openid.field, nickname.field);
       const save = button("保存");
       save.onclick = async () => {
-        const newId = openid.value.trim();
-        const wasPrivate = current()?.conversation?.user_id === user.user_id;
-        try {
-          await write({ action: "update_user", user_id: user.user_id, new_user_id: newId, display_name: nickname.value.trim() });
-          if (state.speakerId === user.user_id) state.speakerId = newId;
-          closeDialog();
-          await refresh();
-          if (wasPrivate) {
-            const next = (state.snapshot?.conversations || []).find((item) => item.conversation?.user_id === newId);
-            if (next) { state.selectedId = next.conversation_id; await loadConversation(); }
-          }
-        } catch (error) {
-          reportError(error);
-        }
+        try { await saveIdentity(user, openid.input.value, nickname.input.value); }
+        catch (error) { reportError(error); }
       };
       foot.append(cancel, save);
       card.append(head, body, foot);
       overlay.append(card);
       root.append(overlay);
-      openid.focus();
-      openid.select();
+      openid.input.focus();
+      openid.input.select();
       return;
     }
     const liveUsers = state.snapshot?.live_users || [];
@@ -1096,10 +1125,76 @@ export function mountSandboxPanel(host, rpc, events) {
     root.append(overlay);
   }
 
+  function syncIdentityDraft(user) {
+    if (!user) {
+      state.identityEdit = null;
+      return;
+    }
+    if (state.identityEdit?.userId !== user.user_id) {
+      state.identityEdit = {
+        userId: user.user_id,
+        openid: user.user_id,
+        nickname: user.display_name || "",
+      };
+    }
+  }
+
+  async function saveIdentity(user, openid, nickname) {
+    const newId = openid.trim();
+    const wasPrivate = current()?.conversation?.user_id === user.user_id;
+    await write({
+      action: "update_user",
+      user_id: user.user_id,
+      new_user_id: newId,
+      display_name: nickname.trim(),
+    });
+    if (state.identityId === user.user_id) state.identityId = newId;
+    state.identityEdit = { userId: newId, openid: newId, nickname: nickname.trim() };
+    closeDialog();
+    await refresh();
+    if (wasPrivate) {
+      const next = (state.snapshot?.conversations || []).find((item) => item.conversation?.user_id === newId);
+      if (next) { state.selectedId = next.conversation_id; await loadConversation(); }
+    }
+  }
+
+  function renderIdentitySettings(pane, conversation) {
+    const head = element("div", "sandbox-pane-head");
+    head.append(element("h2", "", "我的身份"));
+    pane.append(head);
+    const user = conversation?.users?.[0];
+    if (!user) {
+      pane.append(element("p", "muted sandbox-empty", "请先添加用户"));
+      return;
+    }
+    syncIdentityDraft(user);
+    const form = element("div", "sandbox-identity");
+    const openid = labeledField("OpenID", state.identityEdit.openid);
+    const nickname = labeledField("昵称", state.identityEdit.nickname);
+    openid.input.oninput = () => { state.identityEdit.openid = openid.input.value; };
+    nickname.input.oninput = () => { state.identityEdit.nickname = nickname.input.value; };
+    const save = button("保存");
+    save.classList.add("sandbox-identity-save");
+    save.onclick = async () => {
+      try {
+        await saveIdentity(user, openid.input.value, nickname.input.value);
+        showStatus("已更新身份");
+      } catch (error) {
+        reportError(error);
+      }
+    };
+    form.append(openid.field, nickname.field, save);
+    pane.append(form);
+  }
+
   function renderMembers(pane, conversation) {
     if (mode() !== "simulate") closeDialog();
+    if (mode() === "simulate" && isPrivateConversation(conversation)) {
+      renderIdentitySettings(pane, conversation);
+      return;
+    }
     const head = element("div", "sandbox-pane-head");
-    head.append(element("h2", "", "成员"));
+    head.append(element("h2", "", mode() === "simulate" ? "我的身份" : "成员"));
     if (mode() === "simulate") {
       const importMembers = button("导入");
       importMembers.classList.add("sandbox-clear");
@@ -1112,35 +1207,52 @@ export function mountSandboxPanel(host, rpc, events) {
     if (conversation && !roster.length) list.append(element("p", "muted sandbox-empty", "暂无成员"));
     roster.forEach((user) => {
       const item = element("div", "sandbox-member");
-      item.setAttribute("role", "button");
-      item.tabIndex = 0;
       const isBot = user.user_id === botProfile(state.snapshot).user_id;
-      if (mode() === "simulate" && user.user_id === state.speakerId) item.classList.add("is-active");
+      const selectable = mode() === "simulate" && !isBot;
+      if (selectable) {
+        item.setAttribute("role", "button");
+        item.tabIndex = 0;
+      }
+      if (isBot) item.classList.add("is-bot");
+      if (selectable && user.user_id === state.identityId) item.classList.add("is-active");
       const meta = element("div", "");
       meta.append(element("span", "sandbox-member-name", user.display_name || user.user_id));
+      if (mode() === "simulate" && isBot) {
+        meta.append(element("p", "muted sandbox-member-note", "机器人"));
+      }
       if (!isBot) item.oncontextmenu = (event) => openMemberMenu(event, user);
       let actions = null;
-      if (mode() === "simulate") {
-        if (!isBot) {
-          actions = element("div", "sandbox-member-actions");
-          const edit = button("编辑");
-          edit.onclick = (event) => { event.stopPropagation(); openDialog(user.user_id); };
-          const remove = button("移除");
-          remove.onclick = async (event) => {
-            event.stopPropagation();
-            try {
-              await write({ action: "remove_user", user_id: user.user_id });
-              if (state.speakerId === user.user_id) state.speakerId = "";
-              if (state.dialog === user.user_id) closeDialog();
-              await refresh();
-            } catch (error) {
-              reportError(error);
-            }
-          };
-          actions.append(edit, remove);
-        }
-        item.onclick = () => { state.speakerId = user.user_id; render(); };
-        item.onkeydown = (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); state.speakerId = user.user_id; render(); } };
+      if (mode() === "simulate" && !isBot) {
+        actions = element("div", "sandbox-member-actions");
+        const edit = button("编辑");
+        edit.onclick = (event) => { event.stopPropagation(); openDialog(user.user_id); };
+        const remove = button("移除");
+        remove.onclick = async (event) => {
+          event.stopPropagation();
+          try {
+            await write({ action: "remove_user", user_id: user.user_id });
+            if (state.identityId === user.user_id) state.identityId = "";
+            if (state.dialog === user.user_id) closeDialog();
+            await refresh();
+          } catch (error) {
+            reportError(error);
+          }
+        };
+        actions.append(edit, remove);
+      }
+      if (selectable) {
+        const selectIdentity = () => {
+          state.identityId = user.user_id;
+          dropIllegalQuote();
+          render();
+        };
+        item.onclick = selectIdentity;
+        item.onkeydown = (event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            selectIdentity();
+          }
+        };
       }
       item.append(avatar(user.display_name || user.user_id, "sandbox-avatar sandbox-avatar--sm", user.avatar_url), meta);
       if (actions) item.append(actions);
@@ -1163,13 +1275,16 @@ export function mountSandboxPanel(host, rpc, events) {
   }
 
   async function loadConversation() {
-    if (!state.selectedId) { state.messages = []; render(); return; }
+    if (!state.selectedId) { state.messages = []; state.quote = null; render(); return; }
     try {
       state.messages = await rpc.read("sandbox", "messages", { conversation_id: state.selectedId }) || [];
       const conversation = current();
-      if (mode() === "simulate" && conversation?.users?.length && !conversation.users.some((user) => user.user_id === state.speakerId) && state.speakerId !== botProfile(state.snapshot).user_id) {
-        state.speakerId = conversation.users[0].user_id;
+      const live = mode() === "live";
+      if (!live) {
+        state.identityId = resolveIdentity(conversation, state.snapshot, state.identityId);
+        syncIdentityDraft(isPrivateConversation(conversation) ? conversation?.users?.[0] : null);
       }
+      dropIllegalQuote();
       render();
     } catch (error) {
       reportError(error);

@@ -94,7 +94,8 @@ Console 的库依赖。
 - `mutsuki-plugin-bot-agent-web`: authenticated Agent connection management only; event matching
   is edited in the Flow page.
 - `mutsuki-bot-sandbox`: QQ conversation sandbox with `BotStateDb` history. Simulate mode is a
-  Koishi-style closed loop through Bot Flow; live mode projects real inbound events.
+  Koishi-style closed loop through Bot Flow: the operator picks a virtual-user identity and
+  sends into Flow; live mode projects real inbound events and sends as the bot.
   Conversations, users and messages hydrate from `bot_sandbox_*` tables on startup;
   other plugins query the same tables through `BotStateDbRepository`.
 - `mutsuki-plugin-bot-sandbox-web`: WebExtension for the shared simulate/live Stapxs-style QQ conversation client.
