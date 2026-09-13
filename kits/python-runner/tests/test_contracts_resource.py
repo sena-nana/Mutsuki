@@ -264,3 +264,28 @@ def test_resource_plan_contracts_roundtrip() -> None:
             output=None,
         ),
     )
+    decoded = PlanReceipt.from_json_dict(
+        {
+            "plan_id": "write-plan:1",
+            "status": "committed",
+            "resource_ref": None,
+            "snapshot": None,
+            "descriptor_updates": [],
+            "new_version": None,
+            "output": None,
+        }
+    )
+    assert decoded.descriptor_removals == ()
+    assert_json_roundtrip(
+        PlanReceipt,
+        PlanReceipt(
+            plan_id="command:delete",
+            status="deleted",
+            resource_ref=resource,
+            snapshot=None,
+            descriptor_updates=(),
+            new_version=None,
+            output={"deleted_ref_id": "resource:dropped"},
+            descriptor_removals=("resource:dropped",),
+        ),
+    )

@@ -113,7 +113,14 @@ Domain plugins and durable services:
   nodes.
 - `mutsuki-bot-state-db`: durable session, delivery, interaction, persona, conversation-context
   and sandbox history repository; implements store traits from library crates rather than
-  depending on plugin packages. Historical Flow tables are neither read nor destructively removed.
+  depending on plugin packages. Production assembly opens one actor per `data/bot/state.sqlite3`
+  and shares that `Arc` across Sandbox, QQ, Agent, and interaction factories. The actor uses WAL
+  with `busy_timeout` 5s and `synchronous=NORMAL`; last transactions may be lost on power failure
+  by design, and two processes must not open the same `state.sqlite3`. Historical Flow
+  tables are neither read nor destructively removed. Unused leftover
+  `bot_conversation_policy*` tables are not a policy store and are dropped; conversation
+  execution policy lives in Flow plus `BotAgentConfig`
+  (`ConversationService::resolve_execution` uses the in-memory product default).
   Sandbox live/simulate conversations, roster users, messages, content-addressed
   image assets, custom stickers and official face IDs persist in `bot_sandbox_*`
   tables. Other plugins query those tables through
@@ -170,7 +177,11 @@ WebExtensions and product-facing assembly:
 - `mutsuki-bot-web-console`: Bot-package WebHost assembly helper that embeds the admin
   WebExtensions. Products may opt in; this crate is not a Host and not a product entry.
 - `mutsuki-bot-service-host-integration`: explicit ServiceHost assembly (EventSource, health,
-  catalog factories, sandbox outbound intercept). It may ship first-party default Flow graphs
+  catalog factories, sandbox outbound intercept). Command and interaction are selectable
+  workspace factories against the shared `BotStateDb` actor; conversation-context, reply and
+  persona stay Agent-owned. Reply recovery is owned by the Agent plugin id; active-delivery
+  `ResumeDue` is merged into the QQ adapter plugin so the product load plan keeps the runner.
+  Interaction recovery is owned by the workspace interaction factory. It may ship first-party default Flow graphs
   (`qq_ai_orchestrated_flow`, `qq_link_resolve_flow`, `bilibili_push_flow`, merged into
   `qq_full_business_flow` with example `configs/flow-full.example.json`); user graphs live in
   ConfigService, and first-party products seed `qq_full_business_flow` into stores without a
@@ -183,6 +194,11 @@ schema ownership, not a hardcoded backend substitute path. `mutsuki-bot-runtime-
 domain-topology bench with reference runners; it is not a production entry.
 
 ## Deferred Plugins
+
+STT/TTS (`mutsuki-plugin-bot-media`) is not in the first-party catalog. `BotAgentConfig` has
+speech flags, but the bridge needs an injected `MediaService`; AgentKit does not publish a
+production ServiceHost `MediaService`. The QQ AI test bundle injects a test media service.
+Do not register an unavailable production fallback.
 
 Session and permission plugins are intentionally not part of the MVP workspace until a concrete
 behavior path needs them. Their protocol IDs stay reserved constants without runners. Rate-limit

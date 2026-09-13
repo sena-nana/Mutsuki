@@ -99,7 +99,7 @@ Console 的库依赖。
   other plugins query the same tables through `BotStateDbRepository`.
 - `mutsuki-plugin-bot-sandbox-web`: WebExtension for the shared simulate/live Stapxs-style QQ conversation client.
 - `mutsuki-plugin-bot-adapter-qqbot`: QQBot platform adapter for gateway events and message/media OpenAPI tasks.
-- `mutsuki-bot-service-host-integration`: configured native factories, QQ EventSource bundle, and sandbox outbound intercept.
+- `mutsuki-bot-service-host-integration`: configured native factories, QQ EventSource bundle, sandbox outbound intercept, shared `BotStateDb` actor, and reply/active-delivery/interaction recovery sources.
 - `mutsuki-bot-testkit`: reusable fake QQ HTTP/WebSocket boundary for downstream product E2E.
 - `examples/bot-echo`: platform-neutral example business plugin that depends only on Bot protocols and SDK helpers.
 

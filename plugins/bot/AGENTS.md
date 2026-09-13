@@ -57,7 +57,7 @@ Adapter/Gateway。它不拥有 Core 调度、Host 生命周期、Agent 能力或
 | `mutsuki-bot-conversation` / `mutsuki-bot-persona` | 会话与 persona 的 store trait；plugin 包只做 Runner |
 | `mutsuki-bot-interaction` / `mutsuki-bot-delivery` | waiter / delivery 服务与 repository；`DeliveryGateway` 用 `BotTarget` |
 | `mutsuki-plugin-bot-interaction` / `mutsuki-plugin-bot-delivery` | 对应 PluginBuilder manifest 与节点 catalog |
-| `mutsuki-bot-state-db` | SQLite 实现上述库面 store |
+| `mutsuki-bot-state-db` | SQLite 实现上述库面 store；产品装配对同一 `state.sqlite3` 只打开一个 actor |
 | `mutsuki-bot-service-host-integration` | 显式 Host 装配面；禁止再往里加业务 Runner |
 | `mutsuki-bot-web-console` | Bot 包提供的 WebHost 装配 helper，产品可选启用 |
 

@@ -9,6 +9,7 @@
     clippy::unnecessary_wraps
 )]
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -26,7 +27,7 @@ use mutsuki_runtime_sdk::{
     LoadedPlugin, PluginBuilder, ResourcePlanGateway, ResourceProviderExecution,
     ResourceProviderGateway,
 };
-use rusqlite::Connection;
+use rusqlite::{Connection, TransactionBehavior};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -103,6 +104,8 @@ impl SqliteResourceConfig {
 #[derive(Debug)]
 struct SqliteResourceState {
     connection: Connection,
+    /// Ids reclaimed during create, keyed by the new resource's `ref_id`.
+    reclaimed_by_create: HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug)]
@@ -165,7 +168,10 @@ impl SqliteResourceProvider {
         migrate_schema(&connection)
             .map_err(|error| storage_failure("resource.sqlite.open", &error.to_string()))?;
         Ok(Self {
-            state: Mutex::new(SqliteResourceState { connection }),
+            state: Mutex::new(SqliteResourceState {
+                connection,
+                reclaimed_by_create: HashMap::new(),
+            }),
             journal_mode,
             retention,
         })
@@ -192,19 +198,36 @@ impl SqliteResourceProvider {
         bytes: Vec<u8>,
     ) -> RuntimeResult<ResourceRef> {
         const ROUTE: &str = "resource.sqlite.create";
-        let state = self.lock_state(ROUTE)?;
-        // Reclaiming on create keeps the bound enforced without a timer thread:
-        // the database only grows here, so this is the only place it can pass
-        // its limits.
-        if !self.retention.is_empty() {
-            sweep_retention(&state.connection, self.retention, ROUTE)?;
+        let mut state = self.lock_state(ROUTE)?;
+        let incoming_len = match semantic {
+            ResourceSemantic::CapabilityResource => 0,
+            _ => bytes.len() as u64,
+        };
+        if let Some(max_total_bytes) = self.retention.max_total_bytes
+            && incoming_len > max_total_bytes
+        {
+            return Err(payload_exceeds_retention(
+                ROUTE,
+                incoming_len,
+                max_total_bytes,
+            ));
         }
+        // Sweep and insert share one transaction so a failed insert does not
+        // leave hub descriptors for dropped rows.
+        let transaction = state
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| storage_failure(ROUTE, &error.to_string()))?;
+        let reclaimed = if self.retention.is_empty() {
+            Vec::new()
+        } else {
+            sweep_retention(&transaction, self.retention, incoming_len, ROUTE)?
+        };
         let created_at = stored_i64(now_unix_ms(ROUTE)?, ROUTE, "created_at_unix_ms")?;
-        let slot = allocate_slot(&state.connection)
+        let slot = allocate_slot(&transaction)
             .map_err(|error| storage_failure(ROUTE, &error.to_string()))?;
         let ref_id = RefId::from(format!("sqlite-resource-{slot}"));
-        state
-            .connection
+        transaction
             .prepare_cached(
                 "INSERT INTO resources
                      (ref_id, slot, kind_id, semantic, schema, version, bytes, created_at_unix_ms)
@@ -222,6 +245,16 @@ impl SqliteResourceProvider {
                 ])
             })
             .map_err(|error| storage_failure(ROUTE, &error.to_string()))?;
+        transaction
+            .commit()
+            .map_err(|error| storage_failure(ROUTE, &error.to_string()))?;
+        if !reclaimed.is_empty() {
+            state
+                .reclaimed_by_create
+                .insert(ref_id.as_str().to_string(), reclaimed);
+            // Vacuum after commit so a vacuum error cannot hide the insert.
+            let _ = state.connection.execute_batch("PRAGMA incremental_vacuum;");
+        }
         Ok(resource_ref(
             ref_id.as_str(),
             kind_id,
@@ -295,6 +328,7 @@ impl SqliteResourceProvider {
                 resource_ref: Some(capability),
                 snapshot: None,
                 descriptor_updates: Vec::new(),
+                descriptor_removals: Vec::new(),
                 new_version: None,
                 output: json!({
                     "provider_id": PROVIDER_ID,
@@ -329,6 +363,7 @@ impl SqliteResourceProvider {
                     resource_ref: Some(capability),
                     snapshot: None,
                     descriptor_updates: Vec::new(),
+                    descriptor_removals: vec![target_ref_id.clone()],
                     new_version: None,
                     output: json!({ "deleted_ref_id": target_ref_id }),
                 })
@@ -414,6 +449,7 @@ impl ResourcePlanGateway for SqliteResourceProvider {
             resource_ref: Some(resource_ref),
             snapshot: None,
             descriptor_updates: Vec::new(),
+            descriptor_removals: Vec::new(),
             new_version: None,
             output: json!(text),
         })
@@ -486,6 +522,7 @@ impl ResourcePlanGateway for SqliteResourceProvider {
             resource_ref: Some(descriptor.clone()),
             snapshot: None,
             descriptor_updates: vec![descriptor],
+            descriptor_removals: Vec::new(),
             new_version: Some(new_version),
             output: Value::Null,
         })
@@ -640,6 +677,14 @@ impl ResourceProviderGateway for SqliteResourceProvider {
     /// Core actor thread.
     fn execution(&self) -> ResourceProviderExecution {
         ResourceProviderExecution::Offloaded
+    }
+
+    fn take_reclaimed_ref_ids(&self, created_ref_id: &str) -> RuntimeResult<Vec<String>> {
+        let mut state = self.lock_state("resource.sqlite.reclaim")?;
+        Ok(state
+            .reclaimed_by_create
+            .remove(created_ref_id)
+            .unwrap_or_default())
     }
 }
 
@@ -869,51 +914,69 @@ fn column_exists(connection: &Connection, table: &str, column: &str) -> rusqlite
 /// they are handles the runtime keeps for the lifetime of the plugin, not
 /// payloads. Rows without a creation time (written before schema v3) are only
 /// reachable through the size bound.
+///
+/// `incoming_len` is reserved in the size bound so the subsequent insert cannot
+/// push `SUM(length(bytes))` past `max_total_bytes`.
 fn sweep_retention(
     connection: &Connection,
     retention: SqliteRetentionConfig,
+    incoming_len: u64,
     route: &str,
-) -> RuntimeResult<usize> {
-    let mut removed = 0;
+) -> RuntimeResult<Vec<String>> {
+    let mut reclaimed = Vec::new();
     if let Some(max_age_seconds) = retention.max_age_seconds {
-        let cutoff = now_unix_ms(route)?.saturating_sub(max_age_seconds.saturating_mul(1_000));
-        let cutoff = stored_i64(cutoff, route, "cutoff")?;
-        removed += connection
-            .prepare_cached(
-                "DELETE FROM resources
-                 WHERE semantic <> 'capability_resource'
-                   AND created_at_unix_ms > 0
-                   AND created_at_unix_ms < ?1",
-            )
-            .and_then(|mut statement| statement.execute([cutoff]))
-            .map_err(|error| storage_failure(route, &error.to_string()))?;
+        reclaimed.extend(sweep_aged_rows(connection, max_age_seconds, route)?);
     }
     if let Some(max_total_bytes) = retention.max_total_bytes {
-        removed += sweep_total_bytes(connection, max_total_bytes, route)?;
+        reclaimed.extend(sweep_total_bytes(
+            connection,
+            max_total_bytes,
+            incoming_len,
+            route,
+        )?);
     }
-    if removed > 0 {
-        // No-op when auto_vacuum is `none`, which is the case for databases
-        // created before the pragma was introduced.
-        connection
-            .execute_batch("PRAGMA incremental_vacuum;")
-            .map_err(|error| storage_failure(route, &error.to_string()))?;
-    }
-    Ok(removed)
+    Ok(reclaimed)
 }
 
-/// Drops the oldest disposable rows until the stored payload fits the bound.
+fn sweep_aged_rows(
+    connection: &Connection,
+    max_age_seconds: u64,
+    route: &str,
+) -> RuntimeResult<Vec<String>> {
+    let cutoff = now_unix_ms(route)?.saturating_sub(max_age_seconds.saturating_mul(1_000));
+    let cutoff = stored_i64(cutoff, route, "cutoff")?;
+    connection
+        .prepare_cached(
+            "DELETE FROM resources
+             WHERE semantic <> 'capability_resource'
+               AND created_at_unix_ms > 0
+               AND created_at_unix_ms < ?1
+             RETURNING ref_id",
+        )
+        .and_then(|mut statement| {
+            statement
+                .query_map([cutoff], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .map_err(|error| storage_failure(route, &error.to_string()))
+}
+
+/// Drops the oldest disposable rows until existing payload plus `incoming_len`
+/// will fit `max_total_bytes`.
 fn sweep_total_bytes(
     connection: &Connection,
     max_total_bytes: u64,
+    incoming_len: u64,
     route: &str,
-) -> RuntimeResult<usize> {
+) -> RuntimeResult<Vec<String>> {
+    let target = max_total_bytes.saturating_sub(incoming_len);
     let total = connection
         .prepare_cached("SELECT COALESCE(SUM(length(bytes)), 0) FROM resources")
         .and_then(|mut statement| statement.query_row([], |row| row.get::<_, i64>(0)))
         .map_err(|error| storage_failure(route, &error.to_string()))?;
-    let mut over = stored_u64(total, route, "length")?.saturating_sub(max_total_bytes);
+    let mut over = stored_u64(total, route, "length")?.saturating_sub(target);
     if over == 0 {
-        return Ok(0);
+        return Ok(Vec::new());
     }
     let candidates = connection
         .prepare_cached(
@@ -929,18 +992,19 @@ fn sweep_total_bytes(
                 .collect::<rusqlite::Result<Vec<_>>>()
         })
         .map_err(|error| storage_failure(route, &error.to_string()))?;
-    let mut removed = 0;
+    let mut reclaimed = Vec::new();
     for (ref_id, size) in candidates {
         if over == 0 {
             break;
         }
-        removed += connection
+        connection
             .prepare_cached("DELETE FROM resources WHERE ref_id = ?1")
             .and_then(|mut statement| statement.execute([ref_id.as_str()]))
             .map_err(|error| storage_failure(route, &error.to_string()))?;
         over = over.saturating_sub(stored_u64(size, route, "length")?);
+        reclaimed.push(ref_id);
     }
-    Ok(removed)
+    Ok(reclaimed)
 }
 
 fn now_unix_ms(route: &str) -> RuntimeResult<u64> {
@@ -1014,6 +1078,31 @@ fn ensure_descriptor_current(
         ));
     }
     Ok(())
+}
+
+fn payload_exceeds_retention(
+    route: &str,
+    incoming_len: u64,
+    max_total_bytes: u64,
+) -> RuntimeFailure {
+    let mut error = RuntimeError::new(
+        ERR_RESOURCE_UNSUPPORTED,
+        "runtime.resource_provider.sqlite",
+        format!("{route}.payload_exceeds_max_total_bytes"),
+    );
+    error.evidence.insert(
+        "detail".into(),
+        ScalarValue::String("payload exceeds retention.max_total_bytes".into()),
+    );
+    error.evidence.insert(
+        "incoming_bytes".into(),
+        ScalarValue::String(incoming_len.to_string()),
+    );
+    error.evidence.insert(
+        "max_total_bytes".into(),
+        ScalarValue::String(max_total_bytes.to_string()),
+    );
+    RuntimeFailure::new(error)
 }
 
 fn unsupported(route: &str, detail: &str) -> RuntimeFailure {
@@ -1193,6 +1282,10 @@ mod tests {
         };
         let receipt = provider.execute_command_plan(&delete).unwrap();
         assert_eq!(receipt.status, "deleted");
+        assert_eq!(
+            receipt.descriptor_removals,
+            vec![blob.ref_id.as_str().to_string()]
+        );
 
         let read = ReadPlan {
             plan_id: "read:deleted".into(),
@@ -1558,6 +1651,21 @@ mod tests {
         );
     }
 
+    fn stored_payload_bytes(provider: &SqliteResourceProvider) -> u64 {
+        let total: i64 = provider
+            .state
+            .lock()
+            .unwrap()
+            .connection
+            .query_row(
+                "SELECT COALESCE(SUM(length(bytes)), 0) FROM resources",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        u64::try_from(total).unwrap()
+    }
+
     #[test]
     fn retention_reclaims_aged_and_oversized_payloads_but_keeps_capabilities() {
         fn collect(
@@ -1592,8 +1700,14 @@ mod tests {
         let newest = provider
             .create_blob_resource("text.v1", vec![b'b'; 10])
             .unwrap();
-        // The third insert pushes the total past 16 bytes, so the oldest
-        // payload goes and the capability handle stays.
+        // Two 10-byte payloads cannot coexist under a 16-byte bound, so the
+        // incoming write reclaims the previous blob before insert.
+        assert_eq!(
+            provider
+                .take_reclaimed_ref_ids(newest.ref_id.as_str())
+                .unwrap(),
+            vec![oldest.ref_id.as_str().to_string()]
+        );
         let third = provider
             .create_blob_resource("text.v1", vec![b'c'; 10])
             .unwrap();
@@ -1602,8 +1716,15 @@ mod tests {
             collect(&provider, &oldest).unwrap_err().error().code,
             ERR_RESOURCE_NOT_FOUND
         );
-        assert!(collect(&provider, &newest).is_ok());
+        assert_eq!(
+            collect(&provider, &newest).unwrap_err().error().code,
+            ERR_RESOURCE_NOT_FOUND
+        );
         assert!(collect(&provider, &third).is_ok());
+        assert!(
+            stored_payload_bytes(&provider) <= 16,
+            "stored payload must stay within max_total_bytes after insert"
+        );
         assert!(
             provider
                 .execute_command_plan(&CommandPlan {
@@ -1638,16 +1759,7 @@ mod tests {
             .create_blob_resource("text.v1", b"fresh".to_vec())
             .unwrap();
         assert_eq!(
-            provider
-                .collect_read_plan(&ReadPlan {
-                    plan_id: "read:expired".into(),
-                    resource: newest,
-                    operation: "collect".into(),
-                    args: Value::Null,
-                })
-                .unwrap_err()
-                .error()
-                .code,
+            collect(&provider, &third).unwrap_err().error().code,
             ERR_RESOURCE_NOT_FOUND
         );
         assert!(collect(&provider, &fresh).is_ok());
@@ -1663,6 +1775,35 @@ mod tests {
                 .is_ok(),
             "capability handles are exempt from the age bound too"
         );
+    }
+
+    #[test]
+    fn a_payload_larger_than_max_total_bytes_fails_without_inserting() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("resources.db");
+        let provider = SqliteResourceProvider::open_with_retention(
+            &path,
+            SqliteRetentionConfig {
+                max_age_seconds: None,
+                max_total_bytes: Some(16),
+            },
+        )
+        .unwrap();
+        let capability = provider
+            .create_capability_resource("sqlite_query", "sqlite.query.v1")
+            .unwrap();
+        let error = provider
+            .create_blob_resource("text.v1", vec![b'x'; 17])
+            .unwrap_err();
+        assert_eq!(error.error().code, ERR_RESOURCE_UNSUPPORTED);
+        assert_eq!(stored_payload_bytes(&provider), 0);
+        assert!(
+            provider
+                .create_capability_resource("sqlite_query", "sqlite.query.v1")
+                .is_ok(),
+            "capability resources are not rejected by the size bound"
+        );
+        assert_eq!(capability.semantic, ResourceSemantic::CapabilityResource);
     }
 
     fn write_plan(plan_id: &str, resource: ResourceRef) -> WritePlan {

@@ -516,6 +516,7 @@ fn receipt(
         resource_ref,
         snapshot: None,
         descriptor_updates,
+        descriptor_removals: Vec::new(),
         new_version,
         output: json!({ "status": status }),
     }

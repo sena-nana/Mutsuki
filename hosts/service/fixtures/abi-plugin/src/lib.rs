@@ -270,6 +270,7 @@ fn receipt(plan_id: &str, output: Value) -> PlanReceipt {
         resource_ref: None,
         snapshot: None,
         descriptor_updates: Vec::new(),
+        descriptor_removals: Vec::new(),
         new_version: None,
         output,
     }

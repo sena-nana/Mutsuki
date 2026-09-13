@@ -21,8 +21,9 @@ use mutsuki_plugin_bot_conversation_context::{
     ConversationContextRunner, ConversationContextStore, bot_conversation_context_manifest,
 };
 use mutsuki_plugin_bot_delivery::{
-    bot_delivery_manifest, bot_reply_delivery_manifest, bot_scheduled_delivery_manifest,
-    delivery_runner, reply_delivery_runner, scheduled_delivery_runner,
+    BOT_REPLY_DELIVERY_PLUGIN_ID, bot_delivery_manifest, bot_reply_delivery_manifest,
+    bot_scheduled_delivery_manifest, delivery_runner, reply_delivery_runner,
+    scheduled_delivery_runner,
 };
 use mutsuki_plugin_bot_interaction::{
     InteractionCreateRunner, InteractionMatchRunner, bot_interaction_manifest, interaction_runner,
@@ -33,7 +34,7 @@ use mutsuki_plugin_bot_reply::{BotReplyRunner, bot_reply_manifest};
 use mutsuki_runtime_sdk::{LoadedPlugin, RuntimeBootstrapperService};
 use mutsuki_service_runtime::ServiceRuntimeBuilder;
 
-use crate::BotReplyDeliveryRecoveryEventSource;
+use crate::BotTaskRecoveryEventSource;
 
 /// Explicit product assembly for the QQ AI pipeline.
 ///
@@ -210,8 +211,9 @@ impl QqAiBotPluginBundle {
             .register_builtin_plugin(bot_media_bridge_manifest())
             .register_builtin_plugin(bot_delivery_manifest())
             .register_builtin_plugin(bot_reply_delivery_manifest())
-            .register_event_source(Box::new(BotReplyDeliveryRecoveryEventSource::new(
+            .register_event_source(Box::new(BotTaskRecoveryEventSource::reply_delivery(
                 reply_delivery_recovery_interval,
+                BOT_REPLY_DELIVERY_PLUGIN_ID,
             )))
             .register_builtin_plugin(bot_interaction_manifest())
             .register_builtin_plugin(bot_conversation_context_manifest())

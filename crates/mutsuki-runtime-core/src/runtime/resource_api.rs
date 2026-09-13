@@ -41,6 +41,10 @@ impl CoreRuntime {
         self.resources.register_resource_descriptor(descriptor)
     }
 
+    pub fn unregister_resource(&mut self, ref_id: impl AsRef<str>) -> RuntimeResult<()> {
+        self.resources.unregister_resource(ref_id)
+    }
+
     pub fn sync_plan_receipt(&mut self, receipt: &PlanReceipt) -> RuntimeResult<Vec<ResourceRef>> {
         if let Some(resource) = &receipt.resource_ref {
             self.ensure_resource_descriptor_not_deprecated(resource)?;

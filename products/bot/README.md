@@ -34,7 +34,8 @@ cargo run --locked -p mutsuki-bot
 运行目录固定在可执行文件旁的 `.mutsuki-bot/`。源码运行时即
 `target/debug/.mutsuki-bot/`，其中包含 `config.sqlite3`、`secrets.toml`、`data/`、`logs/`、
 `run/` 和 `plugins/{installed,disabled}/`。目录不可写、端口占用或重复启动会直接失败，不回退
-到其他位置。
+到其他位置。单实例备份、恢复与 SQLite 耐久性见
+[`docs/instance-backup.md`](docs/instance-backup.md)。
 
 首次交互启动会隐藏输入并确认管理台口令；非交互部署必须设置
 `MUTSUKI_SECRET_MUTSUKI_WEB_CONSOLE_TOKEN`。口令只进入权限受限的 Host secret 文件，不打印、

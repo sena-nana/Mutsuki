@@ -95,7 +95,9 @@ pub enum HostRuntimeReply {
     Idle(RunnerLoopReport),
     TaskCancelled(TaskHandle),
     DrainStarted(RuntimeStopState),
-    RuntimeAborted { cancelled_tasks: usize },
+    RuntimeAborted {
+        cancelled_tasks: usize,
+    },
     StopState(RuntimeStopState),
     Statistics(RuntimeStatistics),
     DriveState(HostRuntimeDriveState),
@@ -107,9 +109,15 @@ pub enum HostRuntimeReply {
     Events(ObservabilityPage<RuntimeEvent>),
     TraceSpans(ObservabilityPage<TraceSpan>),
     ResourceDescriptor(ResourceRef),
-    ResourceCreated(ResourceRef),
+    ResourceCreated {
+        descriptor: ResourceRef,
+        descriptor_removals: Vec<String>,
+    },
     ResourceBytes(Vec<u8>),
-    Snapshot(SnapshotDescriptor),
+    Snapshot {
+        snapshot: SnapshotDescriptor,
+        descriptor_removals: Vec<String>,
+    },
     StreamPlan(StreamPlan),
     PlanReceipt(PlanReceipt),
     PlanReceipts(Vec<PlanReceipt>),

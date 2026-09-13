@@ -27,8 +27,14 @@ description: Change Mutsuki ResourceRef or ValueRef descriptors, leases, Resourc
   Offloading releases the actor, not the calling worker, and the work is then bound by
   the executor's in-flight limits like any other async resource plan.
 - Core state still changes only on the actor: an offloaded plan returns a reply and the
-  actor applies it (receipt sync, snapshot sync, descriptor registration) when the
-  completion event arrives. A provider must never be handed a Core handle to mutate.
+  actor applies it (receipt sync, snapshot sync, descriptor registration, descriptor
+  removal) when the completion event arrives. A provider must never be handed a Core
+  handle to mutate.
+- Retention DELETE and capability `delete` must invalidate hub descriptors. Plans report
+  dropped `ref_id`s in `PlanReceipt.descriptor_removals`; create-time sweep reports them
+  through `take_reclaimed_ref_ids`, which must fail loud on provider poison rather than
+  returning an empty list. `ResourceManager::unregister_resource` is idempotent,
+  and `open_resource` after unregister is `resource.not_found`.
 
 Test lifetime, sealing, lease expiry, generation mismatch, commit atomicity, restart
-restoration and provider failure behavior.
+restoration, hub invalidation after retention/delete, and provider failure behavior.

@@ -69,6 +69,25 @@ pub trait InteractionConditionMatcher: Send + Sync {
     ) -> Result<bool, InteractionError>;
 }
 
+/// Named waiters skip this matcher without consuming retries until an owner
+/// matcher is injected.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct UnavailableInteractionMatcher;
+
+impl InteractionConditionMatcher for UnavailableInteractionMatcher {
+    fn command_matches(&self, _command: &str, _event: &BotEvent) -> Result<bool, InteractionError> {
+        Err(InteractionError::MatcherUnavailable)
+    }
+
+    fn predicate_matches(
+        &self,
+        _service_id: &str,
+        _event: &BotEvent,
+    ) -> Result<bool, InteractionError> {
+        Err(InteractionError::MatcherUnavailable)
+    }
+}
+
 #[derive(Clone)]
 pub struct InteractionService {
     repository: Arc<dyn InteractionRepository>,
@@ -138,11 +157,19 @@ impl InteractionService {
                 continue;
             }
             let command_matches = match session.wait.command.as_deref() {
-                Some(command) => self.matcher.command_matches(command, event)?,
+                Some(command) => match self.matcher.command_matches(command, event) {
+                    Ok(matched) => matched,
+                    Err(InteractionError::MatcherUnavailable) => continue,
+                    Err(error) => return Err(error),
+                },
                 None => true,
             };
             let predicate_matches = match session.wait.predicate_service_id.as_deref() {
-                Some(service_id) => self.matcher.predicate_matches(service_id, event)?,
+                Some(service_id) => match self.matcher.predicate_matches(service_id, event) {
+                    Ok(matched) => matched,
+                    Err(InteractionError::MatcherUnavailable) => continue,
+                    Err(error) => return Err(error),
+                },
                 None => true,
             };
             let expected = session.version;
@@ -314,6 +341,8 @@ pub enum InteractionError {
     UnsupportedTarget,
     #[error("interaction repository generation conflict")]
     GenerationConflict,
+    #[error("interaction matcher is not configured for named waiters")]
+    MatcherUnavailable,
     #[error("interaction repository failed: {0}")]
     Repository(String),
 }
@@ -561,6 +590,21 @@ mod tests {
             channel_id: None,
             thread_id: None,
         }
+    }
+
+    #[test]
+    fn unavailable_matcher_skips_named_waiters_without_consuming_retries() {
+        let repository = Arc::new(Repository::default());
+        let mut named = session("named", "actor", 1_000);
+        named.wait.command = Some("/code".into());
+        named.retries_remaining = 2;
+        let service =
+            InteractionService::new(repository.clone(), Arc::new(UnavailableInteractionMatcher));
+        service.create(named).unwrap();
+        assert!(service.match_event(&event("actor"), 100).unwrap().is_none());
+        let named = &repository.sessions.lock().unwrap()["named"];
+        assert_eq!(named.status, InteractionStatus::Waiting);
+        assert_eq!(named.retries_remaining, 2);
     }
 
     fn event(actor: &str) -> BotEvent {

@@ -105,8 +105,8 @@ Auth:
 
 RPC surface (`bilibili` namespace):
 
-- read: `status`, `login.poll`, `subscriptions.list`, `subscriptions.preview`
-- write: `login.start`, `credential.clear`, `subscriptions.subscribe`,
+- read: `status`, `subscriptions.list`, `subscriptions.preview`
+- write: `login.start`, `login.poll`, `credential.clear`, `subscriptions.subscribe`,
   `subscriptions.unsubscribe`, `subscriptions.set_paused`, `binding.start`, `binding.verify`,
   `binding.unbind`
 

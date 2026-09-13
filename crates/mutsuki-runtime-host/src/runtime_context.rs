@@ -173,7 +173,7 @@ impl ResourcePlanGateway for ActorCommandClient {
             kind_id: kind_id.into(),
             schema: schema.into(),
         })? {
-            HostRuntimeReply::Snapshot(snapshot) => Ok(snapshot),
+            HostRuntimeReply::Snapshot { snapshot, .. } => Ok(snapshot),
             reply => Err(unexpected_reply("resource.read.snapshot", reply)),
         }
     }
@@ -254,7 +254,7 @@ impl AsyncResourcePlanGateway for ActorCommandClient {
         });
         Box::pin(async move {
             match future.await? {
-                HostRuntimeReply::Snapshot(snapshot) => Ok(snapshot),
+                HostRuntimeReply::Snapshot { snapshot, .. } => Ok(snapshot),
                 reply => Err(unexpected_reply("resource.async_read.snapshot", reply)),
             }
         })
@@ -343,7 +343,7 @@ impl ResourceRegistryGateway for ActorCommandClient {
             schema: schema.into(),
             bytes,
         })? {
-            HostRuntimeReply::ResourceCreated(descriptor) => Ok(descriptor),
+            HostRuntimeReply::ResourceCreated { descriptor, .. } => Ok(descriptor),
             reply => Err(unexpected_reply("resource.blob.create", reply)),
         }
     }
@@ -361,7 +361,7 @@ impl ResourceRegistryGateway for ActorCommandClient {
             schema: schema.into(),
             bytes,
         })? {
-            HostRuntimeReply::ResourceCreated(descriptor) => Ok(descriptor),
+            HostRuntimeReply::ResourceCreated { descriptor, .. } => Ok(descriptor),
             reply => Err(unexpected_reply("resource.cow.create", reply)),
         }
     }
@@ -377,7 +377,7 @@ impl ResourceRegistryGateway for ActorCommandClient {
             kind_id: kind_id.into(),
             schema: schema.into(),
         })? {
-            HostRuntimeReply::ResourceCreated(descriptor) => Ok(descriptor),
+            HostRuntimeReply::ResourceCreated { descriptor, .. } => Ok(descriptor),
             reply => Err(unexpected_reply("resource.capability.create", reply)),
         }
     }

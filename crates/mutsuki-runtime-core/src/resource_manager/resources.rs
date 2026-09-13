@@ -53,6 +53,13 @@ impl ResourceManager {
         Ok(descriptor)
     }
 
+    /// Drops a hub descriptor. Missing ids succeed: retention and delete both
+    /// need to be safe if the hub never observed the row.
+    pub fn unregister_resource(&mut self, ref_id: impl AsRef<str>) -> RuntimeResult<()> {
+        self.hub.remove(ref_id.as_ref());
+        Ok(())
+    }
+
     pub fn sync_resource_descriptor(
         &mut self,
         descriptor: ResourceRef,
@@ -99,10 +106,14 @@ impl ResourceManager {
     }
 
     pub fn sync_plan_receipt(&mut self, receipt: &PlanReceipt) -> RuntimeResult<Vec<ResourceRef>> {
-        receipt_descriptors(receipt)
+        let synced = receipt_descriptors(receipt)
             .into_iter()
             .map(|descriptor| self.sync_resource_descriptor(descriptor))
-            .collect()
+            .collect::<RuntimeResult<Vec<_>>>()?;
+        for ref_id in &receipt.descriptor_removals {
+            self.unregister_resource(ref_id)?;
+        }
+        Ok(synced)
     }
 
     pub fn create_stream_resource(

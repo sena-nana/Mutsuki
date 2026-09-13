@@ -13,9 +13,13 @@ description: Assemble the first-party Mutsuki Bot product from external configur
 - 生产入口不得接受配置路径、profile、namespace 或 `MUTSUKI_BOOTSTRAP`；旧 bootstrap 和完整产品 TOML 不读取、不迁移。
 - Mutsuki Bot 产品显式选择 SQLite repository plugin、document namespace 和路径；Mutsuki 框架不得内置该选择。
 - 产品插件选择、WebExtension 选择和每个 owner 配置由 `ConfigService` 保存到独立 provider document。
+- Web Console 非扩展配置导航只列出产品实际注册的 ConfigProvider id；扩展组是 WebExtension 页面。
+- 工作区启用时同时选择 Agent Connections、Flow Router、Command、Interaction 和 Sandbox。
+  这些 id 与 QQ/Local Agent/Bot Agent/B 站/工房/米画师一样禁止写入 `runtime_plugins`。
 - 内置平台插件（B 站、B 站工房、米画师）与 QQ/Local Agent/Bot Agent 一样由产品 owner provider 驱动：
   启动时注册带 `enabled` 开关的字段级 schema（B 站凭据经 Host secret key 引用注入），默认禁用，
   从控制台插件页配置并热加载；`runtime_plugins` 拒绝这些 owner id。
+- `data/bot/state.sqlite3` 由 owner catalog 共享一个 actor；产品不得再次打开同一文件。单实例备份与 SQLite 耐久性见 `../../docs/instance-backup.md`：停进程后复制（含 `-wal`/`-shm`）；该库为 WAL + `synchronous=NORMAL`，禁止第二进程打开。
 - 主配置只保存 secret key；实际值由 Host 从显式引用且被忽略的专用 secret 文件或环境变量注入。
 - 零插件配置允许启动为空闲 Runtime；未知字段和显式选择后缺失的 capability、plugin、deployment 或 secret 必须结构化失败。
 

@@ -987,20 +987,6 @@ fn migrate_schema(connection: &Connection) -> Result<(), BotStateDbError> {
     let user_version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     let sql = format!(
         "BEGIN IMMEDIATE;
-         CREATE TABLE IF NOT EXISTS bot_conversation_policy(
-             rule_id TEXT PRIMARY KEY,
-             body TEXT NOT NULL
-         );
-         CREATE TABLE IF NOT EXISTS bot_conversation_policy_meta(
-             singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-             revision INTEGER NOT NULL
-         );
-         INSERT OR IGNORE INTO bot_conversation_policy_meta(singleton, revision) VALUES (1, 0);
-         CREATE TABLE IF NOT EXISTS bot_conversation_policy_audit(
-             revision INTEGER PRIMARY KEY,
-             audit_id TEXT NOT NULL UNIQUE,
-             body TEXT NOT NULL
-         );
          CREATE TABLE IF NOT EXISTS bot_agent_binding(
              binding_key TEXT PRIMARY KEY,
              generation INTEGER NOT NULL,
@@ -1137,7 +1123,14 @@ fn migrate_schema(connection: &Connection) -> Result<(), BotStateDbError> {
          ON bot_delivery_receipt(status, delivery_id)",
         [],
     )?;
-    connection.pragma_update(None, "user_version", 12)?;
+    if user_version < 13 {
+        connection.execute_batch(
+            "DROP TABLE IF EXISTS bot_conversation_policy;
+             DROP TABLE IF EXISTS bot_conversation_policy_meta;
+             DROP TABLE IF EXISTS bot_conversation_policy_audit;",
+        )?;
+    }
+    connection.pragma_update(None, "user_version", 13)?;
     Ok(())
 }
 
@@ -2983,6 +2976,68 @@ mod tests {
     }
 
     #[test]
+    fn unused_conversation_policy_tables_are_dropped_on_reopen() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("policy-legacy.db");
+        {
+            let connection = rusqlite::Connection::open(&path).unwrap();
+            connection
+                .execute_batch(
+                    "PRAGMA user_version=12;
+                     CREATE TABLE bot_conversation_policy(
+                         rule_id TEXT PRIMARY KEY,
+                         body TEXT NOT NULL
+                     );
+                     CREATE TABLE bot_conversation_policy_meta(
+                         singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+                         revision INTEGER NOT NULL
+                     );
+                     INSERT INTO bot_conversation_policy_meta(singleton, revision) VALUES (1, 0);
+                     CREATE TABLE bot_conversation_policy_audit(
+                         revision INTEGER PRIMARY KEY,
+                         audit_id TEXT NOT NULL UNIQUE,
+                         body TEXT NOT NULL
+                     );
+                     INSERT INTO bot_conversation_policy(rule_id, body) VALUES ('legacy', '{}');",
+                )
+                .unwrap();
+        }
+
+        let repository = BotStateDbRepository::open(&path).unwrap();
+        assert_conversation_policy_tables_absent(&repository.inspect_snapshot().unwrap());
+        drop(repository);
+
+        let reopened = BotStateDbRepository::open(&path).unwrap();
+        assert_conversation_policy_tables_absent(&reopened.inspect_snapshot().unwrap());
+        drop(reopened);
+
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        let user_version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(user_version, 13);
+        let leftover: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type='table' AND name IN (
+                     'bot_conversation_policy',
+                     'bot_conversation_policy_meta',
+                     'bot_conversation_policy_audit'
+                 )",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(leftover, 0);
+
+        let fresh = root.path().join("policy-fresh.db");
+        let repository = BotStateDbRepository::open(&fresh).unwrap();
+        drop(repository);
+        let reopened = BotStateDbRepository::open(&fresh).unwrap();
+        assert_conversation_policy_tables_absent(&reopened.inspect_snapshot().unwrap());
+    }
+
+    #[test]
     fn icl_and_persona_persist_on_shared_repository() {
         let root = tempfile::tempdir().unwrap();
         let repository = BotStateDbRepository::open(root.path().join("state.db")).unwrap();
@@ -4143,6 +4198,19 @@ mod tests {
             _reply_to: Option<&str>,
         ) -> Result<serde_json::Value, mutsuki_bot_sandbox::SandboxError> {
             Ok(serde_json::json!({ "delivered": true }))
+        }
+    }
+
+    fn assert_conversation_policy_tables_absent(snapshot: &BotDatabaseSnapshot) {
+        for name in [
+            "bot_conversation_policy",
+            "bot_conversation_policy_meta",
+            "bot_conversation_policy_audit",
+        ] {
+            assert!(
+                !snapshot.tables.iter().any(|table| table.name == name),
+                "leftover unused table {name} must not remain"
+            );
         }
     }
 
