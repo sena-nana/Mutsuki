@@ -40,3 +40,14 @@ Keep one repository and one Rust compatibility baseline without collapsing packa
 Treat a successful root build as necessary but insufficient. Report exact commands and results for
 Rust, Python, frontend, integration, performance, first-party products, clean clone, and external
 consumer checks. Fail when any selected capability, artifact, package, or revision is unavailable.
+
+## CI And Performance Gates
+
+- Keep Lint, Performance smoke gate and Check fuzz targets on `${{ !cancelled() }}` with failure propagation.
+- `check_workspace.py` runs real CI condition regressions and `performance/tests`; run owner Cargo tests,
+  optimized smoke and report validation too. Report unexecuted hosted CI and fixed-machine checks.
+- Dev observability is semantic-only; optimized time smoke checks 1 ms/decision, allocation never gates time.
+  Release requires approved matching metrics and valid fragments; missing cases, non-finite metrics or
+  failed reports must not pass. See [package-map.md](references/package-map.md) and the Core performance model.
+- Refresh the existing fuzz lock when inherited dependency minimums change; verify `--locked` in an
+  independent clone without changing the root dependency policy to silence a stale lock.

@@ -13,16 +13,53 @@ use serde_json::json;
 
 use crate::ALLOCATOR;
 use crate::fixtures::{BENCH_PROTOCOL_ID, runner_descriptor, runtime_profile};
-use crate::report::{BenchmarkMode, CaseResult};
+use crate::report::{BenchmarkMode, CaseResult, DISABLED_TRACE_CASE_ID};
 
 pub fn run(mode: BenchmarkMode) -> Result<Vec<CaseResult>, String> {
     let mut cases = Vec::new();
     cases.push(idle_tick_case(mode)?);
+    cases.push(disabled_trace_case(mode.select(200_000, 2_000_000))?);
     cases.extend(observability_cases(mode)?);
     cases.push(task_lifecycle_case(mode)?);
     cases.push(deadline_cancel_case(mode)?);
     cases.push(reload_case(mode)?);
     Ok(cases)
+}
+
+fn disabled_trace_case(iterations: u64) -> Result<CaseResult, String> {
+    let mut traces = TraceLog::with_capacity(0);
+    let measurement = ALLOCATOR.measurement();
+    for _ in 0..iterations {
+        // Keep the real receiver opaque to the optimizer: this measures the
+        // disabled runtime path, not a loop optimized from a known zero capacity.
+        black_box(
+            black_box(&mut traces)
+                .record_with(|_| panic!("disabled trace path constructed a span")),
+        );
+    }
+    let (elapsed_ns, allocations) = measurement.finish(&ALLOCATOR);
+    if traces.allocated_capacity() != 0 || traces.retained() != 0 {
+        return Err("disabled trace retained spans or allocated capacity".into());
+    }
+    Ok(CaseResult::measured(
+        DISABLED_TRACE_CASE_ID,
+        "observability",
+        BTreeMap::from([("capacity".into(), "0".into())]),
+        iterations,
+        iterations,
+        elapsed_ns,
+        allocations,
+        BTreeMap::from([
+            // The closure panics if called, so successful completion proves zero.
+            ("span_constructions".into(), 0),
+            (
+                "allocated_trace_capacity".into(),
+                traces.allocated_capacity() as i128,
+            ),
+            ("retained_traces".into(), traces.retained() as i128),
+            ("dropped_traces".into(), traces.dropped() as i128),
+        ]),
+    ))
 }
 
 fn idle_tick_case(mode: BenchmarkMode) -> Result<CaseResult, String> {
@@ -326,4 +363,33 @@ fn echo_runner(descriptor: &mutsuki_runtime_contracts::RunnerDescriptor) -> Box<
     Box::new(NativeRunner::new(descriptor.clone(), |_ctx, task| {
         Ok(RunnerResult::completed(task.task_id))
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::report::{MeasurementMode, aggregate_samples};
+
+    #[test]
+    fn disabled_trace_preserves_semantics_and_report_identity_in_both_lanes() {
+        let case = disabled_trace_case(128).expect("disabled trace must remain lazy");
+        assert_eq!(case.counters["span_constructions"], 0);
+        assert_eq!(case.counters["allocated_trace_capacity"], 0);
+        assert_eq!(case.counters["retained_traces"], 0);
+        assert_eq!(case.counters["dropped_traces"], 128);
+        for lane in [MeasurementMode::Time, MeasurementMode::Allocation] {
+            let reports = aggregate_samples(&[vec![case.clone()], vec![case.clone()]], lane)
+                .expect("case must aggregate");
+            let report = &reports[0];
+            assert_eq!(report.case_id, DISABLED_TRACE_CASE_ID);
+            assert_eq!(report.correctness.counters["span_constructions"], 0);
+            assert_eq!(report.measurement_mode, lane.as_str());
+            if lane == MeasurementMode::Time {
+                assert_eq!(report.metrics.latency_ns.as_ref().unwrap().sample_count, 2);
+            } else {
+                assert!(report.metrics.latency_ns.is_none());
+                assert!(report.metrics.allocated_bytes.is_some());
+            }
+        }
+    }
 }

@@ -6,12 +6,16 @@ import json
 import math
 import statistics
 import subprocess
+import sys
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "performance/tooling"))
+
+from mutsuki_performance import validate_report  # noqa: E402
 
 
 def distribution(samples: list[float], unit: str) -> dict[str, Any]:
@@ -44,7 +48,7 @@ def run_fragment(
     samples: int,
     output: Path,
 ) -> dict[str, Any]:
-    command = ["cargo", "run", "--release"]
+    command = ["cargo", "run", "--release", "--locked"]
     if lane == "allocation":
         command.extend(["--features", "allocation-tracking"])
     command.extend(
@@ -82,22 +86,85 @@ def case_key(case: dict[str, Any]) -> str:
     return f"{case['case_id']}|{case['measurement_mode']}|{dimensions}"
 
 
+def validate_fragment(report: dict[str, Any], lane: str) -> None:
+    validate_report(report)
+    if report["suite_version"] != "mutsuki-core/v2" or report["sampling"]["process_runs"] != 1:
+        raise ValueError("expected a single-process Core fragment")
+    if (not report["correctness"]["passed"]
+            or any(not case["correctness"]["passed"] for case in report["cases"])
+            or not report.get("gates")
+            or any(not gate["passed"] for gate in report["gates"])):
+        raise ValueError("failed or ungated reference fragment")
+    if ("allocation-tracking" in report["feature_set"]) != (lane == "allocation"):
+        raise ValueError("fragment allocator does not match its lane")
+    allowed = {"time", "system"} if lane == "time" else {"allocation"}
+    for case in report["cases"]:
+        if case["measurement_mode"] not in allowed:
+            raise ValueError("unexpected measurement lane")
+        if case["measurement_mode"] == "time":
+            for name in ("latency_ns", "throughput_per_second"):
+                metric = case["metrics"].get(name, {})
+                expected = report["sampling"]["samples_per_process"]
+                if (metric.get("sample_count") != expected
+                        or len(metric.get("samples", [])) != expected):
+                    raise ValueError("incomplete time fragment samples")
+    trace = [case for case in report["cases"]
+             if case["case_id"] == "core.observability.disabled-trace"]
+    if len(trace) != 1:
+        raise ValueError("missing or ambiguous disabled trace case")
+    counters = trace[0]["correctness"]["counters"]
+    if any(counters.get(name) != 0 for name in
+           ("span_constructions", "allocated_trace_capacity", "retained_traces")):
+        raise ValueError("disabled trace semantics failed")
+    analysis = analyze(report)
+    if analysis["harness_errors"] or analysis["framework_suspects"]:
+        raise ValueError("fragment analysis failed")
+    if lane == "allocation" and "allocated_bytes" not in trace[0]["metrics"]:
+        raise ValueError("missing disabled trace allocation measurement")
+
+
+def build_reference(time_reports: list[dict[str, Any]], allocation: dict[str, Any],
+                    *, warmup: int, samples: int) -> dict[str, Any]:
+    validate_fragment(allocation, "allocation")
+    report = merge_time_reports(time_reports)
+    for fragment in [*time_reports, allocation]:
+        if (fragment["sampling"]["warmup_iterations"] != warmup
+                or fragment["sampling"]["samples_per_process"] != samples):
+            raise ValueError("fragment sampling differs from requested sampling")
+    for field in (
+        "environment_id", "revision_lock_hash", "suite_version", "workload_version", "deployment"
+    ):
+        if allocation[field] != report[field]:
+            raise ValueError(f"allocation fragment differs in {field}")
+    report["cases"].extend(deepcopy(allocation["cases"]))
+    report["feature_set"] = sorted(
+        set(report["feature_set"] + ["separate-process-allocation-lane"])
+    )
+    report["metadata"]["allocation_samples_per_process"] = str(samples)
+    report["gates"].extend(deepcopy(allocation["gates"]))
+    validate_report(report)
+    return report
+
+
 def merge_time_reports(reports: list[dict[str, Any]]) -> dict[str, Any]:
-    reference = deepcopy(reports[0])
-    for report in reports[1:]:
-        if report["environment_id"] != reference["environment_id"]:
-            raise RuntimeError("environment fingerprint changed between process rounds")
-        if report["revision_lock_hash"] != reference["revision_lock_hash"]:
-            raise RuntimeError(
-                "repository revision snapshot changed between process rounds"
-            )
+    if not reports:
+        raise ValueError("time fragments cannot be empty")
+    for report in reports:
+        validate_fragment(report, "time")
     cases_by_report = [
         {case_key(case): case for case in report["cases"]} for report in reports
     ]
-    merged_cases: list[dict[str, Any]] = []
-    for template in reference["cases"]:
-        key = case_key(template)
-        merged = deepcopy(template)
+    reference = deepcopy(reports[0])
+    for report, cases in zip(reports[1:], cases_by_report[1:]):
+        for field in ("environment_id", "revision_lock_hash", "suite_version", "workload_version",
+                      "measurement_boundary", "sampling", "feature_set", "deployment"):
+            if report[field] != reference[field]:
+                raise ValueError(f"time fragments differ in {field}")
+        if cases.keys() != cases_by_report[0].keys():
+            raise ValueError("time fragment case matrix changed")
+    reference["gates"] = [deepcopy(gate) for report in reports for gate in report["gates"]]
+    for merged in reference["cases"]:
+        key = case_key(merged)
         for metric in ("latency_ns", "throughput_per_second", "cpu_time_ns"):
             values: list[float] = []
             unit = None
@@ -108,7 +175,7 @@ def merge_time_reports(reports: list[dict[str, Any]]) -> dict[str, Any]:
                     unit = current["unit"]
             if values:
                 merged["metrics"][metric] = distribution(values, unit or "unit")
-        if template["measurement_mode"] == "system":
+        if merged["measurement_mode"] == "system":
             merged["metrics"]["peak_rss_bytes"] = max(
                 cases[key]["metrics"].get("peak_rss_bytes", 0)
                 for cases in cases_by_report
@@ -119,8 +186,6 @@ def merge_time_reports(reports: list[dict[str, Any]]) -> dict[str, Any]:
                     for cases in cases_by_report
                 ]
             )
-        merged_cases.append(merged)
-    reference["cases"] = merged_cases
     reference["sampling"]["process_runs"] = len(reports)
     reference["report_id"] = reference["report_id"].replace("time", "reference")
     reference["measurement_boundary"] = (
@@ -261,17 +326,10 @@ def main() -> None:
             samples=args.samples,
             output=allocation_path,
         )
-    report = merge_time_reports(time_reports)
-    report["cases"].extend(allocation["cases"])
-    report["feature_set"] = sorted(
-        set(report["feature_set"] + ["separate-process-allocation-lane"])
-    )
-    report["metadata"]["allocation_samples_per_process"] = str(args.samples)
-    report["correctness"]["passed"] = (
-        report["correctness"]["passed"] and allocation["correctness"]["passed"]
-    )
-    report["gates"].extend(allocation["gates"])
+    report = build_reference(time_reports, allocation, warmup=args.warmup, samples=args.samples)
     analysis = analyze(report)
+    if analysis["harness_errors"] or analysis["framework_suspects"]:
+        report["correctness"]["passed"] = False
     report["metadata"]["anomaly_classification"] = analysis["classification"]
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
@@ -285,6 +343,9 @@ def main() -> None:
     )
     print(f"reference report: {args.output}")
     print(f"anomaly analysis: {analysis_output} ({analysis['classification']})")
+
+    if not report["correctness"]["passed"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

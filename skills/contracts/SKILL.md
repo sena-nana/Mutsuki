@@ -14,3 +14,7 @@ Treat `plans/contracts.md` and `mutsuki-runtime-contracts` as the shared wire au
 - Require explicit version or migration handling for breaking surfaces; do not add compatibility shims in consumers.
 
 Test round trips, invalid inputs and downstream conformance at every affected boundary.
+
+Performance report validation is also a contract boundary: metrics and gate values must be finite
+numbers with the declared scalar/distribution shape, and failed reports cannot be approved
+baselines. Run `python3 -m unittest discover -s performance/tests` when changing these rules.

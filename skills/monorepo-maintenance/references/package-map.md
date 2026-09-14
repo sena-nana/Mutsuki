@@ -36,3 +36,15 @@ explicitly named integration packages.
 `products/bot` is the first-party product exception and runs from this Workspace. Business
 repositories such as Lilia and Nana remain external consumers and depend on
 `https://github.com/sena-nana/Mutsuki.git` at a release tag or fixed commit.
+
+## Observability verification ownership
+
+Core owns semantic-only observability assertions; runtime-benchmarks owns the independent
+`core.observability.disabled-trace` case and time/allocation smoke/full reports. Performance tooling
+owns reference aggregation, comparison and approval. These paths use root AGENTS.md; neither runtime
+package has a closer scoped file. Detailed gates and evidence boundaries: `docs/core-performance-model-v1.md`.
+
+Monorepo-maintenance owns `scripts/check_ci.py`; the root checker runs it and `performance/tests`.
+Preserve CI success/failure/cancellation behavior and reference failure propagation. Current cases and
+comparable metrics are mandatory; failed reports cannot be approved. Local coverage does not prove hosted
+Actions scheduling. The standalone fuzz lock must satisfy root dependency minimums and pass clone validation.

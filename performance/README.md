@@ -37,6 +37,14 @@ python scripts/performance/compare_baseline.py \
   --approval path/to/baseline.approval.json
 ```
 
+The Core `core.observability.disabled-trace` case requires a matching approved baseline case
+(same lane and workload dimensions). Both the Rust release gate and this comparator fail when
+it is absent or either side lacks required metrics: time requires `latency_ns` and
+`throughput_per_second`; allocation requires `allocated_bytes`. Historical baselines must be
+recollected and explicitly approved. See
+[`Core observability gates`](../docs/core-performance-model-v1.md#observability-gate-migration-185)
+for the distinction between diagnostic dev runs, public smoke and fixed-machine regression.
+
 The cross-owner Epic validator accepts paths to reports but never launches benchmarks. It checks
 schema compatibility, owner/suite identity, correctness and the five-deployment Runner fixture
 hashes after each area has produced its own report.
@@ -59,3 +67,8 @@ python scripts/performance/validate_issue35_reports.py \
 Use `--require-clean` only for committed reference evidence. Smoke reports created while developing
 a change remain valid schema/correctness evidence but are intentionally marked dirty and cannot be
 approved as a release baseline.
+
+The root checker runs `performance/tests`, covering reference fragment reuse, comparison and approval
+failures. Keep every process gate and require complete cases and finite metrics. See the
+[Core performance model](../docs/core-performance-model-v1.md#observability-gate-migration-185)
+for validation and fixed-machine evidence requirements.
