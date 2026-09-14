@@ -40,3 +40,10 @@ Invoke native async provider execute (including Future construction) only after 
 Retain every offloaded/native-async provider invocation through actor result application, including Concurrent providers. A reload to Ordered fences all older invocations for that provider ID until the last result is applied; Concurrent execution otherwise remains parallel. Host shutdown drains all executing resource invocations.
 
 Offloaded and native async resource requests share invocation construction and admission bookkeeping; LocalResourceClient reuses the Host single-provider route check. Reload selects each active route once without cloning and pruning complete provider maps.
+
+## Async creation (#182)
+
+Both registry caller styles reuse provider admission and actor lifecycle completion. Native
+async Future construction and Offloaded creation must not run on the actor. Async mailbox
+saturation rejects without parking its worker. Test task progress while creation is blocked,
+not only descriptor visibility. See ../../docs/architecture/async-resource-creation.md.

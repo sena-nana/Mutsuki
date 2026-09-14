@@ -55,10 +55,10 @@ pub use abi::{
     ConfiguredBinaryPluginGuest, dispatch_binary_host_request, dispatch_host_request,
 };
 pub use backend::{
-    AsyncResourcePlanGateway, AsyncResourceProviderGateway, BoxRuntimeFuture, ResourcePlanGateway,
-    ResourceProviderExecution, ResourceProviderFuture, ResourceProviderGateway,
-    ResourceProviderOrdering, ResourceProviderOutcome, ResourceProviderReply,
-    ResourceProviderRequest, ResourceRegistryGateway,
+    AsyncResourcePlanGateway, AsyncResourceProviderGateway, AsyncResourceRegistryGateway,
+    BoxRuntimeFuture, ResourcePlanGateway, ResourceProviderExecution, ResourceProviderFuture,
+    ResourceProviderGateway, ResourceProviderOrdering, ResourceProviderOutcome,
+    ResourceProviderReply, ResourceProviderRequest, ResourceRegistryGateway,
 };
 pub use batch::{BatchPayloadBuilder, TaskBatchBuilder, TaskOptions};
 pub use descriptor::{

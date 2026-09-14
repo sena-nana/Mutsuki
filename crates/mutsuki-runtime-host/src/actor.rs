@@ -811,23 +811,8 @@ fn try_offload_resource_command(
         .config
         .async_resource_providers
         .contains_key(&provider_id);
-    if is_async
-        && !matches!(
-            &command,
-            HostRuntimeCommand::CreateBlobResource { .. }
-                | HostRuntimeCommand::CreateCowStateResource { .. }
-                | HostRuntimeCommand::CreateCapabilityResource { .. }
-        )
-    {
-        let _ = reply_tx.send(Err(crate::error::resource_provider_missing(&provider_id)));
-        return OffloadOutcome::Handled;
-    }
-    let provider = actor.config.resource_providers.get(&provider_id).cloned();
-    if !is_async
-        && provider
-            .as_ref()
-            .is_none_or(|p| p.execution() == ResourceProviderExecution::Inline)
-    {
+    let provider = actor.config.resource_providers.get(&provider_id);
+    if !is_async && provider.is_none_or(|p| p.execution() == ResourceProviderExecution::Inline) {
         return OffloadOutcome::RunInline(command, reply_tx);
     }
     let (Some(executor), Some(events)) = (
@@ -840,20 +825,14 @@ fn try_offload_resource_command(
         )));
         return OffloadOutcome::Handled;
     };
-    let (future, payload_bytes) = if is_async {
-        match resource_router::prepare_async_resource_command(command, &actor.config) {
-            Ok((_, future, bytes)) => (future, bytes),
+    let (_, future, payload_bytes) =
+        match resource_router::prepare_resource_command(command, &actor.config) {
+            Ok(prepared) => prepared,
             Err(error) => {
                 let _ = reply_tx.send(Err(error));
                 return OffloadOutcome::Handled;
             }
-        }
-    } else {
-        resource_router::prepare_offloaded_resource_command(
-            command,
-            provider.expect("provider checked"),
-        )
-    };
+        };
     let invocation = resource_invocation(&actor.config, &provider_id, payload_bytes);
     let invocation_id = invocation.invocation_id.clone();
     actor
@@ -911,6 +890,19 @@ fn start_async_resource_command(
     reply: oneshot::Sender<RuntimeResult<HostRuntimeReply>>,
     actor: &mut CoreActor,
 ) {
+    let provider_id = resource_router::resource_command_provider(&command);
+    let inline = provider_id.as_ref().is_some_and(|id| {
+        actor
+            .config
+            .resource_providers
+            .get(id)
+            .is_some_and(|p| p.execution() == ResourceProviderExecution::Inline)
+    });
+    if inline || matches!(&command, HostRuntimeCommand::OpenResourceDescriptor(_)) {
+        let result = handle_command(actor, command).map(|(value, _)| value);
+        let _ = reply.send(result);
+        return;
+    }
     let config = &actor.config;
     let Some(executor) = config.async_executor.as_ref() else {
         let _ = reply.send(Err(host_failure(
@@ -927,7 +919,7 @@ fn start_async_resource_command(
         return;
     };
     let (provider_id, future, payload_bytes) =
-        match resource_router::prepare_async_resource_command(command, config) {
+        match resource_router::prepare_resource_command(command, config) {
             Ok(prepared) => prepared,
             Err(failure) => {
                 let _ = reply.send(Err(failure));

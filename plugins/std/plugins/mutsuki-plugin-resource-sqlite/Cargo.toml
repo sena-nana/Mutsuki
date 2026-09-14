@@ -13,6 +13,7 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+futures.workspace = true
 mutsuki-runtime-host.workspace = true
 tempfile.workspace = true
 

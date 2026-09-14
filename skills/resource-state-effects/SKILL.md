@@ -40,3 +40,11 @@ Provider `execute` returns `ResourceProviderOutcome`: committed invalidations ar
 Invalidating providers declare Ordered. Their provider-id lane survives staged reload, retains the executing provider until actor application, and remains occupied after caller timeout/disconnect until actual completion. Queue count/bytes use Host limits; panic with unknown effects poisons the lane until restart. No permanent tombstone history or I/O in open. SQLite keeps create-before-insert retention and capability exemption.
 
 Index invalidations only for the current outcome so batch deletion/update conflicts do not require a quadratic scan. No per-deletion index survives application. Verify real instance call/restore counts across reload, not only shared database contents.
+
+## Async registry (#182)
+
+AsyncResourceRegistryGateway uses owned inputs and returns a descriptor only after actor
+registration. Descriptor open stays an actor query; all create kinds reuse explicit provider
+outcomes. Timeout/disconnection does not undo creation or discard committed lifecycle facts.
+Sync Host clients bridge native async and Offloaded providers; LocalResourceClient cannot
+replace the Host registry. See ../../docs/architecture/async-resource-creation.md.

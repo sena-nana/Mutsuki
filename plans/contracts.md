@@ -853,3 +853,13 @@ Host shutdown rejects queued resource work and drains executing ordered operatio
 Native async provider execute, including Future construction, runs only after executor capacity admission and under panic isolation. Inline provider panics also fail and poison the provider route. Prepared reload carries candidate providers; the actor validates affected routes before the Core switch and installs them only after success. Full reload requires explicit candidates for all active providers (including previously Host-injected routes); targeted reload preserves unaffected instances. Resource completion during Runner reload drain applies facts and releases the same provider lane. Reload does not restore.
 
 Retain every offloaded/native-async provider invocation through actor result application, including Concurrent providers. A reload to Ordered fences all older invocations for that provider ID until the last result is applied; Concurrent execution otherwise remains parallel. Host shutdown drains all executing resource invocations.
+
+## Async Host resource registry (#182)
+
+AsyncResourceRegistryGateway provides owned-input descriptor open and blob/COW/capability
+creation returning BoxRuntimeFuture<ResourceRef>. Successful creation includes actor descriptor
+registration; provider work and Future construction remain off actor for async/Offloaded
+providers. Sync Host plans also bridge native async providers. HostContext exposes the optional
+registry and adds its constructor argument after the synchronous registry. Runtime-wire 1.4.0
+and existing request/reply DTOs are unchanged. Migration and lifecycle details:
+[async resource creation](../docs/architecture/async-resource-creation.md).

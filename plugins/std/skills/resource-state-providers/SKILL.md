@@ -52,3 +52,8 @@ Invalidating providers declare Ordered. Their provider-id lane survives staged r
 SQLite collects deleted identities in the deletion transaction and publishes only after commit. Vacuum/later failure cannot erase committed facts. Compare hub and stored inventory through 10,000 create/sweep cycles, restart and staged reload.
 
 Capacity retention deletes the oldest disposable prefix in one transaction. A failed capacity statement reports no uncommitted invalidations; already committed TTL deletions still survive. Include bulk rollback, zero-byte rows, and explicit provider instance/restore counters in reload tests.
+
+For #182 exercise AsyncResourceRegistryGateway with real SQLite creation and restart, then read
+through the synchronous Host bridge used by large-blob consumers. Budget payload plus routing
+metadata; never move descriptor registration into a worker or fall back to Inline on exhaustion.
+See ../../../../docs/architecture/async-resource-creation.md.

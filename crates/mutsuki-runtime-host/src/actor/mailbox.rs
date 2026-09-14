@@ -99,6 +99,23 @@ impl ActorSender {
         self.wake.send(()).map_err(|_| ())
     }
 
+    /// Async callers must never park a runtime worker on a full actor mailbox.
+    pub(crate) fn try_send(&self, message: CoreActorMsg) -> Result<(), mpsc::TrySendError<()>> {
+        let mut queued = self.enqueued_at.lock().unwrap_or_else(|p| p.into_inner());
+        self.depth.fetch_add(1, AtomicOrdering::AcqRel);
+        queued.push_back(Instant::now());
+        if let Err(error) = self.tx.try_send(message) {
+            self.depth.fetch_sub(1, AtomicOrdering::AcqRel);
+            queued.pop_back();
+            return Err(match error {
+                mpsc::TrySendError::Full(_) => mpsc::TrySendError::Full(()),
+                mpsc::TrySendError::Disconnected(_) => mpsc::TrySendError::Disconnected(()),
+            });
+        }
+        let _ = self.wake.send(());
+        Ok(())
+    }
+
     pub(crate) fn depth(&self) -> usize {
         self.depth.load(AtomicOrdering::Acquire)
     }
@@ -209,4 +226,27 @@ pub(super) struct ActorMailboxes {
     pub(super) control: ActorReceiver,
     pub(super) data: ActorReceiver,
     pub(super) wake: mpsc::Receiver<()>,
+}
+
+#[cfg(test)]
+mod async_admission_tests {
+    use super::*;
+
+    #[test]
+    fn saturated_async_mailbox_rejects_without_changing_depth() {
+        let (wake, _) = mpsc::channel();
+        let (sender, receiver) = actor_channel(1, wake);
+        sender.try_send(CoreActorMsg::Shutdown).ok().unwrap();
+        assert!(matches!(
+            sender.try_send(CoreActorMsg::Shutdown),
+            Err(mpsc::TrySendError::Full(_))
+        ));
+        assert_eq!(sender.depth(), 1);
+        drop(receiver);
+        assert!(matches!(
+            sender.try_send(CoreActorMsg::Shutdown),
+            Err(mpsc::TrySendError::Disconnected(_))
+        ));
+        assert_eq!(sender.depth(), 1);
+    }
 }
