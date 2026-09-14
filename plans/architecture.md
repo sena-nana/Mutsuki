@@ -548,3 +548,13 @@ Contract surface 兼容性：
   default and receives both path and logical namespace from its caller.
 - Bot Flow is an ordinary Bot-owned `ConfigProvider`; only Bot packages decode its document.
   The independent editor adapts Web RPC to ConfigService and owns no server-side storage or draft.
+
+## Descriptor invalidation (#184)
+
+Provider `execute` returns `ResourceProviderOutcome`: committed invalidations are independent of operation success, including partial batch/saga failure. Host applies provider/ref/resource-generation removals on the actor before replying. Absent refs are idempotent; conflicting owners/generations fail. Invalidation dominates same-outcome updates and removes writer/derived occupancy facts. Receipt status and business JSON are not lifecycle signals.
+
+Invalidating providers declare Ordered. Their provider-id lane survives staged reload, retains the executing provider until actor application, and remains occupied after caller timeout/disconnect until actual completion. Queue count/bytes use Host limits; panic with unknown effects poisons the lane until restart. No permanent tombstone history or I/O in open. SQLite keeps create-before-insert retention and capability exemption.
+
+HostRuntimeCommand::ResourceDescriptors exposes the actor's read-only descriptor inventory for consistency checks. Resource bytes remain provider-owned.
+
+Provider 路由是 Host generation switch 的一部分：候选实例随 PreparedRuntimeReload 进入 actor，Core 切换成功后才替换；完整 reload 缺失候选必须失败，targeted reload 保留未受影响实例。Runner drain 与主循环共用资源结果应用/通道释放，drain 同时消费 control/data mailbox。

@@ -18,3 +18,7 @@ description: Change Mutsuki plugin manifests, capability resolution, RuntimeProf
   roll it back only pre-switch and never make Core own Host effect leases.
 
 Test deterministic resolution, missing capability, generation transitions, occupied removal and breaking reload rejection.
+
+Provider candidates travel with PreparedRuntimeReload. Validate complete affected routes before switching Core, then replace active routes atomically on success; a full reload cannot silently reuse missing candidates. Targeted reload preserves unaffected provider instances. Never restore on reload. Every reload drain consumes resource events through the same actor lifecycle/ordering completion method.
+
+Retain every offloaded/native-async provider invocation through actor result application, including Concurrent providers. A reload to Ordered fences all older invocations for that provider ID until the last result is applied; Concurrent execution otherwise remains parallel. Host shutdown drains all executing resource invocations.

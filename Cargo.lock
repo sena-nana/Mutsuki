@@ -5065,6 +5065,7 @@ version = "0.1.0"
 dependencies = [
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
+ "mutsuki-runtime-host",
  "mutsuki-runtime-sdk",
  "rusqlite",
  "serde",

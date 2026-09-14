@@ -31,3 +31,5 @@ Python Runner SDK 或具体产品装配。
 
 Rust 改动运行 `cargo fmt --check`、`cargo check` 和 `cargo test`。协议或插件 surface
 改动补充行为测试和 conformance；最终报告实际命令与统一 release revision。
+
+ServiceConfig-based test fixtures explicitly set data/log/plugin/run directories under their temporary root. A home override alone must not let tests access the real user service directories.

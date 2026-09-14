@@ -49,3 +49,5 @@ Ask these in order:
 ## Reference
 
 Read [references/naming-rules.md](references/naming-rules.md) when auditing more than one component, reviewing a proposed rename, or deciding whether to split responsibilities.
+
+Provider lifecycle DTOs belong to contracts; native outcomes belong to SDK; ordered completion lanes belong to Host. See naming-rules.md for #184 ownership.

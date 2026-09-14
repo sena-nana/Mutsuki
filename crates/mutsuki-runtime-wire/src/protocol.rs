@@ -5,7 +5,7 @@ use thiserror::Error;
 use mutsuki_runtime_contracts::PluginManifest;
 
 pub const BINARY_CODEC_ID: &str = "mutsuki.codec.typed-msgpack.v1";
-pub const SCHEMA_REVISION: &str = "mutsuki.runtime.wire/1.3.0";
+pub const SCHEMA_REVISION: &str = "mutsuki.runtime.wire/1.4.0";
 pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_INLINE_RESOURCE_BYTES: usize = 64 * 1024;
@@ -87,10 +87,11 @@ pub enum Opcode {
     ResourceCreateBlob = 0x3009,
     ResourceCreateCowState = 0x300a,
     ResourceCreateCapability = 0x300b,
+    ResourceProviderExecute = 0x300c,
 }
 
 impl Opcode {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 19] = [
         Self::PluginInitialize,
         Self::RunnerRunBatch,
         Self::RunnerCancel,
@@ -109,6 +110,7 @@ impl Opcode {
         Self::ResourceCreateBlob,
         Self::ResourceCreateCowState,
         Self::ResourceCreateCapability,
+        Self::ResourceProviderExecute,
     ];
 
     pub const fn method(self) -> &'static str {
@@ -131,6 +133,7 @@ impl Opcode {
             Self::ResourceCreateBlob => "resource.create_blob",
             Self::ResourceCreateCowState => "resource.create_cow_state",
             Self::ResourceCreateCapability => "resource.create_capability",
+            Self::ResourceProviderExecute => "resource.provider.execute",
         }
     }
 

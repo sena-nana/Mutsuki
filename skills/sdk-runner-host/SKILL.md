@@ -12,3 +12,5 @@ description: Change the Mutsuki Rust SDK, SDK macros, native runner helpers, Run
 - Leave process supervision, configuration, secrets and lifecycle to MutsukiServiceHost or another product host.
 
 Test SDK ergonomics against real runtime surfaces and run Runner Link conformance for codec or adapter changes.
+
+Provider integration uses `ResourceProviderGateway::execute` (or native async execute) returning explicit result-plus-invalidation outcomes. Existing caller resource replies remain unchanged; Host actor owns lifecycle application. Invalidating providers declare Ordered. Standalone `LocalResourceClient` rejects ordered providers because it has no Core registry; use HostContext resource clients. Native async future construction must not block.

@@ -1,12 +1,10 @@
 //! Completion revision, task waiting, reload drain, and runner disposal contracts.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
-use mutsuki_runtime_contracts::{
-    CompletionBatch, RunnerId, TaskHandle, TaskId, TaskStatus, WorkBatch,
-};
+use mutsuki_runtime_contracts::{CompletionBatch, RunnerId, TaskHandle, TaskStatus, WorkBatch};
 use mutsuki_runtime_core::{
     CoreRuntime, ReloadDecision, Runner, RunnerIsolation, RunnerManagementHandle, RuntimeResult,
 };
@@ -14,17 +12,12 @@ use mutsuki_runtime_core::{
 use crate::PreparedRuntimeReload;
 use crate::commands::HostTaskState;
 use crate::error::host_failure;
-use crate::host::{HostRuntimeConfig, TaskCompletionHub};
-use crate::management::ManagementExecutor;
+use crate::host::TaskCompletionHub;
 use crate::scheduler::validate_runner_limits;
-use crate::worker::WorkerPools;
 
 use super::cancellation::queue_management_retry;
-use super::mailbox::{ActorReceiver, CoreActorMsg};
-use super::supervision::{
-    DrainingInvocation, RunningBatch, handle_async_event, handle_worker_completion,
-    mark_worker_started, supervise_running_invocations, task_status,
-};
+use super::mailbox::{CoreActorMsg, receive_actor_message};
+use super::supervision::{handle_worker_completion, mark_worker_started, task_status};
 /// Actor-owned waiter resolved only from authoritative `CoreRuntime` task state.
 pub(super) struct PendingTaskWait {
     pub(super) handles: Vec<TaskHandle>,
@@ -142,40 +135,20 @@ fn all_task_states_terminal(states: &[HostTaskState]) -> bool {
 pub(super) fn reload_runtime(
     prepared: PreparedRuntimeReload,
     drain_timeout: Duration,
-    core: &mut CoreRuntime,
-    config: &mut HostRuntimeConfig,
-    pools: &mut WorkerPools,
-    management: &ManagementExecutor,
-    rx: &ActorReceiver,
-    pending_cancels: &mut BTreeMap<RunnerId, Vec<String>>,
-    running_batches_by_task: &mut BTreeMap<TaskId, RunningBatch>,
-    draining_invocations: &mut BTreeMap<String, DrainingInvocation>,
-    offloaded_resource_replies: &mut BTreeMap<
-        String,
-        std::sync::mpsc::Sender<RuntimeResult<crate::commands::HostRuntimeReply>>,
-    >,
+    actor: &mut super::CoreActor,
 ) -> RuntimeResult<ReloadDecision> {
     let affected_runner_ids = prepared.affected_plugins.as_ref().map(|affected_plugins| {
-        core.registry_snapshot()
+        actor
+            .core
+            .registry_snapshot()
             .runners
             .into_iter()
             .filter(|runner| affected_plugins.contains(&runner.plugin_id))
             .map(|runner| runner.runner_id)
             .collect::<BTreeSet<_>>()
     });
-    drain_for_reload(
-        core,
-        config,
-        pools,
-        management,
-        rx,
-        pending_cancels,
-        running_batches_by_task,
-        draining_invocations,
-        offloaded_resource_replies,
-        drain_timeout,
-        affected_runner_ids.as_ref(),
-    )?;
+    let (resource_providers, async_resource_providers) = prepared.resource_routes(&actor.config)?;
+    drain_for_reload(actor, drain_timeout, affected_runner_ids.as_ref())?;
     let PreparedRuntimeReload {
         plan,
         runners,
@@ -184,59 +157,47 @@ pub(super) fn reload_runtime(
         affected_plugins,
         ..
     } = prepared;
-    let previous_runner_limits = config.runner_limits.clone();
+    let previous_runner_limits = actor.config.runner_limits.clone();
     if let Some(runner_limits) = runner_limits {
-        validate_runner_limits(&config.default_runner_limits, &runner_limits)?;
-        config.runner_limits = runner_limits;
+        validate_runner_limits(&actor.config.default_runner_limits, &runner_limits)?;
+        actor.config.runner_limits = runner_limits;
     }
     let runners = runners
         .into_iter()
         .map(|runner| Box::new(DisposeOnDropRunner::new(runner)) as Box<dyn Runner>)
         .collect();
     let result = match affected_plugins {
-        Some(affected_plugins) => core.reload_targeted_with_async_handlers(
+        Some(affected_plugins) => actor.core.reload_targeted_with_async_handlers(
             plan,
             runners,
             async_handlers,
             affected_plugins,
         ),
-        None => core.reload_with_async_handlers(plan, runners, async_handlers),
+        None => actor
+            .core
+            .reload_with_async_handlers(plan, runners, async_handlers),
     };
     if result.is_err() {
-        config.runner_limits = previous_runner_limits;
+        actor.config.runner_limits = previous_runner_limits;
+    }
+    if result.is_ok() {
+        actor.config.resource_providers = resource_providers;
+        actor.config.async_resource_providers = async_resource_providers;
+        actor.fence_reloaded_resource_providers();
     }
     result
 }
 
-#[allow(clippy::too_many_arguments)]
 fn drain_for_reload(
-    core: &mut CoreRuntime,
-    config: &HostRuntimeConfig,
-    pools: &mut WorkerPools,
-    management: &ManagementExecutor,
-    rx: &ActorReceiver,
-    pending_cancels: &mut BTreeMap<RunnerId, Vec<String>>,
-    running_batches_by_task: &mut BTreeMap<TaskId, RunningBatch>,
-    draining_invocations: &mut BTreeMap<String, DrainingInvocation>,
-    offloaded_resource_replies: &mut BTreeMap<
-        String,
-        std::sync::mpsc::Sender<RuntimeResult<crate::commands::HostRuntimeReply>>,
-    >,
+    actor: &mut super::CoreActor,
     drain_timeout: Duration,
     affected_runner_ids: Option<&BTreeSet<RunnerId>>,
 ) -> RuntimeResult<()> {
     let started_at = Instant::now();
     loop {
-        supervise_running_invocations(
-            core,
-            config,
-            pools,
-            management,
-            pending_cancels,
-            running_batches_by_task,
-            draining_invocations,
-        );
-        let running_count = running_batches_by_task
+        actor.supervise();
+        let running_count = actor
+            .running_batches_by_task
             .values()
             .filter(|batch| {
                 affected_runner_ids.is_none_or(|runner_ids| runner_ids.contains(&batch.runner_id))
@@ -258,32 +219,32 @@ fn drain_for_reload(
         let wait = drain_timeout
             .saturating_sub(elapsed)
             .min(Duration::from_millis(10));
-        match rx.recv_timeout(wait) {
+        match receive_actor_message(
+            &actor.control_rx,
+            &actor.data_rx,
+            &actor.wake_rx,
+            Some(wait),
+            actor.config.actor_control_quota,
+            &mut actor.control_burst,
+        ) {
             Ok(CoreActorMsg::WorkerStarted(started)) => {
-                mark_worker_started(started, running_batches_by_task);
+                mark_worker_started(started, &mut actor.running_batches_by_task);
             }
             Ok(CoreActorMsg::WorkerCompleted(completion)) => {
                 let _ = handle_worker_completion(
                     completion,
-                    core,
-                    pending_cancels,
-                    running_batches_by_task,
-                    draining_invocations,
+                    &mut actor.core,
+                    &mut actor.pending_cancels,
+                    &mut actor.running_batches_by_task,
+                    &mut actor.draining_invocations,
                 )?;
             }
             Ok(CoreActorMsg::AsyncEvent(event)) => {
-                let _ = handle_async_event(
-                    event,
-                    core,
-                    pending_cancels,
-                    running_batches_by_task,
-                    draining_invocations,
-                    offloaded_resource_replies,
-                )?;
+                let _ = actor.apply_async_event(event)?;
             }
             Ok(CoreActorMsg::WorkerExited(exited)) => {
                 if exited.isolated
-                    && let Some(pool) = pools.get_mut(&exited.execution_class)
+                    && let Some(pool) = actor.pools.get_mut(&exited.execution_class)
                 {
                     pool.replace_exited_worker(&exited.worker_id)?;
                 }
@@ -294,11 +255,11 @@ fn drain_for_reload(
             }) => queue_management_retry(
                 runner_id,
                 invocation_id,
-                running_batches_by_task,
-                pending_cancels,
+                &actor.running_batches_by_task,
+                &mut actor.pending_cancels,
             ),
             Ok(CoreActorMsg::TaskStatus(task_id, reply_tx)) => {
-                let _ = reply_tx.send(task_status(core, &task_id));
+                let _ = reply_tx.send(task_status(&actor.core, &task_id));
             }
             Ok(CoreActorMsg::WaitTaskStates { reply, .. }) => {
                 let _ = reply.send(Err(host_failure(
@@ -318,7 +279,14 @@ fn drain_for_reload(
                     "runtime reload is draining active work",
                 )));
             }
-            Ok(CoreActorMsg::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Ok(CoreActorMsg::Shutdown) => {
+                actor.handle_message(CoreActorMsg::Shutdown);
+                return Err(host_failure(
+                    "host.reload.shutdown",
+                    "runtime actor stopped",
+                ));
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
                 return Err(host_failure(
                     "host.reload.shutdown",
                     "runtime actor stopped",

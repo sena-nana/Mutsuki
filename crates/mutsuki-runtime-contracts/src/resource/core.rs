@@ -265,3 +265,60 @@ pub enum ResourceValue {
     ValueRef(ValueRef),
     ResourceRef(ResourceRef),
 }
+
+/// A committed provider-side removal. Generation identifies the resource, not the plugin.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceDescriptorInvalidation {
+    pub provider_id: String,
+    pub ref_id: crate::RefId,
+    pub generation: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum ResourceProviderRequest {
+    CreateBlob {
+        schema: String,
+        bytes: Vec<u8>,
+    },
+    CreateCow {
+        kind_id: String,
+        schema: String,
+        bytes: Vec<u8>,
+    },
+    CreateCapability {
+        kind_id: String,
+        schema: String,
+    },
+    Collect(ReadPlan),
+    Snapshot {
+        plan: ReadPlan,
+        kind_id: String,
+        schema: String,
+    },
+    OpenStream(ReadPlan),
+    Export(ExportPlan),
+    Commit {
+        plan: Box<WritePlan>,
+        bytes: Vec<u8>,
+    },
+    Command(CommandPlan),
+    Batch(super::experimental::CommandBatch),
+    Saga(super::experimental::SagaPlan),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum ResourceProviderReply {
+    Created(ResourceRef),
+    Bytes(Vec<u8>),
+    Snapshot(Box<SnapshotDescriptor>),
+    Stream(StreamPlan),
+    Receipt(Box<PlanReceipt>),
+    Receipts(Vec<PlanReceipt>),
+}
+
+/// ABI provider lifecycle outcome. Transport failures remain outside this committed outcome.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ResourceProviderResponse {
+    pub result: Result<ResourceProviderReply, crate::RuntimeError>,
+    pub invalidations: Vec<ResourceDescriptorInvalidation>,
+}

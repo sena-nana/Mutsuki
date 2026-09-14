@@ -67,21 +67,21 @@ pub enum ResourceProviderExecution {
     Inline,
     /// Run on the Host async executor so the actor keeps scheduling. The
     /// calling worker still waits for its reply; only the actor is released.
-    /// Falls back to `Inline` when no async executor is configured, or when the
-    /// executor rejects the work because its in-flight bounds are exhausted.
+    /// Requires an async executor; unavailable capacity is a structured failure.
     Offloaded,
 }
 
-pub trait ResourceProviderGateway: ResourcePlanGateway {
-    fn create_blob_resource(&self, schema: &str, bytes: Vec<u8>) -> RuntimeResult<ResourceRef>;
-    fn create_cow_state_resource(
+pub trait ResourceProviderGateway: Send + Sync {
+    /// Report committed lifecycle effects even when the operation failed.
+    fn execute(
         &self,
-        kind_id: &str,
-        schema: &str,
-        bytes: Vec<u8>,
-    ) -> RuntimeResult<ResourceRef>;
-    fn create_capability_resource(&self, kind_id: &str, schema: &str)
-    -> RuntimeResult<ResourceRef>;
+        request: ResourceProviderRequest,
+    ) -> ResourceProviderOutcome<ResourceProviderReply>;
+
+    /// Invalidating providers must use Ordered; the actor owns the lane through application.
+    fn ordering(&self) -> ResourceProviderOrdering {
+        ResourceProviderOrdering::Concurrent
+    }
 
     /// Descriptors the provider still holds from an earlier run. The Host
     /// re-registers these once at boot so a persistent provider's resources
@@ -123,16 +123,13 @@ pub trait AsyncResourcePlanGateway: Send + Sync {
     fn execute_saga_plan(&self, saga: SagaPlan) -> BoxRuntimeFuture<Vec<PlanReceipt>>;
 }
 
-pub trait AsyncResourceProviderGateway: AsyncResourcePlanGateway {
-    fn create_blob_resource(&self, schema: &str, bytes: Vec<u8>) -> RuntimeResult<ResourceRef>;
-    fn create_cow_state_resource(
-        &self,
-        kind_id: &str,
-        schema: &str,
-        bytes: Vec<u8>,
-    ) -> RuntimeResult<ResourceRef>;
-    fn create_capability_resource(&self, kind_id: &str, schema: &str)
-    -> RuntimeResult<ResourceRef>;
+pub trait AsyncResourceProviderGateway: Send + Sync {
+    fn execute(&self, request: ResourceProviderRequest) -> ResourceProviderFuture;
+
+    /// Invalidating providers must use Ordered; the actor owns the lane through application.
+    fn ordering(&self) -> ResourceProviderOrdering {
+        ResourceProviderOrdering::Concurrent
+    }
 
     /// See [`ResourceProviderGateway::restore_descriptors`]. Boot-time recovery
     /// runs before the actor starts, so it stays synchronous on both gateways.
@@ -144,3 +141,38 @@ pub trait AsyncResourceProviderGateway: AsyncResourcePlanGateway {
         Ok(Vec::new())
     }
 }
+
+/// Ordered providers retain their lane until the actor applies the result.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ResourceProviderOrdering {
+    #[default]
+    Concurrent,
+    Ordered,
+}
+
+/// Lifecycle effects are independent of success, including partial batch/saga failure.
+#[derive(Debug)]
+pub struct ResourceProviderOutcome<T> {
+    pub result: RuntimeResult<T>,
+    pub invalidations: Vec<mutsuki_runtime_contracts::ResourceDescriptorInvalidation>,
+}
+
+impl<T> ResourceProviderOutcome<T> {
+    pub fn new(result: RuntimeResult<T>) -> Self {
+        Self {
+            result,
+            invalidations: Vec::new(),
+        }
+    }
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> ResourceProviderOutcome<U> {
+        ResourceProviderOutcome {
+            result: self.result.map(f),
+            invalidations: self.invalidations,
+        }
+    }
+}
+
+pub type ResourceProviderFuture =
+    Pin<Box<dyn Future<Output = ResourceProviderOutcome<ResourceProviderReply>> + Send + 'static>>;
+
+pub use mutsuki_runtime_contracts::{ResourceProviderReply, ResourceProviderRequest};

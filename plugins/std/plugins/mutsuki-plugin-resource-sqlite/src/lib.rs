@@ -23,8 +23,7 @@ use mutsuki_runtime_contracts::{
 };
 use mutsuki_runtime_core::{RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
-    LoadedPlugin, PluginBuilder, ResourcePlanGateway, ResourceProviderExecution,
-    ResourceProviderGateway,
+    LoadedPlugin, PluginBuilder, ResourceProviderExecution, ResourceProviderGateway,
 };
 use rusqlite::Connection;
 use serde::Deserialize;
@@ -103,11 +102,14 @@ impl SqliteResourceConfig {
 #[derive(Debug)]
 struct SqliteResourceState {
     connection: Connection,
+    invalidations:
+        std::cell::RefCell<Vec<mutsuki_runtime_contracts::ResourceDescriptorInvalidation>>,
 }
 
 #[derive(Debug)]
 pub struct SqliteResourceProvider {
     state: Mutex<SqliteResourceState>,
+    operation: Mutex<()>,
     /// Effective `journal_mode` after open (`wal`, or a non-WAL fallback such
     /// as `memory` for in-memory databases).
     journal_mode: String,
@@ -165,7 +167,11 @@ impl SqliteResourceProvider {
         migrate_schema(&connection)
             .map_err(|error| storage_failure("resource.sqlite.open", &error.to_string()))?;
         Ok(Self {
-            state: Mutex::new(SqliteResourceState { connection }),
+            state: Mutex::new(SqliteResourceState {
+                connection,
+                invalidations: std::cell::RefCell::default(),
+            }),
+            operation: Mutex::new(()),
             journal_mode,
             retention,
         })
@@ -193,11 +199,10 @@ impl SqliteResourceProvider {
     ) -> RuntimeResult<ResourceRef> {
         const ROUTE: &str = "resource.sqlite.create";
         let state = self.lock_state(ROUTE)?;
-        // Reclaiming on create keeps the bound enforced without a timer thread:
-        // the database only grows here, so this is the only place it can pass
-        // its limits.
+        // Retention is intentionally checked before creates, without a timer
+        // or a strict instantaneous bound (writes may also grow stored payloads).
         if !self.retention.is_empty() {
-            sweep_retention(&state.connection, self.retention, ROUTE)?;
+            sweep_retention(&state, self.retention, ROUTE)?;
         }
         let created_at = stored_i64(now_unix_ms(ROUTE)?, ROUTE, "created_at_unix_ms")?;
         let slot = allocate_slot(&state.connection)
@@ -310,13 +315,12 @@ impl SqliteResourceProvider {
                     .and_then(Value::as_str)
                     .ok_or_else(|| unsupported("resource.sqlite.command.delete", "missing ref_id"))?
                     .to_string();
-                let deleted = state
-                    .connection
-                    .prepare_cached("DELETE FROM resources WHERE ref_id = ?1")
-                    .and_then(|mut statement| statement.execute([target_ref_id.as_str()]))
-                    .map_err(|error| {
-                        storage_failure("resource.sqlite.command.delete", &error.to_string())
-                    })?;
+                let deleted = delete_resources(
+                    state,
+                    "DELETE FROM resources WHERE ref_id = ?1 RETURNING ref_id",
+                    [target_ref_id.as_str()],
+                    "resource.sqlite.command.delete",
+                )?;
                 if deleted == 0 {
                     return Err(runtime_failure(
                         ERR_RESOURCE_NOT_FOUND,
@@ -338,7 +342,7 @@ impl SqliteResourceProvider {
     }
 }
 
-impl ResourcePlanGateway for SqliteResourceProvider {
+impl SqliteResourceProvider {
     fn collect_read_plan(&self, plan: &ReadPlan) -> RuntimeResult<Vec<u8>> {
         match plan.operation.as_str() {
             "collect" | "get" => self.with_entry(
@@ -382,7 +386,7 @@ impl ResourcePlanGateway for SqliteResourceProvider {
         })
     }
 
-    fn open_stream_plan(&self, plan: &ReadPlan) -> RuntimeResult<StreamPlan> {
+    fn open_stream_plan(plan: &ReadPlan) -> RuntimeResult<StreamPlan> {
         Err(unsupported("resource.sqlite.stream", &plan.operation))
     }
 
@@ -559,7 +563,7 @@ impl ResourcePlanGateway for SqliteResourceProvider {
     }
 }
 
-impl ResourceProviderGateway for SqliteResourceProvider {
+impl SqliteResourceProvider {
     fn create_blob_resource(&self, schema: &str, bytes: Vec<u8>) -> RuntimeResult<ResourceRef> {
         self.create_resource(BLOB_KIND_ID, ResourceSemantic::FrozenValue, schema, bytes)
     }
@@ -590,14 +594,70 @@ impl ResourceProviderGateway for SqliteResourceProvider {
             Vec::new(),
         )
     }
+}
 
-    /// Every stored row, so the Host can put the rows written before a restart
-    /// back into the resource registry. The blob stays in the database:
-    /// `length(bytes)` is enough to rebuild the descriptor.
-    ///
-    /// Rows the retention sweep already reclaimed are simply absent, and the
-    /// generation stays `1` for the life of a row — this provider rewrites
-    /// bytes in place under a version guard and never re-generations a slot.
+impl ResourceProviderGateway for SqliteResourceProvider {
+    fn execute(
+        &self,
+        request: mutsuki_runtime_sdk::ResourceProviderRequest,
+    ) -> mutsuki_runtime_sdk::ResourceProviderOutcome<mutsuki_runtime_sdk::ResourceProviderReply>
+    {
+        use mutsuki_runtime_sdk::{ResourceProviderReply as R, ResourceProviderRequest as Q};
+        let Ok(_operation) = self.operation.lock() else {
+            return mutsuki_runtime_sdk::ResourceProviderOutcome::new(Err(storage_failure(
+                "resource.sqlite.execute",
+                "operation mutex poisoned",
+            )));
+        };
+        let result = match request {
+            Q::CreateBlob { schema, bytes } => {
+                self.create_blob_resource(&schema, bytes).map(R::Created)
+            }
+            Q::CreateCow {
+                kind_id,
+                schema,
+                bytes,
+            } => self
+                .create_cow_state_resource(&kind_id, &schema, bytes)
+                .map(R::Created),
+            Q::CreateCapability { kind_id, schema } => self
+                .create_capability_resource(&kind_id, &schema)
+                .map(R::Created),
+            Q::Collect(plan) => self.collect_read_plan(&plan).map(R::Bytes),
+            Q::Snapshot {
+                plan,
+                kind_id,
+                schema,
+            } => self
+                .snapshot_read_plan(&plan, &kind_id, &schema)
+                .map(|value| R::Snapshot(Box::new(value))),
+            Q::OpenStream(plan) => Self::open_stream_plan(&plan).map(R::Stream),
+            Q::Export(plan) => self
+                .execute_export_plan(&plan)
+                .map(|value| R::Receipt(Box::new(value))),
+            Q::Commit { plan, bytes } => self
+                .commit_write_plan(&plan, bytes)
+                .map(|value| R::Receipt(Box::new(value))),
+            Q::Command(plan) => self
+                .execute_command_plan(&plan)
+                .map(|value| R::Receipt(Box::new(value))),
+            Q::Batch(batch) => self.execute_command_batch(&batch).map(R::Receipts),
+            Q::Saga(saga) => self.execute_saga_plan(&saga).map(R::Receipts),
+        };
+        let invalidations = std::mem::take(
+            &mut *self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .invalidations
+                .borrow_mut(),
+        );
+        mutsuki_runtime_sdk::ResourceProviderOutcome {
+            result,
+            invalidations,
+        }
+    }
+
     fn restore_descriptors(&self) -> RuntimeResult<Vec<ResourceRef>> {
         const ROUTE: &str = "resource.sqlite.restore";
         let state = self.lock_state(ROUTE)?;
@@ -638,6 +698,10 @@ impl ResourceProviderGateway for SqliteResourceProvider {
 
     /// Every plan here reaches a SQLite file, so none of them belong on the
     /// Core actor thread.
+    fn ordering(&self) -> mutsuki_runtime_sdk::ResourceProviderOrdering {
+        mutsuki_runtime_sdk::ResourceProviderOrdering::Ordered
+    }
+
     fn execution(&self) -> ResourceProviderExecution {
         ResourceProviderExecution::Offloaded
     }
@@ -869,8 +933,44 @@ fn column_exists(connection: &Connection, table: &str, column: &str) -> rusqlite
 /// they are handles the runtime keeps for the lifetime of the plugin, not
 /// payloads. Rows without a creation time (written before schema v3) are only
 /// reachable through the size bound.
+/// Collect identities inside the deletion transaction; publish only after commit.
+fn delete_resources(
+    state: &SqliteResourceState,
+    sql: &str,
+    params: impl rusqlite::Params,
+    route: &str,
+) -> RuntimeResult<usize> {
+    let transaction = state
+        .connection
+        .unchecked_transaction()
+        .map_err(|e| storage_failure(route, &e.to_string()))?;
+    let ids = transaction
+        .prepare(sql)
+        .and_then(|mut statement| {
+            statement
+                .query_map(params, |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .map_err(|e| storage_failure(route, &e.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|e| storage_failure(route, &e.to_string()))?;
+    let count = ids.len();
+    state
+        .invalidations
+        .borrow_mut()
+        .extend(ids.into_iter().map(|ref_id| {
+            mutsuki_runtime_contracts::ResourceDescriptorInvalidation {
+                provider_id: PROVIDER_ID.into(),
+                ref_id: ref_id.into(),
+                generation: 1,
+            }
+        }));
+    Ok(count)
+}
+
 fn sweep_retention(
-    connection: &Connection,
+    state: &SqliteResourceState,
     retention: SqliteRetentionConfig,
     route: &str,
 ) -> RuntimeResult<usize> {
@@ -878,23 +978,21 @@ fn sweep_retention(
     if let Some(max_age_seconds) = retention.max_age_seconds {
         let cutoff = now_unix_ms(route)?.saturating_sub(max_age_seconds.saturating_mul(1_000));
         let cutoff = stored_i64(cutoff, route, "cutoff")?;
-        removed += connection
-            .prepare_cached(
-                "DELETE FROM resources
-                 WHERE semantic <> 'capability_resource'
-                   AND created_at_unix_ms > 0
-                   AND created_at_unix_ms < ?1",
-            )
-            .and_then(|mut statement| statement.execute([cutoff]))
-            .map_err(|error| storage_failure(route, &error.to_string()))?;
+        removed += delete_resources(
+            state,
+            "DELETE FROM resources WHERE semantic <> 'capability_resource' AND created_at_unix_ms > 0 AND created_at_unix_ms < ?1 RETURNING ref_id",
+            [cutoff],
+            route,
+        )?;
     }
     if let Some(max_total_bytes) = retention.max_total_bytes {
-        removed += sweep_total_bytes(connection, max_total_bytes, route)?;
+        removed += sweep_total_bytes(state, max_total_bytes, route)?;
     }
     if removed > 0 {
         // No-op when auto_vacuum is `none`, which is the case for databases
         // created before the pragma was introduced.
-        connection
+        state
+            .connection
             .execute_batch("PRAGMA incremental_vacuum;")
             .map_err(|error| storage_failure(route, &error.to_string()))?;
     }
@@ -903,44 +1001,36 @@ fn sweep_retention(
 
 /// Drops the oldest disposable rows until the stored payload fits the bound.
 fn sweep_total_bytes(
-    connection: &Connection,
+    state: &SqliteResourceState,
     max_total_bytes: u64,
     route: &str,
 ) -> RuntimeResult<usize> {
-    let total = connection
+    let total = state
+        .connection
         .prepare_cached("SELECT COALESCE(SUM(length(bytes)), 0) FROM resources")
         .and_then(|mut statement| statement.query_row([], |row| row.get::<_, i64>(0)))
         .map_err(|error| storage_failure(route, &error.to_string()))?;
-    let mut over = stored_u64(total, route, "length")?.saturating_sub(max_total_bytes);
+    let over = stored_u64(total, route, "length")?.saturating_sub(max_total_bytes);
     if over == 0 {
         return Ok(0);
     }
-    let candidates = connection
-        .prepare_cached(
-            "SELECT ref_id, length(bytes) FROM resources
-             WHERE semantic <> 'capability_resource'
-             ORDER BY slot ASC",
-        )
-        .and_then(|mut statement| {
-            statement
-                .query_map([], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>()
-        })
-        .map_err(|error| storage_failure(route, &error.to_string()))?;
-    let mut removed = 0;
-    for (ref_id, size) in candidates {
-        if over == 0 {
-            break;
-        }
-        removed += connection
-            .prepare_cached("DELETE FROM resources WHERE ref_id = ?1")
-            .and_then(|mut statement| statement.execute([ref_id.as_str()]))
-            .map_err(|error| storage_failure(route, &error.to_string()))?;
-        over = over.saturating_sub(stored_u64(size, route, "length")?);
-    }
-    Ok(removed)
+    // Delete the oldest prefix in one transaction, rather than commit once per
+    // row or materialize every surviving id in the provider. The preceding sum
+    // includes zero-sized rows until the byte target is met, as the old loop did.
+    delete_resources(
+        state,
+        "DELETE FROM resources WHERE ref_id IN (
+             SELECT ref_id FROM (
+                 SELECT ref_id,
+                     COALESCE(SUM(length(bytes)) OVER (
+                         ORDER BY slot ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                     ), 0) AS preceding_bytes
+                 FROM resources WHERE semantic <> 'capability_resource'
+             ) WHERE preceding_bytes < ?1
+         ) RETURNING ref_id",
+        [stored_i64(over, route, "length")?],
+        route,
+    )
 }
 
 fn now_unix_ms(route: &str) -> RuntimeResult<u64> {
@@ -1682,3 +1772,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod lifecycle_tests;

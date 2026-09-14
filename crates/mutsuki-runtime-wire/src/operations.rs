@@ -128,6 +128,25 @@ impl WireRequest for CreateCowStateRequest {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ExecuteResourceProviderRequest {
+    pub provider_id: String,
+    pub operation: mutsuki_runtime_contracts::ResourceProviderRequest,
+}
+impl WireRequest for ExecuteResourceProviderRequest {
+    const OPCODE: Opcode = Opcode::ResourceProviderExecute;
+    type Response = mutsuki_runtime_contracts::ResourceProviderResponse;
+    fn validate(&self, limits: WireLimits) -> Result<(), WireCodecError> {
+        use mutsuki_runtime_contracts::ResourceProviderRequest as Q;
+        match &self.operation {
+            Q::CreateBlob { bytes, .. } | Q::CreateCow { bytes, .. } | Q::Commit { bytes, .. } => {
+                validate_inline_resource_bytes(bytes.len(), limits)
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
 fn validate_inline_resource_bytes(length: usize, limits: WireLimits) -> Result<(), WireCodecError> {
     if length > limits.max_inline_resource_bytes {
         return Err(WireCodecError::InlineResourceOversized {
@@ -158,6 +177,7 @@ pub enum AnyWireRequest {
     CreateBlob(CreateBlobRequest),
     CreateCowState(CreateCowStateRequest),
     CreateCapability(CreateCapabilityRequest),
+    ExecuteResourceProvider(Box<ExecuteResourceProviderRequest>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -169,6 +189,7 @@ pub struct DecodedWireRequest {
 impl AnyWireRequest {
     pub const fn opcode(&self) -> Opcode {
         match self {
+            Self::ExecuteResourceProvider(_) => Opcode::ResourceProviderExecute,
             Self::Initialize(_) => Opcode::PluginInitialize,
             Self::RunBatch(_) => Opcode::RunnerRunBatch,
             Self::CancelRunner(_) => Opcode::RunnerCancel,
@@ -192,6 +213,7 @@ impl AnyWireRequest {
 
     pub fn validate(&self, limits: WireLimits) -> Result<(), WireCodecError> {
         match self {
+            Self::ExecuteResourceProvider(request) => request.validate(limits),
             Self::Initialize(request) => request.validate(limits),
             Self::RunBatch(request) => request.validate(limits),
             Self::CancelRunner(request) => request.validate(limits),
@@ -217,6 +239,11 @@ impl AnyWireRequest {
 macro_rules! decode_any_wire_request {
     ($opcode:expr, $decode:ident, $input:expr) => {
         match $opcode {
+            Opcode::ResourceProviderExecute => {
+                $crate::AnyWireRequest::ExecuteResourceProvider(Box::new($decode::<
+                    $crate::ExecuteResourceProviderRequest,
+                >($input)?))
+            }
             Opcode::PluginInitialize => {
                 $crate::AnyWireRequest::Initialize($decode::<$crate::InitializeRequest>($input)?)
             }

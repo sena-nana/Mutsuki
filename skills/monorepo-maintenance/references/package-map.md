@@ -48,3 +48,5 @@ Monorepo-maintenance owns `scripts/check_ci.py`; the root checker runs it and `p
 Preserve CI success/failure/cancellation behavior and reference failure propagation. Current cases and
 comparable metrics are mandatory; failed reports cannot be approved. Local coverage does not prove hosted
 Actions scheduling. The standalone fuzz lock must satisfy root dependency minimums and pass clone validation.
+
+Issue #184 lifecycle owners: contracts owns invalidation/request/reply DTOs; Core owns removal; SDK owns native outcomes; Host owns ordered actor application; Std SQLite owns transactional deletion facts. Runtime-wire 1.4.0 and Python DTO/schema/golden mirrors change atomically. SQLite owner tests add Host as a dev dependency; independent-clone verification covers that dependency.

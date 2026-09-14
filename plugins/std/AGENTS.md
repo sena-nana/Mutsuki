@@ -28,3 +28,11 @@ workflow 能力，不实现 Agent、Bot、产品配置或平台 UI。
 
 Rust 改动运行 `cargo fmt --check`、`cargo check` 和 `cargo test`。协议、provider、effect 或
 LoadPlan surface 改动补充行为测试，并报告实际命令与结果。
+
+## Descriptor invalidation (#184)
+
+Provider `execute` returns `ResourceProviderOutcome`: committed invalidations are independent of operation success, including partial batch/saga failure. Host applies provider/ref/resource-generation removals on the actor before replying. Absent refs are idempotent; conflicting owners/generations fail. Invalidation dominates same-outcome updates and removes writer/derived occupancy facts. Receipt status and business JSON are not lifecycle signals.
+
+Invalidating providers declare Ordered. Their provider-id lane survives staged reload, retains the executing provider until actor application, and remains occupied after caller timeout/disconnect until actual completion. Queue count/bytes use Host limits; panic with unknown effects poisons the lane until restart. No permanent tombstone history or I/O in open. SQLite keeps create-before-insert retention and capability exemption.
+
+容量 retention 以单事务删除最旧资源前缀，避免逐行事务和将所有候选 ID 拉到 provider。测试同时覆盖 bulk rollback、零字节资源、capability 豁免，以及同文件 provider 实例交替 reload 的调用/restore 计数。

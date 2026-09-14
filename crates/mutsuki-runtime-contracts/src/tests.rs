@@ -1051,3 +1051,27 @@ fn typed_local_payload_shares_arc_and_decodes_without_json() {
     assert!(!decoded.payload.is_local());
     assert_eq!(decoded.payload.decode::<DemoBody>().unwrap(), body);
 }
+
+#[test]
+fn provider_failure_roundtrip_preserves_committed_invalidation() {
+    let response = ResourceProviderResponse {
+        result: Err(RuntimeError::new(
+            ERR_RESOURCE_NOT_FOUND,
+            "provider",
+            "batch.partial",
+        )),
+        invalidations: vec![ResourceDescriptorInvalidation {
+            provider_id: "provider".into(),
+            ref_id: "removed".into(),
+            generation: 1,
+        }],
+    };
+    let encoded = serde_json::to_value(&response).unwrap();
+    assert_eq!(
+        serde_json::from_value::<ResourceProviderResponse>(encoded.clone()).unwrap(),
+        response
+    );
+    let mut invalid = encoded;
+    invalid["invalidations"][0]["generation"] = serde_json::json!(-1);
+    assert!(serde_json::from_value::<ResourceProviderResponse>(invalid).is_err());
+}

@@ -1,6 +1,7 @@
 mod cancellation;
 mod lifecycle;
 mod mailbox;
+mod resources;
 mod scheduling;
 mod supervision;
 
@@ -54,6 +55,14 @@ struct CoreActor {
     /// its own oneshot, so the caller's channel is parked here until the
     /// completion event comes back keyed by invocation id.
     offloaded_resource_replies: BTreeMap<String, mpsc::Sender<RuntimeResult<HostRuntimeReply>>>,
+    resource_busy: BTreeSet<String>,
+    resource_inflight: BTreeMap<String, usize>,
+    resource_shutdown: bool,
+    resource_execution_leases: BTreeMap<String, resources::ResourceExecutionLease>,
+    resource_poisoned: BTreeSet<String>,
+    resource_pending: std::collections::VecDeque<resources::PendingResource>,
+    resource_pending_bytes: usize,
+    resource_pending_ready: bool,
 }
 
 struct ActorExecution {
@@ -91,12 +100,29 @@ impl CoreActor {
             submitted_at: BTreeMap::new(),
             pending_task_waits: Vec::new(),
             offloaded_resource_replies: BTreeMap::new(),
+            resource_busy: BTreeSet::new(),
+            resource_inflight: BTreeMap::new(),
+            resource_shutdown: false,
+            resource_execution_leases: BTreeMap::new(),
+            resource_poisoned: BTreeSet::new(),
+            resource_pending: Default::default(),
+            resource_pending_bytes: 0,
+            resource_pending_ready: false,
         }
     }
 
     #[inline(never)]
     fn run(mut self) {
         loop {
+            if self.resource_shutdown && self.resource_inflight.is_empty() {
+                break;
+            }
+            if let Some(message) = self.next_resource_message() {
+                if self.handle_message(message) {
+                    break;
+                }
+                continue;
+            }
             self.refresh_driver();
             let wait = self
                 .driver
@@ -167,6 +193,9 @@ impl CoreActor {
     #[inline(always)]
     fn handle_message(&mut self, message: CoreActorMsg) -> bool {
         self.supervise();
+        let Some(message) = self.defer_resource_message(message) else {
+            return false;
+        };
         let shutdown = match message {
             CoreActorMsg::Command(command, reply_tx) => {
                 match &command {
@@ -201,7 +230,7 @@ impl CoreActor {
                 }
             }
             CoreActorMsg::AsyncResourceCommand(command, reply_tx) => {
-                start_async_resource_command(command, reply_tx, &self.config);
+                start_async_resource_command(command, reply_tx, self);
                 false
             }
             CoreActorMsg::TaskStatus(task_id, reply_tx) => {
@@ -255,14 +284,7 @@ impl CoreActor {
                 false
             }
             CoreActorMsg::AsyncEvent(event) => {
-                let _ = handle_async_event(
-                    event,
-                    &mut self.core,
-                    &mut self.pending_cancels,
-                    &mut self.running_batches_by_task,
-                    &mut self.draining_invocations,
-                    &mut self.offloaded_resource_replies,
-                );
+                let _ = self.apply_async_event(event);
                 self.publish_terminal_changes();
                 let _ = schedule_ready(
                     &mut self.core,
@@ -297,7 +319,9 @@ impl CoreActor {
                     let _ = executor.cancel_all();
                 }
                 let _ = self.core.abort("host.shutdown");
-                true
+                self.resource_shutdown = true;
+                self.reject_pending_resources();
+                self.resource_inflight.is_empty()
             }
         };
         self.publish_terminal_changes();
@@ -411,6 +435,21 @@ fn handle_command(
             }
             return Ok((HostRuntimeReply::Idle(aggregate), shutdown));
         }
+        HostRuntimeCommand::Reload {
+            prepared,
+            drain_timeout,
+        } => {
+            let decision = reload_runtime(prepared, drain_timeout, actor)?;
+            if actor.config.event_driven {
+                schedule_ready(
+                    &mut actor.core,
+                    &actor.config,
+                    &mut actor.pools,
+                    &mut actor.running_batches_by_task,
+                )?;
+            }
+            return Ok((HostRuntimeReply::Reloaded(decision), false));
+        }
         command => command,
     };
     let CoreActor {
@@ -418,11 +457,9 @@ fn handle_command(
         config,
         pools,
         management,
-        data_rx: rx,
         pending_cancels,
         running_batches_by_task,
-        draining_invocations,
-        offloaded_resource_replies,
+        resource_poisoned,
         driver,
         ..
     } = actor;
@@ -441,7 +478,9 @@ fn handle_command(
             }
             Ok((HostRuntimeReply::TaskBatchSubmitted(handles), false))
         }
-        HostRuntimeCommand::TickOnce | HostRuntimeCommand::RunUntilIdle { .. } => {
+        HostRuntimeCommand::TickOnce
+        | HostRuntimeCommand::RunUntilIdle { .. }
+        | HostRuntimeCommand::Reload { .. } => {
             unreachable!("drive commands are handled before state borrowing")
         }
         HostRuntimeCommand::CancelTask(handle) => {
@@ -517,6 +556,10 @@ fn handle_command(
         HostRuntimeCommand::StopState => {
             Ok((HostRuntimeReply::StopState(core.stop_state()), false))
         }
+        HostRuntimeCommand::ResourceDescriptors => Ok((
+            HostRuntimeReply::ResourceDescriptors(core.resources().list_descriptors()),
+            false,
+        )),
         HostRuntimeCommand::Statistics => {
             Ok((HostRuntimeReply::Statistics(core.statistics()), false))
         }
@@ -559,28 +602,6 @@ fn handle_command(
             HostRuntimeReply::ResourceDescriptor(core.open_resource(&ref_id)?),
             false,
         )),
-        HostRuntimeCommand::Reload {
-            prepared,
-            drain_timeout,
-        } => {
-            let decision = reload_runtime(
-                prepared,
-                drain_timeout,
-                core,
-                config,
-                pools,
-                management,
-                rx,
-                pending_cancels,
-                running_batches_by_task,
-                draining_invocations,
-                offloaded_resource_replies,
-            )?;
-            if config.event_driven {
-                schedule_ready(core, config, pools, running_batches_by_task)?;
-            }
-            Ok((HostRuntimeReply::Reloaded(decision), false))
-        }
         command @ (HostRuntimeCommand::CreateBlobResource { .. }
         | HostRuntimeCommand::CreateCowStateResource { .. }
         | HostRuntimeCommand::CreateCapabilityResource { .. }
@@ -591,10 +612,23 @@ fn handle_command(
         | HostRuntimeCommand::CommitWritePlan { .. }
         | HostRuntimeCommand::ExecuteCommandPlan(_)
         | HostRuntimeCommand::ExecuteCommandBatch(_)
-        | HostRuntimeCommand::ExecuteSagaPlan(_)) => Ok((
-            resource_router::handle_resource_command(command, core, config)?,
-            false,
-        )),
+        | HostRuntimeCommand::ExecuteSagaPlan(_)) => {
+            let provider_id = resource_router::resource_command_provider(&command);
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                resource_router::handle_resource_command(command, core, config)
+            })) {
+                Ok(result) => Ok((result?, false)),
+                Err(_) => {
+                    if let Some(id) = provider_id {
+                        resource_poisoned.insert(id);
+                    }
+                    Err(host_failure(
+                        "host.resource.panic",
+                        "inline provider panicked",
+                    ))
+                }
+            }
+        }
     }
 }
 
@@ -656,6 +690,12 @@ fn drain_worker_completions(
 ) -> bool {
     for _ in 0..max_messages {
         actor.supervise();
+        if let Some(message) = actor.next_resource_message() {
+            if actor.handle_message(message) {
+                return true;
+            }
+            continue;
+        }
         match actor.data_rx.recv_timeout(Duration::from_millis(10)) {
             Ok(CoreActorMsg::WorkerStarted(started)) => {
                 mark_worker_started(started, &mut actor.running_batches_by_task);
@@ -681,14 +721,7 @@ fn drain_worker_completions(
                 }
             }
             Ok(CoreActorMsg::AsyncEvent(event)) => {
-                if let Ok(report) = handle_async_event(
-                    event,
-                    &mut actor.core,
-                    &mut actor.pending_cancels,
-                    &mut actor.running_batches_by_task,
-                    &mut actor.draining_invocations,
-                    &mut actor.offloaded_resource_replies,
-                ) {
+                if let Ok(report) = actor.apply_async_event(event) {
                     aggregate.completed_tasks += report.completed_tasks;
                 }
                 if let Ok(report) = schedule_ready(
@@ -726,15 +759,17 @@ fn drain_worker_completions(
                     "task waits must use the control mailbox",
                 )));
             }
-            Ok(CoreActorMsg::Command(command, reply_tx)) => {
-                if send_command_reply(handle_command(actor, command), reply_tx) {
+            Ok(message @ (CoreActorMsg::Command(..) | CoreActorMsg::AsyncResourceCommand(..))) => {
+                if actor.handle_message(message) {
                     return true;
                 }
             }
-            Ok(CoreActorMsg::AsyncResourceCommand(command, reply_tx)) => {
-                start_async_resource_command(command, reply_tx, &actor.config);
+            Ok(CoreActorMsg::Shutdown) => {
+                if actor.handle_message(CoreActorMsg::Shutdown) {
+                    return true;
+                }
             }
-            Ok(CoreActorMsg::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => return true,
+            Err(mpsc::RecvTimeoutError::Disconnected) => return true,
             Err(mpsc::RecvTimeoutError::Timeout) => return false,
         }
     }
@@ -761,10 +796,9 @@ enum OffloadOutcome {
 /// Sends a resource command to the async executor when its provider says it
 /// blocks, so the actor is not held for the length of a disk or socket call.
 ///
-/// A command whose provider runs inline, or any command at all when no async
-/// executor is configured, takes the original path untouched. Once offloaded it
-/// is subject to the executor's in-flight bounds like every other async
-/// resource plan: exceeding them is a structured failure, not a hang.
+/// Inline providers stay on the actor. Offloaded work requires an executor and
+/// is subject to its in-flight limits; missing capacity is a structured failure.
+/// Ordered providers retain their lane until the actor applies the completion.
 fn try_offload_resource_command(
     actor: &mut CoreActor,
     command: HostRuntimeCommand,
@@ -773,24 +807,54 @@ fn try_offload_resource_command(
     let Some(provider_id) = resource_router::resource_command_provider(&command) else {
         return OffloadOutcome::RunInline(command, reply_tx);
     };
-    let Some(provider) = actor
+    let is_async = actor
         .config
-        .resource_providers
-        .get(&provider_id)
-        .filter(|provider| provider.execution() == ResourceProviderExecution::Offloaded)
-        .cloned()
-    else {
+        .async_resource_providers
+        .contains_key(&provider_id);
+    if is_async
+        && !matches!(
+            &command,
+            HostRuntimeCommand::CreateBlobResource { .. }
+                | HostRuntimeCommand::CreateCowStateResource { .. }
+                | HostRuntimeCommand::CreateCapabilityResource { .. }
+        )
+    {
+        let _ = reply_tx.send(Err(crate::error::resource_provider_missing(&provider_id)));
+        return OffloadOutcome::Handled;
+    }
+    let provider = actor.config.resource_providers.get(&provider_id).cloned();
+    if !is_async
+        && provider
+            .as_ref()
+            .is_none_or(|p| p.execution() == ResourceProviderExecution::Inline)
+    {
         return OffloadOutcome::RunInline(command, reply_tx);
-    };
+    }
     let (Some(executor), Some(events)) = (
-        actor.config.async_executor.as_ref(),
+        actor.config.async_executor.clone(),
         actor.config.async_event_sink.clone(),
     ) else {
-        return OffloadOutcome::RunInline(command, reply_tx);
+        let _ = reply_tx.send(Err(host_failure(
+            "host.async_executor.unavailable",
+            "offloaded resource requires an async executor",
+        )));
+        return OffloadOutcome::Handled;
     };
-    let (future, payload_bytes) =
-        resource_router::prepare_offloaded_resource_command(command, provider_id.clone(), provider);
-    let invocation = offloaded_invocation(&actor.config, &provider_id, payload_bytes);
+    let (future, payload_bytes) = if is_async {
+        match resource_router::prepare_async_resource_command(command, &actor.config) {
+            Ok((_, future, bytes)) => (future, bytes),
+            Err(error) => {
+                let _ = reply_tx.send(Err(error));
+                return OffloadOutcome::Handled;
+            }
+        }
+    } else {
+        resource_router::prepare_offloaded_resource_command(
+            command,
+            provider.expect("provider checked"),
+        )
+    };
+    let invocation = resource_invocation(&actor.config, &provider_id, payload_bytes);
     let invocation_id = invocation.invocation_id.clone();
     actor
         .offloaded_resource_replies
@@ -798,15 +862,20 @@ fn try_offload_resource_command(
     // The executor answers on its own oneshot; the parked sender above is what
     // actually reaches the caller, keyed by invocation id.
     let (discard, _) = oneshot::channel();
-    if let Err(failure) = executor.spawn_resource(invocation, future, discard, events)
-        && let Some(parked) = actor.offloaded_resource_replies.remove(&invocation_id)
-    {
-        let _ = parked.send(Err(failure));
+    match executor.spawn_resource(invocation, future, discard, events) {
+        Ok(_) => {
+            actor.track_resource_invocation(&provider_id, &invocation_id);
+        }
+        Err(failure) => {
+            if let Some(parked) = actor.offloaded_resource_replies.remove(&invocation_id) {
+                let _ = parked.send(Err(failure));
+            }
+        }
     }
     OffloadOutcome::Handled
 }
 
-fn offloaded_invocation(
+fn resource_invocation(
     config: &HostRuntimeConfig,
     provider_id: &str,
     payload_bytes: usize,
@@ -815,7 +884,7 @@ fn offloaded_invocation(
         .async_resource_sequence
         .fetch_add(1, AtomicOrdering::Relaxed)
         .saturating_add(1);
-    let invocation_id = format!("offloaded-resource-{sequence}-{provider_id}");
+    let invocation_id = format!("resource-{sequence}-{provider_id}");
     AsyncInvocation {
         invocation_id: invocation_id.clone(),
         batch_id: invocation_id.clone().into(),
@@ -840,8 +909,9 @@ fn offloaded_invocation(
 fn start_async_resource_command(
     command: HostRuntimeCommand,
     reply: oneshot::Sender<RuntimeResult<HostRuntimeReply>>,
-    config: &HostRuntimeConfig,
+    actor: &mut CoreActor,
 ) {
+    let config = &actor.config;
     let Some(executor) = config.async_executor.as_ref() else {
         let _ = reply.send(Err(host_failure(
             "host.async_executor.unavailable",
@@ -864,30 +934,12 @@ fn start_async_resource_command(
                 return;
             }
         };
-    let sequence = config
-        .async_resource_sequence
-        .fetch_add(1, AtomicOrdering::Relaxed)
-        .saturating_add(1);
-    let invocation_id = format!("async-resource-{sequence}-{provider_id}");
-    let deadline_after_ms = config
-        .default_runner_limits
-        .wall_clock_deadline
-        .and_then(|deadline| u64::try_from(deadline.as_millis()).ok());
-    let invocation = AsyncInvocation {
-        invocation_id: invocation_id.clone(),
-        batch_id: invocation_id.clone().into(),
-        runner_id: format!("resource:{provider_id}").into(),
-        task_ids: Vec::new(),
-        task_lease_ids: Vec::new(),
-        attempt_generations: Vec::new(),
-        task_leases: Vec::new(),
-        expected_entries: Vec::new(),
-        registry_generation: 0,
-        plugin_generation: 0,
-        cancel_token: invocation_id,
-        deadline_after_ms,
-        entry_count: 0,
-        payload_bytes,
-    };
-    let _ = executor.spawn_resource(invocation, future, reply, events);
+    let invocation = resource_invocation(config, &provider_id, payload_bytes);
+    let invocation_id = invocation.invocation_id.clone();
+    if executor
+        .spawn_resource(invocation, future, reply, events)
+        .is_ok()
+    {
+        actor.track_resource_invocation(&provider_id, &invocation_id);
+    }
 }

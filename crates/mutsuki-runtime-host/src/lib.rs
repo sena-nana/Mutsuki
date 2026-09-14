@@ -104,3 +104,5 @@ pub use worker::{
 
 #[cfg(test)]
 mod tests;
+
+pub use resource_router::ResourceCommandFuture;

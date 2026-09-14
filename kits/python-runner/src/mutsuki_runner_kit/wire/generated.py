@@ -1,4 +1,4 @@
-"""Generated from MutsukiCore runtime-wire schema at revision 1d423251.
+"""Runtime-wire schema 1.4.0: monorepo base bd5cc0e1 plus issue #184 changes.
 
 Do not add operation names outside this module. `test_wire_schema.py` verifies
 this generated registry against the checked-in Core artifact.
@@ -6,7 +6,7 @@ this generated registry against the checked-in Core artifact.
 
 from enum import IntEnum
 
-CORE_WIRE_REVISION = "1d42325107a82f98dda3912097c3c0aefd4907ba"
+CORE_WIRE_REVISION = "bd5cc0e1a44d2ecc2a00b4cfb76b4999b9ac87c6"
 
 
 class Opcode(IntEnum):
@@ -28,6 +28,7 @@ class Opcode(IntEnum):
     RESOURCE_CREATE_BLOB = 0x3009
     RESOURCE_CREATE_COW_STATE = 0x300A
     RESOURCE_CREATE_CAPABILITY = 0x300B
+    RESOURCE_PROVIDER_EXECUTE = 0x300C
 
 
 OPCODE_METHODS: dict[Opcode, str] = {
@@ -49,6 +50,7 @@ OPCODE_METHODS: dict[Opcode, str] = {
     Opcode.RESOURCE_CREATE_BLOB: "resource.create_blob",
     Opcode.RESOURCE_CREATE_COW_STATE: "resource.create_cow_state",
     Opcode.RESOURCE_CREATE_CAPABILITY: "resource.create_capability",
+    Opcode.RESOURCE_PROVIDER_EXECUTE: "resource.provider.execute",
 }
 
 MANAGEMENT_OPCODES = frozenset(

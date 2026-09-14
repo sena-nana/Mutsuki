@@ -49,3 +49,5 @@ pnpm --filter @mutsuki/tauri-client typecheck
 ```
 
 最终说明必须列出实际执行过的验证命令与结果。
+
+Provider integration uses `ResourceProviderGateway::execute` (or native async execute) returning explicit result-plus-invalidation outcomes. Existing caller resource replies remain unchanged; Host actor owns lifecycle application. Invalidating providers declare Ordered. Standalone `LocalResourceClient` rejects ordered providers because it has no Core registry; use HostContext resource clients. Native async future construction must not block.

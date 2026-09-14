@@ -1995,7 +1995,7 @@ mod tests {
         let config_path = root.path().join("local.toml");
         std::fs::write(
             &config_path,
-            "[security]\nsecret_file = \"local.secret.toml\"\n[ipc]\nenabled = false\n",
+            "[service]\ndata_dir = \"data\"\nlog_dir = \"logs\"\nplugin_dir = \"plugins\"\nrun_dir = \"run\"\n[security]\nsecret_file = \"local.secret.toml\"\n[ipc]\nenabled = false\n",
         )
         .unwrap();
         std::fs::write(

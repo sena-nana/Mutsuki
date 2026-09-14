@@ -261,8 +261,8 @@ Mutsuki task awaitable；普通 `asyncio` Future 或其他语言 awaitable 必�
 `runner.awaitable_unsupported` 失败，不能用 `Continue` 或 Core tick 忙轮询。
 
 资源 I/O 使用独立的 `AsyncResourcePlanGateway` / `AsyncResourceProviderGateway`。Provider
-Future 由 Host async executor 驱动；成功后的 `PlanReceipt` / snapshot 必须先在 CoreActor
-顺序同步 descriptor/generation，再唤醒调用方。同步 `ResourcePlanGateway` 不得阻塞等待
+Future 由 Host async executor 驱动；`ResourceProviderOutcome` 的 invalidations 无论成功或失败
+都必须先在 CoreActor 应用，再同步成功结果中的 descriptor/generation，最后唤醒调用方。同步 `ResourcePlanGateway` 不得阻塞等待
 异步 Provider。
 
 issue #5 的 SDK async/await 预期是语法层收敛，不是 Core 能力扩张：
@@ -541,7 +541,7 @@ handle，`version` 用于 snapshot、冲突检测和回放。`ResourceRef.genera
 - `TransactionPlan` / `CommandBatch` / `SagaPlan` 是 experimental provider/workflow
   descriptor。CoreRuntime 不解释、调度或执行事务、批处理、补偿或 workflow 语义。
   Provider 或 workflow plugin 可以在自身边界实现这些计划，并通过 `PlanReceipt`
-  只回写 descriptor 更新。
+  回写 descriptor 更新，并用独立的 outcome invalidations 报告已提交删除。
 - 若 provider 支持 experimental `CommandBatch` / `SagaPlan`，`CommandBatch.rollback_guarantee = true`
   在 v1 中应结构化失败；`SagaPlan` 可按顺序执行 steps，step 失败后按反序尝试
   compensations，并以 `resource.saga_failed` 返回原始 cause。
@@ -826,5 +826,30 @@ Runner 永远不会收发它们。镜像它们等于在 Python 侧复制一份 C
 - `crates/mutsuki-plugin-host`：ABI v2 动态库加载与生命周期宿主；只消费 `mutsuki-plugin-api`
   与 contracts，不拥有 package discovery、配置选择或持久化。
 - `crates/mutsuki-runtime-sdk`：Rust SDK async/task/resource helper，以及 host/plugin
-  扩展基础 trait；本次没有新增 wire protocol object。
+  扩展基础 trait；provider lifecycle 的 wire DTO 由 contracts/wire 定义。
 - `kits/python-runner`：Python mirror、runner backend、stdio bridge、resource manager。
+
+
+## Provider descriptor invalidation (#184)
+
+Provider lifecycle results carry explicit `ResourceDescriptorInvalidation` facts independently
+of operation success or failure. Identity is provider id, ref id and resource generation (not
+plugin registry generation). Host validates ownership and applies committed invalidations on
+its Core actor before answering the caller. An invalidation wins over a descriptor update in
+the same outcome. Unknown refs are idempotent; another owner or generation is rejected.
+Creation, retention, delete, snapshots and partially failed batch/saga operations use this one
+channel. Neither receipt status nor arbitrary output JSON is a lifecycle signal.
+
+Providers declaring ordered execution have one operation in flight per provider id until actor
+application, including across staged reload. Timeout/disconnection does not discard committed
+lifecycle results. Panic with unknown effects poisons that provider lane. Pending work is bounded.
+SQLite retains its create-before-insert sweep and capability exemption; ids are never reused.
+Restoration remains boot-only. No permanent tombstone history or existence I/O is added to open.
+
+Provider ABI lifecycle uses `ExecuteResourceProviderRequest` (opcode 0x300c, `resource.provider.execute`) and a `ResourceProviderResponse` containing result plus invalidations. Wire schema 1.4.0 handshake rejects older revisions; rebuild provider binaries. Native providers migrate to `execute`; no receipt-only fallback. Runner-facing resource replies retain their shapes. Python mirrors DTOs and registry/artifacts, without implementing a provider endpoint.
+
+Host shutdown rejects queued resource work and drains executing ordered operations before releasing the actor, so a timed-out worker cannot mutate storage after same-process restart restoration.
+
+Native async provider execute, including Future construction, runs only after executor capacity admission and under panic isolation. Inline provider panics also fail and poison the provider route. Prepared reload carries candidate providers; the actor validates affected routes before the Core switch and installs them only after success. Full reload requires explicit candidates for all active providers (including previously Host-injected routes); targeted reload preserves unaffected instances. Resource completion during Runner reload drain applies facts and releases the same provider lane. Reload does not restore.
+
+Retain every offloaded/native-async provider invocation through actor result application, including Concurrent providers. A reload to Ordered fences all older invocations for that provider ID until the last result is applied; Concurrent execution otherwise remains parallel. Host shutdown drains all executing resource invocations.

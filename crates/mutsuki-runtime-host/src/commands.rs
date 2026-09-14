@@ -48,6 +48,7 @@ pub enum HostRuntimeCommand {
         limit: usize,
     },
     OpenResourceDescriptor(String),
+    ResourceDescriptors,
     CreateBlobResource {
         provider_id: String,
         schema: String,
@@ -108,6 +109,7 @@ pub enum HostRuntimeReply {
     TraceSpans(ObservabilityPage<TraceSpan>),
     ResourceDescriptor(ResourceRef),
     ResourceCreated(ResourceRef),
+    ResourceDescriptors(Vec<ResourceRef>),
     ResourceBytes(Vec<u8>),
     Snapshot(SnapshotDescriptor),
     StreamPlan(StreamPlan),
