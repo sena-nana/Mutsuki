@@ -12,8 +12,7 @@ description: Implement or change standard memory, shared-memory, database, state
 - The persistent `mutsuki.std.resource.sqlite` provider stores blob/COW/capability
   bytes and versions in a product-supplied SQLite file; reopening the same path must
   restore descriptors, versions and bytes, and stale writes keep failing with
-  `resource.generation_mismatch`. One-shot outputs are cleaned through the
-  capability `delete` command, not by silent eviction.
+  `resource.generation_mismatch`. One-shot outputs use the capability `delete` command or explicit retention; both report descriptor invalidation.
 - Persistence is only real once the descriptors come back: implement
   `restore_descriptors` so the Host can re-register stored rows into the resource
   registry at boot, and return descriptors at the versions the rows currently hold.
@@ -43,3 +42,13 @@ description: Implement or change standard memory, shared-memory, database, state
   `CREATE TABLE IF NOT EXISTS` alone.
 
 Test create/read/update, sealing, lease expiry, restart persistence and invalid descriptor behavior.
+
+## Descriptor invalidation (#184)
+
+Provider `execute` returns `ResourceProviderOutcome`: committed invalidations are independent of operation success, including partial batch/saga failure. Host applies provider/ref/resource-generation removals on the actor before replying. Absent refs are idempotent; conflicting owners/generations fail. Invalidation dominates same-outcome updates and removes writer/derived occupancy facts. Receipt status and business JSON are not lifecycle signals.
+
+Invalidating providers declare Ordered. Their provider-id lane survives staged reload, retains the executing provider until actor application, and remains occupied after caller timeout/disconnect until actual completion. Queue count/bytes use Host limits; panic with unknown effects poisons the lane until restart. No permanent tombstone history or I/O in open. SQLite keeps create-before-insert retention and capability exemption.
+
+SQLite collects deleted identities in the deletion transaction and publishes only after commit. Vacuum/later failure cannot erase committed facts. Compare hub and stored inventory through 10,000 create/sweep cycles, restart and staged reload.
+
+Capacity retention deletes the oldest disposable prefix in one transaction. A failed capacity statement reports no uncommitted invalidations; already committed TTL deletions still survive. Include bulk rollback, zero-byte rows, and explicit provider instance/restore counters in reload tests.

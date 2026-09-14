@@ -162,6 +162,8 @@ pub struct RuntimeBootstrapper {
 }
 
 pub struct PreparedRuntimeReload {
+    pub(crate) resource_providers: crate::host::HostResourceProviders,
+    pub(crate) async_resource_providers: crate::host::HostAsyncResourceProviders,
     pub(crate) plan: RuntimeLoadPlan,
     pub(crate) runners: Vec<Box<dyn Runner>>,
     pub(crate) async_handlers: Vec<Arc<dyn AsyncBatchHandler>>,
@@ -206,6 +208,46 @@ impl PreparedHostRuntime {
 }
 
 impl PreparedRuntimeReload {
+    pub(crate) fn resource_routes(
+        &self,
+        config: &HostRuntimeConfig,
+    ) -> RuntimeResult<(
+        crate::host::HostResourceProviders,
+        crate::host::HostAsyncResourceProviders,
+    )> {
+        let replaced: BTreeSet<_> = self
+            .plan
+            .plugins
+            .iter()
+            .filter(|plugin| {
+                self.affected_plugins
+                    .as_ref()
+                    .is_none_or(|ids| ids.contains(&plugin.plugin_id))
+            })
+            .flat_map(|plugin| plugin.provides.resource_providers.iter())
+            .collect();
+        // Select each active route once. Only unaffected targeted routes may
+        // retain an existing instance; affected routes require a candidate.
+        let mut sync = BTreeMap::new();
+        let mut asynchronous = BTreeMap::new();
+        for id in &self.plan.capability_graph.active_resource_providers {
+            let (sync_source, async_source) =
+                if self.affected_plugins.is_none() || replaced.contains(id) {
+                    (&self.resource_providers, &self.async_resource_providers)
+                } else {
+                    (&config.resource_providers, &config.async_resource_providers)
+                };
+            if let Some(provider) = async_source.get(id) {
+                asynchronous.insert(id.clone(), provider.clone());
+            } else if let Some(provider) = sync_source.get(id) {
+                sync.insert(id.clone(), provider.clone());
+            } else {
+                return Err(resource_provider_missing(id));
+            }
+        }
+        Ok((sync, asynchronous))
+    }
+
     #[must_use]
     pub fn load_plan(&self) -> &RuntimeLoadPlan {
         &self.plan
@@ -488,6 +530,16 @@ impl RuntimeBootstrapper {
             affected_plugins.as_ref(),
         )?;
         Ok(PreparedRuntimeReload {
+            resource_providers: prepared
+                .resource_providers
+                .into_iter()
+                .map(|p| (p.provider_id, p.provider))
+                .collect(),
+            async_resource_providers: prepared
+                .async_resource_providers
+                .into_iter()
+                .map(|p| (p.provider_id, p.provider))
+                .collect(),
             plan: prepared.plan,
             runners: prepared.runners,
             async_handlers: prepared.async_handlers,

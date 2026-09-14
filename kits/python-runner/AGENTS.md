@@ -75,3 +75,5 @@ uv run pytest
 
 协议、runner backend、resource descriptor 或 bridge 行为变更必须补充功能测试或说明已有
 conformance 覆盖点。禁止添加只硬匹配日志、字符串或实现细节的低价值测试。
+
+Provider ABI lifecycle uses `ExecuteResourceProviderRequest` (opcode 0x300c, `resource.provider.execute`) and a `ResourceProviderResponse` containing result plus invalidations. Wire schema 1.4.0 handshake rejects older revisions; rebuild provider binaries. Native providers migrate to `execute`; no receipt-only fallback. Runner-facing resource replies retain their shapes. Python mirrors DTOs and registry/artifacts, without implementing a provider endpoint.

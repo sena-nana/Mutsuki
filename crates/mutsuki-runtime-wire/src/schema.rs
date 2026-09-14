@@ -226,6 +226,9 @@ fn fixture(name: &str, value: &impl serde::Serialize) -> Value {
 
 fn operation_types(opcode: Opcode) -> (&'static str, &'static str) {
     match opcode {
+        Opcode::ResourceProviderExecute => {
+            ("ExecuteResourceProviderRequest", "ResourceProviderResponse")
+        }
         Opcode::PluginInitialize => ("InitializeRequest", "ProtocolHelloAck"),
         Opcode::RunnerRunBatch => ("RunBatchRequest", "CompletionBatch"),
         Opcode::RunnerCancel => ("CancelRunnerRequest", "Unit"),

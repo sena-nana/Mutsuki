@@ -1,3 +1,4 @@
+use mutsuki_runtime_sdk::{ResourceProviderReply as R, ResourceProviderRequest as Q};
 use std::collections::BTreeMap;
 use std::fs;
 use std::process::Command;
@@ -105,17 +106,28 @@ async fn real_cdylib_loads_runner_and_resource_provider() {
     assert_eq!(plugin.runners.len(), 1);
     assert_eq!(plugin.resource_providers.len(), 1);
     let provider: &dyn ResourceProviderGateway = plugin.resource_providers[0].provider.as_ref();
-    let resource = provider
-        .create_blob_resource("fixture.v1", b"input".to_vec())
-        .unwrap();
-    let bytes = provider
-        .collect_read_plan(&ReadPlan {
+    let R::Created(resource) = provider
+        .execute(Q::CreateBlob {
+            schema: "fixture.v1".into(),
+            bytes: b"input".to_vec(),
+        })
+        .result
+        .unwrap()
+    else {
+        panic!("expected resource");
+    };
+    let R::Bytes(bytes) = provider
+        .execute(Q::Collect(ReadPlan {
             plan_id: "fixture-read".into(),
             resource,
             operation: "collect".into(),
             args: json!({}),
-        })
-        .unwrap();
+        }))
+        .result
+        .unwrap()
+    else {
+        panic!("expected bytes");
+    };
     assert_eq!(bytes, b"fixture-resource");
 
     let mut bootstrapper = RuntimeBootstrapper::new();

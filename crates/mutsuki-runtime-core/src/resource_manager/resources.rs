@@ -11,6 +11,35 @@ use super::{
 };
 
 impl ResourceManager {
+    /// Validate the complete removal set before changing the registry.
+    pub fn invalidate_resource_descriptors(
+        &mut self,
+        provider_id: &str,
+        invalidations: &[mutsuki_runtime_contracts::ResourceDescriptorInvalidation],
+    ) -> RuntimeResult<()> {
+        for removed in invalidations {
+            if removed.provider_id != provider_id || removed.generation == 0 {
+                return Err(resource_generation_mismatch(format!(
+                    "resource.invalidate.{}",
+                    removed.ref_id
+                )));
+            }
+            if let Some(entry) = self.hub.get(&removed.ref_id)
+                && (entry.descriptor.provider_id != provider_id
+                    || entry.descriptor.generation != removed.generation)
+            {
+                return Err(resource_generation_mismatch(format!(
+                    "resource.invalidate.{}",
+                    removed.ref_id
+                )));
+            }
+        }
+        for removed in invalidations {
+            self.hub.remove(&removed.ref_id);
+        }
+        Ok(())
+    }
+
     pub fn open_resource(&self, ref_id: impl AsRef<str>) -> RuntimeResult<ResourceRef> {
         let ref_id = ref_id.as_ref();
         self.hub

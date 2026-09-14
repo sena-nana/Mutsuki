@@ -41,3 +41,9 @@ description: Change PluginScope, scoped Host services, reversible effects, backe
 
 Test activation rollback, reverse cleanup, timeout/dirty retry, dependency loss/rebind, targeted
 reload isolation, service projection, 10k repeated lifecycle bounds and cross-deployment behavior.
+
+Ordered provider-id lanes span staged reload. Retain the executing provider until actor applies its result, including after caller timeout/disconnect. Queued commands resolve the active instance at dispatch. Old results retain their original route and apply committed invalidations; reload never restores descriptors.
+
+Provider candidates must be retained in the prepared reload and switched with Core generation. Missing affected candidates fail before switch; preserve unaffected targeted routes and retain each executing old provider through actor completion. Exercise resource completions while a Runner keeps reload draining.
+
+Retain every offloaded/native-async provider invocation through actor result application, including Concurrent providers. A reload to Ordered fences all older invocations for that provider ID until the last result is applied; Concurrent execution otherwise remains parallel. Host shutdown drains all executing resource invocations.

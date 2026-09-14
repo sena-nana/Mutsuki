@@ -21,6 +21,7 @@ struct PersistentProvider {
     owner_id: String,
 }
 
+#[allow(clippy::unused_self, clippy::unnecessary_wraps)]
 impl PersistentProvider {
     fn descriptor(ref_id: &str, provider_id: &str) -> ResourceRef {
         ResourceRef {
@@ -97,12 +98,17 @@ impl ResourcePlanGateway for PersistentProvider {
     }
 }
 
-impl ResourceProviderGateway for PersistentProvider {
-    fn create_blob_resource(&self, _schema: &str, _bytes: Vec<u8>) -> RuntimeResult<ResourceRef> {
+#[allow(clippy::unused_self, clippy::unnecessary_wraps)]
+impl PersistentProvider {
+    pub fn create_blob_resource(
+        &self,
+        _schema: &str,
+        _bytes: Vec<u8>,
+    ) -> RuntimeResult<ResourceRef> {
         Err(Self::unsupported("create_blob"))
     }
 
-    fn create_cow_state_resource(
+    pub fn create_cow_state_resource(
         &self,
         _kind_id: &str,
         _schema: &str,
@@ -111,12 +117,58 @@ impl ResourceProviderGateway for PersistentProvider {
         Err(Self::unsupported("create_cow"))
     }
 
-    fn create_capability_resource(
+    pub fn create_capability_resource(
         &self,
         _kind_id: &str,
         _schema: &str,
     ) -> RuntimeResult<ResourceRef> {
         Err(Self::unsupported("create_capability"))
+    }
+}
+
+impl ResourceProviderGateway for PersistentProvider {
+    fn execute(
+        &self,
+        request: mutsuki_runtime_sdk::ResourceProviderRequest,
+    ) -> mutsuki_runtime_sdk::ResourceProviderOutcome<mutsuki_runtime_sdk::ResourceProviderReply>
+    {
+        use mutsuki_runtime_sdk::{ResourceProviderReply as R, ResourceProviderRequest as Q};
+        let result = match request {
+            Q::CreateBlob { schema, bytes } => {
+                self.create_blob_resource(&schema, bytes).map(R::Created)
+            }
+            Q::CreateCow {
+                kind_id,
+                schema,
+                bytes,
+            } => self
+                .create_cow_state_resource(&kind_id, &schema, bytes)
+                .map(R::Created),
+            Q::CreateCapability { kind_id, schema } => self
+                .create_capability_resource(&kind_id, &schema)
+                .map(R::Created),
+            Q::Collect(plan) => self.collect_read_plan(&plan).map(R::Bytes),
+            Q::Snapshot {
+                plan,
+                kind_id,
+                schema,
+            } => self
+                .snapshot_read_plan(&plan, &kind_id, &schema)
+                .map(|value| R::Snapshot(Box::new(value))),
+            Q::OpenStream(plan) => self.open_stream_plan(&plan).map(R::Stream),
+            Q::Export(plan) => self
+                .execute_export_plan(&plan)
+                .map(|value| R::Receipt(Box::new(value))),
+            Q::Commit { plan, bytes } => self
+                .commit_write_plan(&plan, bytes)
+                .map(|value| R::Receipt(Box::new(value))),
+            Q::Command(plan) => self
+                .execute_command_plan(&plan)
+                .map(|value| R::Receipt(Box::new(value))),
+            Q::Batch(batch) => self.execute_command_batch(&batch).map(R::Receipts),
+            Q::Saga(saga) => self.execute_saga_plan(&saga).map(R::Receipts),
+        };
+        mutsuki_runtime_sdk::ResourceProviderOutcome::new(result)
     }
 
     fn restore_descriptors(&self) -> RuntimeResult<Vec<ResourceRef>> {
@@ -257,14 +309,19 @@ impl ResourcePlanGateway for BlockingProvider {
     }
 }
 
-impl ResourceProviderGateway for BlockingProvider {
-    fn create_blob_resource(&self, schema: &str, _bytes: Vec<u8>) -> RuntimeResult<ResourceRef> {
+#[allow(clippy::unused_self, clippy::unnecessary_wraps)]
+impl BlockingProvider {
+    pub fn create_blob_resource(
+        &self,
+        schema: &str,
+        _bytes: Vec<u8>,
+    ) -> RuntimeResult<ResourceRef> {
         let mut descriptor = PersistentProvider::descriptor("blocking-1", PROVIDER_ID);
         descriptor.schema = schema.into();
         Ok(descriptor)
     }
 
-    fn create_cow_state_resource(
+    pub fn create_cow_state_resource(
         &self,
         _kind_id: &str,
         _schema: &str,
@@ -273,12 +330,58 @@ impl ResourceProviderGateway for BlockingProvider {
         Err(PersistentProvider::unsupported("create_cow"))
     }
 
-    fn create_capability_resource(
+    pub fn create_capability_resource(
         &self,
         _kind_id: &str,
         _schema: &str,
     ) -> RuntimeResult<ResourceRef> {
         Err(PersistentProvider::unsupported("create_capability"))
+    }
+}
+
+impl ResourceProviderGateway for BlockingProvider {
+    fn execute(
+        &self,
+        request: mutsuki_runtime_sdk::ResourceProviderRequest,
+    ) -> mutsuki_runtime_sdk::ResourceProviderOutcome<mutsuki_runtime_sdk::ResourceProviderReply>
+    {
+        use mutsuki_runtime_sdk::{ResourceProviderReply as R, ResourceProviderRequest as Q};
+        let result = match request {
+            Q::CreateBlob { schema, bytes } => {
+                self.create_blob_resource(&schema, bytes).map(R::Created)
+            }
+            Q::CreateCow {
+                kind_id,
+                schema,
+                bytes,
+            } => self
+                .create_cow_state_resource(&kind_id, &schema, bytes)
+                .map(R::Created),
+            Q::CreateCapability { kind_id, schema } => self
+                .create_capability_resource(&kind_id, &schema)
+                .map(R::Created),
+            Q::Collect(plan) => self.collect_read_plan(&plan).map(R::Bytes),
+            Q::Snapshot {
+                plan,
+                kind_id,
+                schema,
+            } => self
+                .snapshot_read_plan(&plan, &kind_id, &schema)
+                .map(|value| R::Snapshot(Box::new(value))),
+            Q::OpenStream(plan) => self.open_stream_plan(&plan).map(R::Stream),
+            Q::Export(plan) => self
+                .execute_export_plan(&plan)
+                .map(|value| R::Receipt(Box::new(value))),
+            Q::Commit { plan, bytes } => self
+                .commit_write_plan(&plan, bytes)
+                .map(|value| R::Receipt(Box::new(value))),
+            Q::Command(plan) => self
+                .execute_command_plan(&plan)
+                .map(|value| R::Receipt(Box::new(value))),
+            Q::Batch(batch) => self.execute_command_batch(&batch).map(R::Receipts),
+            Q::Saga(saga) => self.execute_saga_plan(&saga).map(R::Receipts),
+        };
+        mutsuki_runtime_sdk::ResourceProviderOutcome::new(result)
     }
 
     fn execution(&self) -> ResourceProviderExecution {

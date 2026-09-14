@@ -43,3 +43,5 @@ cargo check
 ```
 
 涉及控制面、Runner、配置解析或插件加载时，优先补充行为测试或运行对应定向测试。最终说明必须列出实际执行过的验证命令与结果。
+
+Provider ABI lifecycle uses `ExecuteResourceProviderRequest` (opcode 0x300c, `resource.provider.execute`) and a `ResourceProviderResponse` containing result plus invalidations. Wire schema 1.4.0 handshake rejects older revisions; rebuild provider binaries. Native providers migrate to `execute`; no receipt-only fallback. Runner-facing resource replies retain their shapes. Python mirrors DTOs and registry/artifacts, without implementing a provider endpoint.

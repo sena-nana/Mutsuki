@@ -9,6 +9,15 @@ use crate::{ResourceManager, RuntimeResult};
 use super::CoreRuntime;
 
 impl CoreRuntime {
+    pub fn invalidate_resource_descriptors(
+        &mut self,
+        provider_id: &str,
+        invalidations: &[mutsuki_runtime_contracts::ResourceDescriptorInvalidation],
+    ) -> RuntimeResult<()> {
+        self.resources
+            .invalidate_resource_descriptors(provider_id, invalidations)
+    }
+
     pub fn open_stream(
         &mut self,
         stream_id: &str,

@@ -505,3 +505,71 @@ fn resource_hub_routes_typed_resource_descriptors_and_builds_lazy_plans() {
     );
     assert!(resources.open_stream_plan(&read_plan).is_err());
 }
+
+#[test]
+fn descriptor_invalidation_is_owned_idempotent_and_releases_writer() {
+    let mut resources = ResourceManager::new();
+    let resource = resources
+        .register_resource_descriptor(external_resource_ref(
+            "removed", "bytes", "bytes.v1", "owner",
+        ))
+        .unwrap();
+    let lease = resources
+        .acquire_write_lease(&resource.ref_id, "writer", None)
+        .unwrap();
+    let removed = ResourceDescriptorInvalidation {
+        provider_id: "owner".into(),
+        ref_id: resource.ref_id.clone(),
+        generation: resource.generation,
+    };
+    assert!(
+        resources
+            .invalidate_resource_descriptors("other", std::slice::from_ref(&removed))
+            .is_err()
+    );
+    let mut stale = removed.clone();
+    stale.generation += 1;
+    assert!(
+        resources
+            .invalidate_resource_descriptors("owner", &[stale])
+            .is_err()
+    );
+    assert!(resources.open_resource(&resource.ref_id).is_ok());
+    resources
+        .invalidate_resource_descriptors("owner", std::slice::from_ref(&removed))
+        .unwrap();
+    resources
+        .invalidate_resource_descriptors("owner", &[removed])
+        .unwrap();
+    assert!(
+        resources
+            .active_mutable_lease_routes_for_task("writer")
+            .is_empty()
+    );
+    assert!(resources.release_write_lease(&lease).is_err());
+    assert_eq!(
+        resources
+            .open_resource(&resource.ref_id)
+            .unwrap_err()
+            .error()
+            .code,
+        ERR_RESOURCE_NOT_FOUND
+    );
+    assert_eq!(
+        resources
+            .build_read_plan(&resource.ref_id, "collect")
+            .unwrap_err()
+            .error()
+            .code,
+        ERR_RESOURCE_NOT_FOUND
+    );
+    assert_eq!(
+        resources
+            .build_export_plan(&resource.ref_id, "inline")
+            .unwrap_err()
+            .error()
+            .code,
+        ERR_RESOURCE_NOT_FOUND
+    );
+    assert!(resources.list_descriptors().is_empty());
+}

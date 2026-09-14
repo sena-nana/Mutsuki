@@ -272,6 +272,7 @@ fn assert_typed_response(opcode: Opcode, bytes: &[u8], request_id: u64) {
         };
     }
     match opcode {
+        Opcode::ResourceProviderExecute => drop(decode!(ExecuteResourceProviderRequest)),
         Opcode::PluginInitialize => drop(decode!(InitializeRequest)),
         Opcode::RunnerRunBatch => drop(decode!(RunBatchRequest)),
         Opcode::RunnerCancel => decode!(CancelRunnerRequest),

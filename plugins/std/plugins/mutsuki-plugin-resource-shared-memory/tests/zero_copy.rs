@@ -10,7 +10,6 @@ use std::hint::black_box;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use mutsuki_plugin_resource_shared_memory::SharedMemoryResourceProvider;
-use mutsuki_runtime_sdk::ResourceProviderGateway;
 
 const RESOURCE_BYTES: usize = 100 * 1024 * 1024;
 const MAX_VIEW_HEAP_BYTES: u64 = 1024 * 1024;

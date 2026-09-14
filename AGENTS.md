@@ -97,3 +97,15 @@ crate/module/type/trait、审计组件命名与职责边界时，先读
   `check_workspace.py` 自动运行真实 CI 条件回归与 `performance/tests`。
 - 详细门禁、owner 命令和证据边界见 `docs/core-performance-model-v1.md`；本地验证不替代
   hosted CI 调度或固定机器批准基线比较。
+
+## Descriptor invalidation (#184)
+
+Provider `execute` returns `ResourceProviderOutcome`: committed invalidations are independent of operation success, including partial batch/saga failure. Host applies provider/ref/resource-generation removals on the actor before replying. Absent refs are idempotent; conflicting owners/generations fail. Invalidation dominates same-outcome updates and removes writer/derived occupancy facts. Receipt status and business JSON are not lifecycle signals.
+
+Invalidating providers declare Ordered. Their provider-id lane survives staged reload, retains the executing provider until actor application, and remains occupied after caller timeout/disconnect until actual completion. Queue count/bytes use Host limits; panic with unknown effects poisons the lane until restart. No permanent tombstone history or I/O in open. SQLite keeps create-before-insert retention and capability exemption.
+
+Provider reload 必须携带候选实例并在 Core generation 切换成功后原子替换 active 路由；完整 reload 不回退旧实例，targeted reload 只保留未受影响 owner。所有 actor drain 路径共用资源结果应用及顺序通道释放。
+
+Retain every offloaded/native-async provider invocation through actor result application, including Concurrent providers. A reload to Ordered fences all older invocations for that provider ID until the last result is applied; Concurrent execution otherwise remains parallel. Host shutdown drains all executing resource invocations.
+
+Offloaded and native async resource requests share invocation construction and admission bookkeeping; LocalResourceClient reuses the Host single-provider route check. Reload selects each active route once without cloning and pruning complete provider maps.

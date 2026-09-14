@@ -187,3 +187,7 @@ Choose names by the question answered:
 11. External/legacy translation -> `Adapter`
 12. External capability supplier -> `Provider`
 13. Permission/side-effect exit -> `Gateway`
+
+Provider lifecycle naming: ResourceDescriptorInvalidation/ResourceProviderResponse are contracts, ResourceProviderOutcome is native SDK, and ordered provider lanes are Host execution state. They do not create another Core registry or scheduler.
+
+PendingResource stores Host queue admission facts (route and accounted bytes), not a second scheduling kernel; provider invalidation indexes exist only within one actor outcome.

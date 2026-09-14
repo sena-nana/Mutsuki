@@ -51,3 +51,5 @@ consumer checks. Fail when any selected capability, artifact, package, or revisi
   failed reports must not pass. See [package-map.md](references/package-map.md) and the Core performance model.
 - Refresh the existing fuzz lock when inherited dependency minimums change; verify `--locked` in an
   independent clone without changing the root dependency policy to silence a stale lock.
+
+Provider lifecycle changes must migrate native/ABI implementations and Python wire DTOs in the same revision. Validate the SQLite owner Host dev dependency in an independent clone; see package-map.md.

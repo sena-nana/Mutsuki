@@ -32,3 +32,11 @@ description: Change Mutsuki ResourceRef or ValueRef descriptors, leases, Resourc
 
 Test lifetime, sealing, lease expiry, generation mismatch, commit atomicity, restart
 restoration and provider failure behavior.
+
+## Descriptor invalidation (#184)
+
+Provider `execute` returns `ResourceProviderOutcome`: committed invalidations are independent of operation success, including partial batch/saga failure. Host applies provider/ref/resource-generation removals on the actor before replying. Absent refs are idempotent; conflicting owners/generations fail. Invalidation dominates same-outcome updates and removes writer/derived occupancy facts. Receipt status and business JSON are not lifecycle signals.
+
+Invalidating providers declare Ordered. Their provider-id lane survives staged reload, retains the executing provider until actor application, and remains occupied after caller timeout/disconnect until actual completion. Queue count/bytes use Host limits; panic with unknown effects poisons the lane until restart. No permanent tombstone history or I/O in open. SQLite keeps create-before-insert retention and capability exemption.
+
+Index invalidations only for the current outcome so batch deletion/update conflicts do not require a quadratic scan. No per-deletion index survives application. Verify real instance call/restore counts across reload, not only shared database contents.

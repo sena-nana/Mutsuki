@@ -145,8 +145,8 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
     `ResourceProviderGateway`。当前 `ResourceManager` 只保留 plan 构造、descriptor
     路由和 lease / occupancy 事实。
   - Provider 执行 write commit、command、batch、saga 后通过 `PlanReceipt.descriptor_updates`
-    回写新的 `ResourceRef` descriptor；host actor 只将 descriptor/generation 同步进
-    `ResourceManager`，不把资源 bytes 数据面拉回 Core。
+    回写新的 `ResourceRef` descriptor；已提交删除经独立 outcome invalidations 报告，
+    host actor 先删除再同步 descriptor/generation，不把资源 bytes 数据面拉回 Core。
   - `ResourceManager` 支持 `ResourceCellRef` / `ResourceLease`，长期资源状态归属
     ResourceManager，runner 只持有 step 期间的短期 lease。
   - `TaskHandle` / `TaskAwait` / `TaskOutcome` 是 SDK-facing 协议对象；Core 保存

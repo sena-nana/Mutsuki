@@ -141,12 +141,12 @@ pub(super) fn handle_async_event(
         } => {
             // Core state changes only here, on the actor thread, however the
             // plan was executed.
-            let result = match *result {
-                Ok(value) => {
-                    resource_router::sync_async_resource_reply(core, &value).map(|()| value)
-                }
-                Err(failure) => Err(failure),
-            };
+            let provider_id = invocation
+                .runner_id
+                .as_str()
+                .strip_prefix("resource:")
+                .unwrap_or("");
+            let result = resource_router::apply_resource_outcome(core, provider_id, *result);
             answer_resource_caller(
                 &invocation.invocation_id,
                 result,

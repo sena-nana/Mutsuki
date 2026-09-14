@@ -1,3 +1,4 @@
+use mutsuki_runtime_sdk::{ResourceProviderReply as R, ResourceProviderRequest as Q};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -51,19 +52,45 @@ fn real_abi_v2_library_loads_callbacks_resources_and_closes() {
     assert_eq!(plugin.runners.len(), 1);
     assert_eq!(plugin.resource_providers.len(), 1);
     let provider = plugin.resource_providers[0].provider.as_ref();
-    let resource = provider
-        .create_blob_resource("fixture.v1", b"input".to_vec())
-        .unwrap();
+    let R::Created(resource) = provider
+        .execute(Q::CreateBlob {
+            schema: "fixture.v1".into(),
+            bytes: b"input".to_vec(),
+        })
+        .result
+        .unwrap()
+    else {
+        panic!("expected resource");
+    };
+    let R::Bytes(bytes) = provider
+        .execute(Q::Collect(ReadPlan {
+            plan_id: "fixture-read".into(),
+            resource: resource.clone(),
+            operation: "collect".into(),
+            args: json!({}),
+        }))
+        .result
+        .unwrap()
+    else {
+        panic!("expected bytes");
+    };
+    assert_eq!(bytes, b"fixture-resource");
+
+    let outcome = provider.execute(Q::Command(mutsuki_runtime_contracts::CommandPlan {
+        plan_id: "abi-partial".into(),
+        capability: resource.clone(),
+        operation: "invalidate-then-fail".into(),
+        args: json!({}),
+        idempotency_key: None,
+    }));
+    assert!(outcome.result.is_err());
     assert_eq!(
-        provider
-            .collect_read_plan(&ReadPlan {
-                plan_id: "fixture-read".into(),
-                resource,
-                operation: "collect".into(),
-                args: json!({}),
-            })
-            .unwrap(),
-        b"fixture-resource"
+        outcome.invalidations,
+        vec![mutsuki_runtime_contracts::ResourceDescriptorInvalidation {
+            provider_id: resource.provider_id,
+            ref_id: resource.ref_id,
+            generation: resource.generation
+        }]
     );
 
     drop(plugin);

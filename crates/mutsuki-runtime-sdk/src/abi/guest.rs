@@ -151,87 +151,15 @@ impl PluginGuest {
                     .and_then(|mut runner| runner.dispose());
                 C::encode(request_id, Opcode::RunnerDispose, result)
             }
-            AnyWireRequest::CreateBlob(request) => {
-                let result = self
-                    .provider(request.provider_id.as_deref())
-                    .and_then(|provider| {
-                        provider.create_blob_resource(&request.schema, request.bytes)
-                    });
-                C::encode(request_id, Opcode::ResourceCreateBlob, result)
-            }
-            AnyWireRequest::CreateCowState(request) => {
-                let result = self
-                    .provider(request.provider_id.as_deref())
-                    .and_then(|provider| {
-                        provider.create_cow_state_resource(
-                            &request.kind_id,
-                            &request.schema,
-                            request.bytes,
-                        )
-                    });
-                C::encode(request_id, Opcode::ResourceCreateCowState, result)
-            }
-            AnyWireRequest::CreateCapability(request) => {
-                let result = self
-                    .provider(request.provider_id.as_deref())
-                    .and_then(|provider| {
-                        provider.create_capability_resource(&request.kind_id, &request.schema)
-                    });
-                C::encode(request_id, Opcode::ResourceCreateCapability, result)
-            }
-            AnyWireRequest::CollectReadPlan(request) => {
-                let result = self
-                    .provider(request.provider_id.as_deref())
-                    .and_then(|provider| provider.collect_read_plan(&request.plan));
-                C::encode(request_id, Opcode::ResourceReadCollect, result)
-            }
-            AnyWireRequest::SnapshotReadPlan(request) => {
-                let result = self
-                    .provider(request.provider_id.as_deref())
-                    .and_then(|provider| {
-                        provider.snapshot_read_plan(
-                            &request.plan,
-                            &request.kind_id,
-                            &request.schema,
-                        )
-                    });
-                C::encode(request_id, Opcode::ResourceReadSnapshot, result)
-            }
-            AnyWireRequest::OpenStreamPlan(request) => {
-                let result = self
-                    .provider(request.provider_id.as_deref())
-                    .and_then(|provider| provider.open_stream_plan(&request.plan));
-                C::encode(request_id, Opcode::ResourceStreamOpen, result)
-            }
-            AnyWireRequest::ExportPlan(request) => {
-                let result = self
-                    .provider(request.provider_id.as_deref())
-                    .and_then(|provider| provider.execute_export_plan(&request.plan));
-                C::encode(request_id, Opcode::ResourceExport, result)
-            }
-            AnyWireRequest::CommitWritePlan(request) => {
-                let result = self
-                    .provider(request.provider_id.as_deref())
-                    .and_then(|provider| provider.commit_write_plan(&request.plan, request.bytes));
-                C::encode(request_id, Opcode::ResourceWriteCommit, result)
-            }
-            AnyWireRequest::CommandPlan(request) => {
-                let result = self
-                    .provider(request.provider_id.as_deref())
-                    .and_then(|provider| provider.execute_command_plan(&request.plan));
-                C::encode(request_id, Opcode::ResourceCommand, result)
-            }
-            AnyWireRequest::CommandBatch(request) => {
-                let result = self
-                    .provider(request.provider_id.as_deref())
-                    .and_then(|provider| provider.execute_command_batch(&request.batch));
-                C::encode(request_id, Opcode::ResourceCommandBatch, result)
-            }
-            AnyWireRequest::SagaPlan(request) => {
-                let result = self
-                    .provider(request.provider_id.as_deref())
-                    .and_then(|provider| provider.execute_saga_plan(&request.saga));
-                C::encode(request_id, Opcode::ResourceSaga, result)
+            AnyWireRequest::ExecuteResourceProvider(request) => {
+                let result = self.provider(Some(&request.provider_id)).map(|provider| {
+                    let outcome = provider.execute(request.operation);
+                    mutsuki_runtime_contracts::ResourceProviderResponse {
+                        result: outcome.result.map_err(|failure| failure.error().clone()),
+                        invalidations: outcome.invalidations,
+                    }
+                });
+                C::encode(request_id, Opcode::ResourceProviderExecute, result)
             }
             unsupported => C::encode::<()>(
                 request_id,

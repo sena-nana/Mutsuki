@@ -76,3 +76,15 @@ execution, without reintroducing core-managed bytes storage.
 - filesystem, HTTP, SQLite, permission, config, log, trace, and dev-mock
   behavior
 - any business protocol or product-specific resource kind
+
+## Provider lifecycle migration (#184)
+
+Provider implementations now expose one `execute(ResourceProviderRequest)` entry returning
+`ResourceProviderOutcome<ResourceProviderReply>`. Move creation and plan dispatch behind that
+entry, preserving committed invalidations on both success and failure. Invalidating providers
+declare `ResourceProviderOrdering::Ordered`; `LocalResourceClient` rejects these providers
+because it has no Core actor. Caller-facing plan/creation gateways retain their success types.
+ABI providers use wire 1.4.0 `resource.provider.execute` (0x300c); rebuild both sides together.
+No compatibility shim or Python Core lifecycle implementation is provided.
+
+Full reload candidates must register every active provider explicitly, including routes originally injected through HostRuntimeConfig. Targeted reload only replaces affected providers and preserves unaffected instances; missing affected candidates fail before the Core generation switch.

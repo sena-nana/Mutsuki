@@ -9,7 +9,6 @@ use mutsuki_plugin_resource_shared_memory::{
 use mutsuki_runtime_contracts::{
     ResourceAccess, ResourceId, ResourceLifetime, ResourceRef, ResourceSealState, ResourceSemantic,
 };
-use mutsuki_runtime_sdk::ResourceProviderGateway;
 
 #[test]
 fn child_process_opens_shared_memory_descriptor_by_name() {

@@ -121,3 +121,8 @@ pub use trace::{SpanStatus, TraceSpan};
 
 #[cfg(test)]
 mod tests;
+
+pub use resource::{
+    ResourceDescriptorInvalidation, ResourceProviderReply, ResourceProviderRequest,
+    ResourceProviderResponse,
+};

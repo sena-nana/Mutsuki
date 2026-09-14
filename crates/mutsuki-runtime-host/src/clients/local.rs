@@ -7,9 +7,13 @@ use mutsuki_runtime_contracts::{
     TaskHandle, TaskOutcome, WritePlan,
 };
 use mutsuki_runtime_core::{CoreRuntime, RuntimeResult};
-use mutsuki_runtime_sdk::{ResourcePlanGateway, ResourceProviderGateway, TaskSubmitter};
+use mutsuki_runtime_sdk::{
+    ResourcePlanGateway, ResourceProviderGateway, ResourceProviderReply as Reply,
+    ResourceProviderRequest as Request, TaskSubmitter,
+};
 
 use crate::error::{resource_provider_missing, resource_provider_unsupported};
+use crate::resource_router::single_command_provider;
 
 #[derive(Clone)]
 pub struct LocalTaskClient {
@@ -62,9 +66,9 @@ impl LocalResourceClient {
         provider_id: impl Into<String>,
         provider: Arc<dyn ResourceProviderGateway>,
     ) -> Self {
-        let mut providers = BTreeMap::new();
-        providers.insert(provider_id.into(), provider);
-        Self { providers }
+        Self {
+            providers: BTreeMap::from([(provider_id.into(), provider)]),
+        }
     }
 
     pub fn with_providers<I>(providers: I) -> Self
@@ -77,37 +81,49 @@ impl LocalResourceClient {
     }
 
     fn require_provider(&self, provider_id: &str) -> RuntimeResult<&dyn ResourceProviderGateway> {
-        self.providers
+        let provider = self
+            .providers
             .get(provider_id)
-            .map(|provider| provider.as_ref())
-            .ok_or_else(|| resource_provider_missing(provider_id))
+            .ok_or_else(|| resource_provider_missing(provider_id))?;
+        if provider.ordering() == mutsuki_runtime_sdk::ResourceProviderOrdering::Ordered {
+            return Err(resource_provider_unsupported(
+                "lifecycle providers require the Host actor resource client",
+            ));
+        }
+        Ok(provider.as_ref())
     }
 
-    fn single_command_provider<'a>(
-        commands: impl Iterator<Item = &'a CommandPlan>,
-    ) -> RuntimeResult<String> {
-        let mut provider_id = None;
-        for command in commands {
-            match provider_id {
-                Some(existing) if existing != command.capability.provider_id => {
-                    return Err(resource_provider_unsupported(
-                        "command collection spans multiple resource providers",
-                    ));
-                }
-                Some(_) => {}
-                None => provider_id = Some(command.capability.provider_id.clone()),
-            }
+    fn execute(&self, provider_id: &str, request: Request) -> RuntimeResult<Reply> {
+        self.require_provider(provider_id)?.execute(request).result
+    }
+
+    fn receipt(&self, provider_id: &str, request: Request) -> RuntimeResult<PlanReceipt> {
+        match self.execute(provider_id, request)? {
+            Reply::Receipt(value) => Ok(*value),
+            _ => Err(resource_provider_unsupported(
+                "provider reply type mismatch",
+            )),
         }
-        provider_id.ok_or_else(|| {
-            resource_provider_unsupported("command collection has no provider route")
-        })
+    }
+
+    fn receipts(&self, provider_id: &str, request: Request) -> RuntimeResult<Vec<PlanReceipt>> {
+        match self.execute(provider_id, request)? {
+            Reply::Receipts(value) => Ok(value),
+            _ => Err(resource_provider_unsupported(
+                "provider reply type mismatch",
+            )),
+        }
     }
 }
 
 impl ResourcePlanGateway for LocalResourceClient {
     fn collect_read_plan(&self, plan: &ReadPlan) -> RuntimeResult<Vec<u8>> {
-        self.require_provider(&plan.resource.provider_id)?
-            .collect_read_plan(plan)
+        match self.execute(&plan.resource.provider_id, Request::Collect(plan.clone()))? {
+            Reply::Bytes(value) => Ok(value),
+            _ => Err(resource_provider_unsupported(
+                "provider reply type mismatch",
+            )),
+        }
     }
 
     fn snapshot_read_plan(
@@ -116,39 +132,62 @@ impl ResourcePlanGateway for LocalResourceClient {
         kind_id: &str,
         schema: &str,
     ) -> RuntimeResult<SnapshotDescriptor> {
-        self.require_provider(&plan.resource.provider_id)?
-            .snapshot_read_plan(plan, kind_id, schema)
+        match self.execute(
+            &plan.resource.provider_id,
+            Request::Snapshot {
+                plan: plan.clone(),
+                kind_id: kind_id.into(),
+                schema: schema.into(),
+            },
+        )? {
+            Reply::Snapshot(value) => Ok(*value),
+            _ => Err(resource_provider_unsupported(
+                "provider reply type mismatch",
+            )),
+        }
     }
 
     fn open_stream_plan(&self, plan: &ReadPlan) -> RuntimeResult<StreamPlan> {
-        self.require_provider(&plan.resource.provider_id)?
-            .open_stream_plan(plan)
+        match self.execute(
+            &plan.resource.provider_id,
+            Request::OpenStream(plan.clone()),
+        )? {
+            Reply::Stream(value) => Ok(value),
+            _ => Err(resource_provider_unsupported(
+                "provider reply type mismatch",
+            )),
+        }
     }
 
     fn execute_export_plan(&self, plan: &ExportPlan) -> RuntimeResult<PlanReceipt> {
-        self.require_provider(&plan.resource.provider_id)?
-            .execute_export_plan(plan)
+        self.receipt(&plan.resource.provider_id, Request::Export(plan.clone()))
     }
 
     fn commit_write_plan(&self, plan: &WritePlan, bytes: Vec<u8>) -> RuntimeResult<PlanReceipt> {
-        self.require_provider(&plan.resource.provider_id)?
-            .commit_write_plan(plan, bytes)
+        self.receipt(
+            &plan.resource.provider_id,
+            Request::Commit {
+                plan: Box::new(plan.clone()),
+                bytes,
+            },
+        )
     }
 
     fn execute_command_plan(&self, plan: &CommandPlan) -> RuntimeResult<PlanReceipt> {
-        self.require_provider(&plan.capability.provider_id)?
-            .execute_command_plan(plan)
+        self.receipt(&plan.capability.provider_id, Request::Command(plan.clone()))
     }
 
     fn execute_command_batch(&self, batch: &CommandBatch) -> RuntimeResult<Vec<PlanReceipt>> {
-        let provider_id = Self::single_command_provider(batch.commands.iter())?;
-        self.require_provider(&provider_id)?
-            .execute_command_batch(batch)
+        self.receipts(
+            &single_command_provider(batch.commands.iter())?,
+            Request::Batch(batch.clone()),
+        )
     }
 
     fn execute_saga_plan(&self, saga: &SagaPlan) -> RuntimeResult<Vec<PlanReceipt>> {
-        let provider_id =
-            Self::single_command_provider(saga.steps.iter().chain(saga.compensations.iter()))?;
-        self.require_provider(&provider_id)?.execute_saga_plan(saga)
+        self.receipts(
+            &single_command_provider(saga.steps.iter().chain(saga.compensations.iter()))?,
+            Request::Saga(saga.clone()),
+        )
     }
 }

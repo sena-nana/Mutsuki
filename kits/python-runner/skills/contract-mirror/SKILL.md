@@ -12,3 +12,5 @@ description: Mirror Mutsuki runtime contracts in Python, including tasks, batche
 - Update codecs, exports and round-trip tests with every mirror change.
 
 Record the source Core revision used for a contract update.
+
+Provider ABI lifecycle uses `ExecuteResourceProviderRequest` (opcode 0x300c, `resource.provider.execute`) and a `ResourceProviderResponse` containing result plus invalidations. Wire schema 1.4.0 handshake rejects older revisions; rebuild provider binaries. Native providers migrate to `execute`; no receipt-only fallback. Runner-facing resource replies retain their shapes. Python mirrors DTOs and registry/artifacts, without implementing a provider endpoint.
