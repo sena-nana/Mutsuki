@@ -51,3 +51,6 @@ Ask these in order:
 Read [references/naming-rules.md](references/naming-rules.md) when auditing more than one component, reviewing a proposed rename, or deciding whether to split responsibilities.
 
 Provider lifecycle DTOs belong to contracts; native outcomes belong to SDK; ordered completion lanes belong to Host. See naming-rules.md for #184 ownership.
+
+AsyncResourceRegistryGateway (#182) is the SDK Host-registry boundary, matching the existing
+ResourceRegistryGateway. Its actor client owns dispatch, not provider storage or another Core.

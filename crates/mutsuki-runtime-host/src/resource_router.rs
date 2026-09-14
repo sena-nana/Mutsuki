@@ -253,7 +253,7 @@ pub(crate) fn payload_bytes(command: &HostRuntimeCommand) -> usize {
     }
 }
 
-pub(crate) fn prepare_offloaded_resource_command(
+fn prepare_offloaded_resource_command(
     command: HostRuntimeCommand,
     provider: std::sync::Arc<dyn ResourceProviderGateway>,
 ) -> (ResourceCommandFuture, usize) {
@@ -279,12 +279,16 @@ pub(crate) fn prepare_offloaded_resource_command(
     )
 }
 
-pub(crate) fn prepare_async_resource_command(
+pub(crate) fn prepare_resource_command(
     command: HostRuntimeCommand,
     config: &HostRuntimeConfig,
 ) -> RuntimeResult<(String, ResourceCommandFuture, usize)> {
     let id = resource_command_provider(&command)
         .ok_or_else(|| resource_provider_unsupported("missing provider route"))?;
+    if let Some(provider) = config.resource_providers.get(&id) {
+        let (future, bytes) = prepare_offloaded_resource_command(command, provider.clone());
+        return Ok((id, future, bytes));
+    }
     let bytes = payload_bytes(&command);
     let provider = config
         .async_resource_providers

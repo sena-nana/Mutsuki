@@ -94,3 +94,7 @@ Exact revisions and Issue counts live in
 [`docs/migration/issue-44-ledger.md`](../migration/issue-44-ledger.md).
 
 Resource lifecycle consistency spans contracts (explicit invalidations), Core (descriptor identity/removal), SDK (provider outcomes), Host (ordered actor application) and SQLite (committed removal facts). Provider ABI and Python DTO mirrors share runtime-wire 1.4.0.
+
+Async resource registry creation (#182) adds a Rust SDK/Host interface, reusing existing wire
+1.4.0 DTOs. Provider execution remains outside the actor for async/Offloaded routes; the Host
+actor owns descriptor registration and completion. See [the migration and bridge contract](async-resource-creation.md).

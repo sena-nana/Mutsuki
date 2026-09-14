@@ -5063,6 +5063,7 @@ dependencies = [
 name = "mutsuki-plugin-resource-sqlite"
 version = "0.1.0"
 dependencies = [
+ "futures",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
  "mutsuki-runtime-host",

@@ -447,6 +447,15 @@ fn ordered_queue_rejects_excess_work_without_blocking_actor() {
 
 #[test]
 fn host_drop_drains_timed_out_provider_before_restart() {
+    drain_timed_out_provider(false);
+}
+
+#[test]
+fn host_drop_drains_timed_out_async_create_before_restart() {
+    drain_timed_out_provider(true);
+}
+
+fn drain_timed_out_provider(creating: bool) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("resources.sqlite");
     let provider = Arc::new(SqliteResourceProvider::open(&path).unwrap());
@@ -472,20 +481,43 @@ fn host_drop_drains_timed_out_provider_before_restart() {
         .store(true, std::sync::atomic::Ordering::SeqCst);
     let client = host.host_context().resource_registry_ref();
     let plan = delete(&cap, &resource);
-    let worker = std::thread::spawn(move || client.execute_command_plan(&plan));
+    let async_client = host.host_context().async_resource_registry_ref().unwrap();
+    let worker = std::thread::spawn(move || {
+        if creating {
+            futures::executor::block_on(async_client.create_blob_resource(
+                PROVIDER_ID.into(),
+                "blob.v1".into(),
+                vec![42],
+            ))
+            .map(|_| ())
+        } else {
+            client.execute_command_plan(&plan).map(|_| ())
+        }
+    });
     entered.wait();
-    assert!(worker.join().unwrap().is_err());
+    let timed_out = worker.join().unwrap();
     let (dropped_tx, dropped_rx) = std::sync::mpsc::channel();
     let dropper = std::thread::spawn(move || {
         drop(host);
         dropped_tx.send(()).unwrap();
     });
-    assert!(dropped_rx.recv_timeout(Duration::from_millis(30)).is_err());
+    let early_drop = dropped_rx.recv_timeout(Duration::from_millis(30));
     release.wait();
+    assert!(timed_out.is_err());
+    assert!(early_drop.is_err());
     dropped_rx.recv_timeout(Duration::from_secs(2)).unwrap();
     dropper.join().unwrap();
     let restarted = runtime(Arc::new(SqliteResourceProvider::open(&path).unwrap()));
-    absent(&restarted, &resource);
+    if creating {
+        assert_eq!(inventory(&restarted).len(), 3);
+        assert!(
+            inventory(&restarted)
+                .iter()
+                .any(|d| d.ref_id != resource.ref_id && d.ref_id != cap.ref_id)
+        );
+    } else {
+        absent(&restarted, &resource);
+    }
 }
 
 #[test]
@@ -612,4 +644,131 @@ fn alternating_same_file_provider_instances_preserve_ids_and_live_inventory() {
             .load(std::sync::atomic::Ordering::SeqCst),
         0
     );
+}
+
+#[test]
+fn async_large_blob_creation_bridges_sync_read_and_restores_after_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("large.sqlite");
+    let large_config = || {
+        HostRuntimeConfig::default().with_async_executor(Arc::new(
+            TokioAsyncExecutor::new(2, 8, 8, 16 * 1024 * 1024).unwrap(),
+        ))
+    };
+    let provider = Arc::new(SqliteResourceProvider::open(&path).unwrap());
+    let host = bootstrap(provider.clone())
+        .into_host_runtime_with_config(profile(), large_config())
+        .unwrap();
+    let registry = host.host_context().async_resource_registry_ref().unwrap();
+    let bytes = vec![0x82; 8 * 1024 * 1024];
+    let descriptor = futures::executor::block_on(registry.create_blob_resource(
+        PROVIDER_ID.into(),
+        "image/png".into(),
+        bytes.clone(),
+    ))
+    .unwrap();
+    assert_eq!(
+        futures::executor::block_on(
+            registry.open_resource_descriptor(descriptor.ref_id.to_string())
+        )
+        .unwrap(),
+        descriptor
+    );
+    let plan = ReadPlan {
+        plan_id: "large-consumer".into(),
+        resource: descriptor.clone(),
+        operation: "collect".into(),
+        args: json!({}),
+    };
+    assert_eq!(
+        host.host_context()
+            .resource_gateway()
+            .collect_read_plan(&plan)
+            .unwrap(),
+        bytes
+    );
+    same_inventory(&host, &provider);
+    drop(registry);
+    drop(host);
+    drop(provider);
+    let provider = Arc::new(SqliteResourceProvider::open(&path).unwrap());
+    let host = bootstrap(provider.clone())
+        .into_host_runtime_with_config(profile(), large_config())
+        .unwrap();
+    assert_eq!(
+        host.host_context()
+            .resource_registry()
+            .open_resource_descriptor(descriptor.ref_id.as_str())
+            .unwrap(),
+        descriptor
+    );
+    assert_eq!(
+        futures::executor::block_on(
+            host.host_context()
+                .async_resource_gateway()
+                .unwrap()
+                .collect_read_plan(plan)
+        )
+        .unwrap(),
+        bytes
+    );
+    same_inventory(&host, &provider);
+}
+
+#[test]
+fn timed_out_async_create_registers_across_reload_before_next_creation() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("create-reload.sqlite");
+    let inner = Arc::new(SqliteResourceProvider::open(&path).unwrap());
+    let entered = Arc::new(Barrier::new(2));
+    let release = Arc::new(Barrier::new(2));
+    let provider = Arc::new(PausedProvider {
+        inner: inner.clone(),
+        entered: entered.clone(),
+        release: release.clone(),
+        pause: true.into(),
+        calls: 0.into(),
+        restores: 0.into(),
+    });
+    let mut cfg = config();
+    cfg.default_runner_limits.wall_clock_deadline = Some(Duration::from_millis(100));
+    let mut host = bootstrap(provider.clone())
+        .into_host_runtime_with_config(profile(), cfg)
+        .unwrap();
+    let registry = host.host_context().async_resource_registry_ref().unwrap();
+    let client = registry.clone();
+    let worker = std::thread::spawn(move || {
+        futures::executor::block_on(client.create_blob_resource(
+            PROVIDER_ID.into(),
+            "blob.v1".into(),
+            vec![42],
+        ))
+    });
+    entered.wait();
+    let timed_out = worker.join().unwrap();
+    let stored = inner.restore_descriptors().unwrap();
+    let before = inventory(&host);
+    let replacement = Arc::new(SqliteResourceProvider::open(&path).unwrap());
+    let reload = bootstrap(replacement.clone())
+        .prepare_reload(profile(), 2)
+        .unwrap();
+    let reloaded = host.reload(reload, Duration::from_secs(2));
+    release.wait();
+    assert!(timed_out.is_err());
+    assert!(before.is_empty());
+    reloaded.unwrap();
+    let next = futures::executor::block_on(registry.create_blob_resource(
+        PROVIDER_ID.into(),
+        "blob.v1".into(),
+        vec![43],
+    ))
+    .unwrap();
+    assert_ne!(next.ref_id, stored[0].ref_id);
+    same_inventory(&host, &replacement);
+    assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(
+        provider.restores.load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+    assert_eq!(inventory(&host).len(), 2);
 }

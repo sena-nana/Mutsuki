@@ -109,3 +109,11 @@ Provider reload 必须携带候选实例并在 Core generation 切换成功后�
 Retain every offloaded/native-async provider invocation through actor result application, including Concurrent providers. A reload to Ordered fences all older invocations for that provider ID until the last result is applied; Concurrent execution otherwise remains parallel. Host shutdown drains all executing resource invocations.
 
 Offloaded and native async resource requests share invocation construction and admission bookkeeping; LocalResourceClient reuses the Host single-provider route check. Reload selects each active route once without cloning and pruning complete provider maps.
+
+## Async resource creation (#182)
+
+SDK exposes AsyncResourceRegistryGateway through HostContext. Native async creation and
+Offloaded provider work execute after admission; descriptor registration stays on the actor
+before replying. Sync Host plans bridge native async providers too, blocking only the caller
+worker. Async mailbox saturation fails structurally. Preserve #184 lanes, retained instances,
+reload fencing and shutdown drain. See docs/architecture/async-resource-creation.md.

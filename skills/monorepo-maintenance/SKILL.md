@@ -53,3 +53,7 @@ consumer checks. Fail when any selected capability, artifact, package, or revisi
   independent clone without changing the root dependency policy to silence a stale lock.
 
 Provider lifecycle changes must migrate native/ABI implementations and Python wire DTOs in the same revision. Validate the SQLite owner Host dev dependency in an independent clone; see package-map.md.
+
+For #182 validate the async Host registry and synchronous large-blob bridge together, including
+SQLite futures dev dependency and Bot assembly in an independent clone containing the changes.
+Wire stays 1.4.0; document the HostContext Rust constructor change in compatibility materials.

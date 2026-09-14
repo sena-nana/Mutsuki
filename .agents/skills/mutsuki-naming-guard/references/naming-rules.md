@@ -191,3 +191,7 @@ Choose names by the question answered:
 Provider lifecycle naming: ResourceDescriptorInvalidation/ResourceProviderResponse are contracts, ResourceProviderOutcome is native SDK, and ordered provider lanes are Host execution state. They do not create another Core registry or scheduler.
 
 PendingResource stores Host queue admission facts (route and accounted bytes), not a second scheduling kernel; provider invalidation indexes exist only within one actor outcome.
+
+AsyncResourceRegistryGateway names awaitable access to the Host registry; descriptor construction
+is provider work, descriptor registration is actor/Core state application. Do not create a
+second registry or product-local bridge to implement async creation (#182).

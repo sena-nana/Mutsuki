@@ -67,3 +67,11 @@ Rust 改动运行 `cargo fmt --check`、`cargo check` 和 `cargo test`。平台�
 外部边界 fake 或 smoke；最终报告实际命令、测试层级和统一 release revision。
 
 提交前检查 `git status --short` 和定向 diff，提交标题使用中文短句。
+
+## Large-blob Host bridge (#182)
+
+Image/card and QQ media consumers may keep synchronous injected Host resource gateways. The
+Host bridges native async and Offloaded providers without holding its actor; the caller worker
+still blocks. Async code must await the async gateways instead. Do not substitute standalone
+LocalResourceClient or access provider storage directly. See
+../../docs/architecture/async-resource-creation.md; report fake tests separately from real accounts.

@@ -8,10 +8,10 @@ use mutsuki_runtime_contracts::{
 };
 use mutsuki_runtime_core::{RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
-    AsyncResourcePlanGateway, BoxRuntimeFuture, ConfigProvider, HostContext as SdkHostContext,
-    HostScopeResolver, HostServiceRegistry, NoopEventBridge, PluginScopeHandle,
-    ResourcePlanGateway, ResourceRegistryGateway, ScopedHostService, ShutdownController,
-    StaticConfigProvider, TaskSubmitter,
+    AsyncResourcePlanGateway, AsyncResourceRegistryGateway, BoxRuntimeFuture, ConfigProvider,
+    HostContext as SdkHostContext, HostScopeResolver, HostServiceRegistry, NoopEventBridge,
+    PluginScopeHandle, ResourcePlanGateway, ResourceRegistryGateway, ScopedHostService,
+    ShutdownController, StaticConfigProvider, TaskSubmitter,
 };
 
 use crate::actor::ActorSender;
@@ -33,7 +33,8 @@ pub(crate) fn build_host_context(
     let task_submitter: Arc<dyn TaskSubmitter> = command_client.clone();
     let resource_gateway: Arc<dyn ResourcePlanGateway> = command_client.clone();
     let async_resource_gateway: Arc<dyn AsyncResourcePlanGateway> = command_client.clone();
-    let resource_registry: Arc<dyn ResourceRegistryGateway> = command_client;
+    let resource_registry: Arc<dyn ResourceRegistryGateway> = command_client.clone();
+    let async_resource_registry: Arc<dyn AsyncResourceRegistryGateway> = command_client;
     let shutdown = Arc::new(ActorShutdownController {
         tx,
         requested: AtomicBool::new(false),
@@ -52,6 +53,7 @@ pub(crate) fn build_host_context(
         resource_gateway,
         Some(async_resource_gateway),
         resource_registry,
+        Some(async_resource_registry),
         shutdown,
     )
 }
@@ -122,8 +124,19 @@ impl ActorCommandClient {
         let tx = self.tx.clone();
         Box::pin(async move {
             let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-            tx.send(CoreActorMsg::AsyncResourceCommand(command, reply_tx))
-                .map_err(|_| host_failure("host.actor.async_command", "actor mailbox closed"))?;
+            tx.try_send(CoreActorMsg::AsyncResourceCommand(command, reply_tx))
+                .map_err(|error| match error {
+                    mpsc::TrySendError::Full(_) => {
+                        RuntimeFailure::new(mutsuki_runtime_contracts::RuntimeError::new(
+                            mutsuki_runtime_contracts::ERR_CAPABILITY_EXHAUSTED,
+                            "host.actor.async_command",
+                            "actor mailbox capacity",
+                        ))
+                    }
+                    mpsc::TrySendError::Disconnected(_) => {
+                        host_failure("host.actor.async_command", "actor mailbox closed")
+                    }
+                })?;
             reply_rx
                 .await
                 .map_err(|error| host_failure("host.actor.async_reply", error.to_string()))?
@@ -319,6 +332,71 @@ impl AsyncResourcePlanGateway for ActorCommandClient {
             match future.await? {
                 HostRuntimeReply::PlanReceipts(receipts) => Ok(receipts),
                 reply => Err(unexpected_reply("resource.async_saga", reply)),
+            }
+        })
+    }
+}
+
+impl AsyncResourceRegistryGateway for ActorCommandClient {
+    fn open_resource_descriptor(&self, ref_id: String) -> BoxRuntimeFuture<ResourceRef> {
+        let future = self.dispatch_async(HostRuntimeCommand::OpenResourceDescriptor(ref_id));
+        Box::pin(async move {
+            match future.await? {
+                HostRuntimeReply::ResourceDescriptor(value) => Ok(value),
+                reply => Err(unexpected_reply("resource.descriptor.open", reply)),
+            }
+        })
+    }
+
+    fn create_blob_resource(
+        &self,
+        provider_id: String,
+        schema: String,
+        bytes: Vec<u8>,
+    ) -> BoxRuntimeFuture<ResourceRef> {
+        self.create_resource_async(HostRuntimeCommand::CreateBlobResource {
+            provider_id,
+            schema,
+            bytes,
+        })
+    }
+
+    fn create_cow_state_resource(
+        &self,
+        provider_id: String,
+        kind_id: String,
+        schema: String,
+        bytes: Vec<u8>,
+    ) -> BoxRuntimeFuture<ResourceRef> {
+        self.create_resource_async(HostRuntimeCommand::CreateCowStateResource {
+            provider_id,
+            kind_id,
+            schema,
+            bytes,
+        })
+    }
+
+    fn create_capability_resource(
+        &self,
+        provider_id: String,
+        kind_id: String,
+        schema: String,
+    ) -> BoxRuntimeFuture<ResourceRef> {
+        self.create_resource_async(HostRuntimeCommand::CreateCapabilityResource {
+            provider_id,
+            kind_id,
+            schema,
+        })
+    }
+}
+
+impl ActorCommandClient {
+    fn create_resource_async(&self, command: HostRuntimeCommand) -> BoxRuntimeFuture<ResourceRef> {
+        let future = self.dispatch_async(command);
+        Box::pin(async move {
+            match future.await? {
+                HostRuntimeReply::ResourceCreated(value) => Ok(value),
+                reply => Err(unexpected_reply("resource.create", reply)),
             }
         })
     }

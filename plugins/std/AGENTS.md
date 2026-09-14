@@ -36,3 +36,10 @@ Provider `execute` returns `ResourceProviderOutcome`: committed invalidations ar
 Invalidating providers declare Ordered. Their provider-id lane survives staged reload, retains the executing provider until actor application, and remains occupied after caller timeout/disconnect until actual completion. Queue count/bytes use Host limits; panic with unknown effects poisons the lane until restart. No permanent tombstone history or I/O in open. SQLite keeps create-before-insert retention and capability exemption.
 
 容量 retention 以单事务删除最旧资源前缀，避免逐行事务和将所有候选 ID 拉到 provider。测试同时覆盖 bulk rollback、零字节资源、capability 豁免，以及同文件 provider 实例交替 reload 的调用/restore 计数。
+
+## Async resource creation (#182)
+
+Keep SQLite Offloaded and Ordered. Awaitable Host registry creation still registers on the actor;
+image-render may retain the documented synchronous Host bridge. Owner tests cover an 8 MiB blob
+through async create, synchronous read and restart, using the public Host client. Validate the
+futures dev dependency in an independent clone. See ../../docs/architecture/async-resource-creation.md.

@@ -53,6 +53,35 @@ pub trait ResourceRegistryGateway: ResourcePlanGateway {
     ) -> RuntimeResult<ResourceRef>;
 }
 
+/// Awaitable Host registry access. Creation succeeds only after the actor has
+/// registered the provider's descriptor. Dropping a future after admission does
+/// not cancel committed provider effects or their actor application.
+///
+/// Blocking providers use the Host executor; Inline remains reserved for bounded
+/// in-memory work. Providers never receive a Core handle.
+pub trait AsyncResourceRegistryGateway: Send + Sync {
+    fn open_resource_descriptor(&self, ref_id: String) -> BoxRuntimeFuture<ResourceRef>;
+    fn create_blob_resource(
+        &self,
+        provider_id: String,
+        schema: String,
+        bytes: Vec<u8>,
+    ) -> BoxRuntimeFuture<ResourceRef>;
+    fn create_cow_state_resource(
+        &self,
+        provider_id: String,
+        kind_id: String,
+        schema: String,
+        bytes: Vec<u8>,
+    ) -> BoxRuntimeFuture<ResourceRef>;
+    fn create_capability_resource(
+        &self,
+        provider_id: String,
+        kind_id: String,
+        schema: String,
+    ) -> BoxRuntimeFuture<ResourceRef>;
+}
+
 /// Where the Host runs a synchronous provider's plans.
 ///
 /// Core executes resource commands on its actor thread, which is also the only

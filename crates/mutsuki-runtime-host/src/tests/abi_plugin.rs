@@ -239,16 +239,35 @@ fn build_real_fixture() -> PathBuf {
                 .join("fixtures")
                 .join("abi-v2-plugin")
                 .join("Cargo.toml");
-            let status = Command::new(env!("CARGO"))
-                .args(["build", "--manifest-path"])
+            let output = Command::new(env!("CARGO"))
+                .args([
+                    "build",
+                    "--locked",
+                    "--message-format=json",
+                    "--manifest-path",
+                ])
                 .arg(&manifest)
-                .status()
+                .output()
                 .expect("build real ABI v2 fixture");
-            assert!(status.success(), "real ABI v2 fixture build failed");
-            let library = workspace_root()
-                .join("target")
-                .join("debug")
-                .join(library_file_name());
+            assert!(
+                output.status.success(),
+                "real ABI v2 fixture build failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            // Cargo owns the output location (including CARGO_TARGET_DIR). Do
+            // not assume that an independent clone builds into ./target.
+            let library = String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                .filter(|message| message["reason"] == "compiler-artifact")
+                .filter_map(|message| message["filenames"].as_array().cloned())
+                .flatten()
+                .filter_map(|name| name.as_str().map(PathBuf::from))
+                .find(|path| {
+                    path.file_name()
+                        .is_some_and(|name| name == library_file_name())
+                })
+                .expect("Cargo must report the real ABI fixture artifact");
             assert!(library.is_file(), "fixture artifact: {}", library.display());
             library
         })
