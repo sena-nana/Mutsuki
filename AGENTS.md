@@ -85,3 +85,15 @@ crate/module/type/trait、审计组件命名与职责边界时，先读
 - 依赖、产品装配或发布改动必须在无兄弟仓库的独立 clone 验证。
 - 最终说明列出实际命令、结果、性能产物、release revision 与未执行的外部 smoke；不得以
   部分检查宣称成功。
+
+### Observability 与独立 CI 门禁（#185）
+
+- Core `observability` 只断言语义并输出诊断：disabled 不构造 span、不分配容量，enabled 保留 64 条。
+- benchmarks owner 的 `core.observability.disabled-trace` 进入优化 time smoke，p99 <= 1 ms/decision；
+  allocation 不判耗时，dev 使用 `--gate none`。细粒度回归要求固定机器多进程采样及批准基线。
+- 当前 case、双方 lane 指标、每个 reference 片段的语义/门禁/采样/环境/revision 必须完整有效；
+  缺失、非有限指标或失败报告不得通过比较或审批。复用片段不能绕过验证。
+- CI Lint、Performance smoke gate、Check fuzz targets 使用 `${{ !cancelled() }}`，保持失败传播。
+  `check_workspace.py` 自动运行真实 CI 条件回归与 `performance/tests`。
+- 详细门禁、owner 命令和证据边界见 `docs/core-performance-model-v1.md`；本地验证不替代
+  hosted CI 调度或固定机器批准基线比较。

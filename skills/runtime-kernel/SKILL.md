@@ -16,3 +16,13 @@ description: Change Mutsuki task scheduling, TaskPool, RunnerRegistry, batch exe
   `ResourceProviderExecution`; anything else added to the actor loop answers to the same rule.
 
 Test single and multi-entry batches, partial failure, cancellation, lease expiry and routing generation mismatches.
+
+## Observability verification
+
+Keep Core's observability harness semantic-only: disabled tracing constructs no span and retains
+zero capacity; enabled tracing retains 64 spans. Measure the independent
+`core.observability.disabled-trace` case through an opaque receiver in the benchmarks owner.
+Optimized time smoke gates p99 <= 1 ms/decision; allocation never gates time. Dev uses `--gate none`.
+Require complete current/baseline lane metrics and validated reference fragments for fine regression;
+never approve failed reports or count case presence as a metric comparison. Use synthetic gate tests
+and the owner commands in `docs/core-performance-model-v1.md`; preserve the fixed-machine evidence boundary.

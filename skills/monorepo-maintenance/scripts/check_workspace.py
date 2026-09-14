@@ -359,6 +359,11 @@ def check_manifest_urls() -> None:
 
 
 def main() -> None:
+    subprocess.run([sys.executable, str(Path(__file__).with_name("check_ci.py"))], check=True)
+    subprocess.run(
+        [sys.executable, "-m", "unittest", "discover", "-s", "performance/tests"],
+        cwd=ROOT, check=True,
+    )
     check_required_paths()
     check_single_workspace()
     check_integration_tests_index()

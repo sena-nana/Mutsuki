@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import math
 import re
 from typing import Any
 
@@ -18,9 +19,20 @@ class ContractError(ValueError):
 
 
 def _require(mapping: dict[str, Any], fields: tuple[str, ...], where: str) -> None:
+    if not isinstance(mapping, dict):
+        raise ContractError(f"{where} must be an object")
     missing = [field for field in fields if field not in mapping]
     if missing:
         raise ContractError(f"{where} missing required fields: {', '.join(missing)}")
+
+
+def _finite_number(value: Any) -> bool:
+    if type(value) not in (int, float):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _distribution(value: Any, where: str) -> None:
@@ -28,8 +40,8 @@ def _distribution(value: Any, where: str) -> None:
         raise ContractError(f"{where} must be an object")
     _require(value, ("median", "p95", "p99", "mad", "min", "max", "unit"), where)
     numbers = [value[name] for name in ("median", "p95", "p99", "mad", "min", "max")]
-    if not all(isinstance(number, (int, float)) and number >= 0 for number in numbers):
-        raise ContractError(f"{where} contains a negative or non-numeric statistic")
+    if not all(_finite_number(number) and number >= 0 for number in numbers):
+        raise ContractError(f"{where} contains a negative, non-finite or non-numeric statistic")
     if (
         not value["min"]
         <= value["median"]
@@ -39,16 +51,20 @@ def _distribution(value: Any, where: str) -> None:
     ):
         raise ContractError(f"{where} percentile ordering is invalid")
     if "sample_count" in value:
-        if not isinstance(value["sample_count"], int) or value["sample_count"] < 1:
+        if type(value["sample_count"]) is not int or value["sample_count"] < 1:
             raise ContractError(f"{where}.sample_count must be a positive integer")
-        if "samples" in value and len(value["samples"]) != value["sample_count"]:
+        if "samples" in value and (
+            not isinstance(value["samples"], list)
+            or len(value["samples"]) != value["sample_count"]
+        ):
             raise ContractError(f"{where}.samples does not match sample_count")
-    if "samples" in value and not all(
-        isinstance(sample, (int, float)) and sample >= 0 for sample in value["samples"]
-    ):
-        raise ContractError(
-            f"{where}.samples contains a negative or non-numeric sample"
-        )
+    if "samples" in value:
+        if not isinstance(value["samples"], list) or not value["samples"]:
+            raise ContractError(f"{where}.samples must be a non-empty array")
+        if not all(_finite_number(sample) and sample >= 0 for sample in value["samples"]):
+            raise ContractError(
+                f"{where}.samples contains a negative, non-finite or non-numeric sample"
+            )
 
 
 def validate_report(report: Any) -> None:
@@ -105,8 +121,11 @@ def validate_report(report: Any) -> None:
         ("warmup_iterations", "samples_per_process", "process_runs"),
         "sampling",
     )
-    if sampling["samples_per_process"] < 1 or sampling["process_runs"] < 1:
-        raise ContractError("sampling counts must be positive")
+    for name, minimum in (
+        ("warmup_iterations", 0), ("samples_per_process", 1), ("process_runs", 1)
+    ):
+        if type(sampling[name]) is not int or sampling[name] < minimum:
+            raise ContractError(f"sampling.{name} must be an integer >= {minimum}")
     cases = report["cases"]
     if not isinstance(cases, list) or not cases:
         raise ContractError("cases must be a non-empty array")
@@ -130,20 +149,40 @@ def validate_report(report: Any) -> None:
         key = (
             case["case_id"],
             case["measurement_mode"],
-            repr(sorted(case["dimensions"].items())),
+            repr(sorted(
+                (name, value) for name, value in case["dimensions"].items()
+                if name not in {"iterations", "units"}
+            )),
         )
         if key in seen:
             raise ContractError(f"duplicate case/lane/dimensions: {case['case_id']}")
         seen.add(key)
+        distributions = {"latency_ns", "throughput_per_second", "cpu_time_ns"}
+        unsigned_scalars = {
+            "allocations", "allocated_bytes", "peak_rss_bytes", "context_switches",
+            "disk_bytes", "network_bytes", "ipc_bytes",
+        }
         for metric, value in case["metrics"].items():
-            if isinstance(value, dict):
+            if metric in distributions or (
+                isinstance(value, dict)
+                and metric not in unsigned_scalars | {"retained_rss_bytes"}
+            ):
                 _distribution(value, f"{where}.metrics.{metric}")
-            elif not isinstance(value, (int, float)):
+            elif not _finite_number(value) or (metric in unsigned_scalars and value < 0):
                 raise ContractError(
-                    f"{where}.metrics.{metric} must be numeric or a distribution"
+                    f"{where}.metrics.{metric} must be a finite number in its allowed range"
                 )
+        for stage, value in case.get("stage_breakdown", {}).items():
+            if not _finite_number(value):
+                raise ContractError(f"{where}.stage_breakdown.{stage} must be finite")
         _validate_correctness(case["correctness"], f"{where}.correctness")
     _validate_correctness(report["correctness"], "correctness")
+    for gate in report.get("gates", []):
+        _require(gate, ("gate_id", "passed", "actual", "limit", "unit"), "gate")
+        if type(gate["passed"]) is not bool or not all(
+            _finite_number(gate[field]) for field in ("actual", "limit")
+        ):
+            raise ContractError("gate requires a boolean verdict and finite actual/limit")
 
 
 def _validate_correctness(value: Any, where: str) -> None:
@@ -154,7 +193,7 @@ def _validate_correctness(value: Any, where: str) -> None:
         raise ContractError(f"{where}.passed must be boolean")
     if "output_hash" in value and not HEX_64.fullmatch(value["output_hash"]):
         raise ContractError(f"{where}.output_hash must be a lowercase SHA-256")
-    if not all(isinstance(counter, int) for counter in value["counters"].values()):
+    if not all(type(counter) is int for counter in value["counters"].values()):
         raise ContractError(f"{where}.counters must contain integers")
 
 
@@ -226,6 +265,13 @@ def validate_repository_snapshot(snapshot: Any) -> None:
 def validate_baseline_approval(
     approval: Any, report_bytes: bytes, report: dict[str, Any]
 ) -> None:
+    validate_report(report)
+    if (
+        not report["correctness"]["passed"]
+        or any(not case["correctness"]["passed"] for case in report["cases"])
+        or any(not gate["passed"] for gate in report.get("gates", []))
+    ):
+        raise ContractError("a failed report cannot be an approved baseline")
     if not isinstance(approval, dict):
         raise ContractError("baseline approval must be an object")
     _require(

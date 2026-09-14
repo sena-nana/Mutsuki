@@ -74,12 +74,14 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Performance smoke gate
+        if: ${{ !cancelled() }}
         run: cargo bench-smoke
 
       # The fuzz crate lives outside the root Workspace, so nothing above compiles it. Without this
       # step a target silently rots the moment one of the DTOs it fuzzes changes shape. Running the
       # fuzzers themselves needs nightly and a time budget; that belongs in a scheduled job.
       - name: Check fuzz targets
+        if: ${{ !cancelled() }}
         working-directory: fuzz
         run: cargo check --all-targets --locked
 

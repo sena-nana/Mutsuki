@@ -342,8 +342,8 @@ fn is_within_workspace(path: &Path, canonical_root: &Path) -> bool {
 }
 
 /// Resolve `root.join(relative)` and require the result stays under the
-/// canonical workspace root. Symlinks that escape are refused as path_escape
-/// (OutsideWorkspace). Non-existent create targets are checked via their
+/// canonical workspace root. Symlinks that escape are refused as `path_escape`
+/// (`OutsideWorkspace`). Non-existent create targets are checked via their
 /// deepest existing ancestor so parent-dir symlink escapes are denied too.
 ///
 /// Residual risk note: `ComputerUseRisk::ReversibleWrite` still skips approval
@@ -361,35 +361,31 @@ fn resolve_inside_workspace(root: &Path, relative: &Path) -> Result<PathBuf, Age
     let mut probe = joined.clone();
     let mut missing: Vec<std::ffi::OsString> = Vec::new();
     loop {
-        match std::fs::canonicalize(&probe) {
-            Ok(canon) => {
-                let mut resolved = canon;
-                for part in missing.iter().rev() {
-                    resolved.push(part);
-                }
-                if !is_within_workspace(&resolved, &canonical_root) {
-                    return Err(path_escape_error(format!(
-                        "path `{}` escapes workspace (OutsideWorkspace)",
-                        relative.display()
-                    )));
-                }
-                return Ok(resolved);
+        if let Ok(canon) = std::fs::canonicalize(&probe) {
+            let mut resolved = canon;
+            for part in missing.iter().rev() {
+                resolved.push(part);
             }
-            Err(_) => {
-                let Some(name) = probe.file_name().map(std::ffi::OsStr::to_os_string) else {
-                    return Err(path_escape_error(format!(
-                        "path `{}` escapes workspace (OutsideWorkspace)",
-                        relative.display()
-                    )));
-                };
-                missing.push(name);
-                if !probe.pop() {
-                    return Err(path_escape_error(format!(
-                        "path `{}` escapes workspace (OutsideWorkspace)",
-                        relative.display()
-                    )));
-                }
+            if !is_within_workspace(&resolved, &canonical_root) {
+                return Err(path_escape_error(format!(
+                    "path `{}` escapes workspace (OutsideWorkspace)",
+                    relative.display()
+                )));
             }
+            return Ok(resolved);
+        }
+        let Some(name) = probe.file_name().map(std::ffi::OsStr::to_os_string) else {
+            return Err(path_escape_error(format!(
+                "path `{}` escapes workspace (OutsideWorkspace)",
+                relative.display()
+            )));
+        };
+        missing.push(name);
+        if !probe.pop() {
+            return Err(path_escape_error(format!(
+                "path `{}` escapes workspace (OutsideWorkspace)",
+                relative.display()
+            )));
         }
     }
 }

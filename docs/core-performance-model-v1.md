@@ -43,6 +43,7 @@ fragment set and then rebuilds only the merged report and anomaly analysis.
 - `core.local-builtin-dispatch`
 - `core.host.submit-batch`
 - `core.host.task-outcome`
+- `core.observability.disabled-trace`
 - `core.host.observability-page`
 - `core.host.actor-command`
 
@@ -88,3 +89,51 @@ MAD across more than 20% of time cases is classified as environmental noise. A s
 set is classified as case-specific noise and should trigger fixture/window inspection. Correctness or
 bounded-memory violations are classified as framework suspects. No classification automatically
 changes the baseline.
+
+## Observability gate migration (#185)
+
+The Core `observability` harness runs under `cargo test --all-targets` as well as `cargo bench`.
+It always asserts that disabled tracing does not construct spans or allocate retained capacity,
+and that enabled tracing retains 64 spans. Its historical ALU-baseline budget is printed only as a
+diagnostic, with `wall_clock_gate_enforced: false`; exceeding it never fails the harness.
+
+The owner suite independently measures `core.observability.disabled-trace`: an opaque mutable
+`TraceLog` receiver prevents the optimizer from replacing the known-disabled workload with a
+constant loop. Fixture creation and semantic checks remain outside the measurement window.
+Counters record zero span constructions, zero retained spans/capacity, and dropped decisions.
+The existing combined EventLog/TraceLog cases keep their identities and workloads.
+
+`cargo bench-smoke` includes this case and requires its presence. Its optimized time lane checks
+p99 <= 1,000,000 ns/decision (1 ms), a catastrophic-regression limit, not a claim of negligible
+hot-path overhead. Allocation reports omit headline timing and never use a wall-clock gate.
+Explicit smoke/release gates reject debug-assertions builds; use `--gate none` for dev diagnostics.
+Reference uses the existing warmup, raw samples and independent process rounds, without silently
+substituting a minimum sample for a median or p99.
+
+Both `--gate release` and `scripts/performance/compare_baseline.py` reject a missing matching
+baseline case (including changed dimensions or lane). Older baselines need a new fixed-machine
+report and explicit approval before accepting this case; unrelated baseline matching is unchanged.
+Both sides must also contain the lane's comparable metrics: `latency_ns` and
+`throughput_per_second` for time, `allocated_bytes` for allocation. An empty or partially populated
+case fails instead of skipping comparisons. Case-presence checks do not count as metric comparisons.
+Public CI cannot approve that baseline. Local tests inject gate measurements and validate the real
+CI conditions; they do not replace actual GitHub scheduling or fixed-machine reference runs.
+
+Owner validation:
+
+```sh
+cargo test -p mutsuki-runtime-core -p mutsuki-runtime-benchmarks --all-targets --locked
+cargo test -p mutsuki-runtime-core --bench observability --locked
+cargo bench-smoke
+python3 scripts/performance/validate_report.py target/mutsuki-benchmarks/core-smoke-time.json
+python3 -m unittest discover -s performance/tests
+python3 skills/monorepo-maintenance/scripts/check_ci.py
+```
+
+Reference aggregation validates every fragment's schema, semantics, gates, time case matrix, raw
+sample count, sampling configuration, environment, revision and allocator lane. Preserve all process
+gates; `--reuse-fragments` follows the same checks. Structural or semantic analysis errors fail the command.
+Reports reject non-finite metrics; approval rejects report, case or gate failures. Core comparison
+requires the observability case in each measured lane, even with a legacy baseline, and checks current
+case correctness and owner gates before baseline matching. Synthetic fixtures test these rules and do
+not constitute approved baselines.

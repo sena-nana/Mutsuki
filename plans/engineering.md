@@ -201,3 +201,12 @@ cargo run -p mutsuki-runtime-benchmarks --release --bin execution_domain_qos -- 
 
 - 公共协议、core runtime、ResourceManager、RuntimeBootstrapper、热重载或目录边界变化，提交前必须检查 diff 范围。
 - 不覆盖用户或其他 Agent 的已有改动。
+
+## Observability 性能验证与 CI 失败隔离（#185）
+
+Core observability harness 只保留语义断言与诊断输出；优化 time smoke 通过独立
+`core.observability.disabled-trace` case 检查 p99 <= 1 ms/decision，allocation 不判耗时。
+细粒度回归要求固定机器多进程 reference 和批准基线。当前 case、双方指标及全部片段必须有效，
+失败不得在合并、匹配或审批时丢失；具体规则与命令见 `docs/core-performance-model-v1.md`。
+CI Lint、Performance smoke gate、Check fuzz targets 使用 `${{ !cancelled() }}` 并传播失败；
+根 workspace checker 自动运行真实配置条件与性能报告回归测试。
