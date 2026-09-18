@@ -136,7 +136,7 @@ panic_file = "panic.log"
 
     let runtime = assemble_service(
         service.clone(),
-        mutsuki_bot_web_console::empty_config_service(),
+        mutsuki_bot_web_host_integration::empty_config_service(),
     )
     .unwrap()
     .start()
@@ -154,7 +154,7 @@ panic_file = "panic.log"
 
     let runtime = assemble_service(
         service.clone(),
-        mutsuki_bot_web_console::empty_config_service(),
+        mutsuki_bot_web_host_integration::empty_config_service(),
     )
     .unwrap()
     .start()
@@ -181,7 +181,7 @@ panic_file = "panic.log"
 
     let runtime = assemble_service(
         service.clone(),
-        mutsuki_bot_web_console::empty_config_service(),
+        mutsuki_bot_web_host_integration::empty_config_service(),
     )
     .unwrap()
     .start()

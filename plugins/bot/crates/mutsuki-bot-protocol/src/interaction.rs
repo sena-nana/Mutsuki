@@ -61,15 +61,6 @@ pub struct InteractionMatch {
     pub retry_prompt: Option<BotMessage>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InteractionResult {
-    pub session_id: String,
-    pub status: InteractionStatus,
-    pub version: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub event_id: Option<String>,
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum BotInteractionCommand {

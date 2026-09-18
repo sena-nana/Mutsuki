@@ -1,0 +1,25 @@
+[package]
+name = "mutsuki-web-extension-overview"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Web overview console: system status, runtime structure, task/runner counts, and uptime."
+
+[dependencies]
+mutsuki-web-extension-control = { workspace = true }
+mutsuki-service-control = { workspace = true }
+mutsuki-web-protocol = { workspace = true }
+mutsuki-web-extension-api = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+mutsuki-web-host = { workspace = true }
+mutsuki-web-bridge = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
+uuid.workspace = true
+tokio-tungstenite.workspace = true
+futures.workspace = true
+
+[lints]
+workspace = true

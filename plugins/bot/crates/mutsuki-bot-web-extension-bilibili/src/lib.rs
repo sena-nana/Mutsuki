@@ -1,0 +1,371 @@
+//! Bilibili console WebExtension: login state + subscription management RPC.
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::doc_markdown,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::redundant_closure_for_method_calls,
+    clippy::return_self_not_must_use,
+    clippy::too_many_lines,
+    clippy::uninlined_format_args
+)]
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use mutsuki_bot_management::{
+    BilibiliManagementApi, BilibiliManagementError, BilibiliNotificationKind,
+};
+use mutsuki_bot_protocol::BotTarget;
+use mutsuki_web_extension_api::{
+    BUNDLED_ENTRY_ASSET, BundledAssets, BundledManifest, ExtensionError, RpcRegistry, WebExtension,
+    WebExtensionDescriptor, materialize_bundled_assets,
+};
+use mutsuki_web_protocol::{AssetEntry, ExtensionManifest, WebFrontendAssets};
+use serde_json::{Value as JsonValue, json};
+
+pub const PLUGIN_ID: &str = "bilibili";
+pub const PLUGIN_VERSION: &str = "0.1.0";
+pub const CAPABILITY_RUNTIME_READ: &str = "runtime.read";
+pub const CAPABILITY_RUNTIME_WRITE: &str = "runtime.write";
+
+/// Fixed actor id used for console-initiated QR sessions.
+pub const CONSOLE_LOGIN_ACTOR: &str = "web-console";
+
+/// Administrator reach is a property of the session, not of the request body:
+/// a console session that may mutate the runtime is the administrator surface.
+/// Read-only sessions see and act on the operator's own subscriptions.
+fn console_is_admin(context: &mutsuki_web_extension_api::RpcCallContext) -> bool {
+    context.require(CAPABILITY_RUNTIME_WRITE).is_ok()
+}
+
+pub struct BilibiliWebExtension {
+    service: Arc<dyn BilibiliManagementApi>,
+    assets_root: BundledAssets,
+}
+
+impl BilibiliWebExtension {
+    pub fn new(service: Arc<dyn BilibiliManagementApi>) -> Self {
+        Self {
+            service,
+            assets_root: BundledAssets::default(),
+        }
+    }
+
+    pub fn with_frontend_assets(mut self, root: impl Into<PathBuf>) -> Self {
+        self.assets_root.set(root);
+        self
+    }
+}
+
+impl WebExtension for BilibiliWebExtension {
+    fn descriptor(&self) -> WebExtensionDescriptor {
+        manifest(
+            self.frontend_assets()
+                .map(|assets| assets.manifest.assets)
+                .unwrap_or_default(),
+        )
+    }
+
+    fn frontend_assets(&self) -> Option<WebFrontendAssets> {
+        self.assets_root.resolve(manifest)
+    }
+
+    fn register_rpc(&self, ctx: &mut RpcRegistry) -> Result<(), ExtensionError> {
+        let service = self.service.clone();
+
+        ctx.register_contextual("status", {
+            let service = service.clone();
+            move |context, _params| {
+                context.require(CAPABILITY_RUNTIME_READ)?;
+                encode_json(service.status())
+            }
+        });
+
+        // The QR session is keyed by actor, so the console always uses its own
+        // key: a caller must not be able to drive, or take over, a session that
+        // a chat administrator started.
+        ctx.register_async_contextual("login.start", {
+            let service = service.clone();
+            move |context, _params| {
+                let service = service.clone();
+                async move {
+                    context.require(CAPABILITY_RUNTIME_WRITE)?;
+                    let result = service
+                        .login_start(CONSOLE_LOGIN_ACTOR)
+                        .await
+                        .map_err(map_bili_error)?;
+                    Ok(json!({ "qr_png_base64": result.qr_png_base64 }))
+                }
+            }
+        });
+
+        // Polling a confirmed QR session rotates the stored credential, so this
+        // is a write however much it reads like a status check.
+        ctx.register_contextual("login.poll", {
+            let service = service.clone();
+            move |context, _params| {
+                context.require(CAPABILITY_RUNTIME_WRITE)?;
+                let result = service
+                    .login_poll(CONSOLE_LOGIN_ACTOR)
+                    .map_err(map_bili_error)?;
+                encode_json(result)
+            }
+        });
+
+        ctx.register_contextual("credential.clear", {
+            let service = service.clone();
+            move |context, params| {
+                context.require(CAPABILITY_RUNTIME_WRITE)?;
+                require_confirmed(&params)?;
+                service.credential_clear().map_err(map_bili_error)?;
+                Ok(json!({ "ok": true }))
+            }
+        });
+
+        ctx.register_contextual("subscriptions.list", {
+            let service = service.clone();
+            move |context, params| {
+                context.require(CAPABILITY_RUNTIME_READ)?;
+                let actor = optional_str(&params, "operator_user_id").unwrap_or_default();
+                let is_admin = console_is_admin(&context);
+                let list = service.list(&actor, is_admin).map_err(map_bili_error)?;
+                Ok(json!({ "subscriptions": list }))
+            }
+        });
+
+        ctx.register_contextual("subscriptions.subscribe", {
+            let service = service.clone();
+            move |context, params| {
+                context.require(CAPABILITY_RUNTIME_WRITE)?;
+                let subscription_id = required_str(&params, "subscription_id")?;
+                let uid = required_u64(&params, "uid")?;
+                let notifications = parse_notifications_json(&params)?;
+                let target = parse_target(&params)?;
+                let outbound_binding = required_str(&params, "outbound_binding")?;
+                let view = service
+                    .subscribe(
+                        subscription_id,
+                        uid,
+                        notifications,
+                        target,
+                        outbound_binding,
+                    )
+                    .map_err(map_bili_error)?;
+                encode_json(view)
+            }
+        });
+
+        ctx.register_contextual("subscriptions.unsubscribe", {
+            let service = service.clone();
+            move |context, params| {
+                context.require(CAPABILITY_RUNTIME_WRITE)?;
+                let subscription_id = required_str(&params, "subscription_id")?;
+                require_confirmed(&params)?;
+                service
+                    .unsubscribe(&subscription_id)
+                    .map_err(map_bili_error)?;
+                Ok(json!({ "ok": true }))
+            }
+        });
+
+        ctx.register_contextual("subscriptions.set_paused", {
+            let service = service.clone();
+            move |context, params| {
+                context.require(CAPABILITY_RUNTIME_WRITE)?;
+                let actor = optional_str(&params, "operator_user_id").unwrap_or_default();
+                let is_admin = console_is_admin(&context);
+                let selector = optional_str(&params, "selector");
+                let paused = params
+                    .get("paused")
+                    .and_then(|v| v.as_bool())
+                    .ok_or_else(|| invalid_argument("missing paused"))?;
+                let view = service
+                    .set_paused(&actor, is_admin, selector.as_deref(), paused)
+                    .map_err(map_bili_error)?;
+                encode_json(view)
+            }
+        });
+
+        ctx.register_contextual("subscriptions.preview", {
+            let service = service.clone();
+            move |context, params| {
+                context.require(CAPABILITY_RUNTIME_READ)?;
+                let actor = optional_str(&params, "operator_user_id").unwrap_or_default();
+                let is_admin = console_is_admin(&context);
+                let selector = optional_str(&params, "selector");
+                let card = service
+                    .preview(&actor, is_admin, selector.as_deref())
+                    .map_err(map_bili_error)?;
+                encode_json(card)
+            }
+        });
+
+        ctx.register_contextual("binding.start", {
+            let service = service.clone();
+            move |context, params| {
+                context.require(CAPABILITY_RUNTIME_WRITE)?;
+                let operator = required_str(&params, "operator_user_id")?;
+                let uid = required_u64(&params, "uid")?;
+                let seed = optional_str(&params, "challenge_seed")
+                    .unwrap_or_else(|| format!("web-{}", operator));
+                let result = service
+                    .bind_start(&operator, uid, &seed)
+                    .map_err(map_bili_error)?;
+                encode_json(result)
+            }
+        });
+
+        ctx.register_contextual("binding.verify", {
+            let service = service.clone();
+            move |context, params| {
+                context.require(CAPABILITY_RUNTIME_WRITE)?;
+                let operator = required_str(&params, "operator_user_id")?;
+                let platform = optional_str(&params, "platform").unwrap_or_else(|| "web".into());
+                let target = parse_target(&params)?;
+                let result = service
+                    .bind_verify(&operator, &platform, target)
+                    .map_err(map_bili_error)?;
+                encode_json(result)
+            }
+        });
+
+        ctx.register_contextual("binding.unbind", {
+            let service = service.clone();
+            move |context, params| {
+                context.require(CAPABILITY_RUNTIME_WRITE)?;
+                let operator = required_str(&params, "operator_user_id")?;
+                let removed = service.unbind(&operator).map_err(map_bili_error)?;
+                Ok(json!({ "removed": removed }))
+            }
+        });
+
+        Ok(())
+    }
+
+    fn register_events(
+        &self,
+        ctx: &mut mutsuki_web_extension_api::EventRegistry,
+    ) -> Result<(), ExtensionError> {
+        ctx.register_topic("changed");
+        Ok(())
+    }
+}
+
+fn manifest(assets: Vec<AssetEntry>) -> ExtensionManifest {
+    BundledManifest {
+        id: PLUGIN_ID,
+        version: PLUGIN_VERSION,
+        entry: BUNDLED_ENTRY_ASSET,
+        capabilities: vec![
+            CAPABILITY_RUNTIME_READ.into(),
+            CAPABILITY_RUNTIME_WRITE.into(),
+        ],
+    }
+    .build(assets)
+}
+
+pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::Error> {
+    let js = include_str!("../assets/index.js");
+    materialize_bundled_assets(out_dir, manifest, &[(BUNDLED_ENTRY_ASSET, js.as_bytes())])
+}
+
+fn map_bili_error(error: BilibiliManagementError) -> ExtensionError {
+    ExtensionError::Rpc {
+        code: error.code,
+        message: error.message,
+    }
+}
+
+fn encode_json(value: impl serde::Serialize) -> Result<JsonValue, ExtensionError> {
+    serde_json::to_value(value).map_err(|error| ExtensionError::Rpc {
+        code: "bilibili.encode_failed".into(),
+        message: error.to_string(),
+    })
+}
+
+fn invalid_argument(message: impl Into<String>) -> ExtensionError {
+    ExtensionError::Rpc {
+        code: "bilibili.invalid_argument".into(),
+        message: message.into(),
+    }
+}
+
+fn require_confirmed(params: &JsonValue) -> Result<(), ExtensionError> {
+    if params.get("confirmed").and_then(JsonValue::as_bool) == Some(true) {
+        Ok(())
+    } else {
+        Err(ExtensionError::Rpc {
+            code: "bilibili.confirmation_required".into(),
+            message: "destructive action requires confirmation".into(),
+        })
+    }
+}
+
+fn required_str(params: &JsonValue, key: &str) -> Result<String, ExtensionError> {
+    params
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| invalid_argument(format!("missing {key}")))
+}
+
+fn optional_str(params: &JsonValue, key: &str) -> Option<String> {
+    params
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn required_u64(params: &JsonValue, key: &str) -> Result<u64, ExtensionError> {
+    params
+        .get(key)
+        .and_then(|v| v.as_u64())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| invalid_argument(format!("missing or invalid {key}")))
+}
+
+fn parse_notifications_json(
+    params: &JsonValue,
+) -> Result<Vec<BilibiliNotificationKind>, ExtensionError> {
+    let Some(array) = params.get("notifications").and_then(|v| v.as_array()) else {
+        return Ok(vec![
+            BilibiliNotificationKind::Live,
+            BilibiliNotificationKind::Dynamic,
+            BilibiliNotificationKind::Video,
+        ]);
+    };
+    let mut out = Vec::new();
+    for item in array {
+        let kind = match item.as_str().unwrap_or_default() {
+            "live" => BilibiliNotificationKind::Live,
+            "dynamic" => BilibiliNotificationKind::Dynamic,
+            "video" => BilibiliNotificationKind::Video,
+            other => {
+                return Err(invalid_argument(format!(
+                    "unknown notification type {other}"
+                )));
+            }
+        };
+        if !out.contains(&kind) {
+            out.push(kind);
+        }
+    }
+    if out.is_empty() {
+        return Err(invalid_argument("notifications must not be empty"));
+    }
+    Ok(out)
+}
+
+fn parse_target(params: &JsonValue) -> Result<BotTarget, ExtensionError> {
+    let target = params
+        .get("target")
+        .cloned()
+        .ok_or_else(|| invalid_argument("missing target"))?;
+    serde_json::from_value(target)
+        .map_err(|error| invalid_argument(format!("invalid target: {error}")))
+}

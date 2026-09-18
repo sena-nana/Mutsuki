@@ -1,0 +1,25 @@
+[package]
+name = "mutsuki-web-extension-control"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Web control proxy: ServiceHost ControlMethod as control.* RPC with capability gating."
+
+[dependencies]
+mutsuki-runtime-contracts = { workspace = true }
+mutsuki-service-control = { workspace = true }
+mutsuki-web-protocol = { workspace = true }
+mutsuki-web-extension-api = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+mutsuki-web-host = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
+uuid.workspace = true
+tokio-tungstenite.workspace = true
+futures.workspace = true
+
+[lints]
+workspace = true

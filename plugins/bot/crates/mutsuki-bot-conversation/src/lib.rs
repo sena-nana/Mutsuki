@@ -4,8 +4,10 @@
 #![allow(clippy::missing_errors_doc, clippy::must_use_candidate)]
 
 mod context_store;
+mod persona_store;
 
-pub use context_store::{ConversationContextStore, MemoryConversationContextStore};
+pub use context_store::ConversationContextStore;
+pub use persona_store::PersonaStore;
 
 use std::sync::Arc;
 

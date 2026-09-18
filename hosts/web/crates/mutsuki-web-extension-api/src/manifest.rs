@@ -1,9 +1,11 @@
 use std::fs;
 use std::path::Path;
 
+use std::path::PathBuf;
+
 use mutsuki_web_protocol::{
     AssetEntry, EXTENSION_MANIFEST_VERSION, ExtensionManifest, ProtocolError, WEB_PROTOCOL_VERSION,
-    WEB_PROTOCOL_VERSION_MAJOR,
+    WEB_PROTOCOL_VERSION_MAJOR, WebFrontendAssets,
 };
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -31,6 +33,96 @@ pub enum ManifestError {
     MissingEntry(String),
     #[error("untrusted extension source: {0}")]
     UntrustedSource(String),
+}
+
+/// The parts of a bundled manifest that differ between extensions.
+///
+/// Everything else -- manifest version, protocol version, and the `pages` +
+/// `navigation` permissions every console page needs -- is fixed by the
+/// WebExtension contract, and was being restated in each extension crate.
+pub struct BundledManifest<'a> {
+    pub id: &'a str,
+    pub version: &'a str,
+    /// Usually [`BUNDLED_ENTRY_ASSET`]; extensions that rename their entry differ here.
+    pub entry: &'a str,
+    pub capabilities: Vec<String>,
+}
+
+impl BundledManifest<'_> {
+    /// Completes the manifest with the protocol-fixed fields and the hashed assets.
+    #[must_use]
+    pub fn build(self, assets: Vec<AssetEntry>) -> ExtensionManifest {
+        ExtensionManifest {
+            manifest_version: EXTENSION_MANIFEST_VERSION,
+            id: self.id.into(),
+            version: self.version.into(),
+            entry: self.entry.into(),
+            capabilities: self.capabilities,
+            permissions: vec!["pages".into(), "navigation".into()],
+            assets,
+            protocol_version: WEB_PROTOCOL_VERSION.into(),
+        }
+    }
+}
+
+/// Writes an extension's embedded assets and their content-addressed manifest.
+///
+/// `files` is both what gets written and what the manifest declares, so the two
+/// cannot disagree -- an extension that declared an asset it never wrote would fail
+/// validation only at load time.
+///
+/// # Errors
+///
+/// Returns an I/O error when directory creation, manifest encoding or a write fails.
+pub fn materialize_bundled_assets(
+    out_dir: &Path,
+    derive: impl FnOnce(Vec<AssetEntry>) -> ExtensionManifest,
+    files: &[(&str, &[u8])],
+) -> std::io::Result<PathBuf> {
+    fs::create_dir_all(out_dir)?;
+    let mut assets = Vec::with_capacity(files.len());
+    for (path, bytes) in files {
+        fs::write(out_dir.join(path), bytes)?;
+        assets.push(AssetEntry {
+            path: (*path).into(),
+            content_hash: content_hash(bytes),
+            bytes: bytes.len() as u64,
+        });
+    }
+    let encoded = serde_json::to_vec_pretty(&derive(assets)).map_err(std::io::Error::other)?;
+    fs::write(out_dir.join("manifest.json"), encoded)?;
+    Ok(out_dir.to_path_buf())
+}
+
+/// Where an extension's materialized assets were written, if the host staged them.
+///
+/// Every bundled extension held this same `Option<PathBuf>` plus an identical
+/// `with_frontend_assets` setter and `frontend_assets` resolver.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct BundledAssets {
+    root: Option<PathBuf>,
+}
+
+impl BundledAssets {
+    pub fn set(&mut self, root: impl Into<PathBuf>) {
+        self.root = Some(root.into());
+    }
+
+    /// Resolves the staged manifest, or `None` when the host staged no assets.
+    ///
+    /// A manifest that fails to load is reported as absent: the extension's RPC
+    /// surface still works, it simply contributes no frontend.
+    #[must_use]
+    pub fn resolve(
+        &self,
+        derive: impl FnOnce(Vec<AssetEntry>) -> ExtensionManifest,
+    ) -> Option<WebFrontendAssets> {
+        let root = self.root.as_ref()?;
+        Some(WebFrontendAssets {
+            manifest: load_bundled_manifest(root, derive).ok()?,
+            root_dir: root.clone(),
+        })
+    }
 }
 
 /// Load and validate an extension manifest from `root_dir/manifest.json`.

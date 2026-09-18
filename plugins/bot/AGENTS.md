@@ -32,8 +32,13 @@ Adapter/Gateway。它不拥有 Core 调度、Host 生命周期、Agent 能力或
 10. 媒体等可选后端必须显式提供并与 manifest capability 一致，不注册 unavailable 生产替代。
 11. QQBot 文档必须区分单元、fake E2E 和真实账号 smoke，且与当前 manifest、配置和实现同步。
 12. 有 `PluginBuilder` 的可加载面必须使用 `mutsuki-plugin-*` 名；库面 crate 只持有 trait/service。
+    反向同样成立：不建 `PluginBuilder` 的 crate 不得占用该前缀。WebExtension 属于此类，
+    统一用 `mutsuki-bot-web-extension-*`，且骨架从 `mutsuki-web-extension-api` 复用。
+    不含 Bot 内容的控制台页面归各自 owner（`hosts/web`、`kits/agent`），不留在本包。
     `mutsuki-bot-state-db` 实现 conversation/persona/delivery/interaction/sandbox 库面 store，
-    禁止反向依赖 plugin 包。
+    禁止反向依赖 plugin 包。`PersonaStore` 与 `ConversationContextStore` 同属
+    `mutsuki-bot-conversation`；plugin crate 不得 re-export 库面 trait，消费者一律从 owner 引入。
+    内存实现是测试替身，只住在 `mutsuki-bot-testkit`，不得出现在生产库 crate 的公开面。
 13. Flow 是业务行为唯一启动面：业务插件只经图节点 binding 被调用，或只提交
     `mutsuki.bot.flow/ingress@1` 触发事件并到此为止。业务 EventSource 的提交面必须经
     `mutsuki-bot-sdk` 的 `BotSubmissionGate` 包装（拒绝直提 `message/send`、`message/recall`、
@@ -47,19 +52,29 @@ Adapter/Gateway。它不拥有 Core 调度、Host 生命周期、Agent 能力或
 14. 已发起的效果经持久完成路径排空：`BotReplyDeliveryRecoveryEventSource`、reserved draft
     Submit、interaction waiter 以及 adapter/delivery 服务本身不在第 13 条限制内；控制面
     （管理 API、Web 控制台）同样豁免。图外直连 `mutsuki.bot.agent/submit@1` 仅保留给测试面，
-    不是生产启动路径。
+    不是生产启动路径。该豁免由 `BotManifestSurface` 三档显式表达，注册处按档调用
+    `BotSubmissionGate::ensure_manifest_surface`，不得跳过校验：
+    - `Business`：图内业务节点，禁止 `message/send`、`message/recall`、`mutsuki.bot.delivery/*`
+      与 `mutsuki.bot.agent/*`。
+    - `DurableReplyProducer`：把已产出的回复交给持久投递服务，可声明
+      `mutsuki.bot.delivery/*`，仍禁止直发平台与发起 Agent 轮次。Agent bridge 属于此档。
+    - `EffectDrain`：真正执行外部发送的 delivery/adapter 服务，可声明平台
+      `send`/`recall` 与 `delivery/*`，仍禁止发起 Agent 轮次。
+    三档均禁止 `mutsuki.bot.agent/*`：Agent 轮次只能由图节点 binding 发起。
+    Flow Router 自身是发起面，为每个节点 binding 声明 `requires`，不适用该校验。
 
 完整 crate 表见 `docs/architecture.md`。关键边界：
 
 | crate | 职责 |
 | --- | --- |
 | `mutsuki-bot-protocol` | 纯契约。`event/ingest`、`command/handle` 是 envelope ID，不是 runner |
-| `mutsuki-bot-conversation` / `mutsuki-bot-persona` | 会话与 persona 的 store trait；plugin 包只做 Runner |
+| `mutsuki-bot-conversation` | 会话、ICL 与 persona 的 store trait；plugin 包只做 Runner |
 | `mutsuki-bot-interaction` / `mutsuki-bot-delivery` | waiter / delivery 服务与 repository；`DeliveryGateway` 用 `BotTarget` |
 | `mutsuki-plugin-bot-interaction` / `mutsuki-plugin-bot-delivery` | 对应 PluginBuilder manifest 与节点 catalog |
 | `mutsuki-bot-state-db` | SQLite 实现上述库面 store |
+| `mutsuki-bot-secure-fetch` | 逐跳 allowlist + 手动重定向 + 流式大小上限；节点 runner 应改用 `mutsuki.std.io.http`，此 crate 只服务无 task submitter 的同步 transport |
 | `mutsuki-bot-service-host-integration` | 显式 Host 装配面；禁止再往里加业务 Runner |
-| `mutsuki-bot-web-console` | Bot 包提供的 WebHost 装配 helper，产品可选启用 |
+| `mutsuki-bot-web-host-integration` | Bot 包提供的 WebHost 装配 helper，产品可选启用 |
 
 ## 验证
 

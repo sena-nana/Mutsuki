@@ -3,14 +3,15 @@ use mutsuki_agent_contracts::{
     AgentWireError, AgentWireRequestEnvelope, AgentWireResponseEnvelope,
 };
 use mutsuki_agent_service_host_integration::AgentConnectionRegistry;
-use mutsuki_bot_conversation::ConversationService;
+use mutsuki_bot_conversation::{ConversationContextStore, ConversationService, PersonaStore};
 use mutsuki_bot_flow::{
     BOT_FLOW_CONFIG_PROVIDER_ID, BotFlowConfigProvider, BotFlowRegistry, BotNodeCatalog,
 };
+use mutsuki_bot_interaction::InteractionService;
 use mutsuki_bot_management::{BilibiliCredentialSecretState, BilibiliManagementApi};
 use mutsuki_bot_protocol::{BotFlowDocument, ConversationPolicy};
 use mutsuki_bot_sandbox::{SANDBOX_SERVICE_ID, SandboxService};
-use mutsuki_bot_sdk::BotSubmissionGate;
+use mutsuki_bot_sdk::{BotManifestSurface, BotSubmissionGate};
 use mutsuki_bot_state_db::BotStateDbRepository;
 use mutsuki_config_service::{
     ConfigApplyMode, ConfigApplyRequest, ConfigConstraints, ConfigContext, ConfigDescriptor,
@@ -28,14 +29,17 @@ use mutsuki_plugin_bot_command::{
     BOT_COMMAND_PLUGIN_ID, BotCommandNodeRunner, bot_command_manifest,
 };
 use mutsuki_plugin_bot_conversation_context::{
-    ConversationContextRunner, ConversationContextStore, bot_conversation_context_manifest,
+    ConversationContextRunner, bot_conversation_context_manifest,
 };
 use mutsuki_plugin_bot_delivery::{bot_reply_delivery_manifest_for, reply_delivery_runner_for};
 use mutsuki_plugin_bot_event_router::{
     BOT_FLOW_REGISTRY_SERVICE_ID, BOT_FLOW_ROUTER_PLUGIN_ID, BotFlowMatchRunner,
     flow_ingress_runner, flow_node_runner,
 };
-use mutsuki_plugin_bot_persona::{PersonaRunner, PersonaStore, bot_persona_manifest};
+use mutsuki_plugin_bot_interaction::{
+    InteractionCreateRunner, InteractionMatchRunner, bot_interaction_manifest, interaction_runner,
+};
+use mutsuki_plugin_bot_persona::{PersonaRunner, bot_persona_manifest};
 use mutsuki_plugin_bot_reply::{BotReplyRunner, bot_reply_manifest};
 use mutsuki_runtime_contracts::{
     ContractSurfaceKind, PluginManifest, RuntimeLoadPlan, SurfaceRequirement,
@@ -52,6 +56,7 @@ use mutsuki_service_runtime::{
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::bundle::UncommandedInteractionMatcher;
 use crate::{
     BILIBILI_MANAGEMENT_SERVICE_ID, BilibiliPollingCredentials, BilibiliPollingEventSource,
     BotReplyDeliveryRecoveryEventSource, QqBotPluginBundle,
@@ -136,6 +141,7 @@ struct BotFlowLoadPlanObserver {
     registry: Arc<BotFlowRegistry>,
     config: Arc<ConfigService>,
     seed: Option<BotFlowDocument>,
+    status: Arc<BotFlowSeedStatus>,
 }
 
 impl LoadPlanObserver for BotFlowLoadPlanObserver {
@@ -152,11 +158,13 @@ impl LoadPlanObserver for BotFlowLoadPlanObserver {
         let key = ConfigDocumentKey::new(BOT_FLOW_CONFIG_PROVIDER_ID, ConfigContext::global());
         let config = self.config.clone();
         if self.config.repository().read(&key).ok().flatten().is_some() {
+            let status = self.status.clone();
             tokio::spawn(async move {
                 if let Err(error) = config
                     .restore(BOT_FLOW_CONFIG_PROVIDER_ID, ConfigContext::global())
                     .await
                 {
+                    status.record_failure("restore", &error.to_string());
                     tracing::error!(
                         error = %error,
                         "stored Bot Flow could not be restored after startup; routing stays on an empty graph"
@@ -168,6 +176,7 @@ impl LoadPlanObserver for BotFlowLoadPlanObserver {
         let Some(seed) = self.seed.clone() else {
             return;
         };
+        let status = self.status.clone();
         tokio::spawn(async move {
             let candidate = ConfigValue::from_json(&serde_json::json!({ "flow": seed }));
             if let Err(error) = config
@@ -178,6 +187,7 @@ impl LoadPlanObserver for BotFlowLoadPlanObserver {
                 )
                 .await
             {
+                status.record_failure("seed", &error.to_string());
                 tracing::error!(
                     error = %error,
                     "Bot Flow seed was not applied; routing stays on an empty graph"
@@ -221,6 +231,8 @@ impl ConfiguredPluginFactory for BotFlowRouterConfiguredPlugin {
         let node_registry = registry.clone();
         let service_registry = registry.clone();
         let ingress_stats_registry = registry.clone();
+        let seed_status = Arc::new(BotFlowSeedStatus::default());
+        let probe_status = seed_status.clone();
         let config_service = self.config.clone();
         Ok(builder
             .register_builtin_loaded_plugin_factory(manifest, move || {
@@ -247,11 +259,35 @@ impl ConfiguredPluginFactory for BotFlowRouterConfiguredPlugin {
             .register_builtin_runner(move || flow_ingress_runner(ingress_registry.clone()))
             .register_health_probe("mutsuki.bot.flow.ingress", move || {
                 let stats = ingress_stats_registry.ingress_stats();
-                serde_json::json!({
-                    "status": "ok",
-                    "accepted_total": stats.accepted_total(),
-                    "dropped_total": stats.dropped_total(),
-                })
+                let accepted_total = stats.accepted_total();
+                let dropped_total = stats.dropped_total();
+                let active_nodes = ingress_stats_registry.active().flow.nodes.len();
+                let seed_failure = probe_status.failure();
+                // An empty active graph freezes every business behavior behind
+                // Flow. That is a legitimate state before the operator saves a
+                // graph, so it only counts as degraded once ingress has actually
+                // seen traffic it had nowhere to route.
+                let frozen = active_nodes == 0 && accepted_total > 0;
+                let health = if seed_failure.is_some() || frozen {
+                    "degraded"
+                } else {
+                    "ok"
+                };
+                let mut snapshot = serde_json::json!({
+                    "status": health,
+                    "accepted_total": accepted_total,
+                    "dropped_total": dropped_total,
+                    "active_flow_nodes": active_nodes,
+                });
+                if let Some(failure) = seed_failure {
+                    snapshot["seed_failure"] = serde_json::Value::String(failure);
+                }
+                if frozen {
+                    snapshot["frozen_reason"] = serde_json::Value::String(
+                        "ingress accepted events while the active Flow graph is empty".into(),
+                    );
+                }
+                snapshot
             })
             .register_builtin_runner(move || Box::new(BotFlowMatchRunner::default()))
             .register_runtime_client_runner(move |client| {
@@ -263,6 +299,7 @@ impl ConfiguredPluginFactory for BotFlowRouterConfiguredPlugin {
                     registry,
                     config: self.config.clone(),
                     seed: self.seed.clone(),
+                    status: seed_status,
                 }),
             ))
     }
@@ -288,9 +325,73 @@ impl ConfiguredPluginFactory for BotCommandConfiguredPlugin {
         let _config: FlowRouterConfig =
             serde_json::from_value(config).map_err(|error| error.to_string())?;
         Ok(builder
-            .register_builtin_plugin(bot_command_manifest(1))
+            .register_builtin_plugin(checked_manifest(
+                bot_command_manifest(1),
+                BotManifestSurface::Business,
+            )?)
             .register_builtin_runner(move || Box::new(BotCommandNodeRunner::new(1))))
     }
+}
+
+/// Outcome of the last Flow document seed or restore attempt.
+///
+/// Both run on a detached task after LoadPlan activation, so a failure there used
+/// to reach the operator as a log line only while the process reported healthy and
+/// routed on an empty graph -- every business behavior frozen, nothing structurally
+/// failed. The health probe reads this back so the freeze is visible.
+#[derive(Default)]
+struct BotFlowSeedStatus {
+    failure: std::sync::Mutex<Option<String>>,
+}
+
+impl BotFlowSeedStatus {
+    fn record_failure(&self, stage: &str, error: &str) {
+        if let Ok(mut slot) = self.failure.lock() {
+            *slot = Some(format!("{stage}: {error}"));
+        }
+    }
+
+    fn failure(&self) -> Option<String> {
+        self.failure.lock().ok().and_then(|slot| slot.clone())
+    }
+}
+
+/// Validates a manifest against the outbound surface its role is entitled to and
+/// returns it for registration.
+///
+/// Rule 13 is only an invariant if every registration passes through this check.
+/// Each call site names the tier explicitly, so widening a plugin's outbound
+/// surface is a visible edit here rather than a silently unchecked manifest.
+fn checked_manifest(
+    manifest: PluginManifest,
+    surface: BotManifestSurface,
+) -> Result<PluginManifest, String> {
+    BotSubmissionGate::ensure_manifest_surface(&manifest, surface).map_err(|error| {
+        let error = error.error();
+        format!("{}: {}", error.code, error.route)
+    })?;
+    Ok(manifest)
+}
+
+/// Plain manifests the first-party AI chain registers once the Bot Agent is enabled.
+///
+/// Production registration iterates this list and the catalog tests validate the
+/// seeded `qq.business.full` reference graph against it, so a node type that the
+/// reference graph uses cannot lose its registration without a test failing.
+/// Manifests whose registration also carries runner-specific wiring (the merged
+/// Agent + reply-delivery manifest) stay outside the list.
+pub(crate) fn bot_agent_chain_manifests() -> Result<Vec<PluginManifest>, String> {
+    [
+        bot_conversation_context_manifest(),
+        bot_reply_manifest(),
+        bot_persona_manifest(),
+        bot_interaction_manifest(),
+    ]
+    .into_iter()
+    // Every one of these is a plain graph-invoked business node: none may reach
+    // the platform, the delivery service or the Agent on its own.
+    .map(|manifest| checked_manifest(manifest, BotManifestSurface::Business))
+    .collect()
 }
 
 const BOT_AGENT_REPLY_DELIVERY_RUNNER_ID: &str = "mutsuki.bot.agent.reply-delivery.runner";
@@ -373,6 +474,14 @@ impl ConfiguredPluginFactory for BotAgentConfiguredPlugin {
         );
         let conversation_context: Arc<dyn ConversationContextStore> = repository.clone();
         let persona_store: Arc<dyn PersonaStore> = repository.clone();
+        // The interaction waiter nodes are part of the first-party AI chain that this
+        // factory owns, and they need the same open BotStateDb handle as the stores
+        // above. Registering them anywhere else would either reopen the database or
+        // leave `mutsuki.bot.interaction.*` out of the node catalog, which silently
+        // fails validation of any graph that uses them -- including the seeded
+        // `qq.business.full` reference graph.
+        let interaction =
+            InteractionService::new(repository.clone(), Arc::new(UncommandedInteractionMatcher));
         let connection_id = config
             .selected_connection_id()
             .map_err(|error| error.to_string())?
@@ -389,26 +498,37 @@ impl ConfiguredPluginFactory for BotAgentConfiguredPlugin {
         let bridge =
             BotAgentBridge::new_with_config(conversations, Box::new(client), config_handle.clone());
 
+        // The two halves carry different entitlements, so each is checked before
+        // the merge rather than at the widest tier of the merged result. The Agent
+        // bridge only hands an already-produced turn to the durable delivery
+        // service (`mutsuki.bot.delivery/reply@1` on its node reply port); the
+        // reply-delivery runner is the drain that performs the real platform send.
         let mut manifest = merge_manifests(
-            bot_agent_bridge_manifest(),
-            bot_reply_delivery_manifest_for(
-                BOT_AGENT_BRIDGE_PLUGIN_ID,
-                BOT_AGENT_REPLY_DELIVERY_RUNNER_ID,
-            ),
+            checked_manifest(
+                bot_agent_bridge_manifest(),
+                BotManifestSurface::DurableReplyProducer,
+            )?,
+            checked_manifest(
+                bot_reply_delivery_manifest_for(
+                    BOT_AGENT_BRIDGE_PLUGIN_ID,
+                    BOT_AGENT_REPLY_DELIVERY_RUNNER_ID,
+                ),
+                BotManifestSurface::EffectDrain,
+            )?,
         );
         manifest.requires.push(SurfaceRequirement::new(
             ContractSurfaceKind::Capability,
             connection_id.capability(),
         ));
-        let builder = register_bot_agent_services(builder, manifest, config_handle.clone());
+        let mut builder = register_bot_agent_services(builder, manifest, config_handle.clone());
+        for manifest in bot_agent_chain_manifests()? {
+            builder = builder.register_builtin_plugin(manifest);
+        }
         Ok(builder
             .register_event_source(Box::new(BotReplyDeliveryRecoveryEventSource::for_plugin(
                 Duration::from_millis(250),
                 BOT_AGENT_BRIDGE_PLUGIN_ID,
             )))
-            .register_builtin_plugin(bot_conversation_context_manifest())
-            .register_builtin_plugin(bot_reply_manifest())
-            .register_builtin_plugin(bot_persona_manifest())
             .register_builtin_runner({
                 let store = conversation_context.clone();
                 move || Box::new(ConversationContextRunner::new(store.clone()))
@@ -417,6 +537,14 @@ impl ConfiguredPluginFactory for BotAgentConfiguredPlugin {
             .register_builtin_runner({
                 let store = persona_store.clone();
                 move || Box::new(PersonaRunner::new(store.clone()))
+            })
+            .register_builtin_runner({
+                let interaction = interaction.clone();
+                move || Box::new(InteractionMatchRunner::new(interaction.clone()))
+            })
+            .register_builtin_runner({
+                let interaction = interaction.clone();
+                move || Box::new(InteractionCreateRunner::new(interaction.clone()))
             })
             .register_dynamic_runner_limit(BOT_AGENT_BRIDGE_RUNNER_ID, {
                 let config = config_handle.clone();
@@ -427,6 +555,9 @@ impl ConfiguredPluginFactory for BotAgentConfiguredPlugin {
             })
             .register_runtime_client_runner(move |client| {
                 agent_bridge_runner(client, bridge.clone())
+            })
+            .register_runtime_client_runner(move |client| {
+                interaction_runner(client, interaction.clone())
             })
             .register_runtime_client_runner(move |client| {
                 reply_delivery_runner_for(
@@ -633,6 +764,13 @@ impl BilibiliConfiguredPlugin {
     }
 }
 
+/// Drives a config future from a synchronous caller.
+///
+/// The three arms are not interchangeable. On a multi-thread runtime the worker can
+/// be handed off, so `block_in_place` is enough. On a current-thread runtime the
+/// caller *is* the reactor: blocking on it would deadlock the future it is waiting
+/// for, which is why this pays for a thread instead. With no runtime at all a plain
+/// executor suffices. Only the config write path reaches here.
 fn block_on_config<F, T>(future: F) -> T
 where
     F: std::future::Future<Output = T> + Send + 'static,
@@ -1119,24 +1257,6 @@ fn configured_bot_plugin_catalog_inner(
     Ok(catalog)
 }
 
-/// Adds the Flow Router only when product bootstrap supplies ConfigService.
-pub fn configured_bot_plugin_catalog_with_config(
-    config: Arc<ConfigService>,
-    media_provider_id: String,
-) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
-    let flow_registry = Arc::new(BotFlowRegistry::new(BotNodeCatalog::default()));
-    let mut catalog = configured_bot_plugin_catalog_inner(
-        Some(config.clone()),
-        Some(flow_registry.clone()),
-        media_provider_id,
-    )?;
-    catalog.register(BotFlowRouterConfiguredPlugin::with_registry(
-        config,
-        flow_registry,
-    ))?;
-    Ok(catalog)
-}
-
 /// Production Bot catalog with configurable Agent nodes wired to a shared Agent owner
 /// registry. The base catalog intentionally remains Agent-free for products that do not opt in.
 /// `seed_flow` is applied by LoadPlan activation into stores that never recorded a flow
@@ -1163,7 +1283,7 @@ pub fn configured_bot_plugin_catalog_with_agent_and_flow(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::collections::BTreeMap;
 
     use mutsuki_config_service::{
@@ -1172,27 +1292,32 @@ mod tests {
     };
     use mutsuki_plugin_bot_adapter_qqbot::qqbot_adapter_manifest;
     use mutsuki_plugin_bot_event_router::flow_router_manifest;
-    use mutsuki_plugin_bot_interaction::bot_interaction_manifest;
     use mutsuki_runtime_contracts::RuntimeLoadPlan;
     use mutsuki_service_config::{ConfiguredPluginSelection, ServiceConfig};
     use serde_json::json;
 
+    use mutsuki_bot_flow::validate_flow;
+
     use super::*;
 
-    fn reference_catalog_manifests() -> Vec<PluginManifest> {
+    /// Every manifest a fully-enabled first-party product registers.
+    ///
+    /// Shared with `orchestrated_flow`'s tests so there is one definition of "the
+    /// first-party node catalog"; a second hand-written list is how the seeded graph
+    /// came to reference node types production never registered.
+    pub(crate) fn reference_catalog_manifests() -> Vec<PluginManifest> {
         vec![
             qqbot_adapter_manifest(1, false),
             flow_router_manifest(),
             bot_command_manifest(1),
-            bot_conversation_context_manifest(),
             bot_agent_bridge_manifest(),
-            bot_reply_manifest(),
             mutsuki_plugin_bot_delivery::bot_reply_delivery_manifest(),
-            bot_persona_manifest(),
-            bot_interaction_manifest(),
             mutsuki_plugin_bot_bilibili::manifest(),
             mutsuki_plugin_bot_mihuashi::manifest(),
         ]
+        .into_iter()
+        .chain(bot_agent_chain_manifests().expect("chain manifests satisfy the business surface"))
+        .collect()
     }
 
     fn empty_load_plan(manifests: Vec<PluginManifest>) -> RuntimeLoadPlan {
@@ -1210,6 +1335,106 @@ mod tests {
             capability_graph: Default::default(),
             contract_surfaces: Vec::new(),
         }
+    }
+
+    #[test]
+    fn agent_bridge_is_a_durable_reply_producer_and_nothing_wider() {
+        let manifest = bot_agent_bridge_manifest();
+        // This is the whole reason Rule 13's gate needs a tier rather than a
+        // blanket allow: the Agent bridge legitimately declares
+        // `mutsuki.bot.delivery/reply@1`, which the strict business surface denies.
+        BotSubmissionGate::ensure_manifest_surface(&manifest, BotManifestSurface::Business)
+            .expect_err("the Agent bridge declares a delivery surface a business plugin may not");
+        BotSubmissionGate::ensure_manifest_surface(
+            &manifest,
+            BotManifestSurface::DurableReplyProducer,
+        )
+        .expect("handing an already-produced reply to the delivery service is the durable route");
+
+        // The exemption stops there: the bridge must never gain a direct platform
+        // send or the ability to originate an Agent turn outside a graph binding.
+        for contract in manifest
+            .provides
+            .runners
+            .iter()
+            .flat_map(|runner| runner.contract_surfaces.iter())
+        {
+            if let Some(protocol_id) = contract.as_str().strip_prefix("requires:task_protocol:") {
+                assert!(
+                    !protocol_id.starts_with("mutsuki.bot.agent/")
+                        && protocol_id != "mutsuki.bot.message/send@1"
+                        && protocol_id != "mutsuki.bot.message/recall@1",
+                    "Agent bridge must not declare {protocol_id}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn production_catalog_declares_every_node_type_the_seed_graph_uses() {
+        let catalog = BotNodeCatalog::from_manifests(&reference_catalog_manifests())
+            .expect("reference catalogs merge");
+        let seed = crate::orchestrated_flow::qq_full_business_flow();
+        let missing: Vec<_> = seed
+            .nodes
+            .iter()
+            .filter(|node| {
+                catalog
+                    .descriptor(&node.node_type_id, node.node_type_version)
+                    .is_none()
+            })
+            .map(|node| format!("{}@{}", node.node_type_id, node.node_type_version))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "the seeded reference graph uses node types no production factory registers, \
+             so BotFlowLoadPlanObserver would leave routing on an empty graph: {missing:?}"
+        );
+        let result = validate_flow(&seed, &catalog);
+        assert!(result.valid, "{:#?}", result.issues);
+    }
+
+    #[tokio::test]
+    async fn seed_failure_is_reported_instead_of_a_healthy_empty_graph() {
+        // A catalog missing the node types the seed uses is exactly the P0 shape:
+        // the seed cannot validate, routing stays on an empty graph, and the
+        // process must not keep claiming it is healthy.
+        let registry = Arc::new(BotFlowRegistry::new(BotNodeCatalog::default()));
+        let config = Arc::new(
+            ConfigService::new(
+                Arc::new(ConfigProviderRegistry::default()),
+                Arc::new(InMemoryConfigRepository::default()),
+            )
+            .expect("config service"),
+        );
+        config
+            .registry()
+            .register(Arc::new(BotFlowConfigProvider::new(registry.clone())))
+            .expect("flow provider registers");
+        let status = Arc::new(BotFlowSeedStatus::default());
+        let observer = BotFlowLoadPlanObserver {
+            registry: registry.clone(),
+            config,
+            seed: Some(crate::orchestrated_flow::qq_full_business_flow()),
+            status: status.clone(),
+        };
+
+        observer.activate(&empty_load_plan(Vec::new()));
+
+        let mut recorded = None;
+        for _ in 0..100 {
+            if let Some(failure) = status.failure() {
+                recorded = Some(failure);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let recorded = recorded.expect("an unapplied seed must be recorded, not only logged");
+        assert!(
+            recorded.starts_with("seed: "),
+            "failure must name the stage: {recorded}"
+        );
+        assert_eq!(registry.active().flow.nodes.len(), 0);
     }
 
     #[tokio::test]
@@ -1233,6 +1458,7 @@ mod tests {
             registry: registry.clone(),
             config: config.clone(),
             seed: Some(crate::orchestrated_flow::qq_full_business_flow()),
+            status: Arc::new(BotFlowSeedStatus::default()),
         };
 
         observer.activate(&empty_load_plan(manifests));

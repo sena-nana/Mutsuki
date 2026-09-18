@@ -27,7 +27,7 @@ use mutsuki_runtime_sdk::{
 };
 use serde_json::json;
 
-pub use mutsuki_bot_persona::{MemoryPersonaStore, PersonaStore};
+use mutsuki_bot_conversation::PersonaStore;
 
 pub const BOT_PERSONA_PLUGIN_ID: &str = "mutsuki.plugin.bot.persona";
 pub const BOT_PERSONA_RUNNER_ID: &str = "mutsuki.bot.persona";
@@ -329,6 +329,8 @@ fn runtime_error(
 
 #[cfg(test)]
 mod tests {
+    use mutsuki_bot_testkit::MemoryPersonaStore;
+
     use mutsuki_bot_protocol::{BotPersona, BotTarget};
 
     use super::*;

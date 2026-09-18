@@ -50,8 +50,8 @@ tracing.workspace = true
 
 [dev-dependencies]
 mutsuki-std-service-host-integration.workspace = true
-mutsuki-bot-web-console.workspace = true
-mutsuki-plugin-bot-qq-web.workspace = true
+mutsuki-bot-web-host-integration.workspace = true
+mutsuki-bot-web-extension-qq.workspace = true
 mutsuki-bot-testkit.workspace = true
 mutsuki-plugin-config-sqlite.workspace = true
 tempfile.workspace = true

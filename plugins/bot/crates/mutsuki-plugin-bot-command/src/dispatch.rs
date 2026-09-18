@@ -263,16 +263,15 @@ fn command_reply_result(
     task: &mutsuki_runtime_contracts::Task,
     invocation: &BotNodeInvocation,
 ) -> Result<RunnerResult, RuntimeError> {
-    let config: CommandReplyConfig = serde_json::from_value(invocation.config.clone())
+    let config: CommandReplyConfig = serde::Deserialize::deserialize(&invocation.config)
         .map_err(|error| failure("mutsuki.bot.command.reply.config", error))?;
     if invocation.input_port_id == "error"
         || invocation.input.payload.event_type.type_id == BOT_FLOW_ERROR_TYPE
     {
         return error_notice_result(task, invocation, &config);
     }
-    let command: BotCommandEvent =
-        serde_json::from_value(invocation.input.payload.value.clone())
-            .map_err(|error| failure("mutsuki.bot.command.reply.event", error))?;
+    let command: BotCommandEvent = serde::Deserialize::deserialize(&invocation.input.payload.value)
+        .map_err(|error| failure("mutsuki.bot.command.reply.event", error))?;
     let text = config
         .text
         .filter(|value| !value.is_empty())
@@ -312,9 +311,8 @@ fn error_notice_result(
     invocation: &BotNodeInvocation,
     config: &CommandReplyConfig,
 ) -> Result<RunnerResult, RuntimeError> {
-    let error: BotFlowErrorEvent =
-        serde_json::from_value(invocation.input.payload.value.clone())
-            .map_err(|error| failure("mutsuki.bot.command.reply.error", error))?;
+    let error: BotFlowErrorEvent = serde::Deserialize::deserialize(&invocation.input.payload.value)
+        .map_err(|error| failure("mutsuki.bot.command.reply.error", error))?;
     let target = error_notice_target(invocation, &error).ok_or_else(|| {
         failure(
             "mutsuki.bot.command.reply.error.target",
@@ -356,12 +354,12 @@ fn error_notice_target(
         .clone()
         .or_else(|| error.input.context.target.clone())
         .or_else(|| {
-            serde_json::from_value::<BotEvent>(error.input.payload.value.clone())
+            <BotEvent as serde::Deserialize>::deserialize(&error.input.payload.value)
                 .ok()
                 .map(|event| event.target)
         })
         .or_else(|| {
-            serde_json::from_value::<BotReplyDeliveryRequest>(error.input.payload.value.clone())
+            <BotReplyDeliveryRequest as serde::Deserialize>::deserialize(&error.input.payload.value)
                 .ok()
                 .and_then(|request| request.conversation.target())
         })
@@ -374,7 +372,7 @@ fn error_notice_reply_to(
     context_message_id(&invocation.input)
         .or_else(|| context_message_id(&error.input))
         .or_else(|| {
-            serde_json::from_value::<BotEvent>(error.input.payload.value.clone())
+            <BotEvent as serde::Deserialize>::deserialize(&error.input.payload.value)
                 .ok()
                 .and_then(|event| event.message.and_then(|message| message.message_id))
         })
@@ -464,7 +462,7 @@ impl CommandParserCache {
             return Ok(parser.clone());
         }
         let decoded: BotCommandMatchConfig =
-            serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
+            serde::Deserialize::deserialize(config).map_err(|error| error.to_string())?;
         let parser = Arc::new(decoded.parser()?);
         if self.entries.len() >= Self::CAPACITY {
             self.entries.clear();
@@ -496,7 +494,7 @@ impl Runner for BotCommandNodeRunner {
             let parser = parsers
                 .parser(&invocation.config)
                 .map_err(|error| failure("mutsuki.bot.command.node.config", error))?;
-            let event: BotEvent = serde_json::from_value(invocation.input.payload.value.clone())
+            let event: BotEvent = serde::Deserialize::deserialize(&invocation.input.payload.value)
                 .map_err(|error| failure("mutsuki.bot.command.node.event", error))?;
             let output = match message_text(&event).map(|text| (text.clone(), parser.parse(&text)))
             {

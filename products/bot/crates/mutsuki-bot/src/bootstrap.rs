@@ -347,6 +347,18 @@ fn apply_single_instance_boundaries(service: &mut ServiceConfig, root: &Path) {
     service.plugins.disabled_dir = root.join("plugins/disabled");
 }
 
+/// Console extensions this product enables.
+///
+/// `control`, `overview` and `database` are the console's base surface and are not
+/// listed here — `mutsuki-bot-web-host-integration` always mounts them. Only the optional
+/// pages are named.
+///
+/// Two ids the console understands are deliberately absent:
+/// - `bilibili` activates on the management service being present, so listing it
+///   only turns a missing service into a startup error instead of a silent no-op.
+/// - `upgrade` additionally needs `release_set`, and this product ships no release
+///   set, so `mutsuki-web-extension-upgrade` stays unloaded. Emitting the id
+///   without a path would fail assembly rather than open the page.
 fn console_config(product: &serde_json::Value) -> LocalConsoleConfig {
     let mut extensions = vec!["config".to_string()];
     if product

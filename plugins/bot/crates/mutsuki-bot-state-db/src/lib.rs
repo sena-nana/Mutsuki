@@ -20,6 +20,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use mutsuki_bot_conversation::PersonaStore;
 use mutsuki_bot_conversation::{
     AgentEventClaim, ConversationContextStore, ConversationError, ConversationRepository,
 };
@@ -29,7 +30,6 @@ use mutsuki_bot_delivery::{
 };
 use mutsuki_bot_interaction::{InteractionError, InteractionRepository};
 use mutsuki_bot_management::in_blocking_section;
-use mutsuki_bot_persona::PersonaStore;
 use mutsuki_bot_protocol::{
     AgentSessionBinding, BotActiveDeliveryRequest, BotDeliveryAttempt, BotDeliveryReceipt,
     BotInteractionSession, BotPersona, BotReplyDeliveryReceipt, BotReplyDeliveryRequest,
@@ -38,7 +38,7 @@ use mutsuki_bot_protocol::{
 use rusqlite::types::ValueRef;
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use thiserror::Error;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 
 mod sandbox_history;
 
@@ -253,7 +253,8 @@ impl BotStateDbRepository {
 
     /// Reads the live catalog: user tables, columns, and row counts.
     pub fn inspect_snapshot(&self) -> Result<BotDatabaseSnapshot, BotStateDbError> {
-        let tables = self.call_sync(|reply| DbJob::InspectSnapshot { reply })?;
+        let tables =
+            self.call_sync(false, move |connection| inspect_snapshot_tables(connection))?;
         Ok(BotDatabaseSnapshot {
             path: self.path().display().to_string(),
             journal_mode: self.journal_mode().to_string(),
@@ -271,12 +272,12 @@ impl BotStateDbRepository {
     ) -> Result<BotDatabaseTablePage, BotStateDbError> {
         let table = table.to_owned();
         let after = after.unwrap_or_default().to_owned();
-        self.call_sync(|reply| DbJob::InspectRows {
-            table,
-            after,
-            limit: bounded_page_limit(limit),
-            reply,
-        })
+        {
+            let limit = bounded_page_limit(limit);
+            self.call_sync(false, move |connection| {
+                inspect_rows(connection, &table, &after, limit)
+            })
+        }
     }
 
     /// Lists durable delivery receipts and attempts in stable delivery-id order.
@@ -286,11 +287,12 @@ impl BotStateDbRepository {
         limit: u32,
     ) -> Result<BotStatePage<(BotDeliveryReceipt, Vec<BotDeliveryAttempt>)>, BotStateDbError> {
         let after = after.unwrap_or_default().to_owned();
-        self.call_sync(|reply| DbJob::DeliveryPage {
-            after,
-            limit: bounded_page_limit(limit),
-            reply,
-        })
+        {
+            let limit = bounded_page_limit(limit);
+            self.call_sync(false, move |connection| {
+                delivery_page(connection, &after, limit)
+            })
+        }
     }
 
     /// Lists durable interaction sessions in stable session-id order.
@@ -300,25 +302,28 @@ impl BotStateDbRepository {
         limit: u32,
     ) -> Result<BotStatePage<BotInteractionSession>, BotStateDbError> {
         let after = after.unwrap_or_default().to_owned();
-        self.call_sync(|reply| DbJob::InteractionPage {
-            after,
-            limit: bounded_page_limit(limit),
-            reply,
-        })
+        {
+            let limit = bounded_page_limit(limit);
+            self.call_sync(false, move |connection| {
+                interaction_page(connection, &after, limit)
+            })
+        }
     }
 
     pub fn management_revision(&self) -> Result<u64, BotStateDbError> {
-        self.call_sync(|reply| DbJob::ManagementRevision { reply })
+        self.call_sync(false, move |connection| management_revision(connection))
     }
 
     pub fn management_audits(
         &self,
         limit: u32,
     ) -> Result<Vec<BotManagementAuditRecord>, BotStateDbError> {
-        self.call_sync(|reply| DbJob::ManagementAudits {
-            limit: bounded_page_limit(limit),
-            reply,
-        })
+        {
+            let limit = bounded_page_limit(limit);
+            self.call_sync(false, move |connection| {
+                management_audits(connection, limit)
+            })
+        }
     }
 
     pub fn begin_management_operation(
@@ -329,14 +334,21 @@ impl BotStateDbRepository {
         action: &str,
         created_at_unix_ms: u64,
     ) -> Result<BotManagementOperationReservation, BotStateDbError> {
-        self.call_sync(|reply| DbJob::BeginManagementOperation {
-            operation_id: operation_id.to_owned(),
-            expected_revision,
-            actor_id: actor_id.to_owned(),
-            action: action.to_owned(),
-            created_at_unix_ms,
-            reply,
-        })
+        {
+            let operation_id = operation_id.to_owned();
+            let actor_id = actor_id.to_owned();
+            let action = action.to_owned();
+            self.call_sync(true, move |connection| {
+                begin_management_operation(
+                    connection,
+                    &operation_id,
+                    expected_revision,
+                    &actor_id,
+                    &action,
+                    created_at_unix_ms,
+                )
+            })
+        }
     }
 
     pub fn complete_management_operation(
@@ -346,13 +358,19 @@ impl BotStateDbRepository {
         result: serde_json::Value,
         created_at_unix_ms: u64,
     ) -> Result<BotManagementAuditRecord, BotStateDbError> {
-        self.call_sync(|reply| DbJob::CompleteManagementOperation {
-            operation_id: operation_id.to_owned(),
-            action: action.to_owned(),
-            result,
-            created_at_unix_ms,
-            reply,
-        })
+        {
+            let operation_id = operation_id.to_owned();
+            let action = action.to_owned();
+            self.call_sync(true, move |connection| {
+                complete_management_operation(
+                    connection,
+                    &operation_id,
+                    &action,
+                    result,
+                    created_at_unix_ms,
+                )
+            })
+        }
     }
 
     /// Commits one revision-fenced management audit entry atomically.
@@ -364,34 +382,20 @@ impl BotStateDbRepository {
         result: serde_json::Value,
         created_at_unix_ms: u64,
     ) -> Result<Option<BotManagementAuditRecord>, BotStateDbError> {
-        self.call_sync(|reply| DbJob::CommitManagementAudit {
-            expected_revision,
-            actor_id: actor_id.to_owned(),
-            action: action.to_owned(),
-            result,
-            created_at_unix_ms,
-            reply,
-        })
-    }
-
-    #[allow(dead_code)]
-    async fn call<T>(
-        &self,
-        make_job: impl FnOnce(DbReplyChannel<T>) -> DbJob,
-    ) -> Result<T, BotStateDbError> {
-        let (reply, response) = oneshot::channel();
-        self.inner.metrics.queued();
-        if self
-            .inner
-            .jobs
-            .send(make_job(DbReplyChannel::Async(reply)))
-            .await
-            .is_err()
         {
-            self.inner.metrics.dequeued();
-            return Err(BotStateDbError::ActorStopped);
+            let actor_id = actor_id.to_owned();
+            let action = action.to_owned();
+            self.call_sync(true, move |connection| {
+                commit_management_audit(
+                    connection,
+                    expected_revision,
+                    &actor_id,
+                    &action,
+                    result,
+                    created_at_unix_ms,
+                )
+            })
         }
-        response.await.map_err(|_| BotStateDbError::ActorStopped)?
     }
 
     /// Blocks the caller until the SQLite actor answers.
@@ -399,14 +403,23 @@ impl BotStateDbRepository {
     /// Runner-facing callers must stay synchronous, so this cannot become async. The Web Console
     /// reaches the same repository from an async executor; the wait is announced as a blocking
     /// section so the scheduler can relocate the console's other sockets first.
-    fn call_sync<T>(
-        &self,
-        make_job: impl FnOnce(DbReplyChannel<T>) -> DbJob,
-    ) -> Result<T, BotStateDbError> {
+    ///
+    /// `transactional` only marks the work for the latency metric; each repository
+    /// function opens its own transaction when it needs one.
+    fn call_sync<T, F>(&self, transactional: bool, work: F) -> Result<T, BotStateDbError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut Connection) -> Result<T, BotStateDbError> + Send + 'static,
+    {
         let (reply, response) = std::sync::mpsc::sync_channel(1);
-        let reply = DbReplyChannel::Blocking(reply);
         self.inner.metrics.queued();
-        match self.inner.jobs.try_send(make_job(reply)) {
+        let job = DbJob {
+            transactional,
+            run: Box::new(move |connection, metrics| {
+                send_reply(reply, work(connection), metrics);
+            }),
+        };
+        match self.inner.jobs.try_send(job) {
             Ok(()) => {}
             Err(mpsc::error::TrySendError::Full(_)) => {
                 self.inner.metrics.dequeued();
@@ -421,527 +434,25 @@ impl BotStateDbRepository {
     }
 }
 
-enum DbJob {
-    SessionBinding {
-        binding_key: String,
-        reply: DbReplyChannel<Option<AgentSessionBinding>>,
-    },
-    CompareAndSetSessionBinding {
-        binding_key: String,
-        expected_generation: Option<u64>,
-        binding: AgentSessionBinding,
-        reply: DbReplyChannel<bool>,
-    },
-    BeginAgentEvent {
-        binding_key: String,
-        event_id: String,
-        turn_id: String,
-        reply: DbReplyChannel<AgentEventClaim>,
-    },
-    CompleteAgentEvent {
-        binding_key: String,
-        event_id: String,
-        reply: DbReplyChannel<bool>,
-    },
-    ReserveDelivery {
-        request: BotActiveDeliveryRequest,
-        reply: DbReplyChannel<DeliveryReservation>,
-    },
-    DeliveryRequest {
-        delivery_id: String,
-        reply: DbReplyChannel<Option<BotActiveDeliveryRequest>>,
-    },
-    DeliveryReceipt {
-        delivery_id: String,
-        reply: DbReplyChannel<Option<BotDeliveryReceipt>>,
-    },
-    DeliveryAttempts {
-        delivery_id: String,
-        reply: DbReplyChannel<Vec<BotDeliveryAttempt>>,
-    },
-    DeliveryPage {
-        after: String,
-        limit: u32,
-        reply: DbReplyChannel<BotStatePage<(BotDeliveryReceipt, Vec<BotDeliveryAttempt>)>>,
-    },
-    SaveDeliveryOutcome {
-        attempt: BotDeliveryAttempt,
-        receipt: BotDeliveryReceipt,
-        reply: DbReplyChannel<()>,
-    },
-    SaveDeliveryReceipt {
-        receipt: BotDeliveryReceipt,
-        reply: DbReplyChannel<()>,
-    },
-    ClaimDueDeliveries {
-        now_unix_ms: u64,
-        reply: DbReplyChannel<Vec<String>>,
-    },
-    BeginSendDelivery {
-        delivery_id: String,
-        attempt: BotDeliveryAttempt,
-        now_unix_ms: u64,
-        lease_ms: u64,
-        reply: DbReplyChannel<BotDeliveryReceipt>,
-    },
-    ReserveReplyDelivery {
-        request: BotReplyDeliveryRequest,
-        reply: DbReplyChannel<ReplyDeliveryReservation>,
-    },
-    ReplyDeliveryReceipt {
-        reply_id: String,
-        reply: DbReplyChannel<Option<BotReplyDeliveryReceipt>>,
-    },
-    ClaimDueReplyParts {
-        now_unix_ms: u64,
-        reply: DbReplyChannel<Vec<String>>,
-    },
-    IsReplyPart {
-        delivery_id: String,
-        reply: DbReplyChannel<bool>,
-    },
-    CreateInteraction {
-        session: BotInteractionSession,
-        reply: DbReplyChannel<bool>,
-    },
-    ActiveInteractions {
-        origin_key: String,
-        reply: DbReplyChannel<Vec<BotInteractionSession>>,
-    },
-    CompareAndSetInteraction {
-        expected_version: u64,
-        session: BotInteractionSession,
-        reply: DbReplyChannel<bool>,
-    },
-    RecoverWaitingInteractions {
-        reply: DbReplyChannel<Vec<BotInteractionSession>>,
-    },
-    InteractionPage {
-        after: String,
-        limit: u32,
-        reply: DbReplyChannel<BotStatePage<BotInteractionSession>>,
-    },
-    RecordIcl {
-        origin_key: String,
-        entry: ConversationIclEntry,
-        max_count: usize,
-        reply: DbReplyChannel<()>,
-    },
-    LoadIcl {
-        origin_key: String,
-        max_count: usize,
-        reply: DbReplyChannel<Vec<ConversationIclEntry>>,
-    },
-    UpsertPersona {
-        persona: BotPersona,
-        reply: DbReplyChannel<()>,
-    },
-    ListPersonas {
-        reply: DbReplyChannel<Vec<BotPersona>>,
-    },
-    GetPersona {
-        persona_id: String,
-        reply: DbReplyChannel<Option<BotPersona>>,
-    },
-    BindConversationPersona {
-        origin_key: String,
-        persona_id: String,
-        reply: DbReplyChannel<()>,
-    },
-    ConversationPersona {
-        origin_key: String,
-        reply: DbReplyChannel<Option<String>>,
-    },
-    ManagementRevision {
-        reply: DbReplyChannel<u64>,
-    },
-    ManagementAudits {
-        limit: u32,
-        reply: DbReplyChannel<Vec<BotManagementAuditRecord>>,
-    },
-    BeginManagementOperation {
-        operation_id: String,
-        expected_revision: u64,
-        actor_id: String,
-        action: String,
-        created_at_unix_ms: u64,
-        reply: DbReplyChannel<BotManagementOperationReservation>,
-    },
-    CompleteManagementOperation {
-        operation_id: String,
-        action: String,
-        result: serde_json::Value,
-        created_at_unix_ms: u64,
-        reply: DbReplyChannel<BotManagementAuditRecord>,
-    },
-    CommitManagementAudit {
-        expected_revision: u64,
-        actor_id: String,
-        action: String,
-        result: serde_json::Value,
-        created_at_unix_ms: u64,
-        reply: DbReplyChannel<Option<BotManagementAuditRecord>>,
-    },
-    InspectSnapshot {
-        reply: DbReplyChannel<Vec<BotDatabaseTableInfo>>,
-    },
-    InspectRows {
-        table: String,
-        after: String,
-        limit: u32,
-        reply: DbReplyChannel<BotDatabaseTablePage>,
-    },
-    SandboxLoad {
-        reply: DbReplyChannel<mutsuki_bot_sandbox::SandboxHistorySnapshot>,
-    },
-    SandboxSave {
-        snapshot: mutsuki_bot_sandbox::SandboxHistorySnapshot,
-        reply: DbReplyChannel<()>,
-    },
-    SandboxConversations {
-        kind: mutsuki_bot_sandbox::SandboxHistoryKind,
-        reply: DbReplyChannel<Vec<mutsuki_bot_sandbox::SandboxConversationView>>,
-    },
-    SandboxMessages {
-        kind: mutsuki_bot_sandbox::SandboxHistoryKind,
-        conversation_id: String,
-        reply: DbReplyChannel<Vec<mutsuki_bot_sandbox::SandboxMessageView>>,
-    },
-    SandboxMedia {
-        media_id: String,
-        reply: DbReplyChannel<Option<mutsuki_bot_sandbox::SandboxMediaBlob>>,
-    },
-    SandboxSticker {
-        sticker_id: String,
-        reply: DbReplyChannel<Option<mutsuki_bot_sandbox::SandboxMediaBlob>>,
-    },
-}
-
-/// Answers whichever kind of caller submitted a job.
+/// One unit of work for the SQLite actor.
 ///
-/// Jobs used to be split into blocking and async variants, which forced the async repository
-/// traits to answer through a blocking channel and park a reactor thread for the length of a
-/// SQLite statement. One channel type per job lets the caller decide how it waits.
-enum DbReplyChannel<T> {
-    Blocking(std::sync::mpsc::SyncSender<Result<T, BotStateDbError>>),
-    #[allow(dead_code)]
-    Async(oneshot::Sender<Result<T, BotStateDbError>>),
-}
-
-impl<T> DbReplyChannel<T> {
-    fn send(self, result: Result<T, BotStateDbError>) {
-        match self {
-            Self::Blocking(sender) => {
-                let _ = sender.send(result);
-            }
-            Self::Async(sender) => {
-                let _ = sender.send(result);
-            }
-        }
-    }
-}
-
-impl DbJob {
-    fn transactional(&self) -> bool {
-        matches!(
-            self,
-            Self::CompareAndSetSessionBinding { .. }
-                | Self::BeginAgentEvent { .. }
-                | Self::ReserveDelivery { .. }
-                | Self::SaveDeliveryOutcome { .. }
-                | Self::ClaimDueDeliveries { .. }
-                | Self::BeginSendDelivery { .. }
-                | Self::ReserveReplyDelivery { .. }
-                | Self::ClaimDueReplyParts { .. }
-                | Self::CreateInteraction { .. }
-                | Self::CompareAndSetInteraction { .. }
-                | Self::RecordIcl { .. }
-                | Self::UpsertPersona { .. }
-                | Self::BindConversationPersona { .. }
-                | Self::BeginManagementOperation { .. }
-                | Self::CompleteManagementOperation { .. }
-                | Self::CommitManagementAudit { .. }
-                | Self::SandboxSave { .. }
-        )
-    }
-
-    fn execute(self, connection: &mut Connection, metrics: &ActorMetrics) {
-        match self {
-            Self::SessionBinding { binding_key, reply } => {
-                send_reply(reply, session_binding(connection, &binding_key), metrics);
-            }
-            Self::CompareAndSetSessionBinding {
-                binding_key,
-                expected_generation,
-                binding,
-                reply,
-            } => send_reply(
-                reply,
-                compare_and_set_session_binding(
-                    connection,
-                    &binding_key,
-                    expected_generation,
-                    &binding,
-                ),
-                metrics,
-            ),
-            Self::BeginAgentEvent {
-                binding_key,
-                event_id,
-                turn_id,
-                reply,
-            } => send_reply(
-                reply,
-                begin_agent_event(connection, &binding_key, &event_id, &turn_id),
-                metrics,
-            ),
-            Self::CompleteAgentEvent {
-                binding_key,
-                event_id,
-                reply,
-            } => send_reply(
-                reply,
-                complete_agent_event(connection, &binding_key, &event_id),
-                metrics,
-            ),
-            Self::ReserveDelivery { request, reply } => {
-                send_reply(reply, reserve_delivery(connection, &request), metrics);
-            }
-            Self::DeliveryRequest { delivery_id, reply } => {
-                send_reply(reply, delivery_request(connection, &delivery_id), metrics);
-            }
-            Self::DeliveryReceipt { delivery_id, reply } => {
-                send_reply(reply, delivery_receipt(connection, &delivery_id), metrics);
-            }
-            Self::DeliveryAttempts { delivery_id, reply } => {
-                send_reply(reply, delivery_attempts(connection, &delivery_id), metrics);
-            }
-            Self::DeliveryPage {
-                after,
-                limit,
-                reply,
-            } => send_reply(reply, delivery_page(connection, &after, limit), metrics),
-            Self::SaveDeliveryOutcome {
-                attempt,
-                receipt,
-                reply,
-            } => send_reply(
-                reply,
-                save_delivery_outcome(connection, &attempt, &receipt),
-                metrics,
-            ),
-            Self::SaveDeliveryReceipt { receipt, reply } => {
-                send_reply(reply, save_delivery_receipt(connection, &receipt), metrics);
-            }
-            Self::ClaimDueDeliveries { now_unix_ms, reply } => send_reply(
-                reply,
-                claim_due_deliveries(connection, now_unix_ms),
-                metrics,
-            ),
-            Self::BeginSendDelivery {
-                delivery_id,
-                attempt,
-                now_unix_ms,
-                lease_ms,
-                reply,
-            } => send_reply(
-                reply,
-                begin_send_delivery(connection, &delivery_id, attempt, now_unix_ms, lease_ms),
-                metrics,
-            ),
-            Self::ReserveReplyDelivery { request, reply } => {
-                send_reply(reply, reserve_reply_delivery(connection, &request), metrics)
-            }
-            Self::ReplyDeliveryReceipt { reply_id, reply } => {
-                send_reply(
-                    reply,
-                    reply_delivery_receipt_by_id(connection, &reply_id),
-                    metrics,
-                );
-            }
-            Self::ClaimDueReplyParts { now_unix_ms, reply } => send_reply(
-                reply,
-                claim_due_reply_parts(connection, now_unix_ms),
-                metrics,
-            ),
-            Self::IsReplyPart { delivery_id, reply } => {
-                send_reply(reply, is_reply_part(connection, &delivery_id), metrics);
-            }
-            Self::CreateInteraction { session, reply } => {
-                send_reply(reply, create_interaction(connection, &session), metrics);
-            }
-            Self::ActiveInteractions { origin_key, reply } => {
-                send_reply(reply, active_interactions(connection, &origin_key), metrics);
-            }
-            Self::CompareAndSetInteraction {
-                expected_version,
-                session,
-                reply,
-            } => send_reply(
-                reply,
-                compare_and_set_interaction(connection, expected_version, &session),
-                metrics,
-            ),
-            Self::RecoverWaitingInteractions { reply } => {
-                send_reply(reply, recover_waiting_interactions(connection), metrics);
-            }
-            Self::InteractionPage {
-                after,
-                limit,
-                reply,
-            } => send_reply(reply, interaction_page(connection, &after, limit), metrics),
-            Self::RecordIcl {
-                origin_key,
-                entry,
-                max_count,
-                reply,
-            } => send_reply(
-                reply,
-                record_icl(connection, &origin_key, &entry, max_count),
-                metrics,
-            ),
-            Self::LoadIcl {
-                origin_key,
-                max_count,
-                reply,
-            } => send_reply(reply, load_icl(connection, &origin_key, max_count), metrics),
-            Self::UpsertPersona { persona, reply } => {
-                send_reply(reply, upsert_persona(connection, &persona), metrics);
-            }
-            Self::ListPersonas { reply } => {
-                send_reply(reply, list_personas(connection), metrics);
-            }
-            Self::GetPersona { persona_id, reply } => {
-                send_reply(reply, get_persona(connection, &persona_id), metrics);
-            }
-            Self::BindConversationPersona {
-                origin_key,
-                persona_id,
-                reply,
-            } => send_reply(
-                reply,
-                bind_conversation_persona(connection, &origin_key, &persona_id),
-                metrics,
-            ),
-            Self::ConversationPersona { origin_key, reply } => send_reply(
-                reply,
-                conversation_persona(connection, &origin_key),
-                metrics,
-            ),
-            Self::ManagementRevision { reply } => {
-                send_reply(reply, management_revision(connection), metrics);
-            }
-            Self::ManagementAudits { limit, reply } => {
-                send_reply(reply, management_audits(connection, limit), metrics);
-            }
-            Self::BeginManagementOperation {
-                operation_id,
-                expected_revision,
-                actor_id,
-                action,
-                created_at_unix_ms,
-                reply,
-            } => send_reply(
-                reply,
-                begin_management_operation(
-                    connection,
-                    &operation_id,
-                    expected_revision,
-                    &actor_id,
-                    &action,
-                    created_at_unix_ms,
-                ),
-                metrics,
-            ),
-            Self::CompleteManagementOperation {
-                operation_id,
-                action,
-                result,
-                created_at_unix_ms,
-                reply,
-            } => send_reply(
-                reply,
-                complete_management_operation(
-                    connection,
-                    &operation_id,
-                    &action,
-                    result,
-                    created_at_unix_ms,
-                ),
-                metrics,
-            ),
-            Self::CommitManagementAudit {
-                expected_revision,
-                actor_id,
-                action,
-                result,
-                created_at_unix_ms,
-                reply,
-            } => send_reply(
-                reply,
-                commit_management_audit(
-                    connection,
-                    expected_revision,
-                    &actor_id,
-                    &action,
-                    result,
-                    created_at_unix_ms,
-                ),
-                metrics,
-            ),
-            Self::InspectSnapshot { reply } => {
-                send_reply(reply, inspect_snapshot_tables(connection), metrics);
-            }
-            Self::InspectRows {
-                table,
-                after,
-                limit,
-                reply,
-            } => send_reply(
-                reply,
-                inspect_rows(connection, &table, &after, limit),
-                metrics,
-            ),
-            Self::SandboxLoad { reply } => {
-                send_reply(reply, sandbox_history::load(connection), metrics);
-            }
-            Self::SandboxSave { snapshot, reply } => {
-                send_reply(reply, sandbox_history::save(connection, &snapshot), metrics);
-            }
-            Self::SandboxConversations { kind, reply } => send_reply(
-                reply,
-                sandbox_history::load_conversation_views(connection, kind),
-                metrics,
-            ),
-            Self::SandboxMessages {
-                kind,
-                conversation_id,
-                reply,
-            } => send_reply(
-                reply,
-                sandbox_history::load_conversation_messages(connection, kind, &conversation_id),
-                metrics,
-            ),
-            Self::SandboxMedia { media_id, reply } => send_reply(
-                reply,
-                sandbox_history::load_media_by_id(connection, &media_id),
-                metrics,
-            ),
-            Self::SandboxSticker { sticker_id, reply } => send_reply(
-                reply,
-                sandbox_history::load_sticker_by_id(connection, &sticker_id),
-                metrics,
-            ),
-        }
-    }
+/// This used to be a 40-plus variant enum: adding an operation meant a variant, an
+/// entry in a `transactional` list, a match arm that only unpacked the variant and
+/// forwarded it, and the repository method itself. The enum carried no information
+/// the closure cannot, because every arm did exactly `send_reply(reply, f(..),
+/// metrics)`. Boxing the call collapses those four edits into one.
+struct DbJob {
+    /// Marks the work for the transaction-latency metric only.
+    transactional: bool,
+    run: Box<dyn FnOnce(&mut Connection, &ActorMetrics) + Send>,
 }
 
 fn actor_loop(mut connection: Connection, mut jobs: mpsc::Receiver<DbJob>, metrics: &ActorMetrics) {
     while let Some(job) = jobs.blocking_recv() {
         metrics.dequeued();
-        let transactional = job.transactional();
+        let transactional = job.transactional;
         let started = Instant::now();
-        job.execute(&mut connection, metrics);
+        (job.run)(&mut connection, metrics);
         if transactional {
             metrics.transaction_finished(started.elapsed());
         }
@@ -949,14 +460,15 @@ fn actor_loop(mut connection: Connection, mut jobs: mpsc::Receiver<DbJob>, metri
 }
 
 fn send_reply<T>(
-    reply: DbReplyChannel<T>,
+    reply: std::sync::mpsc::SyncSender<Result<T, BotStateDbError>>,
     result: Result<T, BotStateDbError>,
     metrics: &ActorMetrics,
 ) {
     if let Err(error) = &result {
         metrics.observe_error(error);
     }
-    reply.send(result);
+    // The caller may have gone away; the actor keeps serving either way.
+    let _ = reply.send(result);
 }
 
 fn open_connection(
@@ -972,9 +484,19 @@ fn open_connection(
     Ok((connection, journal_mode))
 }
 
+/// Prepared statements the actor reuses across calls.
+///
+/// The actor owns one long-lived connection, so every repository query can be served
+/// from the statement cache instead of being recompiled per call. The capacity is
+/// sized above the number of distinct cached statements (repository queries plus the
+/// sandbox history queries that share this connection) so the hot set does not evict
+/// itself; rusqlite's default of 16 would thrash.
+const STATEMENT_CACHE_CAPACITY: usize = 64;
+
 /// Single-connection factory: busy timeout, foreign keys, prefer WAL, then synchronous=NORMAL.
 /// When WAL is unavailable, SQLite keeps another mode and open still succeeds.
 fn configure_connection(connection: &Connection) -> Result<String, BotStateDbError> {
+    connection.set_prepared_statement_cache_capacity(STATEMENT_CACHE_CAPACITY);
     connection.busy_timeout(BUSY_TIMEOUT)?;
     connection.pragma_update(None, "foreign_keys", true)?;
     let journal_mode: String =
@@ -1104,6 +626,7 @@ fn migrate_schema(connection: &Connection) -> Result<(), BotStateDbError> {
     if user_version < 11 {
         sandbox_history::migrate_sandbox_v11(connection)?;
     }
+    sandbox_history::migrate_sandbox_v12(connection)?;
 
     let has_receipt_status = {
         let mut statement = connection.prepare("PRAGMA table_info(bot_delivery_receipt)")?;
@@ -1541,7 +1064,7 @@ fn delivery_attempts(
     connection: &Connection,
     delivery_id: &str,
 ) -> Result<Vec<BotDeliveryAttempt>, BotStateDbError> {
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare_cached(
         "SELECT body FROM bot_delivery_attempt
          WHERE delivery_id=?1 ORDER BY attempt, status",
     )?;
@@ -1557,7 +1080,7 @@ fn delivery_page(
     limit: u32,
 ) -> Result<BotStatePage<(BotDeliveryReceipt, Vec<BotDeliveryAttempt>)>, BotStateDbError> {
     let fetch = i64::from(limit.saturating_add(1));
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare_cached(
         "SELECT delivery_id FROM bot_delivery_receipt
          WHERE delivery_id > ?1 ORDER BY delivery_id LIMIT ?2",
     )?;
@@ -1747,7 +1270,7 @@ fn claim_due_deliveries_by_kind(
              ORDER BY r.delivery_id
              LIMIT ?2"
         };
-        let mut statement = transaction.prepare(query)?;
+        let mut statement = transaction.prepare_cached(query)?;
         statement
             .query_map(params![now, CLAIM_DUE_BATCH_LIMIT], |row| {
                 Ok((
@@ -1800,24 +1323,12 @@ fn claim_due_deliveries_by_kind(
                 }
             }
             "retry_scheduled" => {
-                let due = {
-                    let mut statement = transaction.prepare(
-                        "SELECT 1 FROM bot_delivery_attempt
-                         WHERE delivery_id=?1 AND status='retry_scheduled' AND retry_at<=?2
-                           AND attempt=(
-                               SELECT MAX(b.attempt) FROM bot_delivery_attempt b
-                               WHERE b.delivery_id=?1
-                           )
-                         LIMIT 1",
-                    )?;
-                    statement
-                        .query_row(params![delivery_id, now], |_| Ok(()))
-                        .optional()?
-                        .is_some()
-                };
-                if !due {
-                    continue;
-                }
+                // Due-ness was already decided by the `EXISTS` on
+                // `bot_delivery_attempt` in the candidate query above, with the same
+                // `now` and the same max-attempt predicate. Re-asking per candidate
+                // compiled a statement and ran the subquery again up to
+                // `CLAIM_DUE_BATCH_LIMIT` times per tick. Nothing in this loop writes
+                // `bot_delivery_attempt`, so the answer cannot change underneath us.
                 claim_send_lease_on_receipt(&mut receipt, now_unix_ms, DELIVERY_SEND_LEASE_MS);
                 let changed = transaction.execute(
                     "UPDATE bot_delivery_receipt SET status='sending', body=?2
@@ -1922,7 +1433,7 @@ fn active_interactions(
     connection: &Connection,
     origin_key: &str,
 ) -> Result<Vec<BotInteractionSession>, BotStateDbError> {
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare_cached(
         "SELECT body FROM bot_interaction
          WHERE origin_key=?1 AND status='waiting' ORDER BY session_id",
     )?;
@@ -1958,8 +1469,9 @@ fn compare_and_set_interaction(
 fn recover_waiting_interactions(
     connection: &Connection,
 ) -> Result<Vec<BotInteractionSession>, BotStateDbError> {
-    let mut statement = connection
-        .prepare("SELECT body FROM bot_interaction WHERE status='waiting' ORDER BY session_id")?;
+    let mut statement = connection.prepare_cached(
+        "SELECT body FROM bot_interaction WHERE status='waiting' ORDER BY session_id",
+    )?;
     statement
         .query_map([], |row| row.get::<_, String>(0))?
         .map(|body| decode(&body?))
@@ -1972,7 +1484,7 @@ fn interaction_page(
     limit: u32,
 ) -> Result<BotStatePage<BotInteractionSession>, BotStateDbError> {
     let fetch = i64::from(limit.saturating_add(1));
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare_cached(
         "SELECT session_id, body FROM bot_interaction
          WHERE session_id > ?1 ORDER BY session_id LIMIT ?2",
     )?;
@@ -2006,7 +1518,7 @@ fn management_audits(
     connection: &Connection,
     limit: u32,
 ) -> Result<Vec<BotManagementAuditRecord>, BotStateDbError> {
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare_cached(
         "SELECT audit_id, revision, actor_id, action, result, created_at_unix_ms
          FROM bot_management_audit ORDER BY revision DESC LIMIT ?1",
     )?;
@@ -2261,7 +1773,7 @@ fn quote_ident(name: &str) -> String {
 }
 
 fn user_table_names(connection: &Connection) -> Result<Vec<String>, BotStateDbError> {
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare_cached(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
     )?;
     statement
@@ -2460,19 +1972,28 @@ fn load_icl(
     origin_key: &str,
     max_count: usize,
 ) -> Result<Vec<ConversationIclEntry>, BotStateDbError> {
-    let mut statement = connection
-        .prepare("SELECT body FROM bot_conversation_icl WHERE origin_key = ?1 ORDER BY seq ASC")?;
+    // Only the newest `max_count` entries survive, so the limit belongs in SQL.
+    // Reading the whole history and trimming afterwards decoded JSON for rows that
+    // were discarded on the next line, on every message that attaches ICL.
+    // `max_count == 0` keeps its "no limit" meaning.
+    let limit: i64 = if max_count == 0 {
+        -1
+    } else {
+        i64::try_from(max_count).unwrap_or(i64::MAX)
+    };
+    let mut statement = connection.prepare_cached(
+        "SELECT body FROM bot_conversation_icl WHERE origin_key = ?1 ORDER BY seq DESC LIMIT ?2",
+    )?;
     let rows = statement
-        .query_map(params![origin_key], |row| row.get::<_, String>(0))?
+        .query_map(params![origin_key, limit], |row| row.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?;
+    // `DESC` gives the newest first; callers expect chronological order.
     let mut entries = rows
         .into_iter()
+        .rev()
         .map(|body| decode(&body))
         .collect::<Result<Vec<ConversationIclEntry>, _>>()?;
-    if max_count > 0 && entries.len() > max_count {
-        let extra = entries.len() - max_count;
-        entries.drain(..extra);
-    }
+    entries.shrink_to_fit();
     Ok(entries)
 }
 
@@ -2486,7 +2007,8 @@ fn upsert_persona(connection: &Connection, persona: &BotPersona) -> Result<(), B
 }
 
 fn list_personas(connection: &Connection) -> Result<Vec<BotPersona>, BotStateDbError> {
-    let mut statement = connection.prepare("SELECT body FROM bot_persona ORDER BY persona_id")?;
+    let mut statement =
+        connection.prepare_cached("SELECT body FROM bot_persona ORDER BY persona_id")?;
     let rows = statement
         .query_map([], |row| row.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?;
@@ -2557,8 +2079,10 @@ impl ConversationRepository for BotStateDbRepository {
         binding_key: &str,
     ) -> Result<Option<AgentSessionBinding>, ConversationError> {
         let binding_key = binding_key.to_owned();
-        self.call_sync(|reply| DbJob::SessionBinding { binding_key, reply })
-            .map_err(conversation_error)
+        self.call_sync(false, move |connection| {
+            session_binding(connection, &binding_key)
+        })
+        .map_err(conversation_error)
     }
 
     async fn compare_and_set_session_binding(
@@ -2569,11 +2093,13 @@ impl ConversationRepository for BotStateDbRepository {
     ) -> Result<(), ConversationError> {
         let binding_key = binding_key.to_owned();
         let changed = self
-            .call_sync(|reply| DbJob::CompareAndSetSessionBinding {
-                binding_key,
-                expected_generation,
-                binding,
-                reply,
+            .call_sync(true, move |connection| {
+                compare_and_set_session_binding(
+                    connection,
+                    &binding_key,
+                    expected_generation,
+                    &binding,
+                )
             })
             .map_err(conversation_error)?;
         changed
@@ -2590,11 +2116,8 @@ impl ConversationRepository for BotStateDbRepository {
         let binding_key = binding_key.to_owned();
         let event_id = event_id.to_owned();
         let turn_id = turn_id.to_owned();
-        self.call_sync(|reply| DbJob::BeginAgentEvent {
-            binding_key,
-            event_id,
-            turn_id,
-            reply,
+        self.call_sync(true, move |connection| {
+            begin_agent_event(connection, &binding_key, &event_id, &turn_id)
         })
         .map_err(conversation_error)
     }
@@ -2607,10 +2130,8 @@ impl ConversationRepository for BotStateDbRepository {
         let binding_key = binding_key.to_owned();
         let event_id = event_id.to_owned();
         let changed = self
-            .call_sync(|reply| DbJob::CompleteAgentEvent {
-                binding_key,
-                event_id,
-                reply,
+            .call_sync(false, move |connection| {
+                complete_agent_event(connection, &binding_key, &event_id)
             })
             .map_err(conversation_error)?;
         changed
@@ -2627,7 +2148,9 @@ impl DeliveryRepository for BotStateDbRepository {
     ) -> Result<Option<BotDeliveryReceipt>, DeliveryError> {
         let request = request.clone();
         match self
-            .call_sync(|reply| DbJob::ReserveDelivery { request, reply })
+            .call_sync(true, move |connection| {
+                reserve_delivery(connection, &request)
+            })
             .map_err(delivery_error)?
         {
             DeliveryReservation::Reserved => Ok(None),
@@ -2638,22 +2161,28 @@ impl DeliveryRepository for BotStateDbRepository {
 
     async fn request(&self, delivery_id: &str) -> Result<BotActiveDeliveryRequest, DeliveryError> {
         let delivery_id = delivery_id.to_owned();
-        self.call_sync(|reply| DbJob::DeliveryRequest { delivery_id, reply })
-            .map_err(delivery_error)?
-            .ok_or(DeliveryError::NotFound)
+        self.call_sync(false, move |connection| {
+            delivery_request(connection, &delivery_id)
+        })
+        .map_err(delivery_error)?
+        .ok_or(DeliveryError::NotFound)
     }
 
     async fn receipt(&self, delivery_id: &str) -> Result<BotDeliveryReceipt, DeliveryError> {
         let delivery_id = delivery_id.to_owned();
-        self.call_sync(|reply| DbJob::DeliveryReceipt { delivery_id, reply })
-            .map_err(delivery_error)?
-            .ok_or(DeliveryError::NotFound)
+        self.call_sync(false, move |connection| {
+            delivery_receipt(connection, &delivery_id)
+        })
+        .map_err(delivery_error)?
+        .ok_or(DeliveryError::NotFound)
     }
 
     async fn attempts(&self, delivery_id: &str) -> Result<Vec<BotDeliveryAttempt>, DeliveryError> {
         let delivery_id = delivery_id.to_owned();
-        self.call_sync(|reply| DbJob::DeliveryAttempts { delivery_id, reply })
-            .map_err(delivery_error)
+        self.call_sync(false, move |connection| {
+            delivery_attempts(connection, &delivery_id)
+        })
+        .map_err(delivery_error)
     }
 
     async fn save_outcome(
@@ -2661,22 +2190,24 @@ impl DeliveryRepository for BotStateDbRepository {
         attempt: BotDeliveryAttempt,
         receipt: BotDeliveryReceipt,
     ) -> Result<(), DeliveryError> {
-        self.call_sync(|reply| DbJob::SaveDeliveryOutcome {
-            attempt,
-            receipt,
-            reply,
+        self.call_sync(true, move |connection| {
+            save_delivery_outcome(connection, &attempt, &receipt)
         })
         .map_err(delivery_error)
     }
 
     async fn save_receipt(&self, receipt: BotDeliveryReceipt) -> Result<(), DeliveryError> {
-        self.call_sync(|reply| DbJob::SaveDeliveryReceipt { receipt, reply })
-            .map_err(delivery_error)
+        self.call_sync(false, move |connection| {
+            save_delivery_receipt(connection, &receipt)
+        })
+        .map_err(delivery_error)
     }
 
     async fn claim_due_delivery_ids(&self, now_unix_ms: u64) -> Result<Vec<String>, DeliveryError> {
-        self.call_sync(|reply| DbJob::ClaimDueDeliveries { now_unix_ms, reply })
-            .map_err(delivery_error)
+        self.call_sync(true, move |connection| {
+            claim_due_deliveries(connection, now_unix_ms)
+        })
+        .map_err(delivery_error)
     }
 
     async fn begin_send(
@@ -2687,12 +2218,8 @@ impl DeliveryRepository for BotStateDbRepository {
         lease_ms: u64,
     ) -> Result<BotDeliveryReceipt, DeliveryError> {
         let delivery_id = delivery_id.to_owned();
-        self.call_sync(|reply| DbJob::BeginSendDelivery {
-            delivery_id,
-            attempt,
-            now_unix_ms,
-            lease_ms,
-            reply,
+        self.call_sync(true, move |connection| {
+            begin_send_delivery(connection, &delivery_id, attempt, now_unix_ms, lease_ms)
         })
         .map_err(delivery_error)
     }
@@ -2706,7 +2233,9 @@ impl ReplyDeliveryRepository for BotStateDbRepository {
     ) -> Result<Option<BotReplyDeliveryReceipt>, DeliveryError> {
         let request = request.clone();
         match self
-            .call_sync(|reply| DbJob::ReserveReplyDelivery { request, reply })
+            .call_sync(true, move |connection| {
+                reserve_reply_delivery(connection, &request)
+            })
             .map_err(delivery_error)?
         {
             ReplyDeliveryReservation::Reserved => Ok(None),
@@ -2720,31 +2249,39 @@ impl ReplyDeliveryRepository for BotStateDbRepository {
         reply_id: &str,
     ) -> Result<BotReplyDeliveryReceipt, DeliveryError> {
         let reply_id = reply_id.to_owned();
-        self.call_sync(|reply| DbJob::ReplyDeliveryReceipt { reply_id, reply })
-            .map_err(delivery_error)?
-            .ok_or(DeliveryError::NotFound)
+        self.call_sync(false, move |connection| {
+            reply_delivery_receipt_by_id(connection, &reply_id)
+        })
+        .map_err(delivery_error)?
+        .ok_or(DeliveryError::NotFound)
     }
 
     async fn claim_due_reply_part_id(
         &self,
         now_unix_ms: u64,
     ) -> Result<Option<String>, DeliveryError> {
-        self.call_sync(|reply| DbJob::ClaimDueReplyParts { now_unix_ms, reply })
-            .map(|ids| ids.into_iter().next())
-            .map_err(delivery_error)
+        self.call_sync(true, move |connection| {
+            claim_due_reply_parts(connection, now_unix_ms)
+        })
+        .map(|ids| ids.into_iter().next())
+        .map_err(delivery_error)
     }
 
     async fn is_reply_part(&self, delivery_id: &str) -> Result<bool, DeliveryError> {
         let delivery_id = delivery_id.to_owned();
-        self.call_sync(|reply| DbJob::IsReplyPart { delivery_id, reply })
-            .map_err(delivery_error)
+        self.call_sync(false, move |connection| {
+            is_reply_part(connection, &delivery_id)
+        })
+        .map_err(delivery_error)
     }
 }
 
 impl InteractionRepository for BotStateDbRepository {
     fn create(&self, session: BotInteractionSession) -> Result<(), InteractionError> {
         let changed = self
-            .call_sync(|reply| DbJob::CreateInteraction { session, reply })
+            .call_sync(true, move |connection| {
+                create_interaction(connection, &session)
+            })
             .map_err(interaction_error)?;
         changed
             .then_some(())
@@ -2756,8 +2293,10 @@ impl InteractionRepository for BotStateDbRepository {
         origin_key: &str,
     ) -> Result<Vec<BotInteractionSession>, InteractionError> {
         let origin_key = origin_key.to_owned();
-        self.call_sync(|reply| DbJob::ActiveInteractions { origin_key, reply })
-            .map_err(interaction_error)
+        self.call_sync(false, move |connection| {
+            active_interactions(connection, &origin_key)
+        })
+        .map_err(interaction_error)
     }
 
     fn compare_and_set(
@@ -2766,10 +2305,8 @@ impl InteractionRepository for BotStateDbRepository {
         session: BotInteractionSession,
     ) -> Result<(), InteractionError> {
         let changed = self
-            .call_sync(|reply| DbJob::CompareAndSetInteraction {
-                expected_version,
-                session,
-                reply,
+            .call_sync(true, move |connection| {
+                compare_and_set_interaction(connection, expected_version, &session)
             })
             .map_err(interaction_error)?;
         changed
@@ -2778,8 +2315,10 @@ impl InteractionRepository for BotStateDbRepository {
     }
 
     fn recover_waiting(&self) -> Result<Vec<BotInteractionSession>, InteractionError> {
-        self.call_sync(|reply| DbJob::RecoverWaitingInteractions { reply })
-            .map_err(interaction_error)
+        self.call_sync(false, move |connection| {
+            recover_waiting_interactions(connection)
+        })
+        .map_err(interaction_error)
     }
 }
 
@@ -2803,11 +2342,8 @@ impl ConversationContextStore for BotStateDbRepository {
         max_count: usize,
     ) -> Result<(), String> {
         let origin_key = origin_key.to_owned();
-        self.call_sync(|reply| DbJob::RecordIcl {
-            origin_key,
-            entry,
-            max_count,
-            reply,
+        self.call_sync(true, move |connection| {
+            record_icl(connection, &origin_key, &entry, max_count)
         })
         .map_err(state_db_error_message)
     }
@@ -2818,10 +2354,8 @@ impl ConversationContextStore for BotStateDbRepository {
         max_count: usize,
     ) -> Result<Vec<ConversationIclEntry>, String> {
         let origin_key = origin_key.to_owned();
-        self.call_sync(|reply| DbJob::LoadIcl {
-            origin_key,
-            max_count,
-            reply,
+        self.call_sync(false, move |connection| {
+            load_icl(connection, &origin_key, max_count)
         })
         .map_err(state_db_error_message)
     }
@@ -2829,36 +2363,38 @@ impl ConversationContextStore for BotStateDbRepository {
 
 impl PersonaStore for BotStateDbRepository {
     fn upsert(&self, persona: BotPersona) -> Result<(), String> {
-        self.call_sync(|reply| DbJob::UpsertPersona { persona, reply })
+        self.call_sync(true, move |connection| upsert_persona(connection, &persona))
             .map_err(state_db_error_message)
     }
 
     fn list(&self) -> Result<Vec<BotPersona>, String> {
-        self.call_sync(|reply| DbJob::ListPersonas { reply })
+        self.call_sync(false, move |connection| list_personas(connection))
             .map_err(state_db_error_message)
     }
 
     fn get(&self, persona_id: &str) -> Result<Option<BotPersona>, String> {
         let persona_id = persona_id.to_owned();
-        self.call_sync(|reply| DbJob::GetPersona { persona_id, reply })
-            .map_err(state_db_error_message)
+        self.call_sync(false, move |connection| {
+            get_persona(connection, &persona_id)
+        })
+        .map_err(state_db_error_message)
     }
 
     fn bind_conversation(&self, origin_key: &str, persona_id: &str) -> Result<(), String> {
         let origin_key = origin_key.to_owned();
         let persona_id = persona_id.to_owned();
-        self.call_sync(|reply| DbJob::BindConversationPersona {
-            origin_key,
-            persona_id,
-            reply,
+        self.call_sync(true, move |connection| {
+            bind_conversation_persona(connection, &origin_key, &persona_id)
         })
         .map_err(state_db_error_message)
     }
 
     fn conversation_persona(&self, origin_key: &str) -> Result<Option<String>, String> {
         let origin_key = origin_key.to_owned();
-        self.call_sync(|reply| DbJob::ConversationPersona { origin_key, reply })
-            .map_err(state_db_error_message)
+        self.call_sync(false, move |connection| {
+            conversation_persona(connection, &origin_key)
+        })
+        .map_err(state_db_error_message)
     }
 }
 
@@ -2980,6 +2516,42 @@ mod tests {
             .unwrap();
         assert!(index_sql.contains("status"));
         assert!(index_sql.contains("delivery_id"));
+    }
+
+    #[test]
+    fn load_icl_keeps_the_newest_entries_in_chronological_order() {
+        let root = tempfile::tempdir().unwrap();
+        let repository = BotStateDbRepository::open(root.path().join("state.db")).unwrap();
+        // Retention is applied on write with a generous cap so the read side is what
+        // this exercises.
+        for index in 0..6_u64 {
+            repository
+                .record_icl(
+                    "group:g1",
+                    ConversationIclEntry {
+                        actor_id: "u1".into(),
+                        display_name: None,
+                        text: format!("m{index}"),
+                        time_ms: index.cast_signed(),
+                    },
+                    100,
+                )
+                .unwrap();
+        }
+
+        // The window is the *newest* entries, still oldest-first: an ICL prompt built
+        // from a reversed window would feed the model the conversation backwards.
+        let window = repository.load_icl("group:g1", 3).unwrap();
+        let texts: Vec<_> = window.iter().map(|entry| entry.text.as_str()).collect();
+        assert_eq!(texts, vec!["m3", "m4", "m5"]);
+
+        // 0 means "no limit" and must not be turned into an empty result.
+        let all = repository.load_icl("group:g1", 0).unwrap();
+        let all_texts: Vec<_> = all.iter().map(|entry| entry.text.as_str()).collect();
+        assert_eq!(all_texts, vec!["m0", "m1", "m2", "m3", "m4", "m5"]);
+
+        // A window wider than the history returns everything, unpadded.
+        assert_eq!(repository.load_icl("group:g1", 50).unwrap().len(), 6);
     }
 
     #[test]
@@ -3880,6 +3452,105 @@ mod tests {
                 .faces
                 .iter()
                 .any(|item| item.face_key == "qq:6:0" && item.face_type == "6")
+        );
+    }
+
+    #[tokio::test]
+    async fn sandbox_conversation_digest_changes_for_anything_persist_writes() {
+        use mutsuki_bot_sandbox::{
+            SandboxAction, SandboxApi, SandboxHistoryStore, SandboxService, sandbox_user_id,
+        };
+
+        let root = tempfile::tempdir().unwrap();
+        let repository =
+            Arc::new(BotStateDbRepository::open(root.path().join("state.db")).unwrap());
+        let service = SandboxService::with_history("qq-main", repository.clone()).unwrap();
+        service.set_runtime(Arc::new(NoopSandboxRuntime));
+        let initial = service.snapshot("").await.unwrap();
+        let group_id = initial
+            .conversations
+            .iter()
+            .find(|item| item.kind == BotConversationKind::Group)
+            .expect("seed group")
+            .conversation_id
+            .clone();
+        service
+            .write(
+                "tester",
+                mutsuki_bot_sandbox::SandboxWriteRequest {
+                    operation_id: "op-digest".into(),
+                    expected_revision: initial.revision,
+                    action: SandboxAction::IngestAsUser {
+                        conversation_id: group_id.clone(),
+                        user_id: sandbox_user_id("Alice"),
+                        text: "first".into(),
+                        segments: vec![],
+                        reply_to: None,
+                    },
+                },
+            )
+            .await
+            .unwrap();
+
+        let loaded = SandboxHistoryStore::load(repository.as_ref()).unwrap();
+        let conversation = loaded
+            .simulate
+            .iter()
+            .find(|item| item.view.conversation_id == group_id)
+            .expect("persisted conversation");
+        let baseline = sandbox_history::conversation_digest(conversation).unwrap();
+
+        // Skipping an unchanged conversation is only safe if the digest is stable for
+        // identical content...
+        assert_eq!(
+            baseline,
+            sandbox_history::conversation_digest(&conversation.clone()).unwrap()
+        );
+
+        // ...and differs for every part the upserts write. A collision here would
+        // silently drop a real change from the database.
+        let mut retitled = conversation.clone();
+        retitled.view.title = format!("{}-renamed", retitled.view.title);
+        assert_ne!(
+            baseline,
+            sandbox_history::conversation_digest(&retitled).unwrap(),
+            "conversation row change must not be skipped"
+        );
+
+        let mut reactivated = conversation.clone();
+        reactivated.view.active_message = !reactivated.view.active_message;
+        assert_ne!(
+            baseline,
+            sandbox_history::conversation_digest(&reactivated).unwrap(),
+            "active_message change must not be skipped"
+        );
+
+        let mut renamed_user = conversation.clone();
+        let user = renamed_user.users.first_mut().expect("seed user");
+        user.display_name = format!("{}-renamed", user.display_name);
+        assert_ne!(
+            baseline,
+            sandbox_history::conversation_digest(&renamed_user).unwrap(),
+            "user row change must not be skipped"
+        );
+
+        let mut edited_message = conversation.clone();
+        let message = edited_message.messages.first_mut().expect("seed message");
+        message.text = format!("{}-edited", message.text);
+        assert_ne!(
+            baseline,
+            sandbox_history::conversation_digest(&edited_message).unwrap(),
+            "message row change must not be skipped"
+        );
+
+        let mut appended = conversation.clone();
+        let mut extra = appended.messages.last().expect("seed message").clone();
+        extra.message_id = format!("{}-extra", extra.message_id);
+        appended.messages.push(extra);
+        assert_ne!(
+            baseline,
+            sandbox_history::conversation_digest(&appended).unwrap(),
+            "appended message must not be skipped"
         );
     }
 

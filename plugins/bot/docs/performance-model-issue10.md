@@ -1,6 +1,12 @@
-# BotPlugins Performance Model v1
+# BotPlugins Performance Model v1 (superseded)
 
-This suite originated in MutsukiBotPlugins #10 and is the `plugins/bot` business-layer owner
+> **Superseded by [`performance-model-issue140.md`](performance-model-issue140.md).**
+> `scripts/run-performance-model.py` runs `benchmarks/workloads-v2.json`; nothing executes
+> the v1 manifest any more. Both files stay committed because a versioned workload is the
+> record of what a past acceptance actually measured — reading an old report needs the
+> manifest that produced it. Do not extend v1; add cases to v2.
+
+This suite originated in MutsukiBotPlugins #10 and was the `plugins/bot` business-layer owner
 workload for the Mutsuki #35 performance model. `benchmarks/workloads-v1.json` fixes the workload schema,
 fixture version, seed, network policy, and case dimensions.
 

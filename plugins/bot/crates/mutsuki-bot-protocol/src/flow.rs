@@ -4,11 +4,10 @@ use mutsuki_runtime_contracts::{PluginExtensionDescriptor, RuntimeError};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{BotAccountRef, BotExtMap, BotTarget, BotUser};
+use crate::{BotAccountRef, BotEvent, BotExtMap, BotTarget, BotUser};
 
 pub const BOT_FLOW_NODE_EXTENSION_ID: &str = "mutsuki.bot.flow.nodes";
 pub const BOT_FLOW_NODE_EXTENSION_VERSION: u32 = 1;
-pub const BOT_FLOW_EVENT_TYPE: &str = "mutsuki.bot.flow.event";
 pub const BOT_FLOW_ERROR_TYPE: &str = "mutsuki.bot.flow.error";
 pub const BOT_FLOW_BOT_EVENT_TYPE: &str = "mutsuki.bot.event";
 pub const BOT_FLOW_MESSAGE_EVENT_TYPE: &str = "mutsuki.bot.event.message";
@@ -72,6 +71,44 @@ pub struct BotFlowEventEnvelope {
     pub trace_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub correlation_id: Option<String>,
+}
+
+impl BotFlowEventEnvelope {
+    /// Wraps a Bot event as a Flow ingress envelope.
+    ///
+    /// Every producer of an ingress event builds the same shape — the ingest
+    /// protocol id, the `mutsuki.bot.event` type ref, and a context projected from
+    /// the event's own bot/target/actor/ext. It was written out field by field in the
+    /// QQ adapter, in the ServiceHost bundle and again in the benchmarks, so the
+    /// three could drift on a contract none of them owns. It belongs here, next to
+    /// the type it constructs.
+    ///
+    /// # Errors
+    ///
+    /// Returns the serialization error when the event cannot be encoded.
+    pub fn from_bot_event(
+        event: BotEvent,
+        trace_id: Option<String>,
+        correlation_id: Option<String>,
+    ) -> Result<Self, serde_json::Error> {
+        let context = BotFlowContext {
+            bot: Some(event.bot.clone()),
+            target: Some(event.target.clone()),
+            actor: event.actor.clone(),
+            ext: event.ext.clone(),
+        };
+        Ok(Self {
+            event_id: event.event_id.clone(),
+            protocol_id: crate::BOT_EVENT_INGEST_PROTOCOL_ID.into(),
+            payload: BotFlowPayload {
+                event_type: BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1),
+                value: serde_json::to_value(event)?,
+            },
+            context,
+            trace_id,
+            correlation_id,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

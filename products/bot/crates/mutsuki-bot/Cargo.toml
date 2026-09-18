@@ -14,7 +14,7 @@ required-features = ["web-console"]
 
 [features]
 default = ["web-console"]
-web-console = ["dep:mutsuki-bot-web-console", "dep:mutsuki-web-host"]
+web-console = ["dep:mutsuki-bot-web-host-integration", "dep:mutsuki-web-host"]
 
 [dependencies]
 mutsuki-distributed-contracts.workspace = true
@@ -24,7 +24,7 @@ mutsuki-service-runtime.workspace = true
 mutsuki-agent-service-host-integration.workspace = true
 mutsuki-bot-flow.workspace = true
 mutsuki-bot-service-host-integration.workspace = true
-mutsuki-bot-web-console = { workspace = true, optional = true }
+mutsuki-bot-web-host-integration = { workspace = true, optional = true }
 mutsuki-config-service.workspace = true
 mutsuki-plugin-bot-adapter-qqbot.workspace = true
 mutsuki-plugin-bot-agent.workspace = true
@@ -47,7 +47,7 @@ uuid.workspace = true
 rpassword.workspace = true
 
 [dev-dependencies]
-mutsuki-bot-web-console.workspace = true
+mutsuki-bot-web-host-integration.workspace = true
 mutsuki-agent-bundle.workspace = true
 mutsuki-agent-contracts.workspace = true
 mutsuki-agent-sdk.workspace = true
@@ -58,7 +58,7 @@ mutsuki-service-ipc.workspace = true
 mutsuki-web-protocol.workspace = true
 mutsuki-plugin-bot-adapter-qqbot.workspace = true
 mutsuki-plugin-bot-command.workspace = true
-mutsuki-plugin-bot-control-web.workspace = true
+mutsuki-web-extension-control.workspace = true
 mutsuki-bot-protocol.workspace = true
 mutsuki-plugin-bot-event-router.workspace = true
 mutsuki-bot-testkit.workspace = true

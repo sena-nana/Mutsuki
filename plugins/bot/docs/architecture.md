@@ -34,6 +34,10 @@ SDK `BotSubmissionGate`, which rejects direct submissions of `mutsuki.bot.messag
 manifests are validated against that surface at assembly. A graph with no matching Source chain
 freezes the business behavior behind the event; the freeze is observable through the ingress
 stats (`accepted_total` / `dropped_total`) on the `mutsuki.bot.flow.ingress` health snapshot.
+That snapshot also carries `active_flow_nodes` and reports `degraded` when the seed or restore
+of the stored Flow document failed (`seed_failure`), or when ingress accepted events while the
+active graph is empty (`frozen_reason`). Both run on a detached task after LoadPlan activation,
+so without this the operator would see a healthy process routing nothing.
 The Flow Agent node Reserves occupancy-only parts so `ResumeDue` will not send an unpresented
 draft. Delivery `Submit` clears occupancy, replaces unsent parts, then sends. Stable reply and part ids
 make replay an inspection of the existing bundle. After Submit,
@@ -81,16 +85,25 @@ Libraries (not host-loadable plugins):
   are not runner protocols.
 - `mutsuki-bot-sdk`: author helpers over Bot protocol tasks.
 - `mutsuki-bot-flow`: Bot-owned catalog validation and atomic active snapshot provider.
-- `mutsuki-bot-conversation`: conversation/session repository traits, binding keys, and
-  `ConversationContextStore` (ICL/identifier persistence contract).
-- `mutsuki-bot-persona`: `PersonaStore` persistence contract. Plugin runners live in
-  `mutsuki-plugin-bot-persona`.
+- `mutsuki-bot-conversation`: conversation/session repository traits, binding keys,
+  `ConversationContextStore` (ICL/identifier persistence contract) and `PersonaStore`.
+  The persona contract lives here rather than in its own crate: both are plain
+  persistence traits over conversation-scoped state and both are implemented by
+  `mutsuki-bot-state-db`. Plugin runners live in `mutsuki-plugin-bot-persona`.
 - `mutsuki-bot-link-parser`: shared URL/card extraction for link-match flows.
+- `mutsuki-bot-secure-fetch`: allowlisted HTTP fetch with manual redirects and a hard
+  streamed size budget. Bilibili and Workshop each had their own copy of this loop, and
+  two copies of an SSRF guard means a hop-validation fix can land in only one of them.
+  Node runners should submit `mutsuki.std.io.http` instead — the std plugin owns that
+  policy; this exists for the synchronous transports that hold no task submitter.
 - `mutsuki-bot-management`: headless QQ/Bilibili management API traits.
-- `mutsuki-bot-testkit`: fake QQ HTTP/WS boundary for E2E.
+- `mutsuki-bot-testkit`: fakes for E2E — the QQ HTTP/WS boundary, plus the in-memory
+  `ConversationContextStore` / `PersonaStore` doubles. Production stores are always
+  `BotStateDbRepository`; keeping the doubles here stops a plugin from reaching one.
 - `mutsuki-bot-benchmarks`: owner performance workloads. Not a production plugin.
-- `mutsuki-plugin-catalog`: module upgrade catalog CLI. Not Bot protocol; lives under this
-  package only as a workspace member.
+(The module upgrade catalog CLI used to live here as `mutsuki-plugin-catalog`. It owns no Bot
+protocol and builds no `PluginBuilder`, so both its name and its location were wrong; it is now
+`crates/mutsuki-module-catalog`, still shipping the `mutsuki-plugin` binary.)
 
 Domain plugins and durable services:
 
@@ -106,6 +119,10 @@ Domain plugins and durable services:
 - `mutsuki-plugin-bot-delivery`: `delivery/submit@1`, `delivery/reply@1` and scheduled-result plugin manifests.
 - `mutsuki-bot-interaction`: durable multi-step waiter service and repository traits.
 - `mutsuki-plugin-bot-interaction`: `interaction/handle@1` plus match/create node plugin manifests.
+  Registered by `BotAgentConfiguredPlugin` against the shared `BotStateDb` handle, alongside
+  conversation-context, reply and persona. The seeded `qq_full_business_flow` reference graph
+  uses `mutsuki.bot.interaction.create` / `.match`, so these manifests are part of the AI chain
+  rather than an independently selectable factory.
 - `mutsuki-plugin-bot-bilibili` / `mutsuki-plugin-bot-bilibili-workshop` / `mutsuki-plugin-bot-mihuashi`:
   platform processors that consume `bot.link.url`. Bilibili polling only detects fresh items and
   submits `mutsuki.bot.event.bilibili` trigger events into Flow ingress; the push card render and
@@ -158,16 +175,28 @@ Domain plugins and durable services:
 
 WebExtensions and product-facing assembly:
 
-- `mutsuki-plugin-bot-sandbox-web`: simulate/live conversation client.
-- `mutsuki-plugin-bot-agent-web`: Agent connection management.
-- `mutsuki-plugin-bot-control-web`: ServiceHost control RPC.
-- `mutsuki-plugin-bot-overview-web`: overview dashboard.
-- `mutsuki-plugin-bot-database-web`: BotStateDb browser.
-- `mutsuki-plugin-bot-flow-web`: Flow node editor.
-- `mutsuki-plugin-bot-qq-web`: QQ management console.
-- `mutsuki-plugin-bot-bilibili-web`: Bilibili management console.
-- `mutsuki-plugin-bot-upgrade-web`: module upgrade UI.
-- `mutsuki-bot-web-console`: Bot-package WebHost assembly helper that embeds the admin
+None of these build a `PluginBuilder`; they implement `WebExtension` and ship an
+`ExtensionManifest`. They therefore do not carry the `mutsuki-plugin-*` name, which is
+reserved for host-loadable plugin surfaces, and they share their skeleton
+(`BundledManifest`, `BundledAssets`, `materialize_bundled_assets`) from
+`mutsuki-web-extension-api` rather than restating it per crate.
+
+Bot-owned pages live here:
+
+- `mutsuki-bot-web-extension-sandbox`: simulate/live conversation client.
+- `mutsuki-bot-web-extension-database`: BotStateDb browser.
+- `mutsuki-bot-web-extension-flow`: Flow node editor.
+- `mutsuki-bot-web-extension-qq`: QQ management console.
+- `mutsuki-bot-web-extension-bilibili`: Bilibili management console.
+
+Pages with no Bot content live with their owners, and the console composes them:
+
+- `hosts/web/crates/mutsuki-web-extension-control`: ServiceHost control RPC.
+- `hosts/web/crates/mutsuki-web-extension-overview`: overview dashboard.
+- `hosts/web/crates/mutsuki-web-extension-upgrade`: module upgrade UI, over
+  `crates/mutsuki-module-catalog`.
+- `kits/agent/crates/mutsuki-agent-web-extension`: Agent connection management.
+- `mutsuki-bot-web-host-integration`: Bot-package WebHost assembly helper that embeds the admin
   WebExtensions. Products may opt in; this crate is not a Host and not a product entry.
 - `mutsuki-bot-service-host-integration`: explicit ServiceHost assembly (EventSource, health,
   catalog factories, sandbox outbound intercept). It may ship first-party default Flow graphs
@@ -177,6 +206,14 @@ WebExtensions and product-facing assembly:
   flow record while never overwriting existing ones. Do not add business runners
   here. QQ Adapter still only translates official protocol.
 - `examples/bot-echo`: platform-neutral example business plugin over `mutsuki.bot.*` only.
+
+`QqAiBotPluginBundle` (in `mutsuki-bot-service-host-integration`) is the fully-injected
+assembly used by the `qq_ai_pipeline` end-to-end test, not a production entry. Products assemble
+through `configured_bot_plugin_catalog_with_agent_and_flow`, whose factories build their own
+SQLite handle, Agent client and delivery gateway from saved configuration; the bundle exists
+because an E2E has to substitute those three and the configured factories deliberately expose no
+injection point. Both register the same `bot_agent_chain_manifests` list, so the test cannot pass
+against a node catalog production would never build.
 
 First-party product (`products/bot`) may compile against owner plugin config schemas. That is
 schema ownership, not a hardcoded backend substitute path. `mutsuki-bot-runtime-reference` is a
@@ -188,3 +225,12 @@ Session and permission plugins are intentionally not part of the MVP workspace u
 behavior path needs them. Their protocol IDs stay reserved constants without runners. Rate-limit
 matching is the graph-owned `mutsuki.bot.flow.match/rate-limit@1` node, not a standalone
 `rate_limit/check` protocol.
+
+`mutsuki-plugin-bot-media` and the scheduled-delivery surface of `mutsuki-plugin-bot-delivery`
+are built but deliberately **not** registered in the production catalog: no production type
+implements `MediaService`, `ScheduledDeliveryTargetResolver` or `ScheduledDeliveryPolicyProvider`
+(the only implementors are test doubles). Registering them would publish
+`mutsuki.bot.media.*` / `mutsuki.bot.delivery.scheduled` node types that no backend can serve,
+which the package rules forbid. Neither node type appears in the seeded reference graph. They
+become registrable the moment a real backend lands in its owner package; until then the absence
+is the truthful capability projection, not a gap to paper over.

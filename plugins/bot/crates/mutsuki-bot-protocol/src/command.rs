@@ -58,6 +58,8 @@ pub struct BotCommandDescriptor {
     pub summary: Option<String>,
 }
 
+/// Input side of command help. [`BotCommandHelpEntry`] and [`BotCommandHelpResult`]
+/// are produced today, but nothing asks for help yet, so no runner accepts this.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BotCommandHelpRequest {
     #[serde(default)]

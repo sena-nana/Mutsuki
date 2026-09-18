@@ -71,12 +71,18 @@ Complete crate table and Host-assembly boundaries: `docs/architecture.md`.
 
 ## MVP Crates
 
+This lists what the first-party Bot console *composes*, not what this package owns.
+Entries without Bot content live with their owners — `mutsuki-config-*` and
+`mutsuki-plugin-config-web` in `plugins/std`, `mutsuki-web-extension-*` in `hosts/web`,
+`mutsuki-agent-web-extension` in `kits/agent`, `mutsuki-module-catalog` in `crates/`.
+Bot-owned console pages are the `mutsuki-bot-web-extension-*` crates.
+
 - `mutsuki-config-service` / `mutsuki-config-derive`: Schema-first ConfigDescriptor + `#[derive(MutsukiConfig)]`
 - `mutsuki-plugin-config-web`: 默认 Web 配置插件（Lilia Workspace 壳 + `@mutsuki/ui` styles）
-- `mutsuki-plugin-bot-control-web`: ServiceHost ControlMethod 的 `control.*` Web RPC 代理（`runtime.read` / `runtime.write` 门禁；含 task 调试与 lifecycle drain/shutdown）
-- `mutsuki-plugin-bot-overview-web`: Web 概览（`overview.summary`：经 control-web 聚合状态/结构/计数/uptime）
-- `mutsuki-plugin-bot-database-web`: Web 数据库查看（读取当前 Bot 实际接入的 `BotStateDb`：表列表、列结构、分页行）
-- `mutsuki-bot-web-console`: 嵌入式 Bot 管理台装配（WebHost + control/overview/config/upgrade extensions）。产品路径仅 Embedded；不提供 Standalone / 分进程 Console 装配。
+- `mutsuki-web-extension-control`: ServiceHost ControlMethod 的 `control.*` Web RPC 代理（`runtime.read` / `runtime.write` 门禁；含 task 调试与 lifecycle drain/shutdown）
+- `mutsuki-web-extension-overview`: Web 概览（`overview.summary`：经 control-web 聚合状态/结构/计数/uptime）
+- `mutsuki-bot-web-extension-database`: Web 数据库查看（读取当前 Bot 实际接入的 `BotStateDb`：表列表、列结构、分页行）
+- `mutsuki-bot-web-host-integration`: 嵌入式 Bot 管理台装配（WebHost + control/overview/config/upgrade extensions）。产品路径仅 Embedded；不提供 Standalone / 分进程 Console 装配。
 - `examples/config-demo`: Discord-like 最小可用配置闭环
 
 WebHost 依赖：Bot package 通过根 Workspace path 使用 `mutsuki-web-host` / `mutsuki-web-protocol`，
@@ -91,13 +97,13 @@ Console 的库依赖。
 - `mutsuki-plugin-bot-agent`: explicit QQ-to-AgentKit bridge with durable conversation/session
   handling and production configured factory `mutsuki.plugin.bot.agent`. Its config stores only
   `connection_id`; AgentKit supplies the selected `agent_connection:<id>`.
-- `mutsuki-plugin-bot-agent-web`: authenticated Agent connection management only; event matching
+- `mutsuki-agent-web-extension`: authenticated Agent connection management only; event matching
   is edited in the Flow page.
 - `mutsuki-bot-sandbox`: QQ conversation sandbox with `BotStateDb` history. Simulate mode is a
   Koishi-style closed loop through Bot Flow; live mode projects real inbound events.
   Conversations, users and messages hydrate from `bot_sandbox_*` tables on startup;
   other plugins query the same tables through `BotStateDbRepository`.
-- `mutsuki-plugin-bot-sandbox-web`: WebExtension for the shared simulate/live Stapxs-style QQ conversation client.
+- `mutsuki-bot-web-extension-sandbox`: WebExtension for the shared simulate/live Stapxs-style QQ conversation client.
 - `mutsuki-plugin-bot-adapter-qqbot`: QQBot platform adapter for gateway events and message/media OpenAPI tasks.
 - `mutsuki-bot-service-host-integration`: configured native factories, QQ EventSource bundle, and sandbox outbound intercept.
 - `mutsuki-bot-testkit`: reusable fake QQ HTTP/WebSocket boundary for downstream product E2E.

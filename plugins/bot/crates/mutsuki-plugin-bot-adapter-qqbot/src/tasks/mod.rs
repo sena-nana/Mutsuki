@@ -1,13 +1,12 @@
 use std::collections::BTreeMap;
 
 use mutsuki_bot_protocol::{
-    BOT_EVENT_INGEST_PROTOCOL_ID, BOT_FLOW_BOT_EVENT_TYPE, BOT_FLOW_INGRESS_PROTOCOL_ID,
-    BOT_MEDIA_UPLOAD_PROTOCOL_ID, BOT_MESSAGE_RECALL_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID,
-    BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID, BotEvent, BotFlowContext, BotFlowEventEnvelope,
-    BotFlowPayload, BotFlowTypeRef, BotMediaUploadRequest, BotMessage, BotMessageRecallRequest,
-    BotNodeBinding, BotNodeCatalogFragment, BotNodeDescriptor, BotNodeInvocation, BotNodeOutput,
-    BotNodePortDescriptor, BotNodePortDirection, BotNodeResult, BotNodeRole,
-    BotReplyDeliveryRequest, MessageSegment, QQBOT_ACCOUNT_GET_PROTOCOL_ID,
+    BOT_FLOW_INGRESS_PROTOCOL_ID, BOT_MEDIA_UPLOAD_PROTOCOL_ID, BOT_MESSAGE_RECALL_PROTOCOL_ID,
+    BOT_MESSAGE_SEND_PROTOCOL_ID, BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID, BotEvent,
+    BotFlowEventEnvelope, BotFlowTypeRef, BotMediaUploadRequest, BotMessage,
+    BotMessageRecallRequest, BotNodeBinding, BotNodeCatalogFragment, BotNodeDescriptor,
+    BotNodeInvocation, BotNodeOutput, BotNodePortDescriptor, BotNodePortDirection, BotNodeResult,
+    BotNodeRole, BotReplyDeliveryRequest, MessageSegment, QQBOT_ACCOUNT_GET_PROTOCOL_ID,
     QQBOT_CAPABILITY_GET_PROTOCOL_ID, QQBOT_GATEWAY_STATUS_PROTOCOL_ID, QQBOT_RAW_CALL_PROTOCOL_ID,
     QqBotAccountGetRequest, QqBotCapabilityGetRequest, QqBotGatewayStatusRequest,
 };
@@ -543,11 +542,19 @@ impl Runner for QqOpenApiRunner {
     }
 }
 
+/// Splits an outbound task into its request body and, when the send came from a
+/// graph node, the invocation around it.
+///
+/// This runs for every outbound message. Probing the shape used to clone the whole
+/// payload tree to own it, clone it again to hand to `from_value`, then clone the
+/// inner request out of the parsed invocation -- three deep copies of the same JSON
+/// before a single byte reached QQ. Deserializing from the borrowed payload leaves
+/// only the copy the caller actually keeps.
 fn node_payload(task: &Task) -> Result<(Value, Option<BotNodeInvocation>), RuntimeError> {
-    let value = task.payload.to_value();
-    match serde_json::from_value::<BotNodeInvocation>(value.clone()) {
+    let value = task.payload.as_value();
+    match <BotNodeInvocation as serde::Deserialize>::deserialize(value) {
         Ok(invocation) => Ok((invocation.input.payload.value.clone(), Some(invocation))),
-        Err(_) => Ok((value, None)),
+        Err(_) => Ok((value.clone(), None)),
     }
 }
 
@@ -557,7 +564,7 @@ fn complete_forward_fold(task: &Task) -> Result<RunnerResult, RuntimeError> {
         .decode_shared::<BotNodeInvocation>()
         .map_err(|error| failure("mutsuki.bot.qq.reply.forward-fold.decode", error))?;
     let mut request: BotReplyDeliveryRequest =
-        serde_json::from_value(invocation.input.payload.value.clone())
+        serde::Deserialize::deserialize(&invocation.input.payload.value)
             .map_err(|error| failure("mutsuki.bot.qq.reply.forward-fold.payload", error))?;
     apply_forward_fold(&invocation.config, &mut request)
         .map_err(|error| failure("mutsuki.bot.qq.reply.forward-fold.apply", error))?;
@@ -658,29 +665,14 @@ fn incoming_reply_to(invocation: Option<&BotNodeInvocation>) -> Option<String> {
         .and_then(|event| event.message.and_then(|item| item.message_id))
 }
 
+/// Thin adapter-side wrapper mapping the encode failure into a runtime error.
 pub fn flow_envelope(
     event: mutsuki_bot_protocol::BotEvent,
     trace_id: Option<String>,
     correlation_id: Option<String>,
 ) -> Result<BotFlowEventEnvelope, RuntimeError> {
-    let context = BotFlowContext {
-        bot: Some(event.bot.clone()),
-        target: Some(event.target.clone()),
-        actor: event.actor.clone(),
-        ext: event.ext.clone(),
-    };
-    Ok(BotFlowEventEnvelope {
-        event_id: event.event_id.clone(),
-        protocol_id: BOT_EVENT_INGEST_PROTOCOL_ID.into(),
-        payload: BotFlowPayload {
-            event_type: BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1),
-            value: serde_json::to_value(event)
-                .map_err(|error| failure("mutsuki.bot.qqbot.flow.event", error))?,
-        },
-        context,
-        trace_id,
-        correlation_id,
-    })
+    BotFlowEventEnvelope::from_bot_event(event, trace_id, correlation_id)
+        .map_err(|error| failure("mutsuki.bot.qqbot.flow.event", error))
 }
 
 pub fn gateway_descriptor(plugin_generation: u64) -> RunnerDescriptor {

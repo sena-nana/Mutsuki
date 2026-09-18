@@ -2,43 +2,51 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use mutsuki_agent_contracts::MediaService;
-use mutsuki_bot_conversation::{ConversationRepository, ConversationService};
+use mutsuki_bot_conversation::{
+    ConversationContextStore, ConversationRepository, ConversationService, PersonaStore,
+};
 use mutsuki_bot_delivery::{
     ActiveDeliveryService, DeliveryGateway, DeliveryPolicyResolver, ReplyDeliveryRepository,
-    ScheduledAgentDeliveryBridge, ScheduledDeliveryPolicyProvider, ScheduledDeliveryTargetResolver,
 };
 use mutsuki_bot_interaction::{
     InteractionConditionMatcher, InteractionRepository, InteractionService,
 };
-use mutsuki_bot_protocol::{ConversationPolicy, DeliveryPolicy, QqStreamingStrategy};
+use mutsuki_bot_protocol::{ConversationPolicy, DeliveryPolicy};
 use mutsuki_plugin_bot_agent::{
     AgentBridgeClient, BOT_AGENT_BRIDGE_RUNNER_ID, BOT_AGENT_CONFIG_SERVICE_ID, BotAgentBridge,
-    BotAgentConfig, BotAgentConfigError, BotAgentConfigHandle,
-    agent_bridge_runner_with_delivery_policy, bot_agent_bridge_manifest,
+    BotAgentConfig, BotAgentConfigHandle, agent_bridge_runner_with_delivery_policy,
+    bot_agent_bridge_manifest,
 };
 use mutsuki_plugin_bot_command::{BotCommandNodeRunner, bot_command_manifest};
 use mutsuki_plugin_bot_conversation_context::{
-    ConversationContextRunner, ConversationContextStore, bot_conversation_context_manifest,
+    ConversationContextRunner, bot_conversation_context_manifest,
 };
 use mutsuki_plugin_bot_delivery::{
-    bot_delivery_manifest, bot_reply_delivery_manifest, bot_scheduled_delivery_manifest,
-    delivery_runner, reply_delivery_runner, scheduled_delivery_runner,
+    bot_delivery_manifest, bot_reply_delivery_manifest, delivery_runner, reply_delivery_runner,
 };
 use mutsuki_plugin_bot_interaction::{
     InteractionCreateRunner, InteractionMatchRunner, bot_interaction_manifest, interaction_runner,
 };
 use mutsuki_plugin_bot_media::{bot_media_bridge_manifest, media_bridge_runner};
-use mutsuki_plugin_bot_persona::{PersonaRunner, PersonaStore, bot_persona_manifest};
+use mutsuki_plugin_bot_persona::{PersonaRunner, bot_persona_manifest};
 use mutsuki_plugin_bot_reply::{BotReplyRunner, bot_reply_manifest};
 use mutsuki_runtime_sdk::{LoadedPlugin, RuntimeBootstrapperService};
 use mutsuki_service_runtime::ServiceRuntimeBuilder;
 
 use crate::BotReplyDeliveryRecoveryEventSource;
 
-/// Explicit product assembly for the QQ AI pipeline.
+/// Fully-injected assembly of the QQ AI pipeline, for deterministic end-to-end tests.
 ///
-/// Every stateful or external capability is injected. Constructing this bundle cannot silently
-/// fall back to process-local state, a fake Agent client, or an embedded media codec.
+/// This is **not** the production path. Products assemble through
+/// `configured_bot_plugin_catalog_with_agent_and_flow`, whose factories build their
+/// own SQLite handle, Agent client and delivery gateway from saved configuration.
+/// That is exactly why this seam exists: an E2E needs to substitute the Agent
+/// backend, the delivery gateway and the media service, and the configured
+/// factories deliberately offer no injection point for them.
+///
+/// Keep the two in step through `bot_agent_chain_manifests`, which both this
+/// bundle and `BotAgentConfiguredPlugin` register, rather than by listing
+/// manifests here a second time.
 pub struct QqAiBotPluginBundle {
     conversations: Arc<dyn ConversationRepository>,
     deliveries: Arc<dyn ReplyDeliveryRepository>,
@@ -50,10 +58,6 @@ pub struct QqAiBotPluginBundle {
     delivery_policy: Arc<dyn DeliveryPolicyResolver>,
     interaction_matcher: Arc<dyn InteractionConditionMatcher>,
     agent_config: BotAgentConfigHandle,
-    scheduled_delivery: Option<(
-        Arc<dyn ScheduledDeliveryTargetResolver>,
-        Arc<dyn ScheduledDeliveryPolicyProvider>,
-    )>,
     reply_delivery_policy: DeliveryPolicy,
     reply_delivery_recovery_interval: Duration,
     conversation_context: Arc<dyn ConversationContextStore>,
@@ -90,7 +94,6 @@ impl QqAiBotPluginBundle {
             interaction_matcher,
             agent_config: BotAgentConfigHandle::new(agent_config)
                 .expect("explicitly injected Agent config is valid"),
-            scheduled_delivery: None,
             reply_delivery_policy: DeliveryPolicy {
                 max_attempts: 3,
                 initial_backoff_ms: 1_000,
@@ -102,48 +105,6 @@ impl QqAiBotPluginBundle {
             conversation_context,
             persona_store,
         }
-    }
-
-    pub fn with_streaming(self, streaming: QqStreamingStrategy) -> Self {
-        let mut config = self.agent_config.snapshot();
-        config.streaming = match streaming {
-            QqStreamingStrategy::FinalOnly => "final_only",
-            QqStreamingStrategy::SegmentMessages => "segment_messages",
-        }
-        .into();
-        self.agent_config
-            .replace(config)
-            .expect("streaming strategy must produce a valid Bot Agent config");
-        self
-    }
-
-    pub fn with_agent_config(
-        mut self,
-        config: BotAgentConfig,
-    ) -> Result<Self, BotAgentConfigError> {
-        self.agent_config = BotAgentConfigHandle::new(config)?;
-        Ok(self)
-    }
-
-    #[must_use]
-    pub fn with_agent_config_handle(mut self, handle: BotAgentConfigHandle) -> Self {
-        self.agent_config = handle;
-        self
-    }
-
-    pub fn with_scheduled_delivery(
-        mut self,
-        targets: Arc<dyn ScheduledDeliveryTargetResolver>,
-        policies: Arc<dyn ScheduledDeliveryPolicyProvider>,
-    ) -> Self {
-        self.scheduled_delivery = Some((targets, policies));
-        self
-    }
-
-    #[must_use]
-    pub fn with_reply_delivery_policy(mut self, policy: DeliveryPolicy) -> Self {
-        self.reply_delivery_policy = policy;
-        self
     }
 
     #[must_use]
@@ -165,9 +126,6 @@ impl QqAiBotPluginBundle {
             self.delivery_gateway,
             self.delivery_policy,
         );
-        let scheduled_delivery = self.scheduled_delivery.map(|(targets, policies)| {
-            ScheduledAgentDeliveryBridge::new(delivery.clone(), targets, policies)
-        });
         let interaction = InteractionService::new(self.interactions, self.interaction_matcher);
         let media = self.media;
         let conversation_context = self.conversation_context;
@@ -183,7 +141,15 @@ impl QqAiBotPluginBundle {
             .push("bot.agent.config".into());
         let loaded_agent_manifest = agent_manifest.clone();
         let config_service = Arc::new(agent_config.clone());
-        let builder = builder
+        // Same list the production factory registers, so the E2E cannot pass against
+        // a node catalog that production would never build.
+        let mut builder = builder;
+        for manifest in
+            crate::configured::bot_agent_chain_manifests().expect("chain manifests are in-surface")
+        {
+            builder = builder.register_builtin_plugin(manifest);
+        }
+        builder
             .register_dynamic_runner_limit(BOT_AGENT_BRIDGE_RUNNER_ID, {
                 let config = agent_config.clone();
                 move || {
@@ -251,15 +217,6 @@ impl QqAiBotPluginBundle {
             })
             .register_runtime_client_runner(move |client| {
                 interaction_runner(client, interaction.clone())
-            });
-        if let Some(scheduled_delivery) = scheduled_delivery {
-            builder
-                .register_builtin_plugin(bot_scheduled_delivery_manifest())
-                .register_runtime_client_runner(move |client| {
-                    scheduled_delivery_runner(client, scheduled_delivery.clone())
-                })
-        } else {
-            builder
-        }
+            })
     }
 }

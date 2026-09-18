@@ -245,7 +245,7 @@ async fn agentkit_issue3_runs_real_state_machine_through_service_host_and_core()
 
     let mut builder = assemble_service(
         service.clone(),
-        mutsuki_bot_web_console::empty_config_service(),
+        mutsuki_bot_web_host_integration::empty_config_service(),
     )
     .unwrap();
     for manifest in bundle.manifests() {
