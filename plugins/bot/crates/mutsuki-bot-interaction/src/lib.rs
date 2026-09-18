@@ -47,6 +47,26 @@ pub trait InteractionRepository: Send + Sync {
     ///
     /// Returns a repository error when the sessions cannot be loaded.
     fn recover_waiting(&self) -> Result<Vec<BotInteractionSession>, InteractionError>;
+
+    /// Marks every already-expired waiter for one origin as timed out.
+    ///
+    /// `match_event` runs per inbound message, and expiring waiters one
+    /// compare-and-set at a time costs a repository round trip each. The default
+    /// keeps exactly that behaviour for repositories with no batch form.
+    ///
+    /// # Errors
+    ///
+    /// Returns a repository error when a session no longer matches its expected
+    /// version, or when the update cannot be committed.
+    fn time_out_expired(&self, expired: &[BotInteractionSession]) -> Result<(), InteractionError> {
+        for session in expired {
+            let mut session = session.clone();
+            session.status = InteractionStatus::TimedOut;
+            session.version += 1;
+            self.compare_and_set(session.version - 1, session)?;
+        }
+        Ok(())
+    }
 }
 
 pub trait InteractionConditionMatcher: Send + Sync {
@@ -126,14 +146,16 @@ impl InteractionService {
                 .cmp(&left.exclusive)
                 .then_with(|| left.session_id.cmp(&right.session_id))
         });
+        // Expiring these one at a time cost a repository round trip per waiter on
+        // a path that runs for every inbound message. `partition` keeps the sort
+        // order above within each group, so the matching below is unchanged.
+        let (expired, sessions): (Vec<_>, Vec<_>) = sessions
+            .into_iter()
+            .partition(|session| session.wait.timeout_at_unix_ms <= now_unix_ms);
+        if !expired.is_empty() {
+            self.repository.time_out_expired(&expired)?;
+        }
         for mut session in sessions {
-            if session.wait.timeout_at_unix_ms <= now_unix_ms {
-                session.status = InteractionStatus::TimedOut;
-                session.version += 1;
-                self.repository
-                    .compare_and_set(session.version - 1, session)?;
-                continue;
-            }
             if !actor_matches(&session, event) || !event_matches(&session, event) {
                 continue;
             }

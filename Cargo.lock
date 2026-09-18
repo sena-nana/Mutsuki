@@ -4611,6 +4611,7 @@ dependencies = [
 name = "mutsuki-plugin-bot-adapter-qqbot"
 version = "0.1.0"
 dependencies = [
+ "fastrand",
  "futures",
  "hex",
  "html-escape",

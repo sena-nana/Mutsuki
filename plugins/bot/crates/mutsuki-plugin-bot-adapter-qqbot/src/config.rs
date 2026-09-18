@@ -50,6 +50,9 @@ pub struct QqBotConfig {
     pub max_retry_attempts: u8,
     pub retry_base_delay_ms: u64,
     pub retry_max_delay_ms: u64,
+    /// Spread added to the exponential retry delay. Without it a global 429
+    /// makes every in-flight send retry in lockstep. Set to 0 for determinism.
+    pub retry_jitter_ms: u64,
     pub gateway_hello_timeout_ms: u64,
     pub gateway_ack_timeout_ms: u64,
     pub gateway_queue_capacity: usize,
@@ -91,6 +94,7 @@ impl QqBotConfig {
             max_retry_attempts: 3,
             retry_base_delay_ms: 250,
             retry_max_delay_ms: 5_000,
+            retry_jitter_ms: 250,
             gateway_hello_timeout_ms: 15_000,
             gateway_ack_timeout_ms: 10_000,
             gateway_queue_capacity: 128,
