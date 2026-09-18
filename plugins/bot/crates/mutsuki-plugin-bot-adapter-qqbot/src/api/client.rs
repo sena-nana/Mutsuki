@@ -59,8 +59,11 @@ impl std::fmt::Debug for QqHttpResponse {
     }
 }
 
-pub trait QqHttpClient: Send {
-    fn send(&mut self, request: QqHttpRequest) -> Result<QqHttpResponse, QqOpenApiError>;
+/// `Sync` with `&self` sends: the outbound runner executes independent
+/// conversations concurrently, so the client is shared rather than owned by one
+/// in-flight request at a time.
+pub trait QqHttpClient: Send + Sync {
+    fn send(&self, request: QqHttpRequest) -> Result<QqHttpResponse, QqOpenApiError>;
 }
 
 pub trait QqCredentialProvider: Send + Sync {
@@ -126,8 +129,8 @@ impl QqCredentialProvider for SharedQqCredentials {
     }
 }
 
-pub trait QqIdSource: Send {
-    fn next_msg_seq(&mut self) -> u64;
+pub trait QqIdSource: Send + Sync {
+    fn next_msg_seq(&self) -> u64;
 }
 
 pub struct QqBotClients {
@@ -180,7 +183,7 @@ impl QqAuthManager {
         &self,
         config: &QqBotConfig,
         credentials: &dyn QqCredentialProvider,
-        client: &mut dyn QqHttpClient,
+        client: &dyn QqHttpClient,
     ) -> Result<String, QqOpenApiError> {
         self.bearer_token_at(config, credentials, client, unix_now_secs()?)
     }
@@ -189,7 +192,7 @@ impl QqAuthManager {
         &self,
         config: &QqBotConfig,
         credentials: &dyn QqCredentialProvider,
-        client: &mut dyn QqHttpClient,
+        client: &dyn QqHttpClient,
         now_secs: u64,
     ) -> Result<String, QqOpenApiError> {
         if let Some(token) = self.token.lock().expect("QQBot auth mutex").as_ref()
@@ -307,7 +310,7 @@ impl ReqwestQqHttpClient {
 }
 
 impl QqHttpClient for ReqwestQqHttpClient {
-    fn send(&mut self, request: QqHttpRequest) -> Result<QqHttpResponse, QqOpenApiError> {
+    fn send(&self, request: QqHttpRequest) -> Result<QqHttpResponse, QqOpenApiError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.tx
             .as_ref()
@@ -490,7 +493,7 @@ mod production_tests {
         });
         let mut config = local_config(&url);
         config.response_body_limit_bytes = 8;
-        let mut client = ReqwestQqHttpClient::new(&config).unwrap();
+        let client = ReqwestQqHttpClient::new(&config).unwrap();
 
         let error = client
             .send(request_empty(HttpMethod::Get, url))
@@ -513,7 +516,7 @@ mod production_tests {
         });
         let mut config = local_config(&url);
         config.request_timeout_ms = 25;
-        let mut client = ReqwestQqHttpClient::new(&config).unwrap();
+        let client = ReqwestQqHttpClient::new(&config).unwrap();
 
         let error = client
             .send(request_empty(HttpMethod::Get, url))
@@ -538,11 +541,11 @@ mod production_tests {
             let config = config.clone();
             let requests = requests.clone();
             std::thread::spawn(move || {
-                let mut client = SlowTokenClient {
+                let client = SlowTokenClient {
                     requests,
-                    started: Some(started_tx),
+                    started: Mutex::new(Some(started_tx)),
                 };
-                auth.bearer_token_at(&config, credentials.as_ref(), &mut client, 1_000)
+                auth.bearer_token_at(&config, credentials.as_ref(), &client, 1_000)
                     .unwrap()
             })
         };
@@ -553,11 +556,11 @@ mod production_tests {
             let config = config.clone();
             let requests = requests.clone();
             std::thread::spawn(move || {
-                let mut client = SlowTokenClient {
+                let client = SlowTokenClient {
                     requests,
-                    started: None,
+                    started: Mutex::new(None),
                 };
-                auth.bearer_token_at(&config, credentials.as_ref(), &mut client, 1_000)
+                auth.bearer_token_at(&config, credentials.as_ref(), &client, 1_000)
                     .unwrap()
             })
         };
@@ -569,13 +572,13 @@ mod production_tests {
 
     struct SlowTokenClient {
         requests: Arc<AtomicUsize>,
-        started: Option<std::sync::mpsc::Sender<()>>,
+        started: Mutex<Option<std::sync::mpsc::Sender<()>>>,
     }
 
     impl QqHttpClient for SlowTokenClient {
-        fn send(&mut self, _request: QqHttpRequest) -> Result<QqHttpResponse, QqOpenApiError> {
+        fn send(&self, _request: QqHttpRequest) -> Result<QqHttpResponse, QqOpenApiError> {
             self.requests.fetch_add(1, Ordering::SeqCst);
-            if let Some(started) = self.started.take() {
+            if let Some(started) = self.started.lock().unwrap().take() {
                 let _ = started.send(());
                 std::thread::sleep(Duration::from_millis(100));
             }

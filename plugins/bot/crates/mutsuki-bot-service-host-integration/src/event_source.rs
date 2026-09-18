@@ -788,7 +788,7 @@ async fn gateway_credentials(
 ) -> Result<(String, String, Option<BotUser>), GatewayFailure> {
     let app_id = config.app_id.clone();
     let result = tokio::task::spawn_blocking(move || {
-        let mut api = api.lock().expect("QQBot API mutex");
+        let api = api.lock().expect("QQBot API mutex");
         let account = api.execute_json(HttpMethod::Get, "/users/@me".into(), Value::Null)?;
         account
             .get("id")
@@ -922,7 +922,7 @@ fn schedule_group_name_fetch(
     tokio::spawn(async move {
         let path = qq_group_info_path(&group_id);
         let fetched = tokio::task::spawn_blocking(move || {
-            let mut api = api.lock().expect("QQBot API mutex");
+            let api = api.lock().expect("QQBot API mutex");
             api.execute_json(HttpMethod::Get, path, Value::Null)
         })
         .await;

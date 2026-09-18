@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
@@ -20,7 +21,7 @@ use mutsuki_bot_state_db::{
     BotManagementAuditRecord, BotManagementOperationReservation, BotStateDbRepository,
 };
 use mutsuki_runtime_contracts::{
-    ContractSurfaceKind, SurfaceRequirement, Task, TaskOutcome, TaskPayload,
+    ContractSurfaceKind, OrderingRequirement, SurfaceRequirement, Task, TaskOutcome, TaskPayload,
 };
 use mutsuki_runtime_sdk::ResourceRegistryGateway;
 use mutsuki_runtime_sdk::RuntimeClientRef;
@@ -722,12 +723,20 @@ impl DeliveryGateway for RuntimeDeliveryGateway {
             time_ms: None,
             ext: Default::default(),
         };
-        let task = Task::new(
+        let mut task = Task::new(
             unique_id("qq-management-send"),
             BOT_MESSAGE_SEND_PROTOCOL_ID,
             serde_json::to_value(message)
                 .map_err(|_| qq_delivery_failure("qq.message.encode", false, Vec::new()))?,
         );
+        // Order is a per-conversation guarantee, not a global one: two messages to
+        // the same chat must not overtake each other, while sends to different
+        // chats are independent. Declaring the weaker, truthful requirement lets
+        // the scheduler overlap them; `PreserveSubmitOrder` would serialise every
+        // outbound message in the process behind one upstream round trip.
+        task.ordering = OrderingRequirement::SameResourceOrder {
+            ref_id: target.conversation_key().into(),
+        };
         let handle = self.runtime.submit_one(task).map_err(|error| {
             qq_delivery_failure(&format!("qq.runtime.submit:{error}"), true, Vec::new())
         })?;
@@ -1008,7 +1017,7 @@ impl SandboxRuntime for HostSandboxRuntime {
 }
 
 struct SystemQqIdSource {
-    next: u16,
+    next: AtomicU16,
 }
 
 impl SystemQqIdSource {
@@ -1017,20 +1026,24 @@ impl SystemQqIdSource {
             .duration_since(UNIX_EPOCH)
             .map(|duration| duration.as_millis() as u16)
             .unwrap_or(1);
-        Self { next }
+        Self {
+            next: AtomicU16::new(next),
+        }
     }
 
     #[cfg(test)]
     fn from_seed(next: u16) -> Self {
-        Self { next }
+        Self {
+            next: AtomicU16::new(next),
+        }
     }
 }
 
 impl QqIdSource for SystemQqIdSource {
-    fn next_msg_seq(&mut self) -> u64 {
-        let current = u64::from(self.next);
-        self.next = self.next.wrapping_add(1);
-        current
+    /// `fetch_add` wraps, which is what keeps the sequence inside QQ's unsigned
+    /// 16-bit range now that outbound sends may run concurrently.
+    fn next_msg_seq(&self) -> u64 {
+        u64::from(self.next.fetch_add(1, Ordering::Relaxed))
     }
 }
 
@@ -1080,7 +1093,7 @@ mod tests {
 
     #[test]
     fn system_message_sequence_stays_within_qq_unsigned_16_bit_range() {
-        let mut source = SystemQqIdSource::from_seed(u16::MAX);
+        let source = SystemQqIdSource::from_seed(u16::MAX);
 
         assert_eq!(source.next_msg_seq(), u64::from(u16::MAX));
         assert_eq!(source.next_msg_seq(), 0);

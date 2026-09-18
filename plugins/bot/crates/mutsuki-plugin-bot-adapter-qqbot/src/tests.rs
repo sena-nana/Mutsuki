@@ -1421,7 +1421,15 @@ fn openapi_descriptor_accepts_manifest_provided_qqbot_protocols() {
             .accepted_protocol_ids
             .contains(&QQBOT_GATEWAY_STATUS_PROTOCOL_ID.into())
     );
-    assert_eq!(descriptor.batch.max_entry_concurrency, 1);
+    // Sends to different conversations are independent, so the runner claims a
+    // batch and overlaps the entries the plan says may overlap. Ordering is still
+    // guaranteed per conversation, by the plan's serial groups.
+    assert!(
+        descriptor.batch.max_entry_concurrency > 1,
+        "a runner limited to one entry in flight can never overlap conversations"
+    );
+    assert!(descriptor.batch.preferred_batch_size > 1);
+    assert!(descriptor.batch.max_entry_concurrency <= descriptor.batch.max_batch_entries);
     assert_eq!(descriptor.batch.side_effect, RunnerSideEffect::External);
     assert!(descriptor.batch.preserve_order);
     assert_eq!(
@@ -1998,7 +2006,7 @@ fn openapi_runner_splits_markdown_then_image_into_two_sends() {
 #[test]
 fn auth_uses_wall_clock_expiry_and_refreshes_after_real_seconds() {
     let requests = Arc::new(Mutex::new(Vec::new()));
-    let mut client = FakeHttpClient {
+    let client = FakeHttpClient {
         requests: requests.clone(),
         responses: Mutex::new(VecDeque::from([
             token_response("TOKEN_A"),
@@ -2010,17 +2018,17 @@ fn auth_uses_wall_clock_expiry_and_refreshes_after_real_seconds() {
     let auth = QqAuthManager::new();
 
     assert_eq!(
-        auth.bearer_token_at(&config, &credentials, &mut client, 1_000)
+        auth.bearer_token_at(&config, &credentials, &client, 1_000)
             .unwrap(),
         "TOKEN_A"
     );
     assert_eq!(
-        auth.bearer_token_at(&config, &credentials, &mut client, 2_000)
+        auth.bearer_token_at(&config, &credentials, &client, 2_000)
             .unwrap(),
         "TOKEN_A"
     );
     assert_eq!(
-        auth.bearer_token_at(&config, &credentials, &mut client, 8_100)
+        auth.bearer_token_at(&config, &credentials, &client, 8_100)
             .unwrap(),
         "TOKEN_B"
     );
@@ -2030,7 +2038,7 @@ fn auth_uses_wall_clock_expiry_and_refreshes_after_real_seconds() {
 #[test]
 fn auth_accepts_numeric_expires_in() {
     let requests = Arc::new(Mutex::new(Vec::new()));
-    let mut client = FakeHttpClient {
+    let client = FakeHttpClient {
         requests,
         responses: Mutex::new(VecDeque::from([ok_response(json!({
             "access_token": "TOKEN_A",
@@ -2042,7 +2050,7 @@ fn auth_accepts_numeric_expires_in() {
 
     assert_eq!(
         QqAuthManager::new()
-            .bearer_token_at(&config, &credentials, &mut client, 1_000)
+            .bearer_token_at(&config, &credentials, &client, 1_000)
             .unwrap(),
         "TOKEN_A"
     );
@@ -2068,7 +2076,7 @@ fn transport_retries_429_and_5xx_with_bounded_attempts() {
                 ok_response(json!({"ok": true})),
             ])),
         };
-        let mut transport = QqOpenApiTransport::new(
+        let transport = QqOpenApiTransport::new(
             config,
             Box::new(client),
             Arc::new(StaticQqCredentials::new("CLIENT_SECRET")),
@@ -2102,7 +2110,7 @@ fn transport_honors_single_attempt_for_5xx_while_preserving_401_refresh() {
             }),
         ])),
     };
-    let mut transport = QqOpenApiTransport::new(
+    let transport = QqOpenApiTransport::new(
         config,
         Box::new(client),
         Arc::new(StaticQqCredentials::new("CLIENT_SECRET")),
@@ -2140,7 +2148,7 @@ fn transport_refreshes_only_once_for_repeated_401() {
             unauthorized(),
         ])),
     };
-    let mut transport = QqOpenApiTransport::new(
+    let transport = QqOpenApiTransport::new(
         config,
         Box::new(client),
         Arc::new(StaticQqCredentials::new("CLIENT_SECRET")),
@@ -2449,7 +2457,7 @@ struct FakeHttpClient {
 }
 
 impl QqHttpClient for FakeHttpClient {
-    fn send(&mut self, request: QqHttpRequest) -> Result<QqHttpResponse, QqOpenApiError> {
+    fn send(&self, request: QqHttpRequest) -> Result<QqHttpResponse, QqOpenApiError> {
         self.requests.lock().unwrap().push(request);
         self.responses
             .lock()
@@ -2463,7 +2471,7 @@ struct FakeMediaProvider;
 
 impl QqMediaProvider for FakeMediaProvider {
     fn read_chunks(
-        &mut self,
+        &self,
         _resource_ref: &mutsuki_runtime_contracts::ResourceRef,
         _block_size: u64,
     ) -> Result<Vec<MediaChunk>, QqMediaError> {
@@ -2472,20 +2480,20 @@ impl QqMediaProvider for FakeMediaProvider {
 }
 
 struct NoopIdSource {
-    next: u64,
+    next: std::sync::atomic::AtomicU64,
 }
 
 impl NoopIdSource {
     fn new(next: u64) -> Self {
-        Self { next }
+        Self {
+            next: std::sync::atomic::AtomicU64::new(next),
+        }
     }
 }
 
 impl QqIdSource for NoopIdSource {
-    fn next_msg_seq(&mut self) -> u64 {
-        let next = self.next;
-        self.next += 1;
-        next
+    fn next_msg_seq(&self) -> u64 {
+        self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     }
 }
 

@@ -116,6 +116,162 @@ pub trait RuntimeClient: Send + Sync {
     fn register_waker(&self, _handle: &TaskHandle, _waker: &Waker) {}
 }
 
+/// Completes one entry, resolving its payload the way the batch contract requires.
+fn complete_work_batch_entry(
+    batch: &WorkBatch,
+    entry: &mutsuki_runtime_contracts::BatchEntry,
+    handler: &impl Fn(&Task) -> Result<RunnerResult, RuntimeError>,
+) -> EntryCompletion {
+    let task = match batch.payload_task(entry.payload_index) {
+        Ok(task) if task.task_id == entry.task_id => task,
+        Ok(_) => {
+            return EntryCompletion {
+                entry_id: entry.entry_id.clone(),
+                task_id: entry.task_id.clone(),
+                result: None,
+                error: Some(mutsuki_runtime_contracts::RuntimeError::new(
+                    mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
+                    "runtime.sdk",
+                    format!("batch.entry.{}.payload_task_id", entry.entry_id),
+                )),
+            };
+        }
+        Err(error) => {
+            return EntryCompletion {
+                entry_id: entry.entry_id.clone(),
+                task_id: entry.task_id.clone(),
+                result: None,
+                error: Some(error),
+            };
+        }
+    };
+    match handler(&task) {
+        Ok(result) => EntryCompletion {
+            entry_id: entry.entry_id.clone(),
+            task_id: entry.task_id.clone(),
+            result: Some(result),
+            error: None,
+        },
+        Err(error) => EntryCompletion {
+            entry_id: entry.entry_id.clone(),
+            task_id: entry.task_id.clone(),
+            result: None,
+            error: Some(error),
+        },
+    }
+}
+
+/// Runs a batch according to its resource plan: ordered within each serial
+/// group, concurrent across independent ones, bounded by the plan's own
+/// `parallelism_limit`.
+///
+/// A runner whose work is blocking and whose entries are only ordered per key --
+/// outbound chat messages, say, which must stay ordered inside one conversation
+/// and not across conversations -- otherwise has to serialise everything to
+/// respect the stricter guarantee.
+///
+/// Whenever the plan allows no parallelism, which is every case where any entry
+/// asks for submit order or a strict sequence, or where a write conflict was
+/// detected, this behaves exactly like [`map_work_batch_entries`].
+///
+/// # Errors
+///
+/// Returns an error when the completion batch cannot be assembled.
+pub fn map_work_batch_entries_grouped(
+    batch: &WorkBatch,
+    handler: impl Fn(&Task) -> Result<RunnerResult, RuntimeError> + Sync,
+) -> RuntimeResult<CompletionBatch> {
+    let index_of: std::collections::HashMap<_, usize> = batch
+        .entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| (entry.entry_id.clone(), index))
+        .collect();
+    // One unit per independently schedulable sequence. Entries the plan does not
+    // mention -- conflicts, or anything a future plan shape adds -- each become
+    // their own unit so none is silently dropped.
+    let mut units: Vec<Vec<usize>> = Vec::new();
+    let mut claimed = vec![false; batch.entries.len()];
+    for group in &batch.resource_plan.serial_groups {
+        let unit: Vec<usize> = group
+            .iter()
+            .filter_map(|entry_id| index_of.get(entry_id).copied())
+            .inspect(|index| claimed[*index] = true)
+            .collect();
+        if !unit.is_empty() {
+            units.push(unit);
+        }
+    }
+    for group in &batch.resource_plan.parallel_groups {
+        for entry_id in group {
+            if let Some(index) = index_of.get(entry_id).copied() {
+                claimed[index] = true;
+                units.push(vec![index]);
+            }
+        }
+    }
+    for (index, done) in claimed.iter().enumerate() {
+        if !done {
+            units.push(vec![index]);
+        }
+    }
+
+    let lanes = batch
+        .resource_plan
+        .parallelism_limit
+        .max(1)
+        .min(units.len().max(1));
+    if lanes <= 1 {
+        return map_work_batch_entries(batch, |task| handler(task));
+    }
+
+    let mut completed: Vec<Option<EntryCompletion>> =
+        (0..batch.entries.len()).map(|_| None).collect();
+    let handler = &handler;
+    let unit_results: Vec<Vec<(usize, EntryCompletion)>> = std::thread::scope(|scope| {
+        let mut joins = Vec::with_capacity(lanes);
+        for lane in 0..lanes {
+            let lane_units: Vec<&Vec<usize>> = units.iter().skip(lane).step_by(lanes).collect();
+            joins.push(scope.spawn(move || {
+                let mut out = Vec::new();
+                for unit in lane_units {
+                    for index in unit {
+                        out.push((
+                            *index,
+                            complete_work_batch_entry(batch, &batch.entries[*index], handler),
+                        ));
+                    }
+                }
+                out
+            }));
+        }
+        joins
+            .into_iter()
+            .map(|join| join.join().expect("batch lane panicked"))
+            .collect()
+    });
+    for (index, completion) in unit_results.into_iter().flatten() {
+        completed[index] = Some(completion);
+    }
+    let results = completed
+        .into_iter()
+        .zip(batch.entries.iter())
+        .map(|(completion, entry)| {
+            completion.unwrap_or_else(|| EntryCompletion {
+                entry_id: entry.entry_id.clone(),
+                task_id: entry.task_id.clone(),
+                result: None,
+                error: Some(mutsuki_runtime_contracts::RuntimeError::new(
+                    mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
+                    "runtime.sdk",
+                    format!("batch.entry.{}.not_scheduled", entry.entry_id),
+                )),
+            })
+        })
+        .collect();
+    Ok(CompletionBatch::from_results(batch, results))
+}
+
 pub fn map_work_batch_entries(
     batch: &WorkBatch,
     mut handler: impl FnMut(&Task) -> Result<RunnerResult, RuntimeError>,
