@@ -136,3 +136,18 @@ jobs:
           cache-dependency-path: ${{ matrix.directory }}/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: ${{ matrix.build }}
+
+      # `browser/*.js` and `ui/dist/*` are built artifacts that are committed, because
+      # the Rust console embeds them with include_bytes!/include_str!. Building them in
+      # CI proves they *can* be built; it does not prove the committed copies match the
+      # sources. Without this, editing a .ts and forgetting to rebuild leaves CI green
+      # while the console keeps shipping the previous bundle.
+      - name: Check committed build artifacts are up to date
+        working-directory: ${{ github.workspace }}
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "The build changed committed artifacts. Rebuild and commit them:"
+            git status --porcelain
+            git diff --stat
+            exit 1
+          fi

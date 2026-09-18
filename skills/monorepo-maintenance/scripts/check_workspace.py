@@ -441,7 +441,8 @@ def check_nested_workflows() -> None:
     found = {
         path.relative_to(ROOT).as_posix()
         for path in ROOT.rglob(".github/workflows/*.y*ml")
-        if "target" not in path.parts
+        # Dependencies ship their own CI files; only first-party paths are in scope.
+        if not {"target", "node_modules", ".git"} & set(path.parts)
         and not path.relative_to(ROOT).as_posix().startswith(".github/")
     }
     added = sorted(found - DEAD_NESTED_WORKFLOWS)
