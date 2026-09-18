@@ -1378,7 +1378,7 @@ mod grouped_batches {
         plan.parallelism_limit = 1;
         let seen = Arc::new(Mutex::new(Vec::new()));
 
-        let completion = map_work_batch_entries_grouped(&batch(&tasks, plan), |task| {
+        let completion = map_work_batch_entries_grouped(&batch(&tasks, plan), 8, |task| {
             seen.lock().unwrap().push(task.task_id.to_string());
             Ok(RunnerResult::completed(task.task_id.clone()))
         })
@@ -1406,7 +1406,7 @@ mod grouped_batches {
         let alpha_rx = Mutex::new(alpha_rx);
         let beta_rx = Mutex::new(beta_rx);
 
-        let completion = map_work_batch_entries_grouped(&batch(&tasks, plan), |task| {
+        let completion = map_work_batch_entries_grouped(&batch(&tasks, plan), 8, |task| {
             let waited = if task.task_id.as_str() == "alpha" {
                 alpha_tx.send(()).ok();
                 beta_rx.lock().unwrap().recv_timeout(Duration::from_secs(5))
@@ -1448,7 +1448,7 @@ mod grouped_batches {
         plan.parallelism_limit = 4;
         let runs = Arc::new(Mutex::new(0_usize));
 
-        let completion = map_work_batch_entries_grouped(&batch(&tasks, plan), |task| {
+        let completion = map_work_batch_entries_grouped(&batch(&tasks, plan), 8, |task| {
             *runs.lock().unwrap() += 1;
             Ok(RunnerResult::completed(task.task_id.clone()))
         })
@@ -1457,6 +1457,38 @@ mod grouped_batches {
         assert_eq!(*runs.lock().unwrap(), 1, "the entry ran more than once");
         assert_eq!(completion.results.len(), 1);
         assert!(completion.results[0].error.is_none());
+    }
+
+    /// The runner's declared entry concurrency is a real ceiling: a plan that
+    /// permits more parallelism than the runner said it supports must not open
+    /// more lanes than that, or the runner exceeds its own descriptor.
+    #[test]
+    fn the_runners_declared_limit_caps_the_plan() {
+        let tasks: Vec<Task> = (0..4).map(|i| task(&format!("task-{i}"))).collect();
+        let mut plan = WorkResourcePlan::empty();
+        plan.serial_groups = (0..4).map(|i| vec![format!("entry-{i}").into()]).collect();
+        plan.parallelism_limit = 4;
+        let in_flight = Arc::new(Mutex::new(0_usize));
+        let peak = Arc::new(Mutex::new(0_usize));
+
+        map_work_batch_entries_grouped(&batch(&tasks, plan), 1, |task| {
+            {
+                let mut current = in_flight.lock().unwrap();
+                *current += 1;
+                let mut peak = peak.lock().unwrap();
+                *peak = (*peak).max(*current);
+            }
+            std::thread::sleep(Duration::from_millis(20));
+            *in_flight.lock().unwrap() -= 1;
+            Ok(RunnerResult::completed(task.task_id.clone()))
+        })
+        .unwrap();
+
+        assert_eq!(
+            *peak.lock().unwrap(),
+            1,
+            "a runner declaring one entry in flight must not get four"
+        );
     }
 
     /// A plan that permits nothing must behave exactly like the sequential helper.
@@ -1468,7 +1500,7 @@ mod grouped_batches {
         plan.parallelism_limit = 1;
         let seen = Arc::new(Mutex::new(Vec::new()));
 
-        let completion = map_work_batch_entries_grouped(&batch(&tasks, plan), |task| {
+        let completion = map_work_batch_entries_grouped(&batch(&tasks, plan), 8, |task| {
             seen.lock().unwrap().push(task.task_id.to_string());
             Ok(RunnerResult::completed(task.task_id.clone()))
         })
