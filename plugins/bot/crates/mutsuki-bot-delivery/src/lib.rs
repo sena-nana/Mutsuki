@@ -21,6 +21,7 @@ use mutsuki_bot_protocol::{
 use mutsuki_runtime_contracts::{ScalarValue, TaskOutcome};
 use mutsuki_runtime_core::RuntimeFailure;
 use mutsuki_runtime_sdk::AsyncRunnerContext;
+use std::borrow::Cow;
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -39,6 +40,38 @@ pub trait DeliveryRepository: Send + Sync {
     async fn request(&self, delivery_id: &str) -> Result<BotActiveDeliveryRequest, DeliveryError>;
     async fn receipt(&self, delivery_id: &str) -> Result<BotDeliveryReceipt, DeliveryError>;
     async fn attempts(&self, delivery_id: &str) -> Result<Vec<BotDeliveryAttempt>, DeliveryError>;
+    /// Batched [`Self::request`] + [`Self::receipt`], in the order given.
+    ///
+    /// `resume_due` claims a whole batch of ids and then needs both rows for each
+    /// one, so doing it per id costs two repository round trips per delivery
+    /// before anything is sent. A repository with no batch form keeps exactly
+    /// that behaviour through this default.
+    async fn requests_and_receipts(
+        &self,
+        delivery_ids: &[String],
+    ) -> Result<Vec<(BotActiveDeliveryRequest, BotDeliveryReceipt)>, DeliveryError> {
+        let mut rows = Vec::with_capacity(delivery_ids.len());
+        for delivery_id in delivery_ids {
+            rows.push((
+                self.request(delivery_id).await?,
+                self.receipt(delivery_id).await?,
+            ));
+        }
+        Ok(rows)
+    }
+    /// Batched [`Self::receipt`], in the order given.
+    ///
+    /// A reply bundle reads one receipt per part, twice per submission.
+    async fn receipts(
+        &self,
+        delivery_ids: &[String],
+    ) -> Result<Vec<BotDeliveryReceipt>, DeliveryError> {
+        let mut receipts = Vec::with_capacity(delivery_ids.len());
+        for delivery_id in delivery_ids {
+            receipts.push(self.receipt(delivery_id).await?);
+        }
+        Ok(receipts)
+    }
     async fn save_outcome(
         &self,
         attempt: BotDeliveryAttempt,
@@ -360,10 +393,14 @@ impl ActiveDeliveryService {
             .repository
             .claim_due_delivery_ids(now_unix_ms)
             .await?;
-        let mut receipts = Vec::with_capacity(delivery_ids.len());
-        for delivery_id in delivery_ids {
-            let request = self.attempts.repository.request(&delivery_id).await?;
-            let attempt = self.next_attempt(&delivery_id).await?;
+        let claimed = self
+            .attempts
+            .repository
+            .requests_and_receipts(&delivery_ids)
+            .await?;
+        let mut receipts = Vec::with_capacity(claimed.len());
+        for (request, receipt) in claimed {
+            let attempt = receipt.attempt_count.saturating_add(1);
             receipts.push(self.attempt(&request, now_unix_ms, attempt).await?);
         }
         Ok(receipts)
@@ -449,16 +486,6 @@ impl ActiveDeliveryService {
         Ok(current)
     }
 
-    async fn next_attempt(&self, delivery_id: &str) -> Result<u32, DeliveryError> {
-        Ok(self
-            .attempts
-            .repository
-            .receipt(delivery_id)
-            .await?
-            .attempt_count
-            .saturating_add(1))
-    }
-
     async fn attempt(
         &self,
         request: &BotActiveDeliveryRequest,
@@ -540,12 +567,28 @@ impl ReplyDeliveryService {
         request: &BotReplyDeliveryRequest,
         now_unix_ms: u64,
     ) -> Result<BotReplyDeliveryReceipt, DeliveryError> {
-        let mut request = request.clone();
-        request.occupancy_only = false;
-        self.reserve(&request).await?;
-        for part in &request.parts {
-            let work = reply_part_request(&request, part);
-            let current = self.attempts.repository.receipt(&work.delivery_id).await?;
+        // Only the occupancy flag differs, so a bundle that already carries the
+        // submit value is used as-is instead of deep-copying every part.
+        let request = if request.occupancy_only {
+            let mut owned = request.clone();
+            owned.occupancy_only = false;
+            Cow::Owned(owned)
+        } else {
+            Cow::Borrowed(request)
+        };
+        let request = request.as_ref();
+        self.reserve(request).await?;
+        // Part ids are unique (`validate_reply_request` rejects duplicates) and an
+        // attempt only writes its own row, so reading them up front sees exactly
+        // what the per-part reads saw -- in one round trip rather than K.
+        let part_ids = request
+            .parts
+            .iter()
+            .map(|part| part.part_id.clone())
+            .collect::<Vec<_>>();
+        let current_receipts = self.attempts.repository.receipts(&part_ids).await?;
+        for (part, current) in request.parts.iter().zip(current_receipts) {
+            let work = reply_part_request(request, part);
             match current.status {
                 DeliveryStatus::Pending => {
                     if work
@@ -566,7 +609,7 @@ impl ReplyDeliveryService {
                 _ => {}
             }
         }
-        self.receipt_for(&request).await
+        self.receipt_for(request).await
     }
 
     /// Inspects a persisted reply bundle.
@@ -672,10 +715,12 @@ impl ReplyDeliveryService {
         &self,
         request: &BotReplyDeliveryRequest,
     ) -> Result<BotReplyDeliveryReceipt, DeliveryError> {
-        let mut part_receipts = Vec::with_capacity(request.parts.len());
-        for part in &request.parts {
-            part_receipts.push(self.attempts.repository.receipt(&part.part_id).await?);
-        }
+        let part_ids = request
+            .parts
+            .iter()
+            .map(|part| part.part_id.clone())
+            .collect::<Vec<_>>();
+        let part_receipts = self.attempts.repository.receipts(&part_ids).await?;
         Ok(BotReplyDeliveryReceipt {
             reply_id: request.reply_id.clone(),
             idempotency_key: request.idempotency_key.clone(),

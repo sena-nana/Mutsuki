@@ -328,6 +328,16 @@ impl BotAgentConfigHandle {
         self.versioned_snapshot().config
     }
 
+    /// Reads just the admission limit.
+    ///
+    /// The runner factory consults this for every task; going through
+    /// [`Self::snapshot`] deep-copied the entire configuration to look at one
+    /// integer.
+    #[must_use]
+    pub fn max_concurrency(&self) -> usize {
+        self.0.read().unwrap().config.max_concurrency
+    }
+
     #[must_use]
     pub fn versioned_snapshot(&self) -> BotAgentConfigSnapshot {
         let live = self.0.read().unwrap();

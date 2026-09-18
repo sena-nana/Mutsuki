@@ -249,17 +249,14 @@ pub fn agent_bridge_runner_with_delivery_policy(
     let factory: BoxedTaskAwaitRunner = Box::new(move |ctx, task| {
         let bridge = bridge.clone();
         let delivery_policy = delivery_policy.clone();
-        let config = bridge.config.snapshot();
-        let permit = bridge.concurrency.try_acquire(config.max_concurrency);
+        let max_concurrency = bridge.config.max_concurrency();
+        let permit = bridge.concurrency.try_acquire(max_concurrency);
         Box::pin(async move {
             let Some(_permit) = permit else {
                 return Err(bridge_failure(
                     &task,
                     "concurrency_limited",
-                    format!(
-                        "Bot Agent concurrency limit {} is currently occupied",
-                        config.max_concurrency
-                    ),
+                    format!("Bot Agent concurrency limit {max_concurrency} is currently occupied"),
                 ));
             };
             run_bridge_task(ctx, task, bridge, delivery_policy).await

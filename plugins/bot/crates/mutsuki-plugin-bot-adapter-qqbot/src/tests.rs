@@ -1812,6 +1812,63 @@ fn openapi_task_exposes_rate_limit_and_retry_after() {
 }
 
 #[test]
+fn retry_after_beyond_the_local_budget_is_not_retried_in_process() {
+    // Upstream named a 60s deadline. Clamping it to `retry_max_delay_ms` used to
+    // retry ~1200x too early and trip the same limit again; the send now fails
+    // structurally so the durable retry path reschedules it.
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut config = QqBotConfig::new("main", "APP_ID");
+    config.max_retry_attempts = 3;
+    config.retry_base_delay_ms = 0;
+    config.retry_max_delay_ms = 50;
+    config.retry_jitter_ms = 0;
+    let mut runner = openapi_runner_with_config(
+        config,
+        requests.clone(),
+        vec![
+            token_response("TOKEN_A"),
+            Ok(QqHttpResponse {
+                status: 429,
+                headers: BTreeMap::from([("Retry-After".into(), "60".into())]),
+                body: json!({"message": "slow down"}),
+            }),
+            Ok(QqHttpResponse {
+                status: 429,
+                headers: BTreeMap::from([("Retry-After".into(), "60".into())]),
+                body: json!({"message": "slow down"}),
+            }),
+        ],
+        Box::new(NoopIdSource::new(1)),
+    );
+
+    let completion = run_tasks(
+        &mut runner,
+        vec![Task::new(
+            "account",
+            QQBOT_ACCOUNT_GET_PROTOCOL_ID,
+            json!({}),
+        )],
+    );
+
+    let error = completion.results[0].error.as_ref().unwrap();
+    assert_eq!(error.code, QQBOT_OPENAPI_RATE_LIMITED_ERROR);
+    assert_eq!(
+        error.evidence.get("retry_after_ms"),
+        Some(&mutsuki_runtime_contracts::ScalarValue::Int(60_000)),
+        "the server deadline must be reported, not the local cap"
+    );
+    let requests = requests.lock().unwrap();
+    let openapi_calls = requests
+        .iter()
+        .filter(|request| !request.url.contains("app/getAppAccessToken"))
+        .count();
+    assert_eq!(
+        openapi_calls, 1,
+        "a deadline longer than the local budget must not be retried in process"
+    );
+}
+
+#[test]
 fn openapi_runner_rejects_raw_call_absolute_url_without_request() {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let mut runner =

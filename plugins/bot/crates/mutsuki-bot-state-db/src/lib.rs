@@ -2185,6 +2185,51 @@ impl DeliveryRepository for BotStateDbRepository {
         .map_err(delivery_error)
     }
 
+    /// One actor round trip for the whole claimed batch instead of two per id.
+    /// The rows are read on the database thread with the same helpers, so the
+    /// missing-row behaviour stays `NotFound` for the batch.
+    async fn requests_and_receipts(
+        &self,
+        delivery_ids: &[String],
+    ) -> Result<Vec<(BotActiveDeliveryRequest, BotDeliveryReceipt)>, DeliveryError> {
+        let delivery_ids = delivery_ids.to_vec();
+        self.call_sync(false, move |connection| {
+            let mut rows = Vec::with_capacity(delivery_ids.len());
+            for delivery_id in &delivery_ids {
+                let (Some(request), Some(receipt)) = (
+                    delivery_request(connection, delivery_id)?,
+                    delivery_receipt(connection, delivery_id)?,
+                ) else {
+                    return Ok(None);
+                };
+                rows.push((request, receipt));
+            }
+            Ok(Some(rows))
+        })
+        .map_err(delivery_error)?
+        .ok_or(DeliveryError::NotFound)
+    }
+
+    /// One actor round trip for every part of a reply bundle.
+    async fn receipts(
+        &self,
+        delivery_ids: &[String],
+    ) -> Result<Vec<BotDeliveryReceipt>, DeliveryError> {
+        let delivery_ids = delivery_ids.to_vec();
+        self.call_sync(false, move |connection| {
+            let mut receipts = Vec::with_capacity(delivery_ids.len());
+            for delivery_id in &delivery_ids {
+                let Some(receipt) = delivery_receipt(connection, delivery_id)? else {
+                    return Ok(None);
+                };
+                receipts.push(receipt);
+            }
+            Ok(Some(receipts))
+        })
+        .map_err(delivery_error)?
+        .ok_or(DeliveryError::NotFound)
+    }
+
     async fn save_outcome(
         &self,
         attempt: BotDeliveryAttempt,
@@ -2310,6 +2355,36 @@ impl InteractionRepository for BotStateDbRepository {
             })
             .map_err(interaction_error)?;
         changed
+            .then_some(())
+            .ok_or(InteractionError::GenerationConflict)
+    }
+
+    /// One round trip and one transaction for the whole expired set.
+    ///
+    /// The rows keep their own `body`, so this stays a compare-and-set per
+    /// session rather than a single blanket `UPDATE`; what it removes is the
+    /// per-session handoff to the database actor, not the per-row write.
+    fn time_out_expired(&self, expired: &[BotInteractionSession]) -> Result<(), InteractionError> {
+        let expired = expired
+            .iter()
+            .map(|session| {
+                let mut session = session.clone();
+                session.status = InteractionStatus::TimedOut;
+                session.version += 1;
+                session
+            })
+            .collect::<Vec<_>>();
+        let committed = self
+            .call_sync(true, move |connection| {
+                for session in &expired {
+                    if !compare_and_set_interaction(connection, session.version - 1, session)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            })
+            .map_err(interaction_error)?;
+        committed
             .then_some(())
             .ok_or(InteractionError::GenerationConflict)
     }
