@@ -235,12 +235,16 @@ impl HostEventSource for QqGatewayEventSource {
         credentials.set_client_secret(secret);
         let cleanup_credentials = credentials.clone();
         let cleanup_auth = auth.clone();
-        let api = Arc::new(Mutex::new(QqOpenApiTransport::new_with_auth(
+        // Shared without a lock: the transport's methods take `&self` and its
+        // auth cache is already internally synchronised. A mutex here serialised
+        // every QQ call, and held across a blocking round trip -- so concurrent
+        // group-name lookups queued behind one another for no reason.
+        let api = Arc::new(QqOpenApiTransport::new_with_auth(
             config.clone(),
             Box::new(http),
             Arc::new(credentials.clone()),
             auth.clone(),
-        )));
+        ));
         let (stopped_tx, stopped_rx) = oneshot::channel();
         *self.stopped.lock().expect("QQBot stopped mutex") = Some(stopped_rx);
         let task = tokio::spawn(async move {
@@ -305,7 +309,7 @@ impl HostEventSource for QqGatewayEventSource {
 
 async fn run_gateway(
     config: QqBotConfig,
-    api: Arc<Mutex<QqOpenApiTransport>>,
+    api: Arc<QqOpenApiTransport>,
     health: QqGatewayHealthHandle,
     inbound: QqInboundObserveHandle,
     ctx: HostEventSourceContext,
@@ -420,7 +424,7 @@ struct GatewayConnectionContext<'a> {
 
 async fn run_connection(
     config: &QqBotConfig,
-    api: Arc<Mutex<QqOpenApiTransport>>,
+    api: Arc<QqOpenApiTransport>,
     pump: &mut QqGatewayPump,
     lifecycle: GatewayConnectionContext<'_>,
 ) -> Result<ConnectionEnd, GatewayFailure> {
@@ -577,12 +581,12 @@ async fn run_connection(
                                 return Err(GatewayFailure::Fatal(reason));
                             }
                             GatewayCloseDisposition::RefreshToken => {
-                                api.lock().expect("QQBot API mutex").invalidate_token();
+                                api.invalidate_token();
                                 break ConnectionEnd::Reconnect(ReconnectReason::new(reason));
                             }
                             GatewayCloseDisposition::Reidentify => {
                                 pump.clear_session();
-                                api.lock().expect("QQBot API mutex").invalidate_token();
+                                api.invalidate_token();
                                 break ConnectionEnd::Reconnect(reconnect_reason_from_close(
                                     code, reason,
                                 ));
@@ -784,11 +788,10 @@ where
 
 async fn gateway_credentials(
     config: &QqBotConfig,
-    api: Arc<Mutex<QqOpenApiTransport>>,
+    api: Arc<QqOpenApiTransport>,
 ) -> Result<(String, String, Option<BotUser>), GatewayFailure> {
     let app_id = config.app_id.clone();
     let result = tokio::task::spawn_blocking(move || {
-        let api = api.lock().expect("QQBot API mutex");
         let account = api.execute_json(HttpMethod::Get, "/users/@me".into(), Value::Null)?;
         account
             .get("id")
@@ -873,7 +876,7 @@ impl GroupNameCache {
 
 fn notify_group_event(
     inbound: &QqInboundObserveHandle,
-    api: Arc<Mutex<QqOpenApiTransport>>,
+    api: Arc<QqOpenApiTransport>,
     cache: &GroupNameCache,
     mut event: BotEvent,
 ) {
@@ -914,7 +917,7 @@ fn group_openid_from_event(event: &BotEvent) -> Option<&str> {
 }
 
 fn schedule_group_name_fetch(
-    api: Arc<Mutex<QqOpenApiTransport>>,
+    api: Arc<QqOpenApiTransport>,
     cache: GroupNameCache,
     inbound: QqInboundObserveHandle,
     group_id: String,
@@ -922,7 +925,6 @@ fn schedule_group_name_fetch(
     tokio::spawn(async move {
         let path = qq_group_info_path(&group_id);
         let fetched = tokio::task::spawn_blocking(move || {
-            let api = api.lock().expect("QQBot API mutex");
             api.execute_json(HttpMethod::Get, path, Value::Null)
         })
         .await;
