@@ -162,8 +162,9 @@ fn complete_work_batch_entry(
 }
 
 /// Runs a batch according to its resource plan: ordered within each serial
-/// group, concurrent across independent ones, bounded by the plan's own
-/// `parallelism_limit`.
+/// group, concurrent across independent ones, bounded by both the plan's own
+/// `parallelism_limit` and the runner's declared `max_entry_concurrency`, passed
+/// here as `max_concurrent_entries`.
 ///
 /// A runner whose work is blocking and whose entries are only ordered per key --
 /// outbound chat messages, say, which must stay ordered inside one conversation
@@ -187,6 +188,7 @@ fn complete_work_batch_entry(
 /// Returns an error when the completion batch cannot be assembled.
 pub fn map_work_batch_entries_grouped(
     batch: &WorkBatch,
+    max_concurrent_entries: usize,
     handler: impl Fn(&Task) -> Result<RunnerResult, RuntimeError> + Sync,
 ) -> RuntimeResult<CompletionBatch> {
     let index_of: std::collections::HashMap<_, usize> = batch
@@ -229,9 +231,14 @@ pub fn map_work_batch_entries_grouped(
         }
     }
 
+    // Two different bounds: the plan says how much the data dependencies allow,
+    // `max_concurrent_entries` is what the runner declared it can actually have in
+    // flight. A batch of 32 conversations would otherwise open 32 lanes against a
+    // runner whose descriptor promised 8.
     let lanes = batch
         .resource_plan
         .parallelism_limit
+        .min(max_concurrent_entries.max(1))
         .max(1)
         .min(units.len().max(1));
     if lanes <= 1 {
