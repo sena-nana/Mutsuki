@@ -38,8 +38,8 @@ Link、Host、AgentKit、Bot、StdPlugins 和第一方 Bot 产品的 package 组
 标准协议与插件位于 `plugins/std`，包括
 `mutsuki-plugin-resource-memory`、`mutsuki-plugin-resource-shared-memory`、
 `mutsuki-plugin-dev-mock`、`mutsuki-plugin-observe-log`、
-`mutsuki-plugin-config-permission`、`mutsuki-plugin-config-sqlite`、
-`mutsuki-plugin-config-web`、`mutsuki-plugin-workflow-linear`、
+`mutsuki-plugin-config-permission`、`mutsuki-config-sqlite`、
+`mutsuki-std-web-extension-config`、`mutsuki-plugin-workflow-linear`、
 `mutsuki-plugin-workflow-broadcast`、`mutsuki-plugin-io-fs`、
 `mutsuki-plugin-io-http-client`、`mutsuki-plugin-io-browser-chromium`、
 `mutsuki-plugin-image-render-takumi` 和 `mutsuki-plugin-db-sqlite`

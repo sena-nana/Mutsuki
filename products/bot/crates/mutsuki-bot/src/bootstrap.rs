@@ -8,7 +8,7 @@ use mutsuki_config_service::{
     ConfigMutability, ConfigNode, ConfigPresentation, ConfigProviderId, ConfigScope, ConfigService,
     ConfigValue, ConfigValueType, LocalizedText, MemoryConfigProvider, RestartPolicy, capability,
 };
-use mutsuki_plugin_config_sqlite::SqliteConfigRepository;
+use mutsuki_config_sqlite::SqliteConfigRepository;
 use mutsuki_service_config::{
     ConfiguredPluginSelection, ServiceConfig, recover_host_secret_transaction,
 };

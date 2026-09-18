@@ -23,6 +23,13 @@ workflow 能力，不实现 Agent、Bot、产品配置或平台 UI。
 5. 能力、backend、permission、secret 或 LoadPlan 授权缺失时结构化失败，不做生产 fallback 或 shim。
 6. Secret 只由 Host 引用和注入，不进入 manifest、fixture、日志或提交配置。
 7. 仓内 Mutsuki 依赖必须继承根 Workspace 的 path；禁止内部 Git pin、仓库外 Cargo `path` 和本地 `[patch]`。
+8. `mutsuki-plugin-*` 名与 `plugins/` 目录都只给真正可加载的插件面，即产出 `PluginManifest`
+   的 crate。ConfigRepository backend、WebExtension 这类支撑面放 `crates/`，并按其归属命名
+   （如 `mutsuki-config-sqlite`、`mutsuki-std-web-extension-config`）。反向占用前缀会让
+   「manifest 与真实能力一致」这条无法靠名字自查——`mutsuki-plugin-config-sqlite` 与
+   `mutsuki-plugin-config-web` 正是这样漂移过来的。
+   例外只有 `mutsuki-plugin-api` 与 `mutsuki-plugin-host`：它们命名的是插件 ABI 契约与加载器
+   本身，不是某个插件。
 
 ## 验证
 
