@@ -1,0 +1,44 @@
+[package]
+name = "mutsuki-bot-web-host-integration"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Embedded Bot admin console assembly: WebHost + control/overview/config extensions."
+
+[dependencies]
+mutsuki-config-service = { workspace = true }
+mutsuki-bot-flow = { workspace = true }
+mutsuki-plugin-bot-command = { workspace = true }
+mutsuki-plugin-config-web = { workspace = true }
+mutsuki-web-extension-control = { workspace = true }
+mutsuki-bot-web-extension-database = { workspace = true }
+mutsuki-web-extension-upgrade = { workspace = true }
+mutsuki-web-extension-overview = { workspace = true }
+mutsuki-bot-management = { workspace = true }
+mutsuki-bot-sandbox = { workspace = true }
+mutsuki-bot-state-db = { workspace = true }
+mutsuki-bot-web-extension-bilibili = { workspace = true }
+mutsuki-bot-web-extension-qq = { workspace = true }
+mutsuki-bot-web-extension-sandbox = { workspace = true }
+mutsuki-agent-web-extension = { workspace = true }
+mutsuki-bot-web-extension-flow = { workspace = true }
+mutsuki-service-control = { workspace = true }
+mutsuki-web-host = { workspace = true }
+mutsuki-web-extension = { workspace = true }
+mutsuki-web-protocol = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync"] }
+
+[dev-dependencies]
+futures.workspace = true
+mutsuki-bot-protocol = { workspace = true }
+mutsuki-service-control = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
+tokio-tungstenite.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

@@ -132,12 +132,6 @@ impl ProductConfigOptions {
     }
 }
 
-pub fn product_config_service(
-    repository: Arc<dyn ConfigRepository>,
-) -> Result<Arc<ConfigService>, ProductConfigError> {
-    product_config_service_with_options(ProductConfigOptions::new(repository))
-}
-
 pub fn product_config_service_with_options(
     options: ProductConfigOptions,
 ) -> Result<Arc<ConfigService>, ProductConfigError> {

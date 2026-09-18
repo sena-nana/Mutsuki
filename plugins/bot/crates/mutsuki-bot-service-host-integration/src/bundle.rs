@@ -8,11 +8,10 @@ use mutsuki_bot_delivery::{
 };
 use mutsuki_bot_interaction::{InteractionConditionMatcher, InteractionError, InteractionService};
 use mutsuki_bot_protocol::{
-    BOT_EVENT_INGEST_PROTOCOL_ID, BOT_FLOW_BOT_EVENT_TYPE, BOT_FLOW_INGRESS_PROTOCOL_ID,
-    BOT_MESSAGE_SEND_PROTOCOL_ID, BotActiveDeliveryRequest, BotDeliveryContent,
-    BotDeliveryPartReceipt, BotEvent, BotFlowContext, BotFlowEventEnvelope, BotFlowPayload,
-    BotFlowTypeRef, BotMessage, BotTarget, DeliveryPartStatus, DeliveryPolicy, DeliveryStatus,
-    MessageSegment, QqConversationRef,
+    BOT_FLOW_INGRESS_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID, BotActiveDeliveryRequest,
+    BotDeliveryContent, BotDeliveryPartReceipt, BotEvent, BotFlowEventEnvelope, BotMessage,
+    BotTarget, DeliveryPartStatus, DeliveryPolicy, DeliveryStatus, MessageSegment,
+    QqConversationRef,
 };
 use mutsuki_bot_sandbox::{
     SANDBOX_SERVICE_ID, SandboxApi, SandboxError, SandboxRuntime, SandboxService,
@@ -214,7 +213,7 @@ impl QqBotPluginBundle {
                 );
                 let interaction = InteractionService::new(
                     repository.clone(),
-                    Arc::new(ManagementInteractionMatcher),
+                    Arc::new(UncommandedInteractionMatcher),
                 );
                 let provider = Arc::new(OwnerBackedQqManagementProvider {
                     config: management_config.clone(),
@@ -806,9 +805,20 @@ impl DeliveryPolicyResolver for ConfiguredAccountDeliveryPolicy {
     }
 }
 
-struct ManagementInteractionMatcher;
+/// Condition matcher for interaction waiters that carry no command or predicate.
+///
+/// `InteractionService` only consults a matcher when a session sets
+/// `wait.command` or `wait.predicate_service_id`. Neither the Flow
+/// `mutsuki.bot.interaction.create` node (`session_from_event` always writes
+/// `None` for both) nor the QQ management surface produces such a session, so
+/// every waiter reachable in production matches on actor and event kind alone
+/// and never reaches these methods. Answering `false` therefore denies nothing
+/// that exists; it is not a stand-in for an absent matching backend. A waiter
+/// source that does set a command or predicate must ship its own matcher rather
+/// than reuse this one.
+pub(crate) struct UncommandedInteractionMatcher;
 
-impl InteractionConditionMatcher for ManagementInteractionMatcher {
+impl InteractionConditionMatcher for UncommandedInteractionMatcher {
     fn command_matches(
         &self,
         _command: &str,
@@ -932,23 +942,8 @@ impl SandboxRuntime for HostSandboxRuntime {
 
     async fn ingest(&self, event: BotEvent) -> Result<(), SandboxError> {
         let event_id = event.event_id.clone();
-        let envelope = BotFlowEventEnvelope {
-            event_id: event.event_id.clone(),
-            protocol_id: BOT_EVENT_INGEST_PROTOCOL_ID.into(),
-            payload: BotFlowPayload {
-                event_type: BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1),
-                value: serde_json::to_value(&event)
-                    .map_err(|error| SandboxError::new("encode_failed", error.to_string()))?,
-            },
-            context: BotFlowContext {
-                bot: Some(event.bot.clone()),
-                target: Some(event.target.clone()),
-                actor: event.actor.clone(),
-                ext: event.ext.clone(),
-            },
-            trace_id: None,
-            correlation_id: Some(event_id.clone()),
-        };
+        let envelope = BotFlowEventEnvelope::from_bot_event(event, None, Some(event_id.clone()))
+            .map_err(|error| SandboxError::new("encode_failed", error.to_string()))?;
         let task = Task::new(
             format!("sandbox.ingress:{event_id}"),
             BOT_FLOW_INGRESS_PROTOCOL_ID,

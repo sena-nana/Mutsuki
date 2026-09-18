@@ -78,7 +78,11 @@ mode = "disabled"
     assert_eq!(distribution.health_snapshot()["state"], "disabled");
     let runtime = distribution
         .attach_health_probe(
-            assemble_service(service, mutsuki_bot_web_console::empty_config_service()).unwrap(),
+            assemble_service(
+                service,
+                mutsuki_bot_web_host_integration::empty_config_service(),
+            )
+            .unwrap(),
         )
         .start()
         .await
@@ -190,7 +194,11 @@ async fn explicit_fast_fallback_starts_only_as_visible_degraded_local_execution(
     );
     let runtime = distribution
         .attach_health_probe(
-            assemble_service(service, mutsuki_bot_web_console::empty_config_service()).unwrap(),
+            assemble_service(
+                service,
+                mutsuki_bot_web_host_integration::empty_config_service(),
+            )
+            .unwrap(),
         )
         .start()
         .await

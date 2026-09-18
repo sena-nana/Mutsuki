@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+mutsuki-bot-secure-fetch.workspace = true
 async-trait.workspace = true
 md5.workspace = true
 mutsuki-bot-flow.workspace = true

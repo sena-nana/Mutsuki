@@ -276,23 +276,10 @@ fn command_invocation(event: BotEvent) -> BotNodeInvocation {
     }
 }
 
+/// The benchmark must build ingress envelopes the same way production does, or it
+/// measures a shape no adapter produces.
 fn flow_envelope(event: BotEvent) -> BotFlowEventEnvelope {
-    BotFlowEventEnvelope {
-        event_id: event.event_id.clone(),
-        protocol_id: BOT_EVENT_INGEST_PROTOCOL_ID.into(),
-        payload: BotFlowPayload {
-            event_type: BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1),
-            value: serde_json::to_value(&event).unwrap(),
-        },
-        context: BotFlowContext {
-            bot: Some(event.bot.clone()),
-            target: Some(event.target.clone()),
-            actor: event.actor.clone(),
-            ext: event.ext.clone(),
-        },
-        trace_id: None,
-        correlation_id: None,
-    }
+    BotFlowEventEnvelope::from_bot_event(event, None, None).expect("benchmark event encodes")
 }
 
 fn benchmark_fanout_registry(branch_count: usize) -> Arc<BotFlowRegistry> {

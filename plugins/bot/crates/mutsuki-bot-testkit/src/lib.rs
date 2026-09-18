@@ -9,6 +9,10 @@
     clippy::must_use_candidate
 )]
 
+mod memory_stores;
+
+pub use memory_stores::{MemoryConversationContextStore, MemoryPersonaStore};
+
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};

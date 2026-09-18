@@ -135,7 +135,7 @@ impl Runner for BotFlowMatchRunner {
                 .payload
                 .decode_shared::<BotNodeInvocation>()
                 .map_err(|error| runtime_error(task, "decode", error))?;
-            let event: BotEvent = serde_json::from_value(invocation.input.payload.value.clone())
+            let event = BotEvent::deserialize(&invocation.input.payload.value)
                 .map_err(|error| runtime_error(task, "event", error))?;
             let matched = match_event(self, &event, task.protocol_id.as_str(), &invocation.config)
                 .map_err(|error| runtime_error(task, "config", error))?;
@@ -228,8 +228,11 @@ fn match_event(
     })
 }
 
+/// Node config is fixed for a pinned graph revision but is decoded per invocation.
+/// `serde_json` deserializes straight from `&Value`, so there is no reason to clone
+/// the tree first; on a match node this ran for every event on every edge.
 fn decode_config<T: for<'de> Deserialize<'de>>(config: &Value) -> Result<T, String> {
-    serde_json::from_value(config.clone()).map_err(|error| error.to_string())
+    T::deserialize(config).map_err(|error| error.to_string())
 }
 
 impl BotFlowMatchRunner {
@@ -276,22 +279,69 @@ impl BotFlowMatchRunner {
             return Ok(false);
         }
         bucket.available_milli -= 1_000;
+        self.evict_refilled_buckets(capacity, period_ms, now_ms);
         Ok(true)
     }
 }
 
-fn event_kind_id(event: &BotEvent) -> String {
+impl BotFlowMatchRunner {
+    /// Drops buckets that have refilled to capacity.
+    ///
+    /// The map is keyed by rate-limit subject -- one entry per distinct user, or per
+    /// user-and-conversation pair -- and entries were only ever inserted, so a bot in
+    /// busy groups accumulated an entry per person seen for the life of the process.
+    ///
+    /// A bucket that has refilled to capacity carries no state: dropping it and
+    /// re-inserting it on the next event yields the same decision, because a fresh
+    /// bucket starts full. A bucket still holding consumed budget is never dropped,
+    /// so this cannot hand anyone a fresh allowance early. The residual bound is
+    /// therefore the number of distinct subjects seen within one limiter period,
+    /// which is the bound a rate limiter needs anyway, rather than process lifetime.
+    ///
+    /// Eviction is bounded per call so a large map cannot turn one event into a long
+    /// scan; the remainder is reclaimed by subsequent events.
+    fn evict_refilled_buckets(&mut self, capacity: u128, period_ms: u128, now_ms: u64) {
+        const MAX_SCAN: usize = 32;
+        if self.buckets.len() <= MAX_SCAN {
+            self.buckets
+                .retain(|_, bucket| !Self::is_refilled(bucket, capacity, period_ms, now_ms));
+            return;
+        }
+        let stale: Vec<String> = self
+            .buckets
+            .iter()
+            .filter(|(_, bucket)| Self::is_refilled(bucket, capacity, period_ms, now_ms))
+            .take(MAX_SCAN)
+            .map(|(subject, _)| subject.clone())
+            .collect();
+        for subject in stale {
+            self.buckets.remove(&subject);
+        }
+    }
+
+    fn is_refilled(bucket: &Bucket, capacity: u128, period_ms: u128, now_ms: u64) -> bool {
+        let elapsed = u128::from(now_ms.saturating_sub(bucket.updated_at_ms));
+        let refill = elapsed.saturating_mul(capacity) / period_ms;
+        bucket.available_milli.saturating_add(refill) >= capacity
+    }
+}
+
+/// Every arm is a literal, so this borrows rather than allocating. The sibling
+/// `conversation_kind` below already returned `&'static str`; this one built a fresh
+/// `String` and was called from inside a matching closure, once per candidate type
+/// per event.
+fn event_kind_id(event: &BotEvent) -> &'static str {
     match &event.kind {
-        BotEventKind::MessageCreated => "message_created".into(),
-        BotEventKind::MessageUpdated => "message_updated".into(),
-        BotEventKind::MessageDeleted => "message_deleted".into(),
-        BotEventKind::MemberJoined => "member_joined".into(),
-        BotEventKind::MemberLeft => "member_left".into(),
-        BotEventKind::ReactionAdded => "reaction_added".into(),
-        BotEventKind::ReactionRemoved => "reaction_removed".into(),
-        BotEventKind::BotConnected => "bot_connected".into(),
-        BotEventKind::BotDisconnected => "bot_disconnected".into(),
-        BotEventKind::PlatformSpecific(_) => "platform_specific".into(),
+        BotEventKind::MessageCreated => "message_created",
+        BotEventKind::MessageUpdated => "message_updated",
+        BotEventKind::MessageDeleted => "message_deleted",
+        BotEventKind::MemberJoined => "member_joined",
+        BotEventKind::MemberLeft => "member_left",
+        BotEventKind::ReactionAdded => "reaction_added",
+        BotEventKind::ReactionRemoved => "reaction_removed",
+        BotEventKind::BotConnected => "bot_connected",
+        BotEventKind::BotDisconnected => "bot_disconnected",
+        BotEventKind::PlatformSpecific(_) => "platform_specific",
     }
 }
 
@@ -491,7 +541,11 @@ pub fn source_kinds_for_node(node_type_id: &str) -> &'static [&'static str] {
 }
 
 pub fn event_matches_source_types(event: &BotEvent, types: &[&str]) -> bool {
-    types.is_empty() || types.iter().any(|kind| *kind == event_kind_id(event))
+    if types.is_empty() {
+        return true;
+    }
+    let kind = event_kind_id(event);
+    types.contains(&kind)
 }
 
 fn enum_items(values: &[(&str, &str)]) -> Value {
@@ -837,6 +891,68 @@ mod tests {
             raw: None,
             ext: Default::default(),
         }
+    }
+
+    fn actor_event(user_id: &str, time_ms: i64) -> BotEvent {
+        let mut event = event("hi");
+        event.time_ms = time_ms;
+        if let Some(actor) = event.actor.as_mut() {
+            actor.user_id = user_id.into();
+        }
+        event
+    }
+
+    #[test]
+    fn rate_limit_still_limits_a_hot_subject_while_idle_subjects_are_evicted() {
+        let config = RateLimitConfig {
+            scope: "user".into(),
+            max_count: 2,
+            period_seconds: 60,
+        };
+        let mut runner = BotFlowMatchRunner::default();
+
+        // One subject spending its budget must still be cut off: eviction only
+        // removes buckets that have refilled, and this one has not.
+        let hot = actor_event("hot", 0);
+        assert!(runner.consume(&hot, &config, 0).unwrap());
+        assert!(runner.consume(&hot, &config, 0).unwrap());
+        assert!(!runner.consume(&hot, &config, 0).unwrap());
+
+        // Distinct one-shot subjects must still be retained inside the period: each
+        // holds real consumed budget, and dropping it early would hand the subject a
+        // fresh full allowance.
+        for index in 0..200 {
+            let subject = format!("u{index}");
+            assert!(
+                runner
+                    .consume(&actor_event(&subject, 0), &config, 0)
+                    .unwrap()
+            );
+        }
+        assert_eq!(runner.buckets.len(), 201);
+
+        // Once a period has passed those buckets carry no state -- a retained bucket
+        // and a fresh one give the same answer -- so continued traffic reclaims them
+        // instead of growing the map for the life of the process.
+        let before = runner.buckets.len();
+        for tick in 0..10 {
+            let subject = format!("later{tick}");
+            assert!(
+                runner
+                    .consume(&actor_event(&subject, 60_000), &config, 60_000)
+                    .unwrap()
+            );
+        }
+        assert!(
+            runner.buckets.len() < before,
+            "refilled buckets must be reclaimed: {before} -> {}",
+            runner.buckets.len()
+        );
+
+        // Reclaiming must not have weakened the limit for a subject still spending.
+        assert!(runner.consume(&hot, &config, 60_000).unwrap());
+        assert!(runner.consume(&hot, &config, 60_000).unwrap());
+        assert!(!runner.consume(&hot, &config, 60_000).unwrap());
     }
 
     #[test]

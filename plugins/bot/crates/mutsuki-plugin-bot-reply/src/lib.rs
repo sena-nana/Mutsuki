@@ -8,6 +8,7 @@
 )]
 
 use std::collections::BTreeMap;
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(test)]
@@ -45,14 +46,42 @@ struct SegmentConfig {
     words_count_threshold: usize,
 }
 
+const DEFAULT_SEGMENT_PATTERN: &str = r".*?[。？！~…]+|.+$";
+
+/// Compiled segment patterns, keyed by the pattern text.
+///
+/// The segment node runs per reply and its pattern is fixed for the lifetime of a
+/// pinned graph revision, so compiling it per call was pure waste. Graph-authored
+/// patterns are few and change only when a revision is applied. The cap stops a
+/// pathological graph (or a fuzzed config) from growing this without bound; past it
+/// the node simply compiles per call again, which is the old behaviour.
+static SEGMENT_REGEXES: LazyLock<Mutex<BTreeMap<String, Arc<Regex>>>> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
+const MAX_CACHED_SEGMENT_PATTERNS: usize = 64;
+
+fn segment_regex(pattern: &str) -> Result<Arc<Regex>, String> {
+    if let Ok(cache) = SEGMENT_REGEXES.lock()
+        && let Some(regex) = cache.get(pattern)
+    {
+        return Ok(regex.clone());
+    }
+    let regex = Arc::new(Regex::new(pattern).map_err(|error| error.to_string())?);
+    if let Ok(mut cache) = SEGMENT_REGEXES.lock()
+        && cache.len() < MAX_CACHED_SEGMENT_PATTERNS
+    {
+        cache.insert(pattern.to_owned(), regex.clone());
+    }
+    Ok(regex)
+}
+
 impl SegmentConfig {
-    fn regex(&self) -> Result<Regex, String> {
-        let pattern = if self.pattern.trim().is_empty() {
-            r".*?[。？！~…]+|.+$"
+    fn regex(&self) -> Result<Arc<Regex>, String> {
+        let pattern = self.pattern.trim();
+        segment_regex(if pattern.is_empty() {
+            DEFAULT_SEGMENT_PATTERN
         } else {
-            self.pattern.as_str()
-        };
-        Regex::new(pattern).map_err(|error| error.to_string())
+            pattern
+        })
     }
 }
 
@@ -202,7 +231,7 @@ impl Runner for BotReplyRunner {
                 .decode_shared::<BotNodeInvocation>()
                 .map_err(|error| runtime_error(task, error))?;
             let mut request: BotReplyDeliveryRequest =
-                serde_json::from_value(invocation.input.payload.value.clone())
+                serde::Deserialize::deserialize(&invocation.input.payload.value)
                     .map_err(|error| runtime_error(task, error))?;
             match task.protocol_id.as_str() {
                 BOT_REPLY_QUOTE_PROTOCOL_ID => apply_quote(&invocation, &mut request),
@@ -261,7 +290,7 @@ fn apply_mention(invocation: &BotNodeInvocation, request: &mut BotReplyDeliveryR
 
 fn apply_segment(config: &Value, request: &mut BotReplyDeliveryRequest) -> Result<(), String> {
     let config: SegmentConfig =
-        serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
+        serde::Deserialize::deserialize(config).map_err(|error| error.to_string())?;
     let regex = config.regex()?;
     let mut parts = Vec::new();
     let mut delay_ms = 0_u64;

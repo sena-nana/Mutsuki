@@ -37,13 +37,12 @@ use mutsuki_bot_service_host_integration::{
     QqAiBotPluginBundle, qq_ai_orchestrated_flow_with_source,
 };
 use mutsuki_bot_state_db::BotStateDbRepository;
+use mutsuki_bot_testkit::MemoryConversationContextStore;
 use mutsuki_config_service::{ConfigContext, ConfigProviderRegistry, ConfigService, ConfigValue};
 use mutsuki_plugin_bot_agent::{
     AgentBridgeClient, BOT_AGENT_BRIDGE_PLUGIN_ID, BOT_AGENT_NODE_SUBMIT, bot_agent_bridge_manifest,
 };
-use mutsuki_plugin_bot_conversation_context::{
-    MemoryConversationContextStore, bot_conversation_context_manifest,
-};
+use mutsuki_plugin_bot_conversation_context::bot_conversation_context_manifest;
 use mutsuki_plugin_bot_delivery::{
     BOT_DELIVERY_PLUGIN_ID, BOT_REPLY_DELIVERY_PLUGIN_ID, bot_reply_delivery_manifest,
 };
@@ -226,7 +225,7 @@ async fn orchestrated_unmentioned_message_records_icl_without_agent_submit() {
     wait_for_flow_tasks(&runtime).await;
     assert_eq!(fixture.submits.load(Ordering::SeqCst), 0);
     assert_eq!(fixture.sends.load(Ordering::SeqCst), 0);
-    let recorded = mutsuki_plugin_bot_conversation_context::ConversationContextStore::load_icl(
+    let recorded = mutsuki_bot_conversation::ConversationContextStore::load_icl(
         fixture.conversation_context.as_ref(),
         "user:actor",
         20,

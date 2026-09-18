@@ -1343,16 +1343,31 @@ fn strip_persisted_sticker(
 }
 
 fn mark_blobs_persisted(inner: &mut Inner) {
-    let media_hashes = inner.media.keys().cloned().collect::<Vec<_>>();
-    inner.persisted_media.extend(media_hashes);
-    for asset in inner.media.values_mut() {
+    // Destructured so the key iteration and the set update borrow disjoint fields;
+    // this used to materialize a throwaway `Vec<String>` of every hash per persist.
+    let Inner {
+        media,
+        stickers,
+        persisted_media,
+        persisted_stickers,
+        ..
+    } = inner;
+
+    persisted_media.extend(media.keys().cloned());
+    for asset in media.values_mut() {
         asset.bytes.clear();
     }
-    let sticker_hashes = inner.stickers.keys().cloned().collect::<Vec<_>>();
-    inner.persisted_stickers.extend(sticker_hashes);
-    for sticker in inner.stickers.values_mut() {
+    // These sets only answer "is this blob already in SQLite, so can we drop the
+    // in-memory bytes". A hash that no longer has an asset has been GC'd from the
+    // store and pruned from the database, so keeping it would grow the set for the
+    // life of the process without ever being consulted again.
+    persisted_media.retain(|hash| media.contains_key(hash));
+
+    persisted_stickers.extend(stickers.keys().cloned());
+    for sticker in stickers.values_mut() {
         sticker.bytes.clear();
     }
+    persisted_stickers.retain(|hash| stickers.contains_key(hash));
 }
 
 fn history_conversation(stored: &StoredConversation) -> SandboxHistoryConversation {

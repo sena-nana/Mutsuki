@@ -1,0 +1,18 @@
+[package]
+name = "mutsuki-bot-secure-fetch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Allowlisted HTTP fetch with manual redirects and a hard streamed size budget."
+
+[dependencies]
+reqwest = { workspace = true }
+rustls = { workspace = true }
+url = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-util"] }
+
+[lints]
+workspace = true

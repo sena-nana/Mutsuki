@@ -51,6 +51,45 @@ jobs:
         run: >-
           echo "Public runner results are smoke evidence only and cannot approve or replace a release baseline."
 
+  bot-smoke:
+    name: Bot owner performance model
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RUSTC_WRAPPER: ""
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      # The owner gate lived only in plugins/bot/.github/workflows, which GitHub
+      # never schedules -- only the repository root is. It went unrun long enough to
+      # break outright: the benchmark asked for the SQLite media provider the QQ
+      # adapter binds to, without registering it, so the LoadPlan was rejected before
+      # the first case. Scheduling it here is what keeps that from recurring.
+      - name: Run Bot owner smoke
+        run: >-
+          python3 plugins/bot/scripts/run-performance-model.py
+          --mode smoke
+          --output target/mutsuki-benchmarks/bot-smoke-${{ github.run_id }}.json
+
+      - name: Upload structured smoke result
+        uses: actions/upload-artifact@v7
+        with:
+          name: bot-performance-smoke-${{ github.run_id }}
+          path: target/mutsuki-benchmarks/
+          retention-days: 90
+
+      - name: Explain evidence boundary
+        run: >-
+          echo "Public runner results are smoke evidence only and cannot approve or replace a release baseline."
+
   fixed-reference:
     name: Fixed reference (${{ matrix.name }})
     if: github.event_name == 'workflow_dispatch' && inputs.fixed_reference

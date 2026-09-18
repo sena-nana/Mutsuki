@@ -1,0 +1,61 @@
+//! Mutsuki module upgrade catalog: release set pins, remote revision checks and upgrade planning.
+//!
+//! Does not perform runtime plugin registration; ABI artifacts must land under
+//! `plugins/installed` and be selected via `[[plugins.configured]]` + LoadPlan.
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::doc_markdown,
+    clippy::format_push_string,
+    clippy::if_not_else,
+    clippy::items_after_statements,
+    clippy::map_unwrap_or,
+    clippy::missing_errors_doc,
+    clippy::must_use_candidate,
+    clippy::return_self_not_must_use,
+    clippy::struct_excessive_bools,
+    clippy::uninlined_format_args,
+    clippy::unnecessary_wraps
+)]
+
+mod execute;
+mod release_set;
+mod upgrade;
+
+pub use execute::{
+    StepStatus, UpgradeExecuteOptions, UpgradeExecuteReport, UpgradeStepResult,
+    execute_module_upgrade, format_execute_cli_command,
+};
+pub use release_set::{ReleaseSetInfo, ReleaseSetRepository, load_release_set};
+pub use upgrade::{
+    FixtureRemoteHeadProvider, ModuleUpgradeSummary, RemoteHeadError, RemoteHeadProvider,
+    ReqwestRemoteHeadProvider, UpgradePlan, UpgradeStatus, UpgradeStep, check_module_updates,
+    default_abi_inventory_dir, plan_module_upgrade,
+};
+
+use serde_json::{Value, json};
+
+#[derive(Debug, thiserror::Error)]
+pub enum CatalogError {
+    #[error("failed to read {path}: {source}")]
+    Io {
+        path: std::path::PathBuf,
+        source: std::io::Error,
+    },
+    #[error("invalid release set: {0}")]
+    ReleaseSet(String),
+    #[error("module not found: {0}")]
+    ModuleNotFound(String),
+}
+
+pub type CatalogResult<T> = Result<T, CatalogError>;
+
+pub fn upgrade_check_json(release_set: &ReleaseSetInfo, modules: &[ModuleUpgradeSummary]) -> Value {
+    json!({
+        "release_set": release_set.release,
+        "status": release_set.status,
+        "modules": modules,
+        "update_count": modules.iter().filter(|module| module.status == UpgradeStatus::UpdateAvailable).count(),
+    })
+}

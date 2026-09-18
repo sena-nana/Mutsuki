@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use mutsuki_bot::ControlPluginReloadLifecycle;
 use mutsuki_config_service::{ConfigAction, ConfigLifecycle, ConfigValue, RestartPolicy};
-use mutsuki_plugin_bot_control_web::FixtureControlHandler;
+use mutsuki_web_extension_control::FixtureControlHandler;
 
 #[tokio::test]
 async fn control_lifecycle_invokes_real_plugin_reload() {

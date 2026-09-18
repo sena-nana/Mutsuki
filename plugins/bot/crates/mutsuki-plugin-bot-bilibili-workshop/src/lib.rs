@@ -9,7 +9,6 @@
     clippy::needless_pass_by_value
 )]
 
-use std::io::Read;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -30,7 +29,6 @@ use mutsuki_runtime_sdk::{
     map_work_batch_entries,
 };
 use reqwest::blocking::Client;
-use reqwest::header::LOCATION;
 use reqwest::redirect::Policy;
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
@@ -41,9 +39,7 @@ pub const PLUGIN_ID: &str = "mutsuki.bot.bilibili.workshop";
 pub const RUNNER_ID: &str = "mutsuki.bot.bilibili.workshop.runner";
 pub const LINK_RESOLVE: &str = "mutsuki.bot.bilibili.workshop.link/resolve@1";
 
-const MEDIA_MAX_REDIRECTS: u8 = 5;
 const MEDIA_TIMEOUT: Duration = Duration::from_secs(15);
-const READ_CHUNK: usize = 8 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WorkshopResolveRequest {
@@ -111,62 +107,20 @@ impl WorkshopTransport for ReqwestWorkshopTransport {
     }
 }
 
+/// Workshop-side adapter over the shared allowlisted fetch.
+///
+/// The redirect/limit/allowlist loop lives in `mutsuki-bot-secure-fetch`; only the
+/// error mapping is local, so a fix there covers this call site too.
 fn fetch_bytes(
     client: &Client,
     url: &str,
     max_bytes: usize,
     allow: impl Fn(&Url) -> Result<(), String>,
 ) -> Result<(Url, Vec<u8>), String> {
-    let mut current = Url::parse(url).map_err(|error| error.to_string())?;
-    for hop in 0..=MEDIA_MAX_REDIRECTS {
-        allow(&current)?;
-        let mut response = client
-            .get(current.as_str())
-            .send()
-            .map_err(|error| error.to_string())?;
-        if response.status().is_redirection() {
-            if hop == MEDIA_MAX_REDIRECTS {
-                return Err("too many redirects".into());
-            }
-            let location = response
-                .headers()
-                .get(LOCATION)
-                .and_then(|value| value.to_str().ok())
-                .ok_or_else(|| "redirect is missing Location".to_string())?;
-            current = current.join(location).map_err(|error| error.to_string())?;
-            continue;
-        }
-        if !response.status().is_success() {
-            return Err(format!("HTTP {}", response.status().as_u16()));
-        }
-        if response
-            .content_length()
-            .is_some_and(|length| length > max_bytes as u64)
-        {
-            return Err("workshop image exceeds configured limit".into());
-        }
-        allow(&current)?;
-        let mut body = Vec::new();
-        let mut buffer = [0_u8; READ_CHUNK];
-        loop {
-            let read = response
-                .read(&mut buffer)
-                .map_err(|error| error.to_string())?;
-            if read == 0 {
-                break;
-            }
-            let next = body
-                .len()
-                .checked_add(read)
-                .ok_or_else(|| "workshop image exceeds configured limit".to_string())?;
-            if next > max_bytes {
-                return Err("workshop image exceeds configured limit".into());
-            }
-            body.extend_from_slice(&buffer[..read]);
-        }
-        return Ok((current, body));
-    }
-    Err("too many redirects".into())
+    mutsuki_bot_secure_fetch::download(client, url, max_bytes, move |candidate| {
+        allow(candidate).map_err(mutsuki_bot_secure_fetch::SecureFetchError::Denied)
+    })
+    .map_err(|error| error.to_string())
 }
 
 pub struct WorkshopRunner {
@@ -190,7 +144,7 @@ impl WorkshopRunner {
     }
     fn run_task(&mut self, task: &Task) -> Result<RunnerResult, RuntimeError> {
         let payload: serde_json::Value = task.payload.clone().into();
-        let invocation = serde_json::from_value::<BotNodeInvocation>(payload.clone()).ok();
+        let invocation = <BotNodeInvocation as serde::Deserialize>::deserialize(&payload).ok();
         let request = match &invocation {
             Some(invocation) => workshop_request_from_invocation(invocation)
                 .map_err(|error| failure(task, error))?,
@@ -343,8 +297,8 @@ fn workshop_request_from_invocation(
     invocation: &BotNodeInvocation,
 ) -> Result<WorkshopResolveRequest, String> {
     let config: WorkshopFlowConfig =
-        serde_json::from_value(invocation.config.clone()).map_err(|error| error.to_string())?;
-    let event: BotEvent = serde_json::from_value(invocation.input.payload.value.clone())
+        serde::Deserialize::deserialize(&invocation.config).map_err(|error| error.to_string())?;
+    let event: BotEvent = serde::Deserialize::deserialize(&invocation.input.payload.value)
         .map_err(|error| error.to_string())?;
     let url = config
         .url

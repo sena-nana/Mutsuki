@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import subprocess
@@ -68,7 +69,7 @@ UNSAFE_CODE_EXCEPTIONS = {
     "crates/mutsuki-plugin-host/src/lib.rs": "ABI v2 dynamic library loader",
     "crates/mutsuki-runtime-sdk/src/abi.rs": "ABI v2 SDK mirror",
     "crates/mutsuki-runtime-sdk/src/lib.rs": "RawWakerVTable noop waker",
-    "plugins/bot/crates/mutsuki-plugin-catalog/src/execute.rs": "ABI entry symbol probe",
+    "crates/mutsuki-module-catalog/src/execute.rs": "ABI entry symbol probe",
     # OS interfaces with no safe equivalent.
     "hosts/service/crates/mutsuki-service-runtime/src/process_metrics.rs": "libc RSS sampling",
     "hosts/service/crates/mutsuki-service-config/src/lib.rs": "env::set_var in secret tests",
@@ -110,6 +111,36 @@ UNSAFE_ALLOW_INHERITED = {
     "crates/mutsuki-runtime-sdk/src/abi/tests.rs",
 }
 
+
+
+# Workflow files left under a package's own `.github/` by the pre-merge repositories.
+#
+# GitHub only schedules `.github/workflows` at the repository root, so none of these
+# run. They are kept because each still records what that package's owner gate is
+# meant to be, and porting them into the root workflows is a CI-budget decision rather
+# than a cleanup. They are enumerated so a *new* one cannot appear silently: that is
+# how `plugins/bot`'s owner performance gate broke unnoticed -- the benchmark stopped
+# assembling and nothing ran it for long enough that the failure reached `main`.
+#
+# Porting one into `.github/workflows` (or deleting it) means removing its entry here.
+DEAD_NESTED_WORKFLOWS = {
+    "crates/link/.github/workflows/ci.yml",
+    "crates/link/.github/workflows/performance.yml",
+    "hosts/cli/.github/workflows/platform-compat.yml",
+    "hosts/distributed/.github/workflows/ci.yml",
+    "hosts/distributed/.github/workflows/performance.yml",
+    "hosts/service/.github/workflows/performance.yml",
+    "hosts/service/.github/workflows/platform-compat.yml",
+    "hosts/tauri/.github/workflows/performance.yml",
+    "hosts/tauri/.github/workflows/platform-compat.yml",
+    "hosts/web/.github/workflows/ci.yml",
+    "kits/agent/.github/workflows/performance-smoke.yml",
+    "kits/agent/.github/workflows/platform-compat.yml",
+    "kits/python-runner/.github/workflows/performance-smoke.yml",
+    "kits/python-runner/.github/workflows/platform-compat.yml",
+    "plugins/std/.github/workflows/performance-smoke.yml",
+    "plugins/std/.github/workflows/platform-compat.yml",
+}
 
 def fail(message: str) -> None:
     print(f"workspace boundary check failed: {message}", file=sys.stderr)
@@ -358,6 +389,58 @@ def check_manifest_urls() -> None:
                 )
 
 
+def check_materialized_assets() -> None:
+    """Every embedded copy of a built asset must be byte-identical.
+
+    `plugins/bot/scripts/sync-mutsuki-ui-css.sh` copies one `@mutsuki/ui` build into
+    three crates that `include_str!` it. Nothing ran that script in CI, so the copies
+    could drift silently and ship three different stylesheets in one binary. This does
+    not rebuild the asset -- it only asserts the copies still agree.
+    """
+    copies = sorted(
+        path
+        for path in ROOT.rglob("assets/mutsuki-ui.css")
+        if "target" not in path.parts and "node_modules" not in path.parts
+    )
+    if len(copies) < 2:
+        fail(f"expected several materialized mutsuki-ui.css copies, found {len(copies)}")
+    digests = {}
+    for path in copies:
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        digests.setdefault(digest, []).append(str(path.relative_to(ROOT)))
+    if len(digests) > 1:
+        groups = "; ".join(
+            f"{digest[:12]}: {', '.join(paths)}" for digest, paths in sorted(digests.items())
+        )
+        fail(
+            "materialized mutsuki-ui.css copies have drifted; re-run "
+            f"plugins/bot/scripts/sync-mutsuki-ui-css.sh -- {groups}"
+        )
+
+
+def check_nested_workflows() -> None:
+    """No new never-scheduled workflow may appear under a package's own `.github/`."""
+    found = {
+        path.relative_to(ROOT).as_posix()
+        for path in ROOT.rglob(".github/workflows/*.y*ml")
+        if "target" not in path.parts
+        and not path.relative_to(ROOT).as_posix().startswith(".github/")
+    }
+    added = sorted(found - DEAD_NESTED_WORKFLOWS)
+    if added:
+        fail(
+            "workflow files under a package's own .github/ are never scheduled by GitHub; "
+            "put the job in .github/workflows at the repository root instead:\n  "
+            + "\n  ".join(added)
+        )
+    removed = sorted(DEAD_NESTED_WORKFLOWS - found)
+    if removed:
+        fail(
+            "these dead nested workflows are gone; drop them from DEAD_NESTED_WORKFLOWS:\n  "
+            + "\n  ".join(removed)
+        )
+
+
 def main() -> None:
     subprocess.run([sys.executable, str(Path(__file__).with_name("check_ci.py"))], check=True)
     subprocess.run(
@@ -373,6 +456,8 @@ def main() -> None:
     check_workspace_lints(metadata)
     check_unsafe_code_exceptions()
     check_manifest_urls()
+    check_materialized_assets()
+    check_nested_workflows()
     print(
         "workspace boundary check passed: "
         f"{len(metadata['packages'])} Rust packages, one root workspace, no internal Git pins, "

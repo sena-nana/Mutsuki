@@ -757,6 +757,17 @@ impl SqliteBilibiliRepository {
                 .map_err(|_| rusqlite::Error::InvalidPath(parent.into()))?;
         }
         let connection = Connection::open(path)?;
+        // Poll cursors and cooldown stamps are written on every poll tick and every
+        // notification. The rusqlite default (rollback journal, `synchronous=FULL`)
+        // makes each of those a full fsync. `mutsuki-bot-state-db` already settles on
+        // WAL + NORMAL + a busy timeout for the same access shape; match it so a
+        // poll interval is not bounded by disk flushes. WAL can be refused on some
+        // filesystems, in which case SQLite keeps the previous mode and open still
+        // succeeds, so the result is read back rather than asserted.
+        connection.busy_timeout(std::time::Duration::from_secs(5))?;
+        let _journal_mode: String =
+            connection.query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))?;
+        connection.pragma_update(None, "synchronous", "NORMAL")?;
         connection.execute_batch(
             "CREATE TABLE IF NOT EXISTS cursor (key TEXT PRIMARY KEY, value TEXT NOT NULL);\
              CREATE TABLE IF NOT EXISTS cooldown (key TEXT PRIMARY KEY, seen_ms INTEGER NOT NULL);\
@@ -1527,8 +1538,8 @@ fn link_resolve_request_from_invocation(
     invocation: &BotNodeInvocation,
 ) -> Result<LinkResolveRequest, String> {
     let flow: BilibiliLinkFlowConfig =
-        serde_json::from_value(invocation.config.clone()).map_err(|error| error.to_string())?;
-    let event: BotEvent = serde_json::from_value(invocation.input.payload.value.clone())
+        serde::Deserialize::deserialize(&invocation.config).map_err(|error| error.to_string())?;
+    let event: BotEvent = serde::Deserialize::deserialize(&invocation.input.payload.value)
         .map_err(|error| error.to_string())?;
     let url = flow
         .url
@@ -1834,7 +1845,7 @@ async fn run_notification_card(
     invocation: BotNodeInvocation,
 ) -> RuntimeResult<RunnerResult> {
     let notification: BilibiliNotification =
-        serde_json::from_value(invocation.input.payload.value.clone()).map_err(|error| {
+        serde::Deserialize::deserialize(&invocation.input.payload.value).map_err(|error| {
             RuntimeFailure::new(bili_error(
                 task,
                 BilibiliError::InvalidResponse(error.to_string()),
@@ -3681,7 +3692,7 @@ mod tests {
         let completed = runner.run_batch(context, batch).unwrap();
         let completed = completed.results[0].result.as_ref().unwrap();
         let output = completed.output.as_ref().unwrap();
-        let node_result: BotNodeResult = serde_json::from_value(output.clone()).unwrap();
+        let node_result: BotNodeResult = serde::Deserialize::deserialize(output).unwrap();
         assert_eq!(node_result.outputs.len(), 1);
         let output = &node_result.outputs[0];
         assert_eq!(output.port_id, "message");
@@ -3690,7 +3701,7 @@ mod tests {
             "mutsuki.bot.message.send"
         );
         let message: BotMessage =
-            serde_json::from_value(output.event.payload.value.clone()).unwrap();
+            serde::Deserialize::deserialize(&output.event.payload.value).unwrap();
         assert_eq!(
             message.target,
             BotTarget::Group {
