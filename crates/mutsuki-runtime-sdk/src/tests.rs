@@ -1437,6 +1437,28 @@ mod grouped_batches {
         }
     }
 
+    /// These handlers send real messages, so an entry the plan happens to name
+    /// twice must not be executed twice.
+    #[test]
+    fn an_entry_named_by_two_groups_runs_once() {
+        let tasks = vec![task("only")];
+        let mut plan = WorkResourcePlan::empty();
+        plan.serial_groups = vec![vec!["entry-0".into()]];
+        plan.parallel_groups = vec![vec!["entry-0".into()]];
+        plan.parallelism_limit = 4;
+        let runs = Arc::new(Mutex::new(0_usize));
+
+        let completion = map_work_batch_entries_grouped(&batch(&tasks, plan), |task| {
+            *runs.lock().unwrap() += 1;
+            Ok(RunnerResult::completed(task.task_id.clone()))
+        })
+        .unwrap();
+
+        assert_eq!(*runs.lock().unwrap(), 1, "the entry ran more than once");
+        assert_eq!(completion.results.len(), 1);
+        assert!(completion.results[0].error.is_none());
+    }
+
     /// A plan that permits nothing must behave exactly like the sequential helper.
     #[test]
     fn a_plan_without_parallelism_matches_the_sequential_helper() {
