@@ -114,6 +114,16 @@ jobs:
         # credential backend that this runner has no packages for.
         run: cargo check -p mutsuki-link --features local,tcp,quic,discovery,pairing --all-targets
 
+      - name: Test DistributedHost localization testkit
+        if: ${{ !cancelled() }}
+        # `localization-testkit` injects storage faults and blocking panics, so it
+        # rightly stays out of the default feature set -- but that also means the
+        # four content-localization tests behind it were run by no workflow at all,
+        # not even the nested one. They cover atomic publish, hash-mismatch
+        # cleanup, fault/panic partial retention and timeout cancellation: the
+        # failure modes least acceptable to leave unverified.
+        run: cargo test -p mutsuki-distributed-runtime --features localization-testkit --all-targets --locked
+
       - name: Print sccache stats
         if: always()
         run: sccache --show-stats
