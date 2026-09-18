@@ -6,7 +6,6 @@ license.workspace = true
 description = "Mutsuki module upgrade catalog: release set pins, remote checks and upgrade planning."
 
 [dependencies]
-mutsuki-runtime-contracts = { workspace = true }
 libloading.workspace = true
 reqwest = { workspace = true }
 serde = { workspace = true }

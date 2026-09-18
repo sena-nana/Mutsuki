@@ -23,7 +23,6 @@ mutsuki-agent-contracts.workspace = true
 mutsuki-agent-client.workspace = true
 mutsuki-agent-service-host-integration.workspace = true
 mutsuki-service-config.workspace = true
-mutsuki-service-control.workspace = true
 mutsuki-service-runtime.workspace = true
 mutsuki-plugin-bot-command.workspace = true
 mutsuki-plugin-bot-conversation-context.workspace = true
