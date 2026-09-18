@@ -31,7 +31,7 @@ use std::fmt;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use mutsuki_bot_flow::BotFlowRegistry;
@@ -552,6 +552,39 @@ pub struct ReqwestBilibiliTransport {
     client: Option<Client>,
     credential: SharedBilibiliCredential,
     timeout: Duration,
+    wbi_key: WbiKeyCache,
+}
+
+/// Upstream rotates the WBI mixin key about once a day, so re-deriving it per
+/// signed request meant every poll spent two HTTP round trips instead of one and
+/// hammered `/x/web-interface/nav` at the polling interval times the subscription
+/// count. That doubles the rate-limit exposure the `RiskControl352` handling
+/// downstream exists to survive.
+const WBI_MIXIN_KEY_TTL: Duration = Duration::from_mins(60);
+
+#[derive(Default)]
+struct WbiKeyCache {
+    entry: Option<(String, Instant)>,
+}
+
+impl WbiKeyCache {
+    fn fresh(&self, now: Instant) -> Option<String> {
+        self.entry
+            .as_ref()
+            .filter(|(_, fetched_at)| now.duration_since(*fetched_at) < WBI_MIXIN_KEY_TTL)
+            .map(|(key, _)| key.clone())
+    }
+
+    fn store(&mut self, key: String, now: Instant) {
+        self.entry = Some((key, now));
+    }
+
+    /// Dropped whenever upstream rejects the credential or trips risk control:
+    /// a stale key is one reason for exactly those codes, so retrying with the
+    /// same cached value would keep failing until the TTL happened to elapse.
+    fn invalidate(&mut self) {
+        self.entry = None;
+    }
 }
 
 impl ReqwestBilibiliTransport {
@@ -560,6 +593,7 @@ impl ReqwestBilibiliTransport {
             client: None,
             credential,
             timeout,
+            wbi_key: WbiKeyCache::default(),
         }
     }
 
@@ -589,11 +623,30 @@ impl ReqwestBilibiliTransport {
             .json()
             .map_err(|error| BilibiliError::InvalidResponse(error.to_string()))?;
         match value.get("code").and_then(Value::as_i64) {
-            Some(-101) => Err(BilibiliError::CookieExpired),
-            Some(-352 | 352) => Err(BilibiliError::RiskControl352),
+            Some(-101) => {
+                self.wbi_key.invalidate();
+                Err(BilibiliError::CookieExpired)
+            }
+            Some(-352 | 352) => {
+                self.wbi_key.invalidate();
+                Err(BilibiliError::RiskControl352)
+            }
             Some(code) if code != 0 => Err(BilibiliError::InvalidResponse(format!("code {code}"))),
             _ => Ok(value),
         }
+    }
+
+    fn wbi_mixin_key(&mut self) -> Result<String, BilibiliError> {
+        let now = Instant::now();
+        if let Some(key) = self.wbi_key.fresh(now) {
+            return Ok(key);
+        }
+        let nav = self.json("https://api.bilibili.com/x/web-interface/nav")?;
+        let img = string_field(&nav["data"]["wbi_img"], "img_url")?;
+        let sub = string_field(&nav["data"]["wbi_img"], "sub_url")?;
+        let key = wbi_mixin_key(&img, &sub)?;
+        self.wbi_key.store(key.clone(), now);
+        Ok(key)
     }
 
     fn wbi_url(
@@ -601,10 +654,7 @@ impl ReqwestBilibiliTransport {
         path: &str,
         params: Vec<(String, String)>,
     ) -> Result<String, BilibiliError> {
-        let nav = self.json("https://api.bilibili.com/x/web-interface/nav")?;
-        let img = string_field(&nav["data"]["wbi_img"], "img_url")?;
-        let sub = string_field(&nav["data"]["wbi_img"], "sub_url")?;
-        let key = wbi_mixin_key(&img, &sub)?;
+        let key = self.wbi_mixin_key()?;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|error| BilibiliError::Transport(error.to_string()))?
@@ -906,7 +956,12 @@ impl SqliteBilibiliRepository {
 }
 
 pub struct BilibiliRunner {
-    transport: Box<dyn BilibiliTransport>,
+    /// Behind its own lock so a blocking upstream round trip never holds the
+    /// runner mutex. It used to: every poll and every `/bili` command queued
+    /// behind whichever request was currently in flight. Transport calls stay
+    /// serialised among themselves because the trait takes `&mut self` and the
+    /// session state it carries is shared.
+    transport: Arc<Mutex<Box<dyn BilibiliTransport>>>,
     repository: Arc<SqliteBilibiliRepository>,
     resources: Arc<dyn ResourceRegistryGateway>,
     media_provider_id: String,
@@ -944,7 +999,7 @@ impl BilibiliRunner {
         media_provider_id: impl Into<String>,
     ) -> Self {
         Self {
-            transport,
+            transport: Arc::new(Mutex::new(transport)),
             repository,
             resources,
             media_provider_id: media_provider_id.into(),
@@ -1051,7 +1106,36 @@ impl BilibiliRunner {
         Ok(result)
     }
 
-    fn run_command(&mut self, task: &Task) -> Result<RunnerResult, RuntimeError> {
+    /// The command surface, cloned out from under the runner lock.
+    fn commands(&self) -> BilibiliCommands {
+        BilibiliCommands {
+            management: self.management.clone(),
+            managed_config: self.managed_config.clone(),
+        }
+    }
+
+    /// Everything the card path needs, cloned out from under the runner lock so
+    /// the cover download and resource write happen without it held.
+    fn card_media(&self) -> CardMedia {
+        CardMedia {
+            transport: self.transport.clone(),
+            resources: self.resources.clone(),
+            media_provider_id: self.media_provider_id.clone(),
+        }
+    }
+}
+
+/// The `/bili` admin commands need only the management API and the shared config,
+/// and `command_reply` touches no runner state at all. Cloning them out lets a
+/// command that talks to upstream (subscribe resolves a profile, for instance)
+/// run without the runner mutex, which used to block every poll for its duration.
+struct BilibiliCommands {
+    management: Option<Arc<dyn BilibiliManagementApi>>,
+    managed_config: Option<SharedBilibiliConfig>,
+}
+
+impl BilibiliCommands {
+    fn run_command(&self, task: &Task) -> Result<RunnerResult, RuntimeError> {
         let command: BotCommandEvent = decode(task)?;
         let Some(management) = self.management.clone() else {
             return Ok(RunnerResult::completed(task.task_id.clone()));
@@ -1291,9 +1375,24 @@ impl BilibiliRunner {
             binding.as_deref(),
         )
     }
+}
+
+struct CardMedia {
+    transport: Arc<Mutex<Box<dyn BilibiliTransport>>>,
+    resources: Arc<dyn ResourceRegistryGateway>,
+    media_provider_id: String,
+}
+
+impl CardMedia {
+    fn resolve(&self, url: &str) -> Result<ResolvedLinkCard, BilibiliError> {
+        self.transport
+            .lock()
+            .expect("Bilibili transport mutex")
+            .resolve(url)
+    }
 
     fn prepare_card_request(
-        &mut self,
+        &self,
         card: ResolvedLinkCard,
         task: &Task,
         layout: CardLayout,
@@ -1303,6 +1402,8 @@ impl BilibiliRunner {
         let cover = if let Some(image_url) = card.image_url {
             let bytes = self
                 .transport
+                .lock()
+                .expect("Bilibili transport mutex")
                 .download(&image_url, MAX_MEDIA_BYTES)
                 .map_err(|error| bili_error(task, error))?;
             let resource = self
@@ -1409,10 +1510,14 @@ async fn run_task_async(
             None => decode(&task).map_err(RuntimeFailure::new)?,
         };
         let prepared = {
-            let mut runner = state.lock().expect("Bilibili runner mutex");
+            // The cooldown read needs the runner and is cheap; the resolve and the
+            // cover download are blocking HTTP and must not hold its lock.
+            let (media, repository) = {
+                let runner = state.lock().expect("Bilibili runner mutex");
+                (runner.card_media(), runner.repository.clone())
+            };
             let cooldown_key = format!("{}:{}", request.account_id, request.url);
-            if !runner
-                .repository
+            if !repository
                 .cooldown_ready(&cooldown_key, request.now_ms, request.cooldown_ms)
                 .map_err(|error| {
                     RuntimeFailure::new(bili_error(
@@ -1423,12 +1528,11 @@ async fn run_task_async(
             {
                 None
             } else {
-                let card = runner
-                    .transport
+                let card = media
                     .resolve(&request.url)
                     .map_err(|error| RuntimeFailure::new(bili_error(&task, error)))?;
                 let (layout, kicker, live) = layout_for_url(&card.url);
-                let card = runner
+                let card = media
                     .prepare_card_request(card, &task, layout, kicker, live)
                     .map_err(RuntimeFailure::new)?;
                 Some(PreparedCards {
@@ -1439,11 +1543,7 @@ async fn run_task_async(
                         route: CardRoute::Notify(request.outbound_binding),
                     }],
                     cursor_update: None,
-                    cooldown_update: Some((
-                        runner.repository.clone(),
-                        cooldown_key,
-                        request.now_ms,
-                    )),
+                    cooldown_update: Some((repository, cooldown_key, request.now_ms)),
                 })
             }
         };
@@ -1497,10 +1597,17 @@ async fn run_task_async(
         result.output = Some(json!({ "push_wired": false, "poll_skipped": true }));
         return Ok(result);
     };
-    let attempt = state
+    // Clone the handle, then drop the runner guard before the blocking call:
+    // holding it here serialised every other poll and every `/bili` command
+    // behind whichever upstream request happened to be in flight.
+    let transport = state
         .lock()
         .expect("Bilibili runner mutex")
         .transport
+        .clone();
+    let attempt = transport
+        .lock()
+        .expect("Bilibili transport mutex")
         .poll(&kind, request.uid);
     match attempt {
         Ok(items) => state
@@ -1618,11 +1725,8 @@ async fn run_management_task(
     let command: BotCommandEvent = decode(&task).map_err(RuntimeFailure::new)?;
     let action = command.args.first().map(String::as_str).unwrap_or("help");
     if action != "login" && action != "preview" {
-        return state
-            .lock()
-            .expect("Bilibili runner mutex")
-            .run_command(&task)
-            .map_err(RuntimeFailure::new);
+        let commands = state.lock().expect("Bilibili runner mutex").commands();
+        return commands.run_command(&task).map_err(RuntimeFailure::new);
     }
     let (management, config, actor_id, is_admin) = {
         let runner = state.lock().expect("Bilibili runner mutex");
@@ -1661,6 +1765,7 @@ async fn run_management_task(
         return Ok(state
             .lock()
             .expect("Bilibili runner mutex")
+            .commands()
             .command_reply(
                 &task,
                 &command,
@@ -1671,9 +1776,8 @@ async fn run_management_task(
     match management.preview(&actor_id, is_admin, command.args.get(1).map(String::as_str)) {
         Ok(card) => {
             let (layout, kicker, live) = layout_for_url(&card.url);
-            let request = state
-                .lock()
-                .expect("Bilibili runner mutex")
+            let media = state.lock().expect("Bilibili runner mutex").card_media();
+            let request = media
                 .prepare_card_request(
                     ResolvedLinkCard {
                         url: card.url,
@@ -1708,6 +1812,7 @@ async fn run_management_task(
         Err(error) if error.message.contains("暂无可预览") => Ok(state
             .lock()
             .expect("Bilibili runner mutex")
+            .commands()
             .command_reply(&task, &command, error.message, None)),
         Err(error) => Err(RuntimeFailure::new(bili_management_error(&task, error))),
     }
@@ -1852,9 +1957,9 @@ async fn run_notification_card(
             ))
         })?;
     let request = {
-        let mut runner = state.lock().expect("Bilibili runner mutex");
+        let media = state.lock().expect("Bilibili runner mutex").card_media();
         let (layout, kicker, live) = layout_for_poll(notification.kind);
-        runner
+        media
             .prepare_card_request(
                 ResolvedLinkCard {
                     url: notification.url.clone(),
@@ -2740,6 +2845,45 @@ fn wbi_mixin_key(img_url: &str, sub_url: &str) -> Result<String, BilibiliError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Re-deriving the WBI key per signed request doubled the HTTP per poll and
+    /// pointed the extra request at the same endpoint upstream rate-limits.
+    #[test]
+    fn wbi_key_is_reused_within_its_ttl_and_refetched_after_it() {
+        let now = Instant::now();
+        let mut cache = WbiKeyCache::default();
+        assert_eq!(cache.fresh(now), None, "an empty cache must force a fetch");
+
+        cache.store("mixin-key".into(), now);
+        assert_eq!(cache.fresh(now).as_deref(), Some("mixin-key"));
+        assert_eq!(
+            cache
+                .fresh(
+                    (now + WBI_MIXIN_KEY_TTL)
+                        .checked_sub(Duration::from_secs(1))
+                        .expect("one second before the TTL elapses"),
+                )
+                .as_deref(),
+            Some("mixin-key"),
+            "still inside the TTL"
+        );
+        assert_eq!(
+            cache.fresh(now + WBI_MIXIN_KEY_TTL),
+            None,
+            "the key rotates upstream, so the TTL must expire it"
+        );
+    }
+
+    /// `-101` and `-352` are exactly the codes a stale key produces, so keeping
+    /// the cached value would make every retry fail until the TTL elapsed.
+    #[test]
+    fn wbi_key_is_dropped_when_upstream_rejects_the_request() {
+        let now = Instant::now();
+        let mut cache = WbiKeyCache::default();
+        cache.store("mixin-key".into(), now);
+        cache.invalidate();
+        assert_eq!(cache.fresh(now), None);
+    }
     use mutsuki_bot_management::BilibiliQrLoginStatus;
     use mutsuki_bot_protocol::{
         BotAccountRef, BotEvent, BotEventKind, BotFlowDocument, BotFlowEdge, BotFlowEdgeKind,
@@ -3734,7 +3878,7 @@ mod tests {
             config_store.clone(),
             Arc::new(AlwaysPresentSecrets),
         ));
-        let mut runner = BilibiliRunner::new(
+        let runner = BilibiliRunner::new(
             Box::new(FakeTransport(state.clone())),
             repository.clone(),
             Arc::new(UnusedResources),
@@ -3744,10 +3888,12 @@ mod tests {
 
         repository.set_qr_session("admin", "qr-key").unwrap();
         let login = runner
+            .commands()
             .run_command(&command_task("login", "admin", &["login-status"]))
             .unwrap();
         assert!(
             runner
+                .commands()
                 .run_command(&command_task("forbidden-login", "alice", &["login-status"]))
                 .is_err()
         );
@@ -3759,11 +3905,13 @@ mod tests {
         );
 
         runner
+            .commands()
             .run_command(&command_task("bind", "alice", &["bind", "42"]))
             .unwrap();
         let (_, code) = repository.binding_challenge("alice").unwrap().unwrap();
         state.lock().unwrap().signature = format!("hello {code}");
         runner
+            .commands()
             .run_command(&command_task("verify", "alice", &["verify"]))
             .unwrap();
         let snapshot = config.snapshot();
@@ -3775,6 +3923,7 @@ mod tests {
         );
 
         runner
+            .commands()
             .run_command(&command_task("pause", "alice", &["pause"]))
             .unwrap();
         assert!(config.snapshot().subscriptions[0].paused);
