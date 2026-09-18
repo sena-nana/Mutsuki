@@ -386,6 +386,26 @@ mod resource_plan_tests {
         assert_eq!(plan.parallelism_limit, 2, "one in flight per key");
     }
 
+    /// A strict sequence beside keyed groups must pin the whole work set: the
+    /// sequence's guarantee is not per-key here, so nothing may overlap it.
+    #[test]
+    fn a_strict_sequence_beside_keyed_groups_serialises_everything() {
+        let plan = build_work_resource_plan(
+            &work_set(vec![
+                entry("a", same_resource("conversation-1")),
+                entry("b", same_resource("conversation-2")),
+                entry(
+                    "c",
+                    OrderingRequirement::StrictSequence {
+                        sequence_id: "seq".into(),
+                    },
+                ),
+            ]),
+            &[],
+        );
+        assert_eq!(plan.parallelism_limit, 1);
+    }
+
     /// A submit-order entry constrains the whole work set, so keyed groups beside
     /// it must not raise the limit.
     #[test]
