@@ -247,6 +247,20 @@ def check_integration_tests_index() -> None:
             + "\n  ".join(strays)
         )
 
+    # An index is only worth having if it is accurate. Nothing else checks the paths it
+    # names, so three of them had gone on pointing at `tests/` directories long after
+    # those crates moved their cases into in-crate `#[cfg(test)]` modules.
+    readme = directory / "README.md"
+    listed = sorted(set(re.findall(r"^- `([^`]+)`", readme.read_text(), re.MULTILINE)))
+    if not listed:
+        fail("integration-tests/README.md lists no acceptance locations; the index is empty")
+    gone = [path for path in listed if not (ROOT / path).exists()]
+    if gone:
+        fail(
+            "integration-tests/README.md points at paths that no longer exist:\n  "
+            + "\n  ".join(gone)
+        )
+
 
 def check_metadata(metadata: dict[str, object]) -> None:
     workspace_root = Path(str(metadata["workspace_root"])).resolve()
