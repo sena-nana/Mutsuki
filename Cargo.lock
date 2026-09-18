@@ -557,7 +557,6 @@ dependencies = [
  "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "serde_json",
- "tracing",
 ]
 
 [[package]]
@@ -4057,7 +4056,6 @@ dependencies = [
  "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "mutsuki-service-config",
- "mutsuki-service-control",
  "mutsuki-service-runtime",
  "mutsuki-std-service-host-integration",
  "serde",
@@ -4075,7 +4073,6 @@ dependencies = [
  "async-trait",
  "mutsuki-bot-conversation",
  "mutsuki-bot-delivery",
- "mutsuki-bot-flow",
  "mutsuki-bot-interaction",
  "mutsuki-bot-management",
  "mutsuki-bot-protocol",
@@ -4204,7 +4201,6 @@ dependencies = [
  "mutsuki-bot-web-extension-qq",
  "mutsuki-bot-web-extension-sandbox",
  "mutsuki-config-service",
- "mutsuki-plugin-bot-command",
  "mutsuki-service-control",
  "mutsuki-std-web-extension-config",
  "mutsuki-web-extension",
@@ -4472,7 +4468,6 @@ version = "0.1.0"
 dependencies = [
  "hex",
  "libloading",
- "mutsuki-runtime-contracts",
  "reqwest",
  "serde",
  "serde_json",
@@ -4676,7 +4671,6 @@ dependencies = [
  "mutsuki-runtime-sdk",
  "reqwest",
  "rusqlite",
- "rustls",
  "scraper",
  "serde",
  "serde_json",
@@ -4708,14 +4702,12 @@ name = "mutsuki-plugin-bot-command"
 version = "0.1.0"
 dependencies = [
  "mutsuki-bot-protocol",
- "mutsuki-config-service",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
- "tracing",
 ]
 
 [[package]]
@@ -4756,7 +4748,6 @@ dependencies = [
  "mutsuki-runtime-sdk",
  "serde",
  "serde_json",
- "tracing",
 ]
 
 [[package]]
@@ -5323,7 +5314,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -5591,7 +5581,6 @@ dependencies = [
  "mutsuki-web-extension-api",
  "mutsuki-web-protocol",
  "tempfile",
- "thiserror 2.0.20",
  "tokio",
 ]
 
@@ -5600,7 +5589,6 @@ name = "mutsuki-web-extension-api"
 version = "0.1.0"
 dependencies = [
  "mutsuki-web-protocol",
- "serde",
  "serde_json",
  "sha2 0.11.0",
  "tempfile",
@@ -7633,16 +7621,12 @@ dependencies = [
  "bot-echo",
  "mutsuki-bot-flow",
  "mutsuki-bot-protocol",
- "mutsuki-bot-sdk",
  "mutsuki-bot-service-host-integration",
  "mutsuki-bot-testkit",
  "mutsuki-config-service",
  "mutsuki-plugin-bot-adapter-qqbot",
  "mutsuki-plugin-bot-command",
  "mutsuki-plugin-bot-event-router",
- "mutsuki-runtime-contracts",
- "mutsuki-runtime-host",
- "mutsuki-runtime-sdk",
  "mutsuki-service-config",
  "mutsuki-service-control",
  "mutsuki-service-ipc",

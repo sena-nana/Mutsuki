@@ -8,7 +8,6 @@ description = "Embedded Bot admin console assembly: WebHost + control/overview/c
 [dependencies]
 mutsuki-config-service = { workspace = true }
 mutsuki-bot-flow = { workspace = true }
-mutsuki-plugin-bot-command = { workspace = true }
 mutsuki-std-web-extension-config = { workspace = true }
 mutsuki-web-extension-control = { workspace = true }
 mutsuki-bot-web-extension-database = { workspace = true }
