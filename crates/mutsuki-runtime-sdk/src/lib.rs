@@ -174,6 +174,14 @@ fn complete_work_batch_entry(
 /// asks for submit order or a strict sequence, or where a write conflict was
 /// detected, this behaves exactly like [`map_work_batch_entries`].
 ///
+/// Each entry runs exactly once even if the plan names it in several groups.
+///
+/// # Panics
+///
+/// Propagates a panicking handler, but unlike [`map_work_batch_entries`] the
+/// entries already running on other lanes finish first: a panic stops that lane,
+/// not the batch.
+///
 /// # Errors
 ///
 /// Returns an error when the completion batch cannot be assembled.
@@ -196,7 +204,7 @@ pub fn map_work_batch_entries_grouped(
         let unit: Vec<usize> = group
             .iter()
             .filter_map(|entry_id| index_of.get(entry_id).copied())
-            .inspect(|index| claimed[*index] = true)
+            .filter(|index| !std::mem::replace(&mut claimed[*index], true))
             .collect();
         if !unit.is_empty() {
             units.push(unit);
@@ -205,7 +213,12 @@ pub fn map_work_batch_entries_grouped(
     for group in &batch.resource_plan.parallel_groups {
         for entry_id in group {
             if let Some(index) = index_of.get(entry_id).copied() {
-                claimed[index] = true;
+                // An entry named by more than one group must still run once: these
+                // handlers have external side effects, so a second unit would send
+                // the same message twice while only the later completion survived.
+                if std::mem::replace(&mut claimed[index], true) {
+                    continue;
+                }
                 units.push(vec![index]);
             }
         }

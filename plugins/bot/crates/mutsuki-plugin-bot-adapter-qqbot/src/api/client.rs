@@ -289,7 +289,16 @@ impl ReqwestQqHttpClient {
             .map_err(network_error)?;
         let body_limit = config.response_body_limit_bytes;
         let (tx, rx) = mpsc::channel::<HttpJob>();
-        let runtime = tokio::runtime::Builder::new_current_thread()
+        // Multi-threaded, and each job is spawned rather than blocked on. A
+        // current-thread runtime driven by `block_on` per job made this client a
+        // global serialisation point: callers may issue sends concurrently (the
+        // outbound runner overlaps independent conversations), but every request
+        // still queued behind the one in flight. Requests are IO-bound futures,
+        // so a small pool drives many of them at once; the real bound on
+        // concurrency is the caller's, not this pool's size.
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name(format!("qqbot-http-io-{}", config.account_id))
             .enable_all()
             .build()
             .map_err(network_error)?;
@@ -297,9 +306,17 @@ impl ReqwestQqHttpClient {
             .name(format!("qqbot-http-{}", config.account_id))
             .spawn(move || {
                 while let Ok(job) = rx.recv() {
-                    let result = runtime.block_on(send_reqwest(&client, job.request, body_limit));
-                    let _ = job.reply.send(result);
+                    let client = client.clone();
+                    runtime.spawn(async move {
+                        let result = send_reqwest(&client, job.request, body_limit).await;
+                        // A dropped receiver means the caller gave up; the
+                        // request itself already happened either way.
+                        let _ = job.reply.send(result);
+                    });
                 }
+                // Dropping the runtime here cancels anything still in flight,
+                // which is the intended shutdown behaviour: `tx` is only dropped
+                // when the client is.
             })
             .map_err(network_error)?;
         Ok(Self {
@@ -600,6 +617,59 @@ mod production_tests {
         config.openapi_base_url = url.into();
         config.connect_timeout_ms = 500;
         config
+    }
+
+    /// The outbound runner overlaps independent conversations, which is wasted if
+    /// the client funnels every request through one in-flight slot. The server
+    /// here answers only once both requests have arrived, so this passes only
+    /// when they are genuinely concurrent -- and fails on the request timeout
+    /// rather than hanging when they are not.
+    #[test]
+    fn production_http_sends_concurrent_requests_concurrently() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let url = format!("http://{address}/test");
+        let server = std::thread::spawn(move || {
+            let mut accepted = Vec::new();
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0_u8; 1024];
+                let _ = stream.read(&mut request).unwrap();
+                accepted.push(stream);
+            }
+            for mut stream in accepted {
+                stream
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+                    )
+                    .unwrap();
+            }
+        });
+
+        let mut config = local_config(&url);
+        config.request_timeout_ms = 3_000;
+        let client = Arc::new(ReqwestQqHttpClient::new(&config).unwrap());
+
+        let senders: Vec<_> = (0..2)
+            .map(|_| {
+                let client = client.clone();
+                let url = url.clone();
+                std::thread::spawn(move || client.send(request_empty(HttpMethod::Get, url)))
+            })
+            .collect();
+        let outcomes: Vec<_> = senders
+            .into_iter()
+            .map(|sender| sender.join().unwrap())
+            .collect();
+
+        for outcome in &outcomes {
+            assert!(
+                outcome.is_ok(),
+                "both requests must be in flight together: {outcome:?}"
+            );
+        }
+        drop(client);
+        server.join().unwrap();
     }
 
     fn serve_once(
