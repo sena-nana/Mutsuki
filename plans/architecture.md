@@ -181,6 +181,15 @@ bounded channel 的 `try_send` 原子判定，不能用旁路计数先判断再�
 给出 parallel_groups、serial_groups 和 parallelism_limit；Host / SDK scalar adapter 只能
 在 scheduler budget、HostCapacity、runner capability 和 resource plan 都允许时有界并行。
 
+条目按各自的 `OrderingRequirement` 进入计划：`None` 归入 parallel_groups；
+`SameResourceOrder { ref_id }` 按 `ref_id` 归组，**同键一个有序序列、异键互相独立**，
+`parallelism_limit` 因此等于无序条目数加键的个数；`PreserveSubmitOrder` 与
+`StrictSequence` 约束整个 work set，与写冲突一样把 `parallelism_limit` 压回 1。
+键级并行只有在 runner 按计划执行时才兑现（Rust SDK 为
+`map_work_batch_entries_grouped`，顺序执行的 runner 始终合法，因为更严格恒定安全），
+且仍受 runner 自己声明的 `max_entry_concurrency` 收紧——计划表达的是数据依赖允许多少并行，
+descriptor 表达的是 runner 能承受多少，二者取小。
+
 批次间并发由 `RunnerConcurrency` 明确声明。`Exclusive` 保持每个逻辑 runner id 一个
 active batch；`Reentrant` 允许一个共享 async handler 在声明的 batch/entry 上限内并发；
 `Sharded` 允许固定数量的同步或外部进程实例并发。registry freeze 会校验实例数量与
