@@ -991,10 +991,17 @@ impl ServiceConfig {
 
     pub fn load(overrides: ConfigOverrides) -> ConfigResult<Self> {
         let mut config = Self::default();
-        if let Some(home) = overrides.home_dir {
+        // Kept so it can be re-asserted after the merges below. `merge` replaces the
+        // whole `service` section, and a config file that simply omits `home_dir`
+        // still deserializes one -- the serde default, which is the real `$HOME`.
+        // Without this the caller's explicit home was silently discarded and every
+        // derived directory, including the control token, landed in the user's home.
+        let explicit_home = overrides
+            .home_dir
+            .clone()
+            .or_else(|| env::var("MUTSUKI_HOME").ok().map(PathBuf::from));
+        if let Some(home) = explicit_home.clone() {
             config.service.home_dir = home;
-        } else if let Ok(home) = env::var("MUTSUKI_HOME") {
-            config.service.home_dir = PathBuf::from(home);
         }
         config.resolve_relative_dirs();
 
@@ -1036,6 +1043,10 @@ impl ServiceConfig {
         }
         if let Some(token) = overrides.control_token {
             config.ipc.token = Some(token);
+        }
+        // An explicit home outranks a file that never named one; see `explicit_home`.
+        if let Some(home) = explicit_home {
+            config.service.home_dir = home;
         }
         config.load_secret_file(&local_file)?;
         config.resolve_relative_dirs();
@@ -1931,6 +1942,34 @@ json = true
         assert!(config.plugins.dynamic_dirs.is_empty());
         assert!(config.observe.json);
         assert_eq!(config.observe.log_file, "service.log");
+    }
+
+    /// `merge` replaces the whole `service` section, so a config file that merely
+    /// omits `home_dir` still supplies serde's default -- the real `$HOME`. The
+    /// explicit override has to survive that, or the caller silently gets the
+    /// user's home and writes data, logs, run state and the control token there.
+    #[test]
+    fn explicit_home_override_survives_a_config_file_that_omits_it() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("isolated-home");
+        let config_path = root.path().join("service.toml");
+        std::fs::write(
+            &config_path,
+            "[service]\ndata_dir = \"data\"\nlog_dir = \"logs\"\nplugin_dir = \"plugins\"\nrun_dir = \"run\"\n[ipc]\nenabled = false\n",
+        )
+        .unwrap();
+
+        let config = ServiceConfig::load(ConfigOverrides {
+            config_file: Some(config_path),
+            home_dir: Some(home.clone()),
+            ..Default::default()
+        })
+        .unwrap();
+
+        assert_eq!(config.service.home_dir, home);
+        assert_eq!(config.service.data_dir, home.join("data"));
+        assert_eq!(config.service.log_dir, home.join("logs"));
+        assert_eq!(config.service.run_dir, home.join("run"));
     }
 
     #[test]
