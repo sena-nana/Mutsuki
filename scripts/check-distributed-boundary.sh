@@ -4,6 +4,15 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
+# Every check below is an `if rg ...; then fail; fi`. A missing `rg` exits 127,
+# which reads as "no matches" -- and `set -e` does not fire inside an `if`
+# condition -- so without this guard the script prints "passed" having scanned
+# nothing at all. Fail loudly instead of reporting a vacuous green.
+if ! command -v rg >/dev/null 2>&1; then
+  echo "distributed boundary check needs ripgrep (rg); install it and re-run" >&2
+  exit 1
+fi
+
 forbidden_dependency='(^[[:space:]]*[[:alnum:]_.-]*(cluster|distributed|consensus|quorum|remote[-_]resource|trust|attestation|openraft|raft|libp2p|quinn|tonic|transport)[[:alnum:]_.-]*[[:space:]]*=)|(package[[:space:]]*=[[:space:]]*"[[:alnum:]_.-]*(cluster|distributed|consensus|quorum|remote[-_]resource|trust|attestation|openraft|raft|libp2p|quinn|tonic|transport)[[:alnum:]_.-]*")'
 if rg -n -i "$forbidden_dependency" crates/mutsuki-runtime-{contracts,core,sdk,sdk-macros}/Cargo.toml; then
   echo "distributed boundary violation: forbidden cluster/transport dependency" >&2

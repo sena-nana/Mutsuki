@@ -8,5 +8,7 @@ mutsuki-agent-contracts = { path = "../../crates/mutsuki-agent-contracts" }
 mutsuki-agent-sdk = { path = "../../crates/mutsuki-agent-sdk" }
 serde = { version = "1.0", features = ["derive"] }
 
-[lints]
-workspace = true
+# No `lints.workspace = true` here. These packages are in the root manifest's
+# `exclude` list, so there is no workspace to inherit from and Cargo refuses the
+# manifest outright with "failed to find a workspace root" -- which also means a
+# copy of this template cannot build anywhere else either. Keep them standalone.
