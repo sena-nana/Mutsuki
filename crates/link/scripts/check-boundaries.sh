@@ -4,6 +4,15 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
+# Each check below is an `if rg ...; then fail; fi`. A missing `rg` exits 127,
+# which reads as "no matches", and `set -e` does not fire inside an `if`
+# condition -- so without this guard the script reports success having scanned
+# nothing. Fail loudly instead.
+if ! command -v rg >/dev/null 2>&1; then
+  echo "boundary check needs ripgrep (rg); install it and re-run" >&2
+  exit 1
+fi
+
 if rg -n 'MutsukiCore|MutsukiServiceHost|MutsukiDistributedHost|mutsuki-runtime|nana-tracking|tokio|quinn|rustls|mdns' crates/mutsuki-link-core/Cargo.toml; then
   echo "forbidden runtime, product, or concrete network dependency in link-core" >&2
   exit 1
