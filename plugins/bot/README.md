@@ -73,12 +73,12 @@ Complete crate table and Host-assembly boundaries: `docs/architecture.md`.
 
 This lists what the first-party Bot console *composes*, not what this package owns.
 Entries without Bot content live with their owners — `mutsuki-config-*` and
-`mutsuki-plugin-config-web` in `plugins/std`, `mutsuki-web-extension-*` in `hosts/web`,
+`mutsuki-std-web-extension-config` in `plugins/std`, `mutsuki-web-extension-*` in `hosts/web`,
 `mutsuki-agent-web-extension` in `kits/agent`, `mutsuki-module-catalog` in `crates/`.
 Bot-owned console pages are the `mutsuki-bot-web-extension-*` crates.
 
 - `mutsuki-config-service` / `mutsuki-config-derive`: Schema-first ConfigDescriptor + `#[derive(MutsukiConfig)]`
-- `mutsuki-plugin-config-web`: 默认 Web 配置插件（Lilia Workspace 壳 + `@mutsuki/ui` styles）
+- `mutsuki-std-web-extension-config`: 默认 Web 配置插件（Lilia Workspace 壳 + `@mutsuki/ui` styles）
 - `mutsuki-web-extension-control`: ServiceHost ControlMethod 的 `control.*` Web RPC 代理（`runtime.read` / `runtime.write` 门禁；含 task 调试与 lifecycle drain/shutdown）
 - `mutsuki-web-extension-overview`: Web 概览（`overview.summary`：经 control-web 聚合状态/结构/计数/uptime）
 - `mutsuki-bot-web-extension-database`: Web 数据库查看（读取当前 Bot 实际接入的 `BotStateDb`：表列表、列结构、分页行）

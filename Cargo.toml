@@ -213,7 +213,7 @@ mutsuki-plugin-bot-command = { path = "plugins/bot/crates/mutsuki-plugin-bot-com
 mutsuki-plugin-bot-conversation-context = { path = "plugins/bot/crates/mutsuki-plugin-bot-conversation-context" }
 mutsuki-plugin-bot-persona = { path = "plugins/bot/crates/mutsuki-plugin-bot-persona" }
 mutsuki-plugin-bot-reply = { path = "plugins/bot/crates/mutsuki-plugin-bot-reply" }
-mutsuki-plugin-config-web = { path = "plugins/std/plugins/mutsuki-plugin-config-web" }
+mutsuki-std-web-extension-config = { path = "plugins/std/crates/mutsuki-std-web-extension-config" }
 mutsuki-web-extension-control = { path = "hosts/web/crates/mutsuki-web-extension-control" }
 mutsuki-bot-web-extension-database = { path = "plugins/bot/crates/mutsuki-bot-web-extension-database" }
 mutsuki-plugin-bot-event-router = { path = "plugins/bot/crates/mutsuki-plugin-bot-event-router" }
@@ -236,7 +236,7 @@ mutsuki-plugin-io-browser-chromium = { path = "plugins/std/plugins/mutsuki-plugi
 mutsuki-plugin-io-http-client = { path = "plugins/std/plugins/mutsuki-plugin-io-http-client" }
 mutsuki-plugin-resource-memory = { path = "plugins/std/plugins/mutsuki-plugin-resource-memory" }
 mutsuki-plugin-resource-sqlite = { path = "plugins/std/plugins/mutsuki-plugin-resource-sqlite" }
-mutsuki-plugin-config-sqlite = { path = "plugins/std/plugins/mutsuki-plugin-config-sqlite" }
+mutsuki-config-sqlite = { path = "plugins/std/crates/mutsuki-config-sqlite" }
 mutsuki-std-effect = { path = "plugins/std/crates/mutsuki-std-effect" }
 mutsuki-std-plugins = { path = "plugins/std/crates/mutsuki-std-plugins" }
 mutsuki-std-service-host-integration = { path = "plugins/std/crates/mutsuki-std-service-host-integration" }

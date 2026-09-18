@@ -1,5 +1,5 @@
 [package]
-name = "mutsuki-plugin-config-web"
+name = "mutsuki-std-web-extension-config"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

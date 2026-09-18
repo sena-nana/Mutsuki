@@ -11,7 +11,7 @@ BANNER="/* Synced from @mutsuki/ui dist/mutsuki-ui.css — run: scripts/sync-mut
 for dest in \
   "$ROOT/crates/mutsuki-bot-web-host-integration/assets/mutsuki-ui.css" \
   "$WORKSPACE_ROOT/hosts/web/crates/mutsuki-web-extension-overview/assets/mutsuki-ui.css" \
-  "$WORKSPACE_ROOT/plugins/std/plugins/mutsuki-plugin-config-web/assets/mutsuki-ui.css"
+  "$WORKSPACE_ROOT/plugins/std/crates/mutsuki-std-web-extension-config/assets/mutsuki-ui.css"
 do
   { echo "$BANNER"; cat "$SRC"; } > "$dest"
   echo "wrote $dest"

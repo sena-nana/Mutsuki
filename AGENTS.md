@@ -44,7 +44,7 @@ crate/module/type/trait、审计组件命名与职责边界时，先读
 | `kits/agent/` | Agent 协议、SDK、插件、testkit 与 bundle |
 | `kits/python-runner/` | Python Runner SDK、wire mirror、transport 与 conformance |
 | `plugins/bot/` | Bot 协议、SDK、库面 store/service（`mutsuki-bot-*`）、可加载插件层（`mutsuki-plugin-bot-*`）、平台 Adapter、Host integration 与 testkit |
-| `plugins/std/` | `protocols/` 的 `mutsuki-protocol-*`、`plugins/` 的 `mutsuki-plugin-*`（资源/provider、effect、workflow、observe）与 `crates/` 支撑 crate |
+| `plugins/std/` | `protocols/` 的 `mutsuki-protocol-*`、`plugins/` 的 `mutsuki-plugin-*`（资源/provider、effect、workflow、observe）与 `crates/` 支撑 crate（config service/repository、WebExtension 等非插件面） |
 | `products/bot/` | 第一方 Bot 产品入口、配置、运行装配与跨 package 验收 |
 
 ## Hard Rules

@@ -56,10 +56,10 @@ use mutsuki_bot_web_extension_sandbox::{
     SandboxWebExtension, materialize_frontend_assets as materialize_sandbox_assets,
 };
 use mutsuki_config_service::{ConfigProviderRegistry, ConfigService, InMemoryConfigRepository};
-use mutsuki_plugin_config_web::{
+use mutsuki_service_control::ControlHandler;
+use mutsuki_std_web_extension_config::{
     ConfigWebExtension, materialize_frontend_assets as materialize_config_assets,
 };
-use mutsuki_service_control::ControlHandler;
 use mutsuki_web_extension::content_hash;
 use mutsuki_web_extension_control::{
     ControlRpcCaller, ControlWebExtension,
@@ -77,7 +77,7 @@ use mutsuki_web_host::{
 use mutsuki_web_protocol::{DeploymentMode, WebApplicationDescriptor, WebShellAssets};
 use serde_json::json;
 
-pub use mutsuki_plugin_config_web::{ConfigNavigationGroup, ConfigNavigationItem};
+pub use mutsuki_std_web_extension_config::{ConfigNavigationGroup, ConfigNavigationItem};
 
 pub const CONSOLE_APPLICATION_ID: &str = "mutsuki.bot.console";
 

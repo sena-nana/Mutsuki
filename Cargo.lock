@@ -935,7 +935,7 @@ name = "config-demo"
 version = "0.1.0"
 dependencies = [
  "mutsuki-config-service",
- "mutsuki-plugin-config-web",
+ "mutsuki-std-web-extension-config",
  "mutsuki-web-host",
  "mutsuki-web-protocol",
  "serde",
@@ -3801,6 +3801,7 @@ dependencies = [
  "mutsuki-bot-testkit",
  "mutsuki-bot-web-host-integration",
  "mutsuki-config-service",
+ "mutsuki-config-sqlite",
  "mutsuki-distributed-contracts",
  "mutsuki-distributed-control-client",
  "mutsuki-plugin-agent-model-gateway",
@@ -3812,7 +3813,6 @@ dependencies = [
  "mutsuki-plugin-bot-event-router",
  "mutsuki-plugin-bot-flow-agent-tool",
  "mutsuki-plugin-bot-mihuashi",
- "mutsuki-plugin-config-sqlite",
  "mutsuki-plugin-resource-sqlite",
  "mutsuki-protocol-browser",
  "mutsuki-runtime-contracts",
@@ -4038,6 +4038,7 @@ dependencies = [
  "mutsuki-bot-web-extension-qq",
  "mutsuki-bot-web-host-integration",
  "mutsuki-config-service",
+ "mutsuki-config-sqlite",
  "mutsuki-plugin-bot-adapter-qqbot",
  "mutsuki-plugin-bot-agent",
  "mutsuki-plugin-bot-bilibili",
@@ -4051,7 +4052,6 @@ dependencies = [
  "mutsuki-plugin-bot-mihuashi",
  "mutsuki-plugin-bot-persona",
  "mutsuki-plugin-bot-reply",
- "mutsuki-plugin-config-sqlite",
  "mutsuki-plugin-resource-sqlite",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
@@ -4205,8 +4205,8 @@ dependencies = [
  "mutsuki-bot-web-extension-sandbox",
  "mutsuki-config-service",
  "mutsuki-plugin-bot-command",
- "mutsuki-plugin-config-web",
  "mutsuki-service-control",
+ "mutsuki-std-web-extension-config",
  "mutsuki-web-extension",
  "mutsuki-web-extension-control",
  "mutsuki-web-extension-overview",
@@ -4254,6 +4254,16 @@ dependencies = [
  "rmp-serde",
  "serde",
  "tokio",
+]
+
+[[package]]
+name = "mutsuki-config-sqlite"
+version = "0.1.0"
+dependencies = [
+ "mutsuki-config-service",
+ "rusqlite",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -4858,35 +4868,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mutsuki-plugin-config-sqlite"
-version = "0.1.0"
-dependencies = [
- "mutsuki-config-service",
- "rusqlite",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "mutsuki-plugin-config-web"
-version = "0.1.0"
-dependencies = [
- "futures",
- "futures-executor",
- "mutsuki-config-service",
- "mutsuki-web-bridge",
- "mutsuki-web-extension-api",
- "mutsuki-web-host",
- "mutsuki-web-protocol",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tokio-tungstenite 0.30.0",
- "uuid",
-]
-
-[[package]]
 name = "mutsuki-plugin-db-sqlite"
 version = "0.1.0"
 dependencies = [
@@ -5474,6 +5455,25 @@ dependencies = [
  "mutsuki-service-runtime",
  "mutsuki-std-plugins",
  "serde_json",
+]
+
+[[package]]
+name = "mutsuki-std-web-extension-config"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "futures-executor",
+ "mutsuki-config-service",
+ "mutsuki-web-bridge",
+ "mutsuki-web-extension-api",
+ "mutsuki-web-host",
+ "mutsuki-web-protocol",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
+ "uuid",
 ]
 
 [[package]]

@@ -10,7 +10,7 @@ use mutsuki_config_service::{
     ConfigApplyMode, ConfigProviderRegistry, ConfigService, ConfigValue, MemoryConfigProvider,
     MutsukiConfig, MutsukiConfigSchema, SecretState,
 };
-use mutsuki_plugin_config_web::{ConfigWebExtension, materialize_frontend_assets};
+use mutsuki_std_web_extension_config::{ConfigWebExtension, materialize_frontend_assets};
 use mutsuki_web_host::{MinimalWebApplication, MutsukiWebHost, WebHost};
 use mutsuki_web_protocol::{
     DeploymentMode, RpcRequest, WEB_PROTOCOL_VERSION, WebApplicationDescriptor, WebShellAssets,

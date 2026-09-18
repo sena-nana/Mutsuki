@@ -417,6 +417,24 @@ def check_materialized_assets() -> None:
             f"plugins/bot/scripts/sync-mutsuki-ui-css.sh -- {groups}"
         )
 
+    # Equal contents are not enough: the sync script writes to hard-coded paths, so a
+    # crate that moves leaves the copies consistent while the script silently targets a
+    # directory that no longer exists. Check the script still addresses what is here.
+    script = ROOT / "plugins/bot/scripts/sync-mutsuki-ui-css.sh"
+    if script.exists():
+        text = script.read_text(encoding="utf-8")
+        targets = {
+            path.replace("$ROOT", "plugins/bot").replace("$WORKSPACE_ROOT", "").lstrip("/")
+            for path in re.findall(r'"(\$(?:WORKSPACE_)?ROOT[^"]*mutsuki-ui\.css)"', text)
+        }
+        actual = {str(path.relative_to(ROOT)) for path in copies}
+        if targets != actual:
+            fail(
+                "sync-mutsuki-ui-css.sh destinations no longer match the embedded copies:\n"
+                f"  script writes: {sorted(targets)}\n"
+                f"  copies found : {sorted(actual)}"
+            )
+
 
 def check_nested_workflows() -> None:
     """No new never-scheduled workflow may appear under a package's own `.github/`."""

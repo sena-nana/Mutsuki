@@ -39,6 +39,7 @@ use mutsuki_bot_service_host_integration::{
 use mutsuki_bot_state_db::BotStateDbRepository;
 use mutsuki_bot_testkit::MemoryConversationContextStore;
 use mutsuki_config_service::{ConfigContext, ConfigProviderRegistry, ConfigService, ConfigValue};
+use mutsuki_config_sqlite::SqliteConfigRepository;
 use mutsuki_plugin_bot_agent::{
     AgentBridgeClient, BOT_AGENT_BRIDGE_PLUGIN_ID, BOT_AGENT_NODE_SUBMIT, bot_agent_bridge_manifest,
 };
@@ -53,7 +54,6 @@ use mutsuki_plugin_bot_event_router::{
 use mutsuki_plugin_bot_interaction::{BOT_INTERACTION_PLUGIN_ID, bot_interaction_manifest};
 use mutsuki_plugin_bot_persona::bot_persona_manifest;
 use mutsuki_plugin_bot_reply::bot_reply_manifest;
-use mutsuki_plugin_config_sqlite::SqliteConfigRepository;
 use mutsuki_runtime_contracts::{
     CompletionBatch, ExecutionClass, InvocationMode, ResourceAccess, ResourceId, ResourceLifetime,
     ResourceRef, ResourceSealState, ResourceSemantic, RunnerConcurrency, RunnerResult,
