@@ -285,11 +285,48 @@ def _matches_source(rule: dict[str, object], package: dict[str, object]) -> bool
     )
 
 
+def _check_boundary_rules_still_bind(
+    config: dict[str, object], metadata: dict[str, object]
+) -> None:
+    """A rule that matches no package enforces nothing, silently.
+
+    Source matchers are written as paths and package-name patterns, so renaming or
+    moving a crate can detach a rule from everything it was meant to constrain
+    while this gate keeps reporting success. The same goes for an `allow_*` entry
+    naming a package that no longer exists: it is a stale exception that reads as
+    a deliberate carve-out.
+
+    `forbidden_*` entries are deliberately not checked here -- naming a package or
+    root that does not exist yet is a legitimate way to forbid it in advance.
+    """
+    packages = list(metadata["packages"])
+    names = {str(package["name"]) for package in packages}
+    problems: list[str] = []
+    for rule in config.get("rules", []):
+        rule_name = str(rule.get("name", "unnamed"))
+        if not any(_matches_source(rule, package) for package in packages):
+            problems.append(
+                f"{rule_name}: matches no package, so it constrains nothing; "
+                "update its source_roots/source_packages/prefixes or drop the rule"
+            )
+        for key in ("allow_source_packages", "allow_target_packages"):
+            for entry in rule.get(key, []):
+                if str(entry) not in names:
+                    problems.append(
+                        f"{rule_name}: {key} names '{entry}', which is not a workspace "
+                        "package; drop the stale exception"
+                    )
+    if problems:
+        fail("package-boundaries.toml rules no longer bind:\n  " + "\n  ".join(problems))
+
+
 def check_package_boundaries(metadata: dict[str, object]) -> None:
     with PACKAGE_BOUNDARIES.open("rb") as handle:
         config = tomllib.load(handle)
     if config.get("version") != 1:
         fail("package-boundaries.toml must declare version = 1")
+
+    _check_boundary_rules_still_bind(config, metadata)
 
     violations: list[str] = []
     for rule in config.get("rules", []):
