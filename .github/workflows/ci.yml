@@ -104,6 +104,16 @@ jobs:
             cargo check --manifest-path "$crate/Cargo.toml" --all-targets
           done
 
+      - name: Check feature-gated Link examples
+        if: ${{ !cancelled() }}
+        # `--all-targets` silently skips an example whose `required-features` are
+        # off, so the workspace build never compiles these five. The only thing
+        # that did was crates/link/scripts/check-boundaries.sh, which runs solely
+        # from a nested workflow GitHub never schedules. `mdns` and
+        # `system-keyring` stay off on purpose: they pull a system discovery and
+        # credential backend that this runner has no packages for.
+        run: cargo check -p mutsuki-link --features local,tcp,quic,discovery,pairing --all-targets
+
       - name: Print sccache stats
         if: always()
         run: sccache --show-stats
