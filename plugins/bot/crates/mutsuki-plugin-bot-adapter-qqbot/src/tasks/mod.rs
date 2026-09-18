@@ -18,7 +18,10 @@ use mutsuki_runtime_contracts::{
     WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
-use mutsuki_runtime_sdk::{PluginBuilder, ProtocolDescriptorBuilder, map_work_batch_entries};
+use mutsuki_runtime_sdk::{
+    PluginBuilder, ProtocolDescriptorBuilder, map_work_batch_entries,
+    map_work_batch_entries_grouped,
+};
 use serde_json::{Value, json};
 
 use crate::adapter::{
@@ -456,7 +459,9 @@ impl Runner for QqOpenApiRunner {
         batch: WorkBatch,
     ) -> RuntimeResult<CompletionBatch> {
         let account_id = self.service.account_id().to_owned();
-        map_work_batch_entries(&batch, |task| {
+        // Grouped, not sequential: sends to different conversations are
+        // independent, and the plan already says which entries may overlap.
+        map_work_batch_entries_grouped(&batch, |task| {
             if task.protocol_id.as_str() == BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID {
                 return complete_forward_fold(task);
             }
@@ -734,7 +739,13 @@ pub fn openapi_descriptor(plugin_generation: u64, media_enabled: bool) -> Runner
         output_schema: json!({
             "events": [QQBOT_OPENAPI_RESULT_EVENT]
         }),
-        batch: native_batch_capability(RunnerSideEffect::External, 1, 32),
+        // A batch of one could never overlap anything. Entries are ordered per
+        // conversation by the plan, so several may be claimed together and the
+        // independent ones run side by side.
+        batch: RunnerBatchCapability {
+            max_entry_concurrency: 8,
+            ..native_batch_capability(RunnerSideEffect::External, 8, 32)
+        },
         payload: RunnerPayloadCapability::default(),
         resources: resource_capability(),
         ordering: preserve_submit_order(),

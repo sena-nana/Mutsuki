@@ -1252,10 +1252,10 @@ pub fn rate_limit_sample() -> Sample {
     config.retry_base_delay_ms = 0;
     config.retry_max_delay_ms = 10;
     let client = ScriptedHttpClient {
-        responses,
+        responses: Mutex::new(responses),
         requests: requests.clone(),
     };
-    let mut transport = QqOpenApiTransport::new(
+    let transport = QqOpenApiTransport::new(
         config,
         Box::new(client),
         Arc::new(StaticQqCredentials::new("BENCHMARK_SECRET")),
@@ -1359,14 +1359,16 @@ pub fn wait_resume_sample() -> Sample {
 }
 
 struct ScriptedHttpClient {
-    responses: VecDeque<QqHttpResponse>,
+    responses: Mutex<VecDeque<QqHttpResponse>>,
     requests: Arc<Mutex<u64>>,
 }
 
 impl QqHttpClient for ScriptedHttpClient {
-    fn send(&mut self, _request: QqHttpRequest) -> Result<QqHttpResponse, QqOpenApiError> {
+    fn send(&self, _request: QqHttpRequest) -> Result<QqHttpResponse, QqOpenApiError> {
         *self.requests.lock().unwrap() += 1;
         self.responses
+            .lock()
+            .unwrap()
             .pop_front()
             .ok_or_else(|| QqOpenApiError::InvalidResponse("benchmark response exhausted".into()))
     }

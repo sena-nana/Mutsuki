@@ -1326,3 +1326,133 @@ fn optional_checkpointable_plugin_can_persist_and_restore_a_local_task() {
     assert_eq!(restored.lease_id, None);
     assert_eq!(restored.registry_generation, 0);
 }
+
+mod grouped_batches {
+    use super::*;
+    use mutsuki_runtime_contracts::{
+        BatchEntry, BatchKey, DispatchLane, OrderingRequirement, WorkResourcePlan,
+    };
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    fn batch(tasks: &[Task], plan: WorkResourcePlan) -> WorkBatch {
+        let entries = tasks
+            .iter()
+            .enumerate()
+            .map(|(index, task)| BatchEntry {
+                entry_id: format!("entry-{index}").into(),
+                task_id: task.task_id.clone(),
+                trace_id: None,
+                parent_id: None,
+                payload_index: index,
+                resource_requirement_indices: Vec::new(),
+                cancel_index: None,
+                deadline_tick: None,
+                priority: 0,
+                lane: DispatchLane::Normal,
+                ordering: OrderingRequirement::None,
+            })
+            .collect();
+        WorkBatch {
+            batch_id: "batch:grouped".into(),
+            tick_id: "tick:grouped".into(),
+            batch_key: BatchKey::from("runner:grouped"),
+            entries,
+            payload: BatchPayload::from_tasks(tasks),
+            resource_plan: plan,
+            task_leases: Vec::new(),
+        }
+    }
+
+    fn task(name: &str) -> Task {
+        Task::new(name, "test.protocol/v1", json!({ "name": name }))
+    }
+
+    /// Entries in one serial group are one conversation: they must not overtake
+    /// each other however much parallelism the plan allows elsewhere.
+    #[test]
+    fn a_serial_group_runs_in_order() {
+        let tasks = vec![task("first"), task("second"), task("third")];
+        let mut plan = WorkResourcePlan::empty();
+        plan.serial_groups = vec![vec!["entry-0".into(), "entry-1".into(), "entry-2".into()]];
+        plan.parallelism_limit = 1;
+        let seen = Arc::new(Mutex::new(Vec::new()));
+
+        let completion = map_work_batch_entries_grouped(&batch(&tasks, plan), |task| {
+            seen.lock().unwrap().push(task.task_id.to_string());
+            Ok(RunnerResult::completed(task.task_id.clone()))
+        })
+        .unwrap();
+
+        assert_eq!(completion.results.len(), 3);
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec!["first".to_string(), "second".into(), "third".into()]
+        );
+    }
+
+    /// The whole point: independent groups overlap. Each handler refuses to
+    /// finish until the other has started, so this completes only if both are in
+    /// flight at once -- and reports a timeout rather than hanging if they are not.
+    #[test]
+    fn independent_groups_run_concurrently() {
+        let tasks = vec![task("alpha"), task("beta")];
+        let mut plan = WorkResourcePlan::empty();
+        plan.serial_groups = vec![vec!["entry-0".into()], vec!["entry-1".into()]];
+        plan.parallelism_limit = 2;
+
+        let (alpha_tx, alpha_rx) = mpsc::channel();
+        let (beta_tx, beta_rx) = mpsc::channel();
+        let alpha_rx = Mutex::new(alpha_rx);
+        let beta_rx = Mutex::new(beta_rx);
+
+        let completion = map_work_batch_entries_grouped(&batch(&tasks, plan), |task| {
+            let waited = if task.task_id.as_str() == "alpha" {
+                alpha_tx.send(()).ok();
+                beta_rx.lock().unwrap().recv_timeout(Duration::from_secs(5))
+            } else {
+                beta_tx.send(()).ok();
+                alpha_rx
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(5))
+            };
+            waited.map_err(|_| {
+                RuntimeError::new(
+                    "test.not_concurrent",
+                    "test",
+                    "the other group never started",
+                )
+            })?;
+            Ok(RunnerResult::completed(task.task_id.clone()))
+        })
+        .unwrap();
+
+        for result in &completion.results {
+            assert!(
+                result.error.is_none(),
+                "both groups must be in flight together: {:?}",
+                result.error
+            );
+        }
+    }
+
+    /// A plan that permits nothing must behave exactly like the sequential helper.
+    #[test]
+    fn a_plan_without_parallelism_matches_the_sequential_helper() {
+        let tasks = vec![task("one"), task("two")];
+        let mut plan = WorkResourcePlan::empty();
+        plan.serial_groups = vec![vec!["entry-0".into()], vec!["entry-1".into()]];
+        plan.parallelism_limit = 1;
+        let seen = Arc::new(Mutex::new(Vec::new()));
+
+        let completion = map_work_batch_entries_grouped(&batch(&tasks, plan), |task| {
+            seen.lock().unwrap().push(task.task_id.to_string());
+            Ok(RunnerResult::completed(task.task_id.clone()))
+        })
+        .unwrap();
+
+        assert_eq!(completion.results.len(), 2);
+        assert_eq!(*seen.lock().unwrap(), vec!["one".to_string(), "two".into()]);
+    }
+}

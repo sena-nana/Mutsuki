@@ -41,7 +41,7 @@ impl QqOpenApiTransport {
     }
 
     pub fn execute_json(
-        &mut self,
+        &self,
         method: HttpMethod,
         path: String,
         body: Value,
@@ -54,7 +54,7 @@ impl QqOpenApiTransport {
             let token = self.auth.bearer_token(
                 &self.config,
                 self.credentials.as_ref(),
-                self.http.as_mut(),
+                self.http.as_ref(),
             )?;
             let mut request = match &method {
                 HttpMethod::Get => request_empty(method.clone(), url.clone()),
@@ -100,17 +100,17 @@ impl QqOpenApiTransport {
         }
     }
 
-    pub fn access_token(&mut self) -> Result<String, QqOpenApiError> {
+    pub fn access_token(&self) -> Result<String, QqOpenApiError> {
         self.auth
-            .bearer_token(&self.config, self.credentials.as_ref(), self.http.as_mut())
+            .bearer_token(&self.config, self.credentials.as_ref(), self.http.as_ref())
     }
 
     pub fn invalidate_token(&self) {
         self.auth.invalidate();
     }
 
-    pub fn http(&mut self) -> &mut dyn QqHttpClient {
-        self.http.as_mut()
+    pub fn http(&self) -> &dyn QqHttpClient {
+        self.http.as_ref()
     }
 
     pub fn config(&self) -> &QqBotConfig {

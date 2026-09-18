@@ -13,9 +13,9 @@ pub struct MediaChunk {
     pub md5: String,
 }
 
-pub trait QqMediaProvider: Send {
+pub trait QqMediaProvider: Send + Sync {
     fn read_chunks(
-        &mut self,
+        &self,
         resource: &ResourceRef,
         block_size: u64,
     ) -> Result<Vec<MediaChunk>, QqMediaError>;
@@ -46,7 +46,7 @@ impl ResourceGatewayQqMediaProvider {
 
 impl QqMediaProvider for ResourceGatewayQqMediaProvider {
     fn read_chunks(
-        &mut self,
+        &self,
         resource: &ResourceRef,
         block_size: u64,
     ) -> Result<Vec<MediaChunk>, QqMediaError> {
