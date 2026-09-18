@@ -79,7 +79,7 @@ crate/module/type/trait、审计组件命名与职责边界时，先读
   - `cargo fmt --all -- --check`
   - `cargo check --workspace --all-targets --locked`
   - `cargo test --workspace --all-targets --locked`
-  - `bash scripts/check-distributed-boundary.sh`
+  - `bash scripts/check-distributed-boundary.sh`（需要 `ripgrep`；缺失时脚本直接失败而非空转通过）
   - `cargo bench-smoke`
 - Python、前端、集成和 owner 性能测试按 scoped AGENTS/SKILL 执行。
 - 依赖、产品装配或发布改动必须在无兄弟仓库的独立 clone 验证。
