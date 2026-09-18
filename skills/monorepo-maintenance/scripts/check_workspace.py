@@ -173,12 +173,40 @@ def check_required_paths() -> None:
         fail(f"missing required paths: {', '.join(missing)}")
 
 
+def git_ignored(relative_paths: list[str]) -> set[str]:
+    """The subset of `relative_paths` that git ignores.
+
+    Build products are not repository content. `target/` is excluded by name
+    elsewhere, but a package in the root manifest's `exclude` list is its own
+    workspace root, so building it writes a `Cargo.lock` *beside* its manifest
+    rather than under `target/`. Those are already ignored (see
+    `kits/agent/.gitignore`), so ask git instead of maintaining a second,
+    drifting copy of the ignore rules here.
+    """
+    if not relative_paths:
+        return set()
+    result = subprocess.run(
+        ["git", "check-ignore", "--stdin"],
+        cwd=ROOT,
+        input="\n".join(relative_paths),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    # 0 = some paths ignored, 1 = none ignored; anything else is a real failure.
+    if result.returncode not in (0, 1):
+        fail(result.stderr.strip() or "git check-ignore failed")
+    return {line for line in result.stdout.splitlines() if line}
+
+
 def check_single_workspace() -> None:
-    locks = sorted(
+    candidates = sorted(
         path.relative_to(ROOT).as_posix()
         for path in ROOT.rglob("Cargo.lock")
         if ".git" not in path.parts and "target" not in path.parts
     )
+    ignored = git_ignored(candidates)
+    locks = [path for path in candidates if path not in ignored]
     allowed = {"Cargo.lock", "fuzz/Cargo.lock"}
     unexpected = [path for path in locks if path not in allowed]
     if unexpected:

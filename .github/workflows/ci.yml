@@ -85,6 +85,25 @@ jobs:
         working-directory: fuzz
         run: cargo check --all-targets --locked
 
+      # The Agent examples and templates are also `exclude`d from the root workspace,
+      # so nothing above compiles them either. They had drifted: a blanket
+      # `lints.workspace = true` made all four unbuildable (an excluded package has no
+      # workspace to inherit from), and behind that the model-provider pair had gone
+      # stale against `AgentModelGenerateResult`. A template nobody compiles is a
+      # template that does not work when someone copies it.
+      - name: Check excluded Agent examples and templates
+        if: ${{ !cancelled() }}
+        run: |
+          for crate in \
+            kits/agent/examples/rust-agent-tool \
+            kits/agent/examples/rust-model-provider \
+            kits/agent/templates/rust-agent-tool \
+            kits/agent/templates/rust-model-provider
+          do
+            echo "== $crate"
+            cargo check --manifest-path "$crate/Cargo.toml" --all-targets
+          done
+
       - name: Print sccache stats
         if: always()
         run: sccache --show-stats
