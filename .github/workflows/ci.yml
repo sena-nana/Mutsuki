@@ -138,6 +138,18 @@ jobs:
         # failure modes least acceptable to leave unverified.
         run: cargo test -p mutsuki-distributed-runtime --features localization-testkit --all-targets --locked
 
+      # `rust-version` is a promise to anyone building this workspace, and nothing
+      # verified it: CI builds `stable`, so the declared floor could drift for
+      # releases without anyone noticing. The version is read from the manifest
+      # rather than duplicated here, so bumping it there moves this check too.
+      - name: Check the declared MSRV still builds
+        if: ${{ !cancelled() }}
+        run: |
+          msrv=$(python3 -c "import tomllib;print(tomllib.load(open('Cargo.toml','rb'))['workspace']['package']['rust-version'])")
+          echo "declared MSRV: $msrv"
+          rustup toolchain install "$msrv" --profile minimal
+          cargo "+$msrv" check --workspace --all-targets --locked
+
       - name: Print sccache stats
         if: always()
         run: sccache --show-stats
