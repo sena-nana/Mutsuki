@@ -23,9 +23,19 @@ fn product_for(deployment: &Path, mode: &str) -> (tempfile::TempDir, PathBuf) {
     let root = tempdir().unwrap();
     let product = root.path().join("product.toml");
     let deployment = deployment.to_string_lossy().replace('\\', "/");
+    // A `[service]` home inside the TempDir. Without it the config declares no
+    // home at all, so loading it resolved to the developer's real `~/.mutsuki`
+    // and the test created data, logs, run state and a control token there.
+    let home = root
+        .path()
+        .join("runtime")
+        .to_string_lossy()
+        .replace('\\', "/");
     fs::write(
         &product,
-        format!("[distribution]\nmode = \"{mode}\"\ndeployment = \"{deployment}\"\n"),
+        format!(
+            "[service]\nhome_dir = \"{home}\"\n\n[distribution]\nmode = \"{mode}\"\ndeployment = \"{deployment}\"\n"
+        ),
     )
     .unwrap();
     (root, product)

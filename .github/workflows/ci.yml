@@ -69,6 +69,20 @@ jobs:
       # so one flaky test silently switched the lint gate off for as long as it
       # kept failing. `!cancelled()` rather than `always()` so a superseded run
       # still stops immediately under the concurrency group above.
+      # The suite must stay inside its TempDirs. A config that declares no
+      # `[service] home_dir` silently resolves to the real `$HOME/.mutsuki`, and
+      # one test helper did exactly that -- writing data, logs, run state and a
+      # control token into the developer's home, where parallel tests then raced
+      # over the same directory.
+      - name: Check the test suite left no state in HOME
+        if: ${{ !cancelled() }}
+        run: |
+          if [ -e "$HOME/.mutsuki" ]; then
+            echo "tests wrote to $HOME/.mutsuki; give the config a home_dir inside its TempDir:"
+            find "$HOME/.mutsuki" -maxdepth 2
+            exit 1
+          fi
+
       - name: Lint
         if: ${{ !cancelled() }}
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
