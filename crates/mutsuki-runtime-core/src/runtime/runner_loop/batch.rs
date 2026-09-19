@@ -249,14 +249,11 @@ fn build_work_resource_plan(
         })
         .collect();
     let mut parallel_group = Vec::new();
-    // `SameResourceOrder` asks for order per key, not across the whole work set.
-    // Collapsing it into singleton serial groups -- as every non-`None` ordering
-    // used to be -- made it indistinguishable from `PreserveSubmitOrder`, so the
-    // capability the registry validates bought nothing over declaring the
-    // stricter one.
-    // Keyed orderings share this map under distinct namespaces, so a `ref_id` and
-    // a `sequence_id` that happen to spell the same string never collapse into one
-    // group.
+    // `SameResourceOrder` and `StrictSequence` both order per key, not across the
+    // whole work set. Collapsing them into singleton serial groups -- as every
+    // non-`None` ordering once did -- made them indistinguishable from
+    // `PreserveSubmitOrder`. They share this map under distinct namespaces so a
+    // `ref_id` and a `sequence_id` spelling the same string stay separate groups.
     let mut keyed_groups: BTreeMap<(u8, String), Vec<mutsuki_runtime_contracts::EntryId>> =
         BTreeMap::new();
     let mut strictly_serial = false;
@@ -295,8 +292,8 @@ fn build_work_resource_plan(
         plan.parallel_groups.push(parallel_group);
     }
     plan.parallelism_limit = if !plan.conflict_entries.is_empty() || strictly_serial {
-        // A submit-order or strict-sequence entry constrains the whole work set,
-        // and a write conflict is resolved by running nothing else beside it.
+        // A submit-order entry constrains the whole work set, and a write
+        // conflict is resolved by running nothing else beside it.
         1
     } else if keyed_group_count > 0 {
         // Every key may have one entry in flight, alongside the unordered ones.

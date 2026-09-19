@@ -112,26 +112,6 @@ UNSAFE_ALLOW_INHERITED = {
 }
 
 
-
-# Workflow files left under a package's own `.github/` by the pre-merge repositories.
-#
-# GitHub only schedules `.github/workflows` at the repository root, so none of these
-# run. They are kept because each still records what that package's owner gate is
-# meant to be, and porting them into the root workflows is a CI-budget decision rather
-# than a cleanup. They are enumerated so a *new* one cannot appear silently: that is
-# how `plugins/bot`'s owner performance gate broke unnoticed -- the benchmark stopped
-# assembling and nothing ran it for long enough that the failure reached `main`.
-#
-# Porting one into `.github/workflows` (or deleting it) means removing its entry here.
-# Empty on purpose. These files were pre-monorepo residue: each package once had
-# its own repository and its own CI, and the leftovers run `scripts/...` relative
-# to a package root against self-hosted runners, so they could not have worked
-# here even if GitHub scheduled them -- which it does not. The coverage they
-# asked for now lives at the repository root: every owner performance model in
-# `performance.yml`, and macOS in `platform-compat.yml`. The check below keeps
-# this set empty so the pattern cannot come back.
-DEAD_NESTED_WORKFLOWS: set[str] = set()
-
 def fail(message: str) -> None:
     print(f"workspace boundary check failed: {message}", file=sys.stderr)
     raise SystemExit(1)
@@ -506,7 +486,14 @@ def check_materialized_assets() -> None:
 
 
 def check_nested_workflows() -> None:
-    """No new never-scheduled workflow may appear under a package's own `.github/`."""
+    """No workflow may live under a package's own `.github/`.
+
+    GitHub only schedules workflows at the repository root, so one here is dead on
+    arrival. The repository used to carry sixteen of them -- pre-monorepo residue
+    that also resolved paths relative to a package root -- and a Bot performance
+    gate rotted unnoticed inside one. The coverage they asked for now lives in the
+    root workflows, so this is a flat prohibition rather than a known-list.
+    """
     found = {
         path.relative_to(ROOT).as_posix()
         for path in ROOT.rglob(".github/workflows/*.y*ml")
@@ -514,18 +501,11 @@ def check_nested_workflows() -> None:
         if not {"target", "node_modules", ".git"} & set(path.parts)
         and not path.relative_to(ROOT).as_posix().startswith(".github/")
     }
-    added = sorted(found - DEAD_NESTED_WORKFLOWS)
-    if added:
+    if found:
         fail(
             "workflow files under a package's own .github/ are never scheduled by GitHub; "
             "put the job in .github/workflows at the repository root instead:\n  "
-            + "\n  ".join(added)
-        )
-    removed = sorted(DEAD_NESTED_WORKFLOWS - found)
-    if removed:
-        fail(
-            "these dead nested workflows are gone; drop them from DEAD_NESTED_WORKFLOWS:\n  "
-            + "\n  ".join(removed)
+            + "\n  ".join(sorted(found))
         )
 
 

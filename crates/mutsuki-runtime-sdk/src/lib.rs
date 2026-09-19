@@ -212,21 +212,12 @@ pub fn map_work_batch_entries_grouped(
             units.push(unit);
         }
     }
-    for group in &batch.resource_plan.parallel_groups {
-        for entry_id in group {
-            if let Some(index) = index_of.get(entry_id).copied() {
-                // An entry named by more than one group must still run once: these
-                // handlers have external side effects, so a second unit would send
-                // the same message twice while only the later completion survived.
-                if std::mem::replace(&mut claimed[index], true) {
-                    continue;
-                }
-                units.push(vec![index]);
-            }
-        }
-    }
-    for (index, done) in claimed.iter().enumerate() {
-        if !done {
+    // Everything a serial group did not claim is independent and becomes its own
+    // unit: that covers `parallel_groups`, the conflict entries the plan leaves
+    // out, and anything a future plan shape adds. Together with the guard above
+    // this is exactly one unit per entry, so nothing runs twice or goes missing.
+    for (index, claimed) in claimed.iter().enumerate() {
+        if !claimed {
             units.push(vec![index]);
         }
     }
@@ -245,8 +236,6 @@ pub fn map_work_batch_entries_grouped(
         return map_work_batch_entries(batch, |task| handler(task));
     }
 
-    let mut completed: Vec<Option<EntryCompletion>> =
-        (0..batch.entries.len()).map(|_| None).collect();
     let handler = &handler;
     let unit_results: Vec<Vec<(usize, EntryCompletion)>> = std::thread::scope(|scope| {
         let mut joins = Vec::with_capacity(lanes);
@@ -270,24 +259,13 @@ pub fn map_work_batch_entries_grouped(
             .map(|join| join.join().expect("batch lane panicked"))
             .collect()
     });
-    for (index, completion) in unit_results.into_iter().flatten() {
-        completed[index] = Some(completion);
-    }
+    // The units partition every entry index, so restoring submit order is a sort
+    // rather than a scatter with a hole to fill.
+    let mut completed: Vec<(usize, EntryCompletion)> = unit_results.into_iter().flatten().collect();
+    completed.sort_by_key(|(index, _)| *index);
     let results = completed
         .into_iter()
-        .zip(batch.entries.iter())
-        .map(|(completion, entry)| {
-            completion.unwrap_or_else(|| EntryCompletion {
-                entry_id: entry.entry_id.clone(),
-                task_id: entry.task_id.clone(),
-                result: None,
-                error: Some(mutsuki_runtime_contracts::RuntimeError::new(
-                    mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
-                    "runtime.sdk",
-                    format!("batch.entry.{}.not_scheduled", entry.entry_id),
-                )),
-            })
-        })
+        .map(|(_, completion)| completion)
         .collect();
     Ok(CompletionBatch::from_results(batch, results))
 }
