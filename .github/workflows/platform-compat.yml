@@ -1,45 +1,56 @@
 name: Platform compatibility
 
+# Root CI builds ubuntu only. Each package used to carry its own
+# `platform-compat.yml` asking for macOS as well, but those live under a
+# package's `.github/` and GitHub never schedules them, so macOS has in practice
+# gone unbuilt. Nightly rather than per-PR: it is real coverage, not a reason to
+# double the cost of every pull request.
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  schedule:
+    - cron: "47 4 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-# Linux full workspace gate lives in ci.yml. This workflow only covers other OSes.
 jobs:
   macos:
-    name: Rust (macos-15)
+    name: Rust workspace (macOS)
     runs-on: macos-15
-    timeout-minutes: 45
-    env:
-      RUSTC_WRAPPER: ""
+    timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v7
-      - name: Install Rust
-        run: |
-          rustup set profile minimal
-          rustup toolchain install stable
-          rustup component add rust-analyzer
-      - run: cargo test --workspace --all-targets --locked
+      - name: Checkout
+        uses: actions/checkout@v7
 
-  windows-host-metrics:
-    name: Windows HostMetrics
-    runs-on: windows-2025
-    timeout-minutes: 30
-    env:
-      RUSTC_WRAPPER: ""
-    steps:
-      - uses: actions/checkout@v7
       - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          # check_workspace.py needs tomllib.
+          python-version: "3.13"
+
+      - run: cargo metadata --locked --format-version 1 > /dev/null
+
+      - run: cargo fmt --all -- --check
+
+      - run: python3 skills/monorepo-maintenance/scripts/check_workspace.py
+
+      - name: Test locked workspace
+        run: cargo test --workspace --all-targets --locked
+
+      - name: Check the test suite left no state in HOME
+        if: ${{ !cancelled() }}
         run: |
-          rustup set profile minimal
-          rustup toolchain install stable
-      - run: cargo test --locked -p mutsuki-service-control -p mutsuki-service-runtime
+          if [ -e "$HOME/.mutsuki" ]; then
+            echo "tests wrote to $HOME/.mutsuki; give the config a home_dir inside its TempDir:"
+            find "$HOME/.mutsuki" -maxdepth 2
+            exit 1
+          fi
+
+      - name: Lint
+        if: ${{ !cancelled() }}
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings

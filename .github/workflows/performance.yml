@@ -90,6 +90,54 @@ jobs:
         run: >-
           echo "Public runner results are smoke evidence only and cannot approve or replace a release baseline."
 
+  # Every owner model, not just Bot's. Bot's own gate had rotted unnoticed
+  # precisely because it lived in a per-package workflow that GitHub never
+  # schedules, so the remaining owners are scheduled here rather than left to
+  # the pre-monorepo files under each package's own `.github/`.
+  owner-smoke:
+    name: Owner performance model (${{ matrix.owner }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RUSTC_WRAPPER: ""
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - owner: link
+            script: crates/link/scripts/run-performance-model.py
+          - owner: distributed
+            script: hosts/distributed/scripts/run-performance-model.py
+          - owner: agent
+            script: kits/agent/scripts/run-performance-model.py
+          - owner: std
+            script: plugins/std/scripts/run-performance-model.py
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install Linux desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+      - name: Run ${{ matrix.owner }} owner smoke
+        run: >-
+          python3 ${{ matrix.script }}
+          --mode smoke
+          --output target/mutsuki-benchmarks/${{ matrix.owner }}-smoke-${{ github.run_id }}.json
+      - name: Upload structured smoke result
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.owner }}-performance-smoke-${{ github.run_id }}
+          path: target/mutsuki-benchmarks/
+          retention-days: 90
+      - name: Explain evidence boundary
+        run: echo "Public runner results are smoke evidence only and cannot approve or replace a release baseline."
+
   fixed-reference:
     name: Fixed reference (${{ matrix.name }})
     if: github.event_name == 'workflow_dispatch' && inputs.fixed_reference
