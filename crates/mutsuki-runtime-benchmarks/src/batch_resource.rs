@@ -234,7 +234,15 @@ fn validate_plan(
                 && plan.parallelism_limit == 1
         }
         ResourcePattern::StrictOrder => {
-            plan.serial_groups.len() == entries && plan.parallelism_limit == 1
+            // Every task here carries the same `sequence_id`, so the plan must be
+            // one ordered group holding all of them -- not one group per entry --
+            // and nothing may run beside it.
+            plan.serial_groups.len() == 1
+                && plan
+                    .serial_groups
+                    .first()
+                    .is_some_and(|group| group.len() == entries)
+                && plan.parallelism_limit == 1
         }
     };
     valid.then_some(()).ok_or_else(|| {
