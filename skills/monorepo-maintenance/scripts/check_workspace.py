@@ -123,24 +123,14 @@ UNSAFE_ALLOW_INHERITED = {
 # assembling and nothing ran it for long enough that the failure reached `main`.
 #
 # Porting one into `.github/workflows` (or deleting it) means removing its entry here.
-DEAD_NESTED_WORKFLOWS = {
-    "crates/link/.github/workflows/ci.yml",
-    "crates/link/.github/workflows/performance.yml",
-    "hosts/cli/.github/workflows/platform-compat.yml",
-    "hosts/distributed/.github/workflows/ci.yml",
-    "hosts/distributed/.github/workflows/performance.yml",
-    "hosts/service/.github/workflows/performance.yml",
-    "hosts/service/.github/workflows/platform-compat.yml",
-    "hosts/tauri/.github/workflows/performance.yml",
-    "hosts/tauri/.github/workflows/platform-compat.yml",
-    "hosts/web/.github/workflows/ci.yml",
-    "kits/agent/.github/workflows/performance-smoke.yml",
-    "kits/agent/.github/workflows/platform-compat.yml",
-    "kits/python-runner/.github/workflows/performance-smoke.yml",
-    "kits/python-runner/.github/workflows/platform-compat.yml",
-    "plugins/std/.github/workflows/performance-smoke.yml",
-    "plugins/std/.github/workflows/platform-compat.yml",
-}
+# Empty on purpose. These files were pre-monorepo residue: each package once had
+# its own repository and its own CI, and the leftovers run `scripts/...` relative
+# to a package root against self-hosted runners, so they could not have worked
+# here even if GitHub scheduled them -- which it does not. The coverage they
+# asked for now lives at the repository root: every owner performance model in
+# `performance.yml`, and macOS in `platform-compat.yml`. The check below keeps
+# this set empty so the pattern cannot come back.
+DEAD_NESTED_WORKFLOWS: set[str] = set()
 
 def fail(message: str) -> None:
     print(f"workspace boundary check failed: {message}", file=sys.stderr)
