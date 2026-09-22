@@ -1,7 +1,7 @@
 # MutsukiStdPlugins 工作规范
 
-本仓库拥有 Mutsuki 的领域中立标准协议和通用插件实现。Core 提供 runtime 机制，Host
-负责装配与生命周期；本仓库实现可复用的 config、db、fs、http、observe、resource 和
+本目录拥有 Mutsuki 的领域中立标准协议和通用插件实现。Core 提供 runtime 机制，Host
+负责装配与生命周期；本目录实现可复用的 config、db、fs、http、observe、resource 和
 workflow 能力，不实现 Agent、Bot、产品配置或平台 UI。
 
 ## 阅读与技能路由

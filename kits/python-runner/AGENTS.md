@@ -33,13 +33,13 @@ load-plan 校验和调度事实源。
 
 ## 命名边界
 
-- `Kit`：本仓库整体，表示 Python SDK + runner glue。
+- `Kit`：本目录整体，表示 Python SDK + runner glue。
 - `SDK`：插件作者 API，例如 `Plugin`、`Context`、`TaskError`、resource helper。
 - `Backend`：runner 执行形态，例如 `PythonRunnerBackend`。
 - `Bridge`：跨边界传输/编解码，例如 `StdioBinaryBridge`。
 - `Protocol` / `contracts`：纯 wire shape mirror。
 - `Provider`：只用于未来的具体 resource/effect provider，不得混入 SDK facade。
-- 禁止把本仓库组件命名为 `Host`；Host 只属于应用运行环境或 native/Tauri/CLI 容器。
+- 禁止把本目录组件命名为 `Host`；Host 只属于应用运行环境或 native/Tauri/CLI 容器。
 
 ## 推荐阅读顺序
 
@@ -77,3 +77,5 @@ uv run pytest
 conformance 覆盖点。禁止添加只硬匹配日志、字符串或实现细节的低价值测试。
 
 Provider ABI lifecycle uses `ExecuteResourceProviderRequest` (opcode 0x300c, `resource.provider.execute`) and a `ResourceProviderResponse` containing result plus invalidations. Wire schema 1.4.0 handshake rejects older revisions; rebuild provider binaries. Native providers migrate to `execute`; no receipt-only fallback. Runner-facing resource replies retain their shapes. Python mirrors DTOs and registry/artifacts, without implementing a provider endpoint.
+
+技能统一由本目录 `skills/` 路由；旧独立仓库的隐藏技能入口已合并，不维护第二套规则。

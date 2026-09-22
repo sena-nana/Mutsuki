@@ -11,7 +11,7 @@
 3. 候选依赖仓库的 `AGENTS.md`、公开 API、manifest 和测试。
 4. 本文件路由的相关技能，再检查当前实现、远端 commit 和 lockfile。
 
-Issue 是需求线索，不是当前 API 的事实源。存在 `.codegraph/` 时，定位代码先用 CodeGraph。
+Issue 是需求线索，不是当前 API 的事实源。
 
 ## 技能路由
 

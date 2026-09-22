@@ -53,7 +53,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Check monorepo boundaries
-        run: python3 skills/monorepo-maintenance/scripts/check_workspace.py
+        run: python3 skills/governance/monorepo-maintenance/scripts/check_workspace.py
 
       - name: Check dependency graph resolves against the committed lockfile
         run: cargo metadata --locked --format-version 1 > /dev/null
