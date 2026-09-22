@@ -1,6 +1,6 @@
 # MutsukiBotPlugins 工作规范
 
-本仓库拥有 Mutsuki Bot 领域协议、Rust SDK、通用事件/命令 Runner 和平台
+本目录拥有 Mutsuki Bot 领域协议、Rust SDK、通用事件/命令 Runner 和平台
 Adapter/Gateway。它不拥有 Core 调度、Host 生命周期、Agent 能力或产品装配。
 
 ## 阅读顺序与技能路由
@@ -90,3 +90,5 @@ Host bridges native async and Offloaded providers without holding its actor; the
 still blocks. Async code must await the async gateways instead. Do not substitute standalone
 LocalResourceClient or access provider storage directly. See
 ../../docs/architecture/async-resource-creation.md; report fake tests separately from real accounts.
+
+技能统一由本目录 `skills/` 路由；旧独立仓库的隐藏技能入口已合并，不维护第二套规则。

@@ -37,7 +37,7 @@ jobs:
 
       - run: cargo fmt --all -- --check
 
-      - run: python3 skills/monorepo-maintenance/scripts/check_workspace.py
+      - run: python3 skills/governance/monorepo-maintenance/scripts/check_workspace.py
 
       - name: Test locked workspace
         run: cargo test --workspace --all-targets --locked

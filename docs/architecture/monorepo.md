@@ -64,7 +64,7 @@ The diagram is ownership-oriented, not permission to add every downward dependen
 - Package names stay stable; no root facade crate or global feature matrix is introduced.
 - A clean clone can build without former sibling repositories.
 
-`skills/monorepo-maintenance/scripts/check_workspace.py` enforces the mechanical subset of these
+`skills/governance/monorepo-maintenance/scripts/check_workspace.py` enforces the mechanical subset of these
 rules. Cargo tests, contract conformance and scoped integration tests enforce behavior.
 
 ## Non-Rust packages

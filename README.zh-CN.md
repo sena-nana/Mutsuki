@@ -95,7 +95,7 @@ cargo create-bot
 Rust package 共享根 `Cargo.toml` 和 `Cargo.lock`：
 
 ```bash
-python3 skills/monorepo-maintenance/scripts/check_workspace.py
+python3 skills/governance/monorepo-maintenance/scripts/check_workspace.py
 cargo metadata --locked --format-version 1
 cargo fmt --all -- --check
 cargo check --workspace --all-targets --locked

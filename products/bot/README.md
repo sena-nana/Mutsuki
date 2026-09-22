@@ -95,7 +95,7 @@ fake HTTP/WebSocket 边界。
 ## 验证
 
 ```powershell
-python skills/monorepo-maintenance/scripts/check_workspace.py
+python skills/governance/monorepo-maintenance/scripts/check_workspace.py
 cargo metadata --locked --format-version 1
 cargo test --locked -p mutsuki-bot --all-targets
 ```

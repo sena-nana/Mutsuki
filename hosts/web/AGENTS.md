@@ -1,6 +1,6 @@
 # MutsukiWebHost 工作规范
 
-本仓库是 **与 MutsukiTauriHost 同层的 Web 运行宿主**。它负责启动并承载一个
+本目录是 **与 MutsukiTauriHost 同层的 Web 运行宿主**。它负责启动并承载一个
 `WebApplication`：HTTP/WebSocket、静态资源、RPC/Event bridge、WebExtension 加载、
 会话/认证/capability，以及最小 Recovery Shell。
 
@@ -13,7 +13,7 @@ Axum/HTTP internals 作为稳定 ABI。
 2. `../../AGENTS.md`、`../../crates/link/AGENTS.md`（若改动 Link/standalone）。
 3. 本文件路由的相关技能，再检查当前实现、远端 commit 和 lockfile。
 
-Issue 是需求线索，不是当前 API 的事实源。存在 `.codegraph/` 时，定位代码先用 CodeGraph。
+Issue 是需求线索，不是当前 API 的事实源。
 
 ## 技能路由
 
@@ -55,7 +55,7 @@ Issue 是需求线索，不是当前 API 的事实源。存在 `.codegraph/` 时
 9. 本机默认只监听 loopback；非 loopback 必须有明确 TLS/远程认证策略。
 10. 仓内 Mutsuki 依赖必须继承根 Workspace 的 path；禁止内部 Git pin、仓库外 Cargo `path` 和本地 `[patch]`。
 11. 不向插件暴露 Axum/Hyper 类型作为稳定 ABI。
-12. 不在本仓库实现数据库、日志、指标、市场或 Bot 管理业务页面。
+12. 不在本目录实现数据库、日志、指标、市场或 Bot 管理业务页面。
 
 ## 验证
 

@@ -1,6 +1,6 @@
 # MutsukiServiceHost 工作规范
 
-本仓库是 **MutsukiCore 的无界面常驻服务 Host**。它负责进程生命周期、配置、插件发现、外部 Runner 监督、本地控制面、日志观测和服务化集成；不得实现 AgentLoop、Bot 路由、QQBot 网关、模型 Provider、Python SDK 或业务插件逻辑。
+本目录是 **MutsukiCore 的无界面常驻服务 Host**。它负责进程生命周期、配置、插件发现、外部 Runner 监督、本地控制面、日志观测和服务化集成；不得实现 AgentLoop、Bot 路由、QQBot 网关、模型 Provider、Python SDK 或业务插件逻辑。
 
 ## 阅读顺序
 
@@ -23,15 +23,12 @@
 - 插件和 Runner 能力必须真实接入对应后端；禁止做看似可用但未接线的 UI/CLI 输出。
 - 控制面不得提供任意插件调用；领域操作必须提交 Core task。公开客户端只接收 endpoint、transport 和 token，不暴露完整 ServiceConfig。
 - 配置选择的原生插件只通过通用 `ConfiguredPluginCatalog` 在 boot 前安装；Host 不解析领域 config，也不内建领域 factory。
-- Binary Wire 编解码与通用子进程 transport 使用 Core host helper；本仓库只拥有发现、环境策略、监督、重启和停止。
+- Binary Wire 编解码与通用子进程 transport 使用 Core host helper；本目录只拥有发现、环境策略、监督、重启和停止。
 - 修复问题先定位根因，选择正确层级修正，禁止只为绕过症状打补丁。
 - 配置、控制 API、Runner 环境、secret 和日志必须默认安全：本地访问、token 鉴权、产品配置只保存 secret 引用；专用本地 secret 文件必须显式引用、被版本控制忽略且不进入序列化/Debug/普通日志；外部 Runner 不默认继承完整环境。
 - 仓内 Mutsuki 依赖必须继承根 Workspace 的 path；禁止内部 Git pin、仓库外 Cargo `path` 和本地 `[patch]`。外部业务依赖固定 tag 或 commit。
 - 新测试必须验证功能行为；禁止低价值字符串/日志硬匹配测试。
 
-## CodeGraph
-
-如果仓库根目录存在 `.codegraph/`，需要理解或定位代码时先使用 CodeGraph，再使用 `rg` 或直接读文件。没有 `.codegraph/` 时跳过。
 
 ## 验证
 

@@ -111,7 +111,7 @@ API rather than copying framework or product implementation.
 Rust packages share the root `Cargo.toml` and `Cargo.lock`:
 
 ```bash
-python3 skills/monorepo-maintenance/scripts/check_workspace.py
+python3 skills/governance/monorepo-maintenance/scripts/check_workspace.py
 cargo metadata --locked --format-version 1
 cargo fmt --all -- --check
 cargo check --workspace --all-targets --locked

@@ -1,6 +1,6 @@
 # MutsukiAgentKit 工作规范
 
-本仓库拥有 Rust 原生 Agent 协议、SDK/宏、AgentLoop、上下文、会话、工具、记忆、
+本目录拥有 Rust 原生 Agent 协议、SDK/宏、AgentLoop、上下文、会话、工具、记忆、
 模型网关、Prompt 插件和测试工具。它不拥有 Core 调度、Host 生命周期、Bot 平台适配、
 Python Runner SDK 或具体产品装配。
 

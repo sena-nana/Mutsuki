@@ -1,6 +1,6 @@
 # MutsukiTauriHost 工作规范
 
-本仓库是 **MutsukiCore 在 Tauri 桌面应用中的内嵌 Host**。它负责 Core lifecycle、Tauri command/event bridge、ResourceRef WebView bridge、approval UI bridge、插件/runner 桌面加载、桌面 HostServices、日志和 trace 桥接。
+本目录是 **MutsukiCore 在 Tauri 桌面应用中的内嵌 Host**。它负责 Core lifecycle、Tauri command/event bridge、ResourceRef WebView bridge、approval UI bridge、插件/runner 桌面加载、桌面 HostServices、日志和 trace 桥接。
 
 它不是 ServiceHost、AgentHost、BotHost、模型 Provider、Python SDK、LiliaUI 组件库或业务插件集合。
 
@@ -29,9 +29,6 @@
 - 修复问题必须定位根因并在正确层级修正，禁止绕症状打补丁。
 - 新测试必须验证功能行为；无功能变动不添加低价值测试，不硬匹配日志或字符串。
 
-## CodeGraph
-
-如果仓库根目录存在 `.codegraph/`，需要理解或定位代码时先使用 CodeGraph，再使用 `rg` 或直接读文件。没有 `.codegraph/` 时跳过。
 
 ## 验证
 

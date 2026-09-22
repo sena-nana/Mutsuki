@@ -127,7 +127,7 @@ cargo test -p mutsuki-runtime-core --bench observability --locked
 cargo bench-smoke
 python3 scripts/performance/validate_report.py target/mutsuki-benchmarks/core-smoke-time.json
 python3 -m unittest discover -s performance/tests
-python3 skills/monorepo-maintenance/scripts/check_ci.py
+python3 skills/governance/monorepo-maintenance/scripts/check_ci.py
 ```
 
 Reference aggregation validates every fragment's schema, semantics, gates, time case matrix, raw
