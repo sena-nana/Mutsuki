@@ -54,7 +54,7 @@ reload 按 active provider 单次选择路由，避免完整 map 克隆后多轮
 | 命令 | 结果 |
 | --- | --- |
 | `CARGO_INCREMENTAL=0 cargo test -p mutsuki-plugin-resource-sqlite -p mutsuki-runtime-host -p mutsuki-runtime-wire --lib --locked`（独立 clone） | 202 passed、1 ignored |
-| `python3 skills/monorepo-maintenance/scripts/check_workspace.py` | 通过：164 Rust packages，4 个 CI 条件回归及 22 个 performance 测试 |
+| `python3 skills/governance/monorepo-maintenance/scripts/check_workspace.py` | 通过：164 Rust packages，4 个 CI 条件回归及 22 个 performance 测试 |
 | `cargo metadata --locked --format-version 1` | 通过 |
 | `cargo fmt --all -- --check` | 通过 |
 | `CARGO_INCREMENTAL=0 cargo check --workspace --all-targets --locked` | 通过 |
