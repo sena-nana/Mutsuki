@@ -94,7 +94,13 @@ impl LocalResourceClient {
     }
 
     fn execute(&self, provider_id: &str, request: Request) -> RuntimeResult<Reply> {
-        self.require_provider(provider_id)?.execute(request).result
+        let outcome = self.require_provider(provider_id)?.execute(request);
+        if !outcome.invalidations.is_empty() {
+            return Err(resource_provider_unsupported(
+                "standalone resource client cannot apply provider invalidations",
+            ));
+        }
+        outcome.result
     }
 
     fn receipt(&self, provider_id: &str, request: Request) -> RuntimeResult<PlanReceipt> {
@@ -191,3 +197,7 @@ impl ResourcePlanGateway for LocalResourceClient {
         )
     }
 }
+
+#[cfg(test)]
+#[path = "local_tests.rs"]
+mod tests;
