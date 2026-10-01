@@ -456,7 +456,7 @@ def check_materialized_assets() -> None:
     digests = {}
     for path in copies:
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        digests.setdefault(digest, []).append(str(path.relative_to(ROOT)))
+        digests.setdefault(digest, []).append(path.relative_to(ROOT).as_posix())
     if len(digests) > 1:
         groups = "; ".join(
             f"{digest[:12]}: {', '.join(paths)}" for digest, paths in sorted(digests.items())
@@ -476,7 +476,7 @@ def check_materialized_assets() -> None:
             path.replace("$ROOT", "plugins/bot").replace("$WORKSPACE_ROOT", "").lstrip("/")
             for path in re.findall(r'"(\$(?:WORKSPACE_)?ROOT[^"]*mutsuki-ui\.css)"', text)
         }
-        actual = {str(path.relative_to(ROOT)) for path in copies}
+        actual = {path.relative_to(ROOT).as_posix() for path in copies}
         if targets != actual:
             fail(
                 "sync-mutsuki-ui-css.sh destinations no longer match the embedded copies:\n"
