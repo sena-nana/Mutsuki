@@ -364,7 +364,11 @@ impl SqliteResourceProvider {
                     resource_ref: Some(capability),
                     snapshot: None,
                     descriptor_updates: Vec::new(),
-                    descriptor_removals: vec![target_ref_id.clone()],
+                    // The committed row removal is published by `execute` as a
+                    // ResourceDescriptorInvalidation. Keep lifecycle removal
+                    // facts out of receipts so retention and explicit delete
+                    // share the same actor-owned channel.
+                    descriptor_removals: Vec::new(),
                     new_version: None,
                     output: json!({ "deleted_ref_id": target_ref_id }),
                 })
@@ -1387,12 +1391,19 @@ mod tests {
             args: json!({"ref_id": blob.ref_id}),
             idempotency_key: Some("delete:1".into()),
         };
-        let receipt = provider.execute_command_plan(&delete).unwrap();
+        let outcome = provider.execute(mutsuki_runtime_sdk::ResourceProviderRequest::Command(
+            delete.clone(),
+        ));
+        let receipt = match outcome.result.unwrap() {
+            mutsuki_runtime_sdk::ResourceProviderReply::Receipt(receipt) => *receipt,
+            other => panic!("unexpected provider reply: {other:?}"),
+        };
         assert_eq!(receipt.status, "deleted");
-        assert_eq!(
-            receipt.descriptor_removals,
-            vec![blob.ref_id.as_str().to_string()]
-        );
+        assert!(receipt.descriptor_removals.is_empty());
+        assert_eq!(outcome.invalidations.len(), 1);
+        assert_eq!(outcome.invalidations[0].provider_id, PROVIDER_ID);
+        assert_eq!(outcome.invalidations[0].ref_id, blob.ref_id);
+        assert_eq!(outcome.invalidations[0].generation, blob.generation);
 
         let read = ReadPlan {
             plan_id: "read:deleted".into(),

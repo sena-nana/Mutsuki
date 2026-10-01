@@ -248,7 +248,11 @@ pub struct PlanReceipt {
     pub resource_ref: Option<ResourceRef>,
     pub snapshot: Option<SnapshotDescriptor>,
     pub descriptor_updates: Vec<ResourceRef>,
-    /// Hub `ref_id`s the actor must drop after this plan. Absent JSON deserializes as empty.
+    /// Legacy hub removals carried by older provider receipts. New providers
+    /// must report committed lifecycle removals through
+    /// `ResourceProviderOutcome::invalidations`, which the Host applies on the
+    /// Core actor together with retention and explicit delete facts.
+    /// Absent JSON deserializes as empty for compatibility.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub descriptor_removals: Vec<String>,
     pub new_version: Option<u64>,

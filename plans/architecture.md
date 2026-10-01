@@ -563,6 +563,9 @@ Contract surface 兼容性：
 
 Provider `execute` returns `ResourceProviderOutcome`: committed invalidations are independent of operation success, including partial batch/saga failure. Host applies provider/ref/resource-generation removals on the actor before replying. Absent refs are idempotent; conflicting owners/generations fail. Invalidation dominates same-outcome updates and removes writer/derived occupancy facts. Receipt status and business JSON are not lifecycle signals.
 
+`PlanReceipt.descriptor_removals` remains a deserializable compatibility field for older providers;
+new providers publish retention and explicit-delete removals only through outcome invalidations.
+
 Invalidating providers declare Ordered. Their provider-id lane survives staged reload, retains the executing provider until actor application, and remains occupied after caller timeout/disconnect until actual completion. Queue count/bytes use Host limits; panic with unknown effects poisons the lane until restart. No permanent tombstone history or I/O in open. SQLite keeps create-before-insert retention and capability exemption.
 
 HostRuntimeCommand::ResourceDescriptors exposes the actor's read-only descriptor inventory for consistency checks. Resource bytes remain provider-owned.

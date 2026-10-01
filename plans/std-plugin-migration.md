@@ -87,4 +87,8 @@ because it has no Core actor. Caller-facing plan/creation gateways retain their 
 ABI providers use wire 1.4.0 `resource.provider.execute` (0x300c); rebuild both sides together.
 No compatibility shim or Python Core lifecycle implementation is provided.
 
+Lifecycle deletion is one outcome channel: SQLite retention and explicit capability delete publish
+`ResourceDescriptorInvalidation` facts. `PlanReceipt.descriptor_removals` remains readable only for
+legacy providers and is not emitted by the migrated SQLite provider.
+
 Full reload candidates must register every active provider explicitly, including routes originally injected through HostRuntimeConfig. Targeted reload only replaces affected providers and preserves unaffected instances; missing affected candidates fail before the Core generation switch.
