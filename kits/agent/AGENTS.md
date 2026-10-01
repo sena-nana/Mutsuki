@@ -1,6 +1,6 @@
 # MutsukiAgentKit 工作规范
 
-本仓库拥有 Rust 原生 Agent 协议、SDK/宏、AgentLoop、上下文、会话、工具、记忆、
+本目录拥有 Rust 原生 Agent 协议、SDK/宏、AgentLoop、上下文、会话、工具、记忆、
 模型网关、Prompt 插件和测试工具。它不拥有 Core 调度、Host 生命周期、Bot 平台适配、
 Python Runner SDK 或具体产品装配。
 
@@ -31,3 +31,5 @@ Python Runner SDK 或具体产品装配。
 
 Rust 改动运行 `cargo fmt --check`、`cargo check` 和 `cargo test`。协议或插件 surface
 改动补充行为测试和 conformance；最终报告实际命令与统一 release revision。
+
+ServiceConfig-based test fixtures explicitly set data/log/plugin/run directories under their temporary root. A home override alone must not let tests access the real user service directories.

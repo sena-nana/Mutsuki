@@ -249,23 +249,219 @@ fn build_work_resource_plan(
         })
         .collect();
     let mut parallel_group = Vec::new();
+    // `SameResourceOrder` and `StrictSequence` both order per key, not across the
+    // whole work set. Collapsing them into singleton serial groups -- as every
+    // non-`None` ordering once did -- made them indistinguishable from
+    // `PreserveSubmitOrder`. They share this map under distinct namespaces so a
+    // `ref_id` and a `sequence_id` spelling the same string stay separate groups.
+    let mut keyed_groups: BTreeMap<(u8, String), Vec<mutsuki_runtime_contracts::EntryId>> =
+        BTreeMap::new();
+    let mut strictly_serial = false;
     for (entry_index, entry) in work_set.entries.iter().enumerate() {
         if conflict_entry_indices.contains(&entry_index) {
             plan.conflict_entries.push(entry.entry_id.clone());
             continue;
         }
-        match entry.ordering {
+        match &entry.ordering {
             OrderingRequirement::None => parallel_group.push(entry.entry_id.clone()),
-            _ => plan.serial_groups.push(vec![entry.entry_id.clone()]),
+            OrderingRequirement::SameResourceOrder { ref_id } => keyed_groups
+                .entry((0, ref_id.as_str().to_owned()))
+                .or_default()
+                .push(entry.entry_id.clone()),
+            // A sequence is identified by its id: `workflow-linear` keys it per
+            // workflow and the Bot SDK keys it per conversation, so two different
+            // sequence ids are independent work, not one global queue.
+            OrderingRequirement::StrictSequence { sequence_id } => keyed_groups
+                .entry((1, sequence_id.clone()))
+                .or_default()
+                .push(entry.entry_id.clone()),
+            // The only ordering that constrains the whole work set rather than a
+            // key. Named rather than a wildcard so a new variant has to make this
+            // choice deliberately instead of inheriting "serialise everything".
+            OrderingRequirement::PreserveSubmitOrder => {
+                strictly_serial = true;
+                plan.serial_groups.push(vec![entry.entry_id.clone()]);
+            }
         }
     }
+    let keyed_group_count = keyed_groups.len();
+    // Ordered within a key, independent across keys.
+    plan.serial_groups.extend(keyed_groups.into_values());
+    let parallel_entries = parallel_group.len();
     if !parallel_group.is_empty() {
         plan.parallel_groups.push(parallel_group);
     }
-    plan.parallelism_limit = if plan.serial_groups.is_empty() && plan.conflict_entries.is_empty() {
-        work_set.entries.len().max(1)
-    } else {
+    plan.parallelism_limit = if !plan.conflict_entries.is_empty() || strictly_serial {
+        // A submit-order entry constrains the whole work set, and a write
+        // conflict is resolved by running nothing else beside it.
         1
+    } else if keyed_group_count > 0 {
+        // Every key may have one entry in flight, alongside the unordered ones.
+        parallel_entries.saturating_add(keyed_group_count)
+    } else {
+        work_set.entries.len().max(1)
     };
     plan
+}
+
+#[cfg(test)]
+mod resource_plan_tests {
+    use super::*;
+    use mutsuki_runtime_contracts::{BatchEntry, BatchKey, DispatchLane, EntryId};
+
+    fn entry(entry_id: &str, ordering: OrderingRequirement) -> BatchEntry {
+        BatchEntry {
+            entry_id: entry_id.into(),
+            task_id: format!("task-{entry_id}").into(),
+            trace_id: None,
+            parent_id: None,
+            payload_index: 0,
+            resource_requirement_indices: Vec::new(),
+            cancel_index: None,
+            deadline_tick: None,
+            priority: 0,
+            lane: DispatchLane::Normal,
+            ordering,
+        }
+    }
+
+    fn work_set(entries: Vec<BatchEntry>) -> WorkSet {
+        WorkSet {
+            tick_id: "tick-1".into(),
+            batch_key: BatchKey::from("runner:test"),
+            entries,
+            resource_requirements: Vec::new(),
+        }
+    }
+
+    fn same_resource(ref_id: &str) -> OrderingRequirement {
+        OrderingRequirement::SameResourceOrder {
+            ref_id: ref_id.into(),
+        }
+    }
+
+    fn sequence(sequence_id: &str) -> OrderingRequirement {
+        OrderingRequirement::StrictSequence {
+            sequence_id: sequence_id.into(),
+        }
+    }
+
+    /// Unordered entries must keep running as one parallel group.
+    #[test]
+    fn unordered_entries_stay_fully_parallel() {
+        let plan = build_work_resource_plan(
+            &work_set(vec![
+                entry("a", OrderingRequirement::None),
+                entry("b", OrderingRequirement::None),
+            ]),
+            &[],
+        );
+        assert_eq!(plan.parallel_groups.len(), 1);
+        assert!(plan.serial_groups.is_empty());
+        assert_eq!(plan.parallelism_limit, 2);
+    }
+
+    /// The point of the requirement: one key keeps its submit order.
+    #[test]
+    fn entries_sharing_a_resource_key_stay_ordered_together() {
+        let plan = build_work_resource_plan(
+            &work_set(vec![
+                entry("a", same_resource("conversation-1")),
+                entry("b", same_resource("conversation-1")),
+            ]),
+            &[],
+        );
+        assert_eq!(
+            plan.serial_groups,
+            vec![vec![EntryId::from("a"), EntryId::from("b")]],
+            "one key is one ordered sequence"
+        );
+        assert_eq!(plan.parallelism_limit, 1);
+    }
+
+    /// ...and the other half: different keys are independent, which is the only
+    /// thing that distinguishes this from `PreserveSubmitOrder`.
+    #[test]
+    fn entries_under_different_resource_keys_may_overlap() {
+        let plan = build_work_resource_plan(
+            &work_set(vec![
+                entry("a", same_resource("conversation-1")),
+                entry("b", same_resource("conversation-2")),
+                entry("c", same_resource("conversation-1")),
+            ]),
+            &[],
+        );
+        assert_eq!(plan.serial_groups.len(), 2, "one group per key");
+        assert!(
+            plan.serial_groups
+                .contains(&vec![EntryId::from("a"), EntryId::from("c")])
+        );
+        assert!(plan.serial_groups.contains(&vec![EntryId::from("b")]));
+        assert_eq!(plan.parallelism_limit, 2, "one in flight per key");
+    }
+
+    /// A sequence is keyed by its id, exactly as a resource order is keyed by its
+    /// ref: `workflow-linear` keys per workflow and the Bot SDK keys per
+    /// conversation, so independent sequences are independent work.
+    #[test]
+    fn entries_under_different_sequence_ids_may_overlap() {
+        let plan = build_work_resource_plan(
+            &work_set(vec![
+                entry("a", sequence("workflow-1")),
+                entry("b", sequence("workflow-2")),
+                entry("c", sequence("workflow-1")),
+            ]),
+            &[],
+        );
+        assert_eq!(plan.serial_groups.len(), 2, "one group per sequence id");
+        assert!(
+            plan.serial_groups
+                .contains(&vec![EntryId::from("a"), EntryId::from("c")])
+        );
+        assert_eq!(plan.parallelism_limit, 2);
+    }
+
+    /// The two keyed orderings are separate namespaces: a ref and a sequence that
+    /// spell the same string must not merge into one ordered group.
+    #[test]
+    fn a_resource_key_and_a_sequence_id_that_match_stay_separate() {
+        let plan = build_work_resource_plan(
+            &work_set(vec![
+                entry("a", same_resource("shared-name")),
+                entry("b", sequence("shared-name")),
+            ]),
+            &[],
+        );
+        assert_eq!(plan.serial_groups.len(), 2);
+        assert_eq!(plan.parallelism_limit, 2);
+    }
+
+    /// `PreserveSubmitOrder` is now the only ordering that pins the whole work
+    /// set, so keyed groups beside it must not overlap.
+    #[test]
+    fn a_submit_ordered_entry_beside_keyed_groups_serialises_everything() {
+        let plan = build_work_resource_plan(
+            &work_set(vec![
+                entry("a", same_resource("conversation-1")),
+                entry("b", sequence("workflow-1")),
+                entry("c", OrderingRequirement::PreserveSubmitOrder),
+            ]),
+            &[],
+        );
+        assert_eq!(plan.parallelism_limit, 1);
+    }
+
+    /// A submit-order entry constrains the whole work set, so keyed groups beside
+    /// it must not raise the limit.
+    #[test]
+    fn a_submit_ordered_entry_still_serialises_everything() {
+        let plan = build_work_resource_plan(
+            &work_set(vec![
+                entry("a", same_resource("conversation-1")),
+                entry("b", OrderingRequirement::PreserveSubmitOrder),
+            ]),
+            &[],
+        );
+        assert_eq!(plan.parallelism_limit, 1);
+    }
 }

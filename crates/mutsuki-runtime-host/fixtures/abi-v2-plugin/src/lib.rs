@@ -108,12 +108,14 @@ impl ResourcePlanGateway for FixtureProvider {
     }
 }
 
-impl ResourceProviderGateway for FixtureProvider {
-    fn create_blob_resource(&self, schema: &str, bytes: Vec<u8>) -> RuntimeResult<ResourceRef> {
+// Fixture helpers retain the same fallible operation shape used in provider tests.
+#[allow(clippy::unused_self, clippy::unnecessary_wraps)]
+impl FixtureProvider {
+    pub fn create_blob_resource(&self, schema: &str, bytes: Vec<u8>) -> RuntimeResult<ResourceRef> {
         Ok(resource_ref(schema, bytes.len() as u64))
     }
 
-    fn create_cow_state_resource(
+    pub fn create_cow_state_resource(
         &self,
         _kind_id: &str,
         schema: &str,
@@ -122,12 +124,73 @@ impl ResourceProviderGateway for FixtureProvider {
         Ok(resource_ref(schema, bytes.len() as u64))
     }
 
-    fn create_capability_resource(
+    pub fn create_capability_resource(
         &self,
         _kind_id: &str,
         schema: &str,
     ) -> RuntimeResult<ResourceRef> {
         Ok(resource_ref(schema, 0))
+    }
+}
+
+impl ResourceProviderGateway for FixtureProvider {
+    fn ordering(&self) -> mutsuki_runtime_sdk::ResourceProviderOrdering {
+        mutsuki_runtime_sdk::ResourceProviderOrdering::Ordered
+    }
+    fn execute(
+        &self,
+        request: mutsuki_runtime_sdk::ResourceProviderRequest,
+    ) -> mutsuki_runtime_sdk::ResourceProviderOutcome<mutsuki_runtime_sdk::ResourceProviderReply>
+    {
+        use mutsuki_runtime_sdk::{ResourceProviderReply as R, ResourceProviderRequest as Q};
+        if let Q::Command(plan) = &request
+            && plan.operation == "invalidate-then-fail"
+        {
+            return mutsuki_runtime_sdk::ResourceProviderOutcome {
+                result: Err(unsupported("partial.failure")),
+                invalidations: vec![mutsuki_runtime_contracts::ResourceDescriptorInvalidation {
+                    provider_id: plan.capability.provider_id.clone(),
+                    ref_id: plan.capability.ref_id.clone(),
+                    generation: plan.capability.generation,
+                }],
+            };
+        }
+        let result = match request {
+            Q::CreateBlob { schema, bytes } => {
+                self.create_blob_resource(&schema, bytes).map(R::Created)
+            }
+            Q::CreateCow {
+                kind_id,
+                schema,
+                bytes,
+            } => self
+                .create_cow_state_resource(&kind_id, &schema, bytes)
+                .map(R::Created),
+            Q::CreateCapability { kind_id, schema } => self
+                .create_capability_resource(&kind_id, &schema)
+                .map(R::Created),
+            Q::Collect(plan) => self.collect_read_plan(&plan).map(R::Bytes),
+            Q::Snapshot {
+                plan,
+                kind_id,
+                schema,
+            } => self
+                .snapshot_read_plan(&plan, &kind_id, &schema)
+                .map(|value| R::Snapshot(Box::new(value))),
+            Q::OpenStream(plan) => self.open_stream_plan(&plan).map(R::Stream),
+            Q::Export(plan) => self
+                .execute_export_plan(&plan)
+                .map(|value| R::Receipt(Box::new(value))),
+            Q::Commit { plan, bytes } => self
+                .commit_write_plan(&plan, bytes)
+                .map(|value| R::Receipt(Box::new(value))),
+            Q::Command(plan) => self
+                .execute_command_plan(&plan)
+                .map(|value| R::Receipt(Box::new(value))),
+            Q::Batch(batch) => self.execute_command_batch(&batch).map(R::Receipts),
+            Q::Saga(saga) => self.execute_saga_plan(&saga).map(R::Receipts),
+        };
+        mutsuki_runtime_sdk::ResourceProviderOutcome::new(result)
     }
 }
 

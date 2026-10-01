@@ -49,7 +49,7 @@ Final acceptance was run on 2026-08-02 (Asia/Shanghai) from dirty revision
   across 207 suites.
 - Modified Bot owner/consumer packages in an independent local clone with no sibling repositories:
   53 passed across 8 suites after a fresh 603-crate `cargo check --workspace --all-targets --locked`.
-- `python3 skills/monorepo-maintenance/scripts/check_workspace.py`, locked metadata, `cargo fmt`,
+- `python3 skills/governance/monorepo-maintenance/scripts/check_workspace.py`, locked metadata, `cargo fmt`,
   `scripts/check-distributed-boundary.sh`, full Workspace check and `git diff --check`: passed.
 - Strict Clippy with `--no-deps -D warnings` for the modified protocol, QQ adapter, testkit and
   ServiceHost integration packages: passed.

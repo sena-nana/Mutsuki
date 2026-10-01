@@ -30,6 +30,7 @@ pub(super) const SANDBOX_SCHEMA_SQL: &str = "
              last_activity_unix_ms INTEGER NOT NULL,
              message_count INTEGER NOT NULL,
              active_message INTEGER NOT NULL DEFAULT 1,
+             content_digest TEXT,
              PRIMARY KEY(store, conversation_id)
          );
          CREATE TABLE IF NOT EXISTS bot_sandbox_user(
@@ -302,7 +303,7 @@ fn load_users(
     store: &str,
     conversation_id: &str,
 ) -> Result<Vec<SandboxUserView>, BotStateDbError> {
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare_cached(
         "SELECT user_id, display_name, avatar_url, last_seen_unix_ms, message_count
          FROM bot_sandbox_user
          WHERE store=?1 AND conversation_id=?2
@@ -336,7 +337,7 @@ fn load_messages(
     store: &str,
     conversation_id: &str,
 ) -> Result<Vec<SandboxMessageView>, BotStateDbError> {
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare_cached(
         "SELECT message_id, sender_id, sender_name, role, text, refs_json, reply_to, time_ms
          FROM bot_sandbox_message
          WHERE store=?1 AND conversation_id=?2
@@ -377,7 +378,7 @@ fn load_messages(
 }
 
 fn load_media(connection: &Connection) -> Result<Vec<SandboxAsset>, BotStateDbError> {
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare_cached(
         "SELECT content_hash, kind, mime, name, url, created_at_unix_ms
          FROM bot_sandbox_asset
          ORDER BY created_at_unix_ms ASC, content_hash ASC",
@@ -418,7 +419,7 @@ fn load_stickers(connection: &Connection) -> Result<Vec<SandboxSticker>, BotStat
     if !table_exists(connection, "bot_sandbox_sticker")? {
         return Ok(Vec::new());
     }
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare_cached(
         "SELECT content_hash, mime, name, created_at_unix_ms
          FROM bot_sandbox_sticker
          ORDER BY created_at_unix_ms ASC, content_hash ASC",
@@ -453,7 +454,7 @@ fn load_faces(connection: &Connection) -> Result<Vec<SandboxFace>, BotStateDbErr
     if !table_exists(connection, "bot_sandbox_face")? {
         return Ok(Vec::new());
     }
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare_cached(
         "SELECT face_key, face_type, face_id, last_seen_unix_ms
          FROM bot_sandbox_face
          ORDER BY last_seen_unix_ms DESC, face_key ASC",
@@ -540,12 +541,82 @@ pub(super) fn save(
     Ok(())
 }
 
+/// Digest of everything `upsert_conversations` writes for one conversation.
+///
+/// Persist runs after every ingested message and rewrites the whole snapshot, so a
+/// busy sandbox re-upserted every user and every retained message of every
+/// conversation each time -- O(conversations x SANDBOX_MAX_MESSAGES) statements to
+/// record one new message. Comparing this digest against the stored one lets an
+/// untouched conversation skip its writes entirely while `save` keeps its
+/// full-state reconciliation contract: the cross-conversation prune below still
+/// sees every id, so deletions are unaffected.
+///
+/// The digest must cover every column and child row the upserts write, or a change
+/// could be skipped. It is computed over the same encoded forms that get stored.
+///
+/// It is deliberately order-sensitive rather than set-canonical. `users` reaches here
+/// from a `HashMap`, so an identical roster can serialize in a different order after a
+/// restart and produce a different digest. That direction is safe -- it costs one
+/// redundant rewrite and nothing else. Making the digest canonical (sorting before
+/// hashing) would invert the risk: the digest would then claim equality for content
+/// whose stored serialization differs, so do not "optimize" it that way without also
+/// canonicalizing what gets written.
+pub(super) fn conversation_digest(
+    conversation: &SandboxHistoryConversation,
+) -> Result<String, BotStateDbError> {
+    let mut payload = Vec::new();
+    payload.extend_from_slice(encode(&conversation.view)?.as_bytes());
+    payload.push(0);
+    for user in &conversation.users {
+        payload.extend_from_slice(encode(user)?.as_bytes());
+        payload.push(0);
+    }
+    payload.push(1);
+    for message in retained_messages(&conversation.messages) {
+        payload.extend_from_slice(encode(message)?.as_bytes());
+        payload.push(0);
+    }
+    Ok(hash_bytes(&payload))
+}
+
+/// The trailing window `upsert_conversations` actually persists.
+fn retained_messages(messages: &[SandboxMessageView]) -> &[SandboxMessageView] {
+    if messages.len() > SANDBOX_MAX_MESSAGES {
+        &messages[messages.len() - SANDBOX_MAX_MESSAGES..]
+    } else {
+        messages
+    }
+}
+
+fn stored_conversation_digest(
+    connection: &Connection,
+    kind: SandboxHistoryKind,
+    conversation_id: &str,
+) -> Result<Option<String>, BotStateDbError> {
+    Ok(connection
+        .prepare_cached(
+            "SELECT content_digest FROM bot_sandbox_conversation
+             WHERE store = ?1 AND conversation_id = ?2",
+        )?
+        .query_row(params![kind.as_str(), conversation_id], |row| {
+            row.get::<_, Option<String>>(0)
+        })
+        .optional()?
+        .flatten())
+}
+
 fn upsert_conversations(
     connection: &Connection,
     kind: SandboxHistoryKind,
     items: &[SandboxHistoryConversation],
 ) -> Result<(), BotStateDbError> {
     for conversation in items {
+        let digest = conversation_digest(conversation)?;
+        if stored_conversation_digest(connection, kind, &conversation.view.conversation_id)?
+            .is_some_and(|stored| stored == digest)
+        {
+            continue;
+        }
         upsert_conversation_row(connection, kind, &conversation.view)?;
         let user_ids = conversation
             .users
@@ -563,11 +634,7 @@ fn upsert_conversations(
             &conversation.view.conversation_id,
             &user_ids,
         )?;
-        let messages = if conversation.messages.len() > SANDBOX_MAX_MESSAGES {
-            &conversation.messages[conversation.messages.len() - SANDBOX_MAX_MESSAGES..]
-        } else {
-            conversation.messages.as_slice()
-        };
+        let messages = retained_messages(&conversation.messages);
         let message_ids = messages
             .iter()
             .map(|message| message.message_id.as_str())
@@ -582,6 +649,14 @@ fn upsert_conversations(
             kind,
             &conversation.view.conversation_id,
             &message_ids,
+        )?;
+        // Recorded only after every write above succeeded, and inside the same
+        // transaction as those writes, so a digest can never claim a state the
+        // database does not hold.
+        connection.execute(
+            "UPDATE bot_sandbox_conversation SET content_digest = ?3
+             WHERE store = ?1 AND conversation_id = ?2",
+            params![kind.as_str(), conversation.view.conversation_id, digest],
         )?;
     }
     Ok(())
@@ -886,6 +961,30 @@ pub(super) fn migrate_sandbox_v10(connection: &Connection) -> Result<(), BotStat
     backfill_faces(connection)
 }
 
+/// Adds the per-conversation content digest used to skip unchanged rewrites.
+///
+/// Existing rows get NULL, which never equals a computed digest, so the first save
+/// after the upgrade rewrites each conversation once and records its digest.
+pub(super) fn migrate_sandbox_v12(connection: &Connection) -> Result<(), BotStateDbError> {
+    if !table_exists(connection, "bot_sandbox_conversation")? {
+        return Ok(());
+    }
+    let mut statement = connection.prepare("PRAGMA table_info(bot_sandbox_conversation)")?;
+    let has_digest = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?
+        .iter()
+        .any(|column| column == "content_digest");
+    drop(statement);
+    if !has_digest {
+        connection.execute(
+            "ALTER TABLE bot_sandbox_conversation ADD COLUMN content_digest TEXT",
+            [],
+        )?;
+    }
+    Ok(())
+}
+
 pub(super) fn migrate_sandbox_v11(connection: &Connection) -> Result<(), BotStateDbError> {
     if !table_exists(connection, "bot_sandbox_conversation")? {
         return Ok(());
@@ -904,7 +1003,8 @@ fn backfill_faces(connection: &Connection) -> Result<(), BotStateDbError> {
     {
         return Ok(());
     }
-    let mut statement = connection.prepare("SELECT refs_json, time_ms FROM bot_sandbox_message")?;
+    let mut statement =
+        connection.prepare_cached("SELECT refs_json, time_ms FROM bot_sandbox_message")?;
     let rows = statement
         .query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
@@ -947,8 +1047,9 @@ fn migrate_legacy_media(
     if !table_exists(connection, "bot_sandbox_media")? {
         return Ok(aliases);
     }
-    let mut statement = connection
-        .prepare("SELECT media_id, mime, name, bytes, created_at_unix_ms FROM bot_sandbox_media")?;
+    let mut statement = connection.prepare_cached(
+        "SELECT media_id, mime, name, bytes, created_at_unix_ms FROM bot_sandbox_media",
+    )?;
     let rows = statement
         .query_map([], |row| {
             Ok((
@@ -988,7 +1089,7 @@ fn migrate_legacy_messages(
     connection: &Connection,
     aliases: &HashMap<String, String>,
 ) -> Result<(), BotStateDbError> {
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare_cached(
         "SELECT store, message_id, conversation_id, sender_id, sender_name, role, text, segments_json, reply_to, time_ms
          FROM bot_sandbox_message",
     )?;
@@ -1120,7 +1221,9 @@ impl BotStateDbRepository {
         &self,
         kind: SandboxHistoryKind,
     ) -> Result<Vec<SandboxConversationView>, BotStateDbError> {
-        self.call_sync(|reply| super::DbJob::SandboxConversations { kind, reply })
+        self.call_sync(false, move |connection| {
+            load_conversation_views(connection, kind)
+        })
     }
 
     pub fn sandbox_messages(
@@ -1129,10 +1232,8 @@ impl BotStateDbRepository {
         conversation_id: &str,
     ) -> Result<Vec<SandboxMessageView>, BotStateDbError> {
         let conversation_id = conversation_id.to_owned();
-        self.call_sync(|reply| super::DbJob::SandboxMessages {
-            kind,
-            conversation_id,
-            reply,
+        self.call_sync(false, move |connection| {
+            load_conversation_messages(connection, kind, &conversation_id)
         })
     }
 
@@ -1141,7 +1242,9 @@ impl BotStateDbRepository {
         media_id: &str,
     ) -> Result<Option<SandboxMediaBlob>, BotStateDbError> {
         let media_id = media_id.to_owned();
-        self.call_sync(|reply| super::DbJob::SandboxMedia { media_id, reply })
+        self.call_sync(false, move |connection| {
+            load_media_by_id(connection, &media_id)
+        })
     }
 
     /// Loads sticker bytes by content hash.
@@ -1154,19 +1257,21 @@ impl BotStateDbRepository {
         sticker_id: &str,
     ) -> Result<Option<SandboxMediaBlob>, BotStateDbError> {
         let sticker_id = sticker_id.to_owned();
-        self.call_sync(|reply| super::DbJob::SandboxSticker { sticker_id, reply })
+        self.call_sync(false, move |connection| {
+            load_sticker_by_id(connection, &sticker_id)
+        })
     }
 }
 
 impl SandboxHistoryStore for BotStateDbRepository {
     fn load(&self) -> Result<SandboxHistorySnapshot, SandboxError> {
-        self.call_sync(|reply| super::DbJob::SandboxLoad { reply })
+        self.call_sync(false, move |connection| load(connection))
             .map_err(sandbox_error)
     }
 
     fn save(&self, snapshot: &SandboxHistorySnapshot) -> Result<(), SandboxError> {
         let snapshot = snapshot.clone();
-        self.call_sync(|reply| super::DbJob::SandboxSave { snapshot, reply })
+        self.call_sync(true, move |connection| save(connection, &snapshot))
             .map_err(sandbox_error)
     }
 

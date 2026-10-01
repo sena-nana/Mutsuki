@@ -276,23 +276,10 @@ fn command_invocation(event: BotEvent) -> BotNodeInvocation {
     }
 }
 
+/// The benchmark must build ingress envelopes the same way production does, or it
+/// measures a shape no adapter produces.
 fn flow_envelope(event: BotEvent) -> BotFlowEventEnvelope {
-    BotFlowEventEnvelope {
-        event_id: event.event_id.clone(),
-        protocol_id: BOT_EVENT_INGEST_PROTOCOL_ID.into(),
-        payload: BotFlowPayload {
-            event_type: BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1),
-            value: serde_json::to_value(&event).unwrap(),
-        },
-        context: BotFlowContext {
-            bot: Some(event.bot.clone()),
-            target: Some(event.target.clone()),
-            actor: event.actor.clone(),
-            ext: event.ext.clone(),
-        },
-        trace_id: None,
-        correlation_id: None,
-    }
+    BotFlowEventEnvelope::from_bot_event(event, None, None).expect("benchmark event encodes")
 }
 
 fn benchmark_fanout_registry(branch_count: usize) -> Arc<BotFlowRegistry> {
@@ -1265,10 +1252,10 @@ pub fn rate_limit_sample() -> Sample {
     config.retry_base_delay_ms = 0;
     config.retry_max_delay_ms = 10;
     let client = ScriptedHttpClient {
-        responses,
+        responses: Mutex::new(responses),
         requests: requests.clone(),
     };
-    let mut transport = QqOpenApiTransport::new(
+    let transport = QqOpenApiTransport::new(
         config,
         Box::new(client),
         Arc::new(StaticQqCredentials::new("BENCHMARK_SECRET")),
@@ -1372,14 +1359,16 @@ pub fn wait_resume_sample() -> Sample {
 }
 
 struct ScriptedHttpClient {
-    responses: VecDeque<QqHttpResponse>,
+    responses: Mutex<VecDeque<QqHttpResponse>>,
     requests: Arc<Mutex<u64>>,
 }
 
 impl QqHttpClient for ScriptedHttpClient {
-    fn send(&mut self, _request: QqHttpRequest) -> Result<QqHttpResponse, QqOpenApiError> {
+    fn send(&self, _request: QqHttpRequest) -> Result<QqHttpResponse, QqOpenApiError> {
         *self.requests.lock().unwrap() += 1;
         self.responses
+            .lock()
+            .unwrap()
             .pop_front()
             .ok_or_else(|| QqOpenApiError::InvalidResponse("benchmark response exhausted".into()))
     }

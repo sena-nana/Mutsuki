@@ -181,6 +181,16 @@ bounded channel 的 `try_send` 原子判定，不能用旁路计数先判断再�
 给出 parallel_groups、serial_groups 和 parallelism_limit；Host / SDK scalar adapter 只能
 在 scheduler budget、HostCapacity、runner capability 和 resource plan 都允许时有界并行。
 
+条目按各自的 `OrderingRequirement` 进入计划：`None` 归入 parallel_groups；
+`SameResourceOrder { ref_id }` 与 `StrictSequence { sequence_id }` 各自按键归组
+（两者是独立命名空间，同名的 ref 与 sequence 不会合并），**同键一个有序序列、
+异键互相独立**，`parallelism_limit` 因此等于无序条目数加键的总个数；
+`PreserveSubmitOrder` 约束整个 work set，与写冲突一样把 `parallelism_limit` 压回 1。
+键级并行只有在 runner 按计划执行时才兑现（Rust SDK 为
+`map_work_batch_entries_grouped`，顺序执行的 runner 始终合法，因为更严格恒定安全），
+且仍受 runner 自己声明的 `max_entry_concurrency` 收紧——计划表达的是数据依赖允许多少并行，
+descriptor 表达的是 runner 能承受多少，二者取小。
+
 批次间并发由 `RunnerConcurrency` 明确声明。`Exclusive` 保持每个逻辑 runner id 一个
 active batch；`Reentrant` 允许一个共享 async handler 在声明的 batch/entry 上限内并发；
 `Sharded` 允许固定数量的同步或外部进程实例并发。registry freeze 会校验实例数量与
@@ -548,3 +558,13 @@ Contract surface 兼容性：
   default and receives both path and logical namespace from its caller.
 - Bot Flow is an ordinary Bot-owned `ConfigProvider`; only Bot packages decode its document.
   The independent editor adapts Web RPC to ConfigService and owns no server-side storage or draft.
+
+## Descriptor invalidation (#184)
+
+Provider `execute` returns `ResourceProviderOutcome`: committed invalidations are independent of operation success, including partial batch/saga failure. Host applies provider/ref/resource-generation removals on the actor before replying. Absent refs are idempotent; conflicting owners/generations fail. Invalidation dominates same-outcome updates and removes writer/derived occupancy facts. Receipt status and business JSON are not lifecycle signals.
+
+Invalidating providers declare Ordered. Their provider-id lane survives staged reload, retains the executing provider until actor application, and remains occupied after caller timeout/disconnect until actual completion. Queue count/bytes use Host limits; panic with unknown effects poisons the lane until restart. No permanent tombstone history or I/O in open. SQLite keeps create-before-insert retention and capability exemption.
+
+HostRuntimeCommand::ResourceDescriptors exposes the actor's read-only descriptor inventory for consistency checks. Resource bytes remain provider-owned.
+
+Provider 路由是 Host generation switch 的一部分：候选实例随 PreparedRuntimeReload 进入 actor，Core 切换成功后才替换；完整 reload 缺失候选必须失败，targeted reload 保留未受影响实例。Runner drain 与主循环共用资源结果应用/通道释放，drain 同时消费 control/data mailbox。

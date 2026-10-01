@@ -496,7 +496,7 @@ mod tests {
         WritePlan,
     };
     use mutsuki_runtime_core::RuntimeFailure;
-    use mutsuki_runtime_sdk::{ResourcePlanGateway, ResourceProviderGateway};
+    use mutsuki_runtime_sdk::ResourcePlanGateway;
 
     use super::*;
 
@@ -601,7 +601,7 @@ mod tests {
         ) -> RuntimeResult<ResourceRef> {
             Self::ensure_provider(provider_id)?;
             let resource =
-                ResourceProviderGateway::create_blob_resource(&self.provider, schema, bytes)?;
+                MemoryResourceProvider::create_blob_resource(&self.provider, schema, bytes)?;
             Ok(self.remember(resource))
         }
 
@@ -613,7 +613,7 @@ mod tests {
             bytes: Vec<u8>,
         ) -> RuntimeResult<ResourceRef> {
             Self::ensure_provider(provider_id)?;
-            let resource = ResourceProviderGateway::create_cow_state_resource(
+            let resource = MemoryResourceProvider::create_cow_state_resource(
                 &self.provider,
                 kind_id,
                 schema,
@@ -629,7 +629,7 @@ mod tests {
             schema: &str,
         ) -> RuntimeResult<ResourceRef> {
             Self::ensure_provider(provider_id)?;
-            let resource = ResourceProviderGateway::create_capability_resource(
+            let resource = MemoryResourceProvider::create_capability_resource(
                 &self.provider,
                 kind_id,
                 schema,

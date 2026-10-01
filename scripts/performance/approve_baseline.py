@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import _bootstrap  # noqa: F401
-from mutsuki_performance import validate_report
+from mutsuki_performance import validate_baseline_approval, validate_report
 
 
 def main() -> None:
@@ -33,6 +33,7 @@ def main() -> None:
         "approved_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "reason": args.reason,
     }
+    validate_baseline_approval(approval, report_bytes, report)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(approval, indent=2, sort_keys=True) + "\n", encoding="utf-8"

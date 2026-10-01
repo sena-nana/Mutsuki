@@ -38,8 +38,8 @@ Link、Host、AgentKit、Bot、StdPlugins 和第一方 Bot 产品的 package 组
 标准协议与插件位于 `plugins/std`，包括
 `mutsuki-plugin-resource-memory`、`mutsuki-plugin-resource-shared-memory`、
 `mutsuki-plugin-dev-mock`、`mutsuki-plugin-observe-log`、
-`mutsuki-plugin-config-permission`、`mutsuki-plugin-config-sqlite`、
-`mutsuki-plugin-config-web`、`mutsuki-plugin-workflow-linear`、
+`mutsuki-plugin-config-permission`、`mutsuki-config-sqlite`、
+`mutsuki-std-web-extension-config`、`mutsuki-plugin-workflow-linear`、
 `mutsuki-plugin-workflow-broadcast`、`mutsuki-plugin-io-fs`、
 `mutsuki-plugin-io-http-client`、`mutsuki-plugin-io-browser-chromium`、
 `mutsuki-plugin-image-render-takumi` 和 `mutsuki-plugin-db-sqlite`
@@ -145,9 +145,9 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
     `ResourceProviderGateway`。当前 `ResourceManager` 只保留 plan 构造、descriptor
     路由和 lease / occupancy 事实。
   - Provider 执行 write commit、command、batch、saga 后通过 `PlanReceipt.descriptor_updates`
-    回写新的 `ResourceRef` descriptor，并通过 `descriptor_removals` 注销 retention/delete
-    回收的 hub 条目；host actor 只将 descriptor/generation 同步进 `ResourceManager`，
-    不把资源 bytes 数据面拉回 Core。
+    回写新的 `ResourceRef` descriptor；已提交删除经独立 outcome invalidations 报告，
+    host actor 先删除再同步 descriptor/generation，不把资源 bytes 数据面拉回 Core。
+
   - `ResourceManager` 支持 `ResourceCellRef` / `ResourceLease`，长期资源状态归属
     ResourceManager，runner 只持有 step 期间的短期 lease。
   - `TaskHandle` / `TaskAwait` / `TaskOutcome` 是 SDK-facing 协议对象；Core 保存

@@ -8,7 +8,7 @@ from mutsuki_runner_kit.contracts.codec import JsonDict, as_bool, as_int, as_str
 from mutsuki_runner_kit.wire.schema import RUNTIME_WIRE_SCHEMA
 
 BINARY_CODEC_ID = "mutsuki.codec.typed-msgpack.v1"
-SCHEMA_REVISION = "mutsuki.runtime.wire/1.3.0"
+SCHEMA_REVISION = "mutsuki.runtime.wire/1.4.0"
 
 
 @dataclass(frozen=True)

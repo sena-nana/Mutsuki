@@ -249,17 +249,14 @@ pub fn agent_bridge_runner_with_delivery_policy(
     let factory: BoxedTaskAwaitRunner = Box::new(move |ctx, task| {
         let bridge = bridge.clone();
         let delivery_policy = delivery_policy.clone();
-        let config = bridge.config.snapshot();
-        let permit = bridge.concurrency.try_acquire(config.max_concurrency);
+        let max_concurrency = bridge.config.max_concurrency();
+        let permit = bridge.concurrency.try_acquire(max_concurrency);
         Box::pin(async move {
             let Some(_permit) = permit else {
                 return Err(bridge_failure(
                     &task,
                     "concurrency_limited",
-                    format!(
-                        "Bot Agent concurrency limit {} is currently occupied",
-                        config.max_concurrency
-                    ),
+                    format!("Bot Agent concurrency limit {max_concurrency} is currently occupied"),
                 ));
             };
             run_bridge_task(ctx, task, bridge, delivery_policy).await
@@ -467,7 +464,7 @@ async fn run_bridge_node_task(
 
 #[allow(clippy::needless_pass_by_value)]
 fn bind_profile_node(task: &Task, invocation: BotNodeInvocation) -> RuntimeResult<RunnerResult> {
-    let mut event: BotEvent = serde_json::from_value(invocation.input.payload.value.clone())
+    let mut event: BotEvent = serde::Deserialize::deserialize(&invocation.input.payload.value)
         .map_err(|error| bridge_failure(task, "node.event", error))?;
     let override_existing = invocation
         .config
@@ -515,11 +512,11 @@ fn flow_bridge_request(
     invocation: &BotNodeInvocation,
 ) -> RuntimeResult<BotAgentBridgeRequest> {
     if task.protocol_id == BOT_AGENT_SUBMIT_PROTOCOL_ID {
-        let event: BotEvent = serde_json::from_value(invocation.input.payload.value.clone())
+        let event: BotEvent = serde::Deserialize::deserialize(&invocation.input.payload.value)
             .map_err(|error| bridge_failure(task, "node.event", error))?;
         return Ok(BotAgentBridgeRequest::Submit { event });
     }
-    let command: BotCommandEvent = serde_json::from_value(invocation.input.payload.value.clone())
+    let command: BotCommandEvent = serde::Deserialize::deserialize(&invocation.input.payload.value)
         .map_err(|error| bridge_failure(task, "node.command", error))?;
     let event = command.source;
     match task.protocol_id.as_str() {
@@ -554,10 +551,10 @@ struct BridgeExecution {
 
 fn decode_bridge_request(task: &Task) -> RuntimeResult<BotAgentBridgeRequest> {
     let payload = task.payload.to_value();
-    if let Ok(request) = serde_json::from_value::<BotAgentBridgeRequest>(payload.clone()) {
+    if let Ok(request) = <BotAgentBridgeRequest as serde::Deserialize>::deserialize(&payload) {
         return Ok(request);
     }
-    if let Ok(command) = serde_json::from_value::<BotCommandEvent>(payload.clone()) {
+    if let Ok(command) = <BotCommandEvent as serde::Deserialize>::deserialize(&payload) {
         return bridge_request_from_command(command)
             .map_err(|error| bridge_failure(task, "command.decode", error));
     }
@@ -1422,23 +1419,6 @@ impl BotAgentBridge {
         })
     }
 
-    /// Claims a QQ event before STT/TTS or any other externally metered media work.
-    ///
-    /// A pending claim remains resumable after a Host restart; only a completed claim bypasses
-    /// the rest of the bridge.
-    /// Claims an event before any media side effect and detects completed retries.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when conversation resolution or the durable claim fails.
-    pub async fn claim_event_before_media(
-        &self,
-        event: &BotEvent,
-    ) -> Result<Option<BotAgentBridgeResult>, BotAgentError> {
-        let (claim, result) = self.claim_event_state(event).await?;
-        Ok((claim == AgentEventClaim::Completed).then_some(result))
-    }
-
     async fn claim_event_state(
         &self,
         event: &BotEvent,
@@ -1780,7 +1760,7 @@ fn event_message(
     if let Some(identifiers) = event.ext.get(BOT_EXT_CONVERSATION_IDENTIFIERS) {
         metadata["identifiers"] = identifiers.clone();
         if let Ok(identifiers) =
-            serde_json::from_value::<ConversationIdentifiers>(identifiers.clone())
+            <ConversationIdentifiers as serde::Deserialize>::deserialize(identifiers)
             && let Some(text) = identifiers.prompt_text()
         {
             injections.push(AgentMessageContextInjection {

@@ -8,7 +8,7 @@
 - `skills/link-protocol-transport/SKILL.md`：协议、typed envelope、会话、安全和 transport。
 - `skills/link-performance/SKILL.md`：时延、公平性、重连和性能模型。
 
-跨 Core 契约先读根 `AGENTS.md` 与 `skills/contracts/SKILL.md`。
+跨 Core 契约先读根 `AGENTS.md` 与 `skills/protocol/SKILL.md`。
 
 ## Hard Rules
 
