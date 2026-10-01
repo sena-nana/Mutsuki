@@ -5,8 +5,8 @@ use mutsuki_runtime_host::{
     RuntimeBootstrapper, TokioAsyncExecutor,
 };
 use mutsuki_runtime_sdk::{
-    ResourceProviderOrdering, ResourceProviderOutcome, ResourceProviderReply as P,
-    ResourceProviderRequest as Q,
+    ResourceProviderExecution, ResourceProviderGateway, ResourceProviderOrdering,
+    ResourceProviderOutcome, ResourceProviderReply as P, ResourceProviderRequest as Q,
 };
 use std::sync::{Arc, Barrier};
 use std::time::Duration;
@@ -99,6 +99,37 @@ fn same_inventory(runtime: &HostRuntime, provider: &SqliteResourceProvider) {
     assert_eq!(inventory(runtime), stored);
 }
 
+struct InlineSqliteProvider(Arc<SqliteResourceProvider>);
+
+impl ResourceProviderGateway for InlineSqliteProvider {
+    fn execute(&self, request: Q) -> ResourceProviderOutcome<P> {
+        self.0.execute(request)
+    }
+
+    fn ordering(&self) -> ResourceProviderOrdering {
+        ResourceProviderOrdering::Ordered
+    }
+
+    fn execution(&self) -> ResourceProviderExecution {
+        ResourceProviderExecution::Inline
+    }
+
+    fn restore_descriptors(&self) -> RuntimeResult<Vec<ResourceRef>> {
+        self.0.restore_descriptors()
+    }
+}
+
+#[test]
+fn inline_delete_applies_the_same_actor_invalidation_as_offloaded_delete() {
+    let provider = Arc::new(SqliteResourceProvider::open_in_memory().unwrap());
+    let host = runtime(Arc::new(InlineSqliteProvider(provider)));
+    let cap = capability(&host);
+    let blob = create(&host);
+    host.dispatch(C::ExecuteCommandPlan(Box::new(delete(&cap, &blob))))
+        .unwrap();
+    absent(&host, &blob);
+}
+
 #[test]
 fn retention_and_delete_are_immediately_invisible_and_restart_consistent() {
     let dir = tempfile::tempdir().unwrap();
@@ -172,7 +203,7 @@ fn ten_thousand_create_sweep_cycles_bound_the_live_hub() {
         }
     }
     same_inventory(&host, &provider);
-    assert_eq!(inventory(&host).len(), 3);
+    assert_eq!(inventory(&host).len(), 2);
     assert!(
         host.dispatch(C::OpenResourceDescriptor(cap.ref_id.to_string()))
             .is_ok()
@@ -209,7 +240,7 @@ fn failed_batch_and_saga_preserve_committed_deletions() {
 }
 
 #[test]
-fn snapshot_retention_and_failed_insert_still_publish_removals() {
+fn snapshot_retention_publishes_committed_removals_and_failed_insert_rolls_back() {
     let provider = Arc::new(
         SqliteResourceProvider::prepare(
             Connection::open_in_memory().unwrap(),
@@ -247,15 +278,20 @@ fn snapshot_retention_and_failed_insert_still_publish_removals() {
     absent(&host, &old);
     same_inventory(&host, &provider);
     provider.state.lock().unwrap().connection.execute_batch("UPDATE resources SET created_at_unix_ms = 1; CREATE TRIGGER reject_insert BEFORE INSERT ON resources BEGIN SELECT RAISE(ABORT, 'injected'); END;").unwrap();
-    assert!(
-        host.dispatch(C::CreateBlobResource {
-            provider_id: PROVIDER_ID.into(),
-            schema: "bytes.v1".into(),
-            bytes: vec![1]
-        })
-        .is_err()
+    let failed = host.dispatch(C::CreateBlobResource {
+        provider_id: PROVIDER_ID.into(),
+        schema: "bytes.v1".into(),
+        bytes: vec![1],
+    });
+    assert!(failed.is_err());
+    // The failed insert rolls back its age sweep; the snapshot remains visible.
+    assert_eq!(
+        host.dispatch(C::OpenResourceDescriptor(
+            snapshot.snapshot_ref.ref_id.to_string()
+        ))
+        .unwrap(),
+        R::ResourceDescriptor(snapshot.snapshot_ref.clone())
     );
-    absent(&host, &snapshot.snapshot_ref);
     same_inventory(&host, &provider);
 }
 
@@ -575,11 +611,20 @@ fn bulk_capacity_sweep_is_transactional_and_preserves_the_exact_oldest_prefix() 
         .unwrap();
     let provider = Arc::new(provider);
     let host = runtime(provider.clone());
-    let new = create(&host);
+    let R::ResourceCreated(new) = host
+        .dispatch(C::CreateBlobResource {
+            provider_id: PROVIDER_ID.into(),
+            schema: "bytes.v1".into(),
+            bytes: vec![1],
+        })
+        .unwrap()
+    else {
+        panic!("created");
+    };
     same_inventory(&host, &provider);
     let live: std::collections::BTreeSet<_> =
         inventory(&host).into_iter().map(|r| r.ref_id).collect();
-    let expected: std::collections::BTreeSet<_> = resources[9_997..]
+    let expected: std::collections::BTreeSet<_> = resources[9_998..]
         .iter()
         .map(|r| r.ref_id.clone())
         .chain([cap.ref_id, new.ref_id])
