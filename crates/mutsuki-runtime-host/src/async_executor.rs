@@ -5,13 +5,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::resource_router::ResourceCommandFuture;
 use futures::FutureExt;
 use mutsuki_runtime_contracts::{
     AsyncInvocation, AsyncInvocationHandle, CompletionBatch, ERR_CAPABILITY_EXHAUSTED,
     RuntimeError, ScalarValue,
 };
 use mutsuki_runtime_core::{AsyncCompletionFuture, RuntimeFailure, RuntimeResult};
-use mutsuki_runtime_sdk::BoxRuntimeFuture;
+use mutsuki_runtime_sdk::ResourceProviderOutcome;
 use serde::Serialize;
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::oneshot;
@@ -32,7 +33,7 @@ pub enum AsyncExecutorEvent {
     ResourceCompleted {
         invocation: AsyncInvocation,
         reply: oneshot::Sender<RuntimeResult<HostRuntimeReply>>,
-        result: Box<RuntimeResult<HostRuntimeReply>>,
+        result: Box<ResourceProviderOutcome<HostRuntimeReply>>,
     },
     ResourceTimedOut {
         invocation: AsyncInvocation,
@@ -90,11 +91,6 @@ impl Drop for AsyncCancellationGuard {
     }
 }
 
-enum ResourceFutureOutcome {
-    Completed(Box<RuntimeResult<HostRuntimeReply>>),
-    TimedOut,
-}
-
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct AsyncExecutorSnapshot {
     pub executor_id: String,
@@ -120,7 +116,7 @@ pub trait AsyncExecutor: Send + Sync + fmt::Debug {
     fn spawn_resource(
         &self,
         invocation: AsyncInvocation,
-        future: BoxRuntimeFuture<HostRuntimeReply>,
+        future: ResourceCommandFuture,
         reply: oneshot::Sender<RuntimeResult<HostRuntimeReply>>,
         events: AsyncEventSink,
     ) -> RuntimeResult<AsyncInvocationHandle>;
@@ -325,7 +321,7 @@ impl AsyncExecutor for TokioAsyncExecutor {
     fn spawn_resource(
         &self,
         invocation: AsyncInvocation,
-        future: BoxRuntimeFuture<HostRuntimeReply>,
+        future: ResourceCommandFuture,
         reply: oneshot::Sender<RuntimeResult<HostRuntimeReply>>,
         events: AsyncEventSink,
     ) -> RuntimeResult<AsyncInvocationHandle> {
@@ -337,57 +333,42 @@ impl AsyncExecutor for TokioAsyncExecutor {
                 return Err(returned);
             }
         };
-        let state = self.state.clone();
         let invocation_for_task = invocation.clone();
-        let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
-        let task = self.runtime().spawn(async move {
-            let _ = start_rx.await;
-            let _reservation = reservation;
-            let deadline = invocation_for_task
-                .deadline_after_ms
-                .map(Duration::from_millis);
-            let outcome = AssertUnwindSafe(async {
-                match deadline {
-                    Some(deadline) => match tokio::time::timeout(deadline, future).await {
-                        Ok(result) => ResourceFutureOutcome::Completed(Box::new(result)),
-                        Err(_) => ResourceFutureOutcome::TimedOut,
-                    },
-                    None => ResourceFutureOutcome::Completed(Box::new(future.await)),
+        // Resource side effects are not cancellable runner work. Keep driving the
+        // future after the caller's deadline and retain the reservation until completion.
+        self.runtime().spawn(async move {
+            let mut future = AssertUnwindSafe(future).catch_unwind();
+            let mut reply = Some(reply);
+            let outcome = if let Some(ms) = invocation_for_task.deadline_after_ms {
+                match tokio::time::timeout(Duration::from_millis(ms), &mut future).await {
+                    Ok(result) => result,
+                    Err(_) => {
+                        events(AsyncExecutorEvent::ResourceTimedOut {
+                            invocation: invocation_for_task.clone(),
+                            reply: reply.take().expect("first reply"),
+                        });
+                        future.await
+                    }
                 }
-            })
-            .catch_unwind()
-            .await;
-            state
-                .handles
-                .lock()
-                .expect("async executor handle lock poisoned")
-                .remove(&invocation_for_task.invocation_id);
+            } else {
+                future.await
+            };
+            // Completion can wake the actor immediately. Release executor capacity
+            // before it admits the next ordered request.
+            drop(reservation);
+            let reply = reply.unwrap_or_else(|| oneshot::channel().0);
             match outcome {
-                Ok(ResourceFutureOutcome::Completed(result)) => {
-                    events(AsyncExecutorEvent::ResourceCompleted {
-                        invocation: invocation_for_task,
-                        reply,
-                        result,
-                    })
-                }
-                Ok(ResourceFutureOutcome::TimedOut) => {
-                    events(AsyncExecutorEvent::ResourceTimedOut {
-                        invocation: invocation_for_task,
-                        reply,
-                    })
-                }
+                Ok(result) => events(AsyncExecutorEvent::ResourceCompleted {
+                    invocation: invocation_for_task,
+                    reply,
+                    result: Box::new(result),
+                }),
                 Err(_) => events(AsyncExecutorEvent::ResourcePanicked {
                     invocation: invocation_for_task,
                     reply,
                 }),
             }
         });
-        self.state
-            .handles
-            .lock()
-            .expect("async executor handle lock poisoned")
-            .insert(invocation.invocation_id.clone(), task.abort_handle());
-        let _ = start_tx.send(());
         Ok(AsyncInvocationHandle {
             invocation_id: invocation.invocation_id,
             cancel_token: invocation.cancel_token,

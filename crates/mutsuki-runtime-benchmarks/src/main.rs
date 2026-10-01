@@ -85,6 +85,7 @@ fn main() -> ExitCode {
 fn run() -> Result<(), String> {
     let options = parse_options()?;
     validate_lane_build(options.measurement_mode)?;
+    validate_gate_build(options.gate, cfg!(debug_assertions))?;
     for _ in 0..options.warmup_iterations {
         let _ = run_cases(options.mode)?;
     }
@@ -228,6 +229,15 @@ fn validate_lane_build(mode: MeasurementMode) -> Result<(), String> {
             "allocation lane requires --features allocation-tracking and a separate process".into(),
         ),
     }
+}
+
+fn validate_gate_build(level: GateLevel, debug_assertions: bool) -> Result<(), String> {
+    if debug_assertions && level != GateLevel::None {
+        return Err(
+            "performance gates require --release; use --gate none for dev diagnostics".into(),
+        );
+    }
+    Ok(())
 }
 
 fn parse_options() -> Result<Options, String> {
@@ -395,6 +405,24 @@ fn verify_baseline_approval(report_path: &Path, approval_path: &Path) -> Result<
     {
         return Err("a dirty repository report cannot be an approved baseline".into());
     }
+    validate_baseline_success(
+        baseline.correctness.passed,
+        &baseline.cases,
+        &baseline.gates,
+    )
+}
+
+fn validate_baseline_success(
+    passed: bool,
+    cases: &[CaseReport],
+    gates: &[GateResult],
+) -> Result<(), String> {
+    if !passed
+        || cases.iter().any(|case| !case.correctness.passed)
+        || gates.iter().any(|gate| !gate.passed)
+    {
+        return Err("a failed report cannot be an approved baseline".into());
+    }
     Ok(())
 }
 
@@ -418,6 +446,7 @@ fn evaluate_gates(
         return Vec::new();
     }
     let mut gates = Vec::new();
+    gates.extend(disabled_trace_gates(cases));
     let scheduling_100k = cases
         .iter()
         .filter(|case| {
@@ -434,7 +463,9 @@ fn evaluate_gates(
         1.0,
         "cases",
     ));
-    for case in cases.iter().filter(|case| case.measurement_mode == "time") {
+    for case in cases.iter().filter(|case| {
+        case.measurement_mode == "time" && case.case_id != report::DISABLED_TRACE_CASE_ID
+    }) {
         if let Some(latency) = &case.metrics.latency_ns {
             gates.push(gate_at_most(
                 format!("absolute.{}.p99", case.case_id),
@@ -453,6 +484,38 @@ fn evaluate_gates(
         gates.extend(relative_gates(cases, baseline));
     }
     gates.extend(zero_tolerance_gates(cases));
+    gates
+}
+
+fn disabled_trace_gates(cases: &[CaseReport]) -> Vec<GateResult> {
+    let traces = cases
+        .iter()
+        .filter(|case| case.case_id == report::DISABLED_TRACE_CASE_ID)
+        .collect::<Vec<_>>();
+    let mut gates = vec![gate_at_least(
+        "matrix.case.core.observability.disabled-trace",
+        traces.len() as f64,
+        1.0,
+        "cases",
+    )];
+    for case in traces {
+        if case.measurement_mode == "time" {
+            gates.push(gate_at_least(
+                "matrix.metric.core.observability.disabled-trace.latency",
+                usize::from(case.metrics.latency_ns.is_some()) as f64,
+                1.0,
+                "metrics",
+            ));
+            if let Some(latency) = &case.metrics.latency_ns {
+                gates.push(gate_at_most(
+                    "absolute.core.observability.disabled-trace.p99",
+                    latency.p99,
+                    1_000_000.0,
+                    "ns/decision",
+                ));
+            }
+        }
+    }
     gates
 }
 
@@ -538,6 +601,14 @@ fn coverage_gate(
     }
 }
 
+fn disabled_trace_metrics_complete(case: &CaseReport) -> bool {
+    match case.measurement_mode.as_str() {
+        "time" => case.metrics.latency_ns.is_some() && case.metrics.throughput_per_second.is_some(),
+        "allocation" => case.metrics.allocated_bytes.is_some(),
+        _ => false,
+    }
+}
+
 fn relative_gates(cases: &[CaseReport], baseline: &BaselineReport) -> Vec<GateResult> {
     let baseline_by_key = baseline
         .cases
@@ -545,10 +616,26 @@ fn relative_gates(cases: &[CaseReport], baseline: &BaselineReport) -> Vec<GateRe
         .map(|case| (case_key(case), case))
         .collect::<BTreeMap<_, _>>();
     let mut gates = Vec::new();
+    let mut comparisons = 0;
     for case in cases {
-        let Some(previous) = baseline_by_key.get(&case_key(case)) else {
+        let previous = baseline_by_key.get(&case_key(case));
+        if case.case_id == report::DISABLED_TRACE_CASE_ID {
+            let comparable = disabled_trace_metrics_complete(case)
+                && previous.is_some_and(|old| disabled_trace_metrics_complete(old));
+            gates.push(gate_at_least(
+                "relative.baseline.core.observability.disabled-trace",
+                usize::from(comparable) as f64,
+                1.0,
+                "comparable-cases",
+            ));
+            if !comparable {
+                continue;
+            }
+        }
+        let Some(previous) = previous else {
             continue;
         };
+        let before_comparison = gates.len();
         if let (Some(current), Some(old)) = (&case.metrics.latency_ns, &previous.metrics.latency_ns)
         {
             let regression_ratio = if case
@@ -615,10 +702,11 @@ fn relative_gates(cases: &[CaseReport], baseline: &BaselineReport) -> Vec<GateRe
                 "bytes",
             ));
         }
+        comparisons += gates.len() - before_comparison;
     }
     gates.push(gate_at_least(
         "relative.matched-cases",
-        gates.len() as f64,
+        comparisons as f64,
         1.0,
         "comparisons",
     ));
@@ -702,5 +790,197 @@ fn gate_at_least(
         actual,
         limit,
         unit: unit.into(),
+    }
+}
+
+#[cfg(test)]
+mod gate_tests {
+    use super::*;
+    use report::{AllocationMetrics, CaseResult};
+
+    fn trace_case(elapsed_ns: u64, lane: MeasurementMode) -> CaseReport {
+        aggregate_samples(
+            &[vec![CaseResult::measured(
+                report::DISABLED_TRACE_CASE_ID,
+                "observability",
+                BTreeMap::from([("capacity".into(), "0".into())]),
+                1,
+                1,
+                elapsed_ns,
+                AllocationMetrics::default(),
+                BTreeMap::new(),
+            )]],
+            lane,
+        )
+        .unwrap()
+        .remove(0)
+    }
+
+    fn trace_gates(
+        level: GateLevel,
+        cases: &[CaseReport],
+        baseline: Option<&BaselineReport>,
+    ) -> Vec<GateResult> {
+        evaluate_gates(BenchmarkMode::Smoke, level, cases, baseline)
+            .into_iter()
+            .filter(|gate| gate.gate_id.contains(report::DISABLED_TRACE_CASE_ID))
+            .collect()
+    }
+
+    #[test]
+    fn failed_reports_cases_and_gates_cannot_be_baselines() {
+        let mut cases = vec![trace_case(100, MeasurementMode::Time)];
+        let mut gates = trace_gates(GateLevel::Smoke, &cases, None);
+        assert!(validate_baseline_success(true, &cases, &gates).is_ok());
+        assert!(validate_baseline_success(false, &cases, &gates).is_err());
+        cases[0].correctness.passed = false;
+        assert!(validate_baseline_success(true, &cases, &gates).is_err());
+        cases[0].correctness.passed = true;
+        gates[0].passed = false;
+        assert!(validate_baseline_success(true, &cases, &gates).is_err());
+    }
+
+    #[test]
+    fn dev_requires_diagnostic_mode_and_release_accepts_gates() {
+        assert!(validate_gate_build(GateLevel::None, true).is_ok());
+        for level in [GateLevel::Smoke, GateLevel::Release] {
+            assert!(validate_gate_build(level, true).is_err());
+            assert!(validate_gate_build(level, false).is_ok());
+        }
+        let cases = [trace_case(2_000_000, MeasurementMode::Time)];
+        assert!(trace_gates(GateLevel::None, &cases, None).is_empty());
+    }
+
+    #[test]
+    fn smoke_enforces_catastrophic_limit_inclusively() {
+        for (elapsed_ns, passed) in [(100, true), (1_000_000, true), (1_000_001, false)] {
+            let gates = trace_gates(
+                GateLevel::Smoke,
+                &[trace_case(elapsed_ns, MeasurementMode::Time)],
+                None,
+            );
+            assert!(!gates.is_empty());
+            assert_eq!(gates.iter().all(|gate| gate.passed), passed);
+            assert_eq!(
+                gates
+                    .iter()
+                    .filter(|gate| gate.gate_id.starts_with("absolute."))
+                    .count(),
+                1
+            );
+        }
+    }
+
+    #[test]
+    fn smoke_requires_case_and_time_metric_but_never_times_allocation_lane() {
+        assert!(
+            trace_gates(GateLevel::Smoke, &[], None)
+                .iter()
+                .any(|gate| !gate.passed)
+        );
+        let mut case = trace_case(100, MeasurementMode::Time);
+        case.metrics.latency_ns = None;
+        assert!(
+            trace_gates(GateLevel::Smoke, &[case], None)
+                .iter()
+                .any(|gate| !gate.passed)
+        );
+        let allocation = trace_case(2_000_000, MeasurementMode::Allocation);
+        let gates = trace_gates(GateLevel::Smoke, &[allocation], None);
+        assert!(gates.iter().all(|gate| gate.passed));
+        assert!(
+            !gates
+                .iter()
+                .any(|gate| gate.gate_id.starts_with("absolute."))
+        );
+    }
+
+    #[test]
+    fn release_requires_matching_baseline_and_detects_regression() {
+        let baseline = BaselineReport {
+            environment_id: "test".into(),
+            measurement_boundary: "test".into(),
+            cases: vec![trace_case(100, MeasurementMode::Time)],
+        };
+        for (elapsed_ns, passed) in [(100, true), (130, false)] {
+            let gates = trace_gates(
+                GateLevel::Release,
+                &[trace_case(elapsed_ns, MeasurementMode::Time)],
+                Some(&baseline),
+            );
+            assert_eq!(gates.iter().all(|gate| gate.passed), passed);
+        }
+        let current = [trace_case(100, MeasurementMode::Time)];
+        let mut incompatible = baseline;
+        incompatible.cases[0]
+            .dimensions
+            .insert("capacity".into(), "64".into());
+        assert!(
+            trace_gates(GateLevel::Release, &current, Some(&incompatible))
+                .iter()
+                .any(|gate| !gate.passed)
+        );
+        incompatible.cases.clear();
+        assert!(
+            trace_gates(GateLevel::Release, &current, Some(&incompatible))
+                .iter()
+                .any(|gate| !gate.passed)
+        );
+    }
+
+    #[test]
+    fn release_requires_lane_metrics_on_both_sides() {
+        for lane in [MeasurementMode::Time, MeasurementMode::Allocation] {
+            let complete = trace_case(100, lane);
+            let baseline = BaselineReport {
+                environment_id: "test".into(),
+                measurement_boundary: "test".into(),
+                cases: vec![complete.clone()],
+            };
+            let gates = relative_gates(std::slice::from_ref(&complete), &baseline);
+            assert!(gates.iter().all(|gate| gate.passed));
+            let expected_comparisons = if lane == MeasurementMode::Time {
+                3.0
+            } else {
+                1.0
+            };
+            assert_eq!(gates.last().unwrap().actual, expected_comparisons);
+
+            let mut missing_metrics = vec![report::CaseMetrics::default()];
+            if lane == MeasurementMode::Time {
+                let mut missing_latency = complete.metrics.clone();
+                missing_latency.latency_ns = None;
+                missing_metrics.push(missing_latency);
+                let mut missing_throughput = complete.metrics.clone();
+                missing_throughput.throughput_per_second = None;
+                missing_metrics.push(missing_throughput);
+            } else {
+                let mut missing_bytes = complete.metrics.clone();
+                missing_bytes.allocated_bytes = None;
+                missing_metrics.push(missing_bytes);
+            }
+            for metrics in missing_metrics {
+                for incomplete_baseline in [true, false] {
+                    let mut current = complete.clone();
+                    let mut previous = complete.clone();
+                    if incomplete_baseline {
+                        previous.metrics = metrics.clone();
+                    } else {
+                        current.metrics = metrics.clone();
+                    }
+                    let baseline = BaselineReport {
+                        environment_id: "test".into(),
+                        measurement_boundary: "test".into(),
+                        cases: vec![previous],
+                    };
+                    let gates = relative_gates(&[current], &baseline);
+                    assert!(
+                        gates.iter().any(|gate| !gate.passed),
+                        "incomplete {lane:?} baseline={incomplete_baseline}"
+                    );
+                    assert_eq!(gates.last().unwrap().actual, 0.0);
+                }
+            }
+        }
     }
 }

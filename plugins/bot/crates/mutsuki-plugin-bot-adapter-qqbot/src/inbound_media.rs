@@ -100,7 +100,7 @@ impl AsyncBatchHandler for QqGatewayMediaHandler {
                     allow_insecure_transport,
                     &allowed_hosts,
                     &client,
-                    resources.as_ref(),
+                    resources.clone(),
                     &max_bytes_by_kind,
                 )
                 .await;
@@ -157,7 +157,7 @@ async fn map_task_with_media(
     allow_insecure_transport: bool,
     allowed_hosts: &[String],
     client: &Client,
-    resources: &dyn ResourceRegistryGateway,
+    resources: Arc<dyn ResourceRegistryGateway>,
     max_bytes_by_kind: &BTreeMap<BotMediaKind, u64>,
 ) -> Result<RunnerResult, RuntimeError> {
     let frame = if let Some(frame) = task.payload.as_local::<GatewayFrame>() {
@@ -189,9 +189,19 @@ async fn map_task_with_media(
             )
             .await?;
             validate_mime(&attachment.mime_type, &bytes)?;
-            let resource = resources
-                .create_blob_resource(provider_id, &attachment.mime_type, bytes)
-                .map_err(|error| failure("gateway.media.resource", error))?;
+            // AsyncBatchHandler runs on the Host async executor. The synchronous
+            // Host bridge releases Core but still waits on its caller, so park
+            // this media write on a blocking worker rather than occupying an
+            // async executor thread while SQLite performs I/O.
+            let resource = tokio::task::spawn_blocking({
+                let resources = resources.clone();
+                let provider_id = provider_id.to_owned();
+                let schema = attachment.mime_type.clone();
+                move || resources.create_blob_resource(&provider_id, &schema, bytes)
+            })
+            .await
+            .map_err(|error| failure("gateway.media.resource.join", error))?
+            .map_err(|error| failure("gateway.media.resource", error))?;
             if resource.size_hint.is_none()
                 || resource.content_hash.as_deref().is_none_or(str::is_empty)
             {
@@ -570,6 +580,11 @@ mod tests {
                 assert_eq!(resource.size_hint, Some(bytes.len() as u64));
                 assert!(resource.content_hash.unwrap().starts_with("sha256:"));
                 assert_eq!(resources.created.lock().unwrap().len(), 1);
+                assert_ne!(
+                    resources.created_on.lock().unwrap()[0],
+                    std::thread::current().id(),
+                    "sync Host bridge must run on a blocking worker"
+                );
                 server.await.unwrap();
             }
         }
@@ -656,6 +671,7 @@ mod tests {
     #[derive(Default)]
     struct TestResources {
         created: Mutex<Vec<Vec<u8>>>,
+        created_on: Mutex<Vec<std::thread::ThreadId>>,
     }
 
     impl mutsuki_runtime_sdk::ResourcePlanGateway for TestResources {
@@ -711,6 +727,10 @@ mod tests {
             let digest = format!("sha256:{}", hex::encode(Sha256::digest(&bytes)));
             let size = bytes.len() as u64;
             self.created.lock().unwrap().push(bytes);
+            self.created_on
+                .lock()
+                .unwrap()
+                .push(std::thread::current().id());
             Ok(ResourceRef {
                 ref_id: format!("ref-{digest}").into(),
                 resource_id: ResourceId {

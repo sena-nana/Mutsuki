@@ -55,8 +55,10 @@ pub use abi::{
     ConfiguredBinaryPluginGuest, dispatch_binary_host_request, dispatch_host_request,
 };
 pub use backend::{
-    AsyncResourcePlanGateway, AsyncResourceProviderGateway, BoxRuntimeFuture, ResourcePlanGateway,
-    ResourceProviderExecution, ResourceProviderGateway, ResourceRegistryGateway,
+    AsyncResourcePlanGateway, AsyncResourceProviderGateway, AsyncResourceRegistryGateway,
+    BoxRuntimeFuture, ResourcePlanGateway, ResourceProviderExecution, ResourceProviderFuture,
+    ResourceProviderGateway, ResourceProviderOrdering, ResourceProviderOutcome,
+    ResourceProviderReply, ResourceProviderRequest, ResourceRegistryGateway,
 };
 pub use batch::{BatchPayloadBuilder, TaskBatchBuilder, TaskOptions};
 pub use descriptor::{
@@ -112,6 +114,160 @@ pub trait RuntimeClient: Send + Sync {
     }
     fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>>;
     fn register_waker(&self, _handle: &TaskHandle, _waker: &Waker) {}
+}
+
+/// Completes one entry, resolving its payload the way the batch contract requires.
+fn complete_work_batch_entry(
+    batch: &WorkBatch,
+    entry: &mutsuki_runtime_contracts::BatchEntry,
+    handler: &impl Fn(&Task) -> Result<RunnerResult, RuntimeError>,
+) -> EntryCompletion {
+    let task = match batch.payload_task(entry.payload_index) {
+        Ok(task) if task.task_id == entry.task_id => task,
+        Ok(_) => {
+            return EntryCompletion {
+                entry_id: entry.entry_id.clone(),
+                task_id: entry.task_id.clone(),
+                result: None,
+                error: Some(mutsuki_runtime_contracts::RuntimeError::new(
+                    mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
+                    "runtime.sdk",
+                    format!("batch.entry.{}.payload_task_id", entry.entry_id),
+                )),
+            };
+        }
+        Err(error) => {
+            return EntryCompletion {
+                entry_id: entry.entry_id.clone(),
+                task_id: entry.task_id.clone(),
+                result: None,
+                error: Some(error),
+            };
+        }
+    };
+    match handler(&task) {
+        Ok(result) => EntryCompletion {
+            entry_id: entry.entry_id.clone(),
+            task_id: entry.task_id.clone(),
+            result: Some(result),
+            error: None,
+        },
+        Err(error) => EntryCompletion {
+            entry_id: entry.entry_id.clone(),
+            task_id: entry.task_id.clone(),
+            result: None,
+            error: Some(error),
+        },
+    }
+}
+
+/// Runs a batch according to its resource plan: ordered within each serial
+/// group, concurrent across independent ones, bounded by both the plan's own
+/// `parallelism_limit` and the runner's declared `max_entry_concurrency`, passed
+/// here as `max_concurrent_entries`.
+///
+/// A runner whose work is blocking and whose entries are only ordered per key --
+/// outbound chat messages, say, which must stay ordered inside one conversation
+/// and not across conversations -- otherwise has to serialise everything to
+/// respect the stricter guarantee.
+///
+/// Whenever the plan allows no parallelism, which is every case where any entry
+/// asks for submit order or a strict sequence, or where a write conflict was
+/// detected, this behaves exactly like [`map_work_batch_entries`].
+///
+/// Each entry runs exactly once even if the plan names it in several groups.
+///
+/// # Panics
+///
+/// Propagates a panicking handler, but unlike [`map_work_batch_entries`] the
+/// entries already running on other lanes finish first: a panic stops that lane,
+/// not the batch.
+///
+/// # Errors
+///
+/// Returns an error when the completion batch cannot be assembled.
+pub fn map_work_batch_entries_grouped(
+    batch: &WorkBatch,
+    max_concurrent_entries: usize,
+    handler: impl Fn(&Task) -> Result<RunnerResult, RuntimeError> + Sync,
+) -> RuntimeResult<CompletionBatch> {
+    let index_of: std::collections::HashMap<_, usize> = batch
+        .entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| (entry.entry_id.clone(), index))
+        .collect();
+    // One unit per independently schedulable sequence. Entries the plan does not
+    // mention -- conflicts, or anything a future plan shape adds -- each become
+    // their own unit so none is silently dropped.
+    let mut units: Vec<Vec<usize>> = Vec::new();
+    let mut claimed = vec![false; batch.entries.len()];
+    for group in &batch.resource_plan.serial_groups {
+        let unit: Vec<usize> = group
+            .iter()
+            .filter_map(|entry_id| index_of.get(entry_id).copied())
+            .filter(|index| !std::mem::replace(&mut claimed[*index], true))
+            .collect();
+        if !unit.is_empty() {
+            units.push(unit);
+        }
+    }
+    // Everything a serial group did not claim is independent and becomes its own
+    // unit: that covers `parallel_groups`, the conflict entries the plan leaves
+    // out, and anything a future plan shape adds. Together with the guard above
+    // this is exactly one unit per entry, so nothing runs twice or goes missing.
+    for (index, claimed) in claimed.iter().enumerate() {
+        if !claimed {
+            units.push(vec![index]);
+        }
+    }
+
+    // Two different bounds: the plan says how much the data dependencies allow,
+    // `max_concurrent_entries` is what the runner declared it can actually have in
+    // flight. A batch of 32 conversations would otherwise open 32 lanes against a
+    // runner whose descriptor promised 8.
+    let lanes = batch
+        .resource_plan
+        .parallelism_limit
+        .min(max_concurrent_entries.max(1))
+        .max(1)
+        .min(units.len().max(1));
+    if lanes <= 1 {
+        return map_work_batch_entries(batch, |task| handler(task));
+    }
+
+    let handler = &handler;
+    let unit_results: Vec<Vec<(usize, EntryCompletion)>> = std::thread::scope(|scope| {
+        let mut joins = Vec::with_capacity(lanes);
+        for lane in 0..lanes {
+            let lane_units: Vec<&Vec<usize>> = units.iter().skip(lane).step_by(lanes).collect();
+            joins.push(scope.spawn(move || {
+                let mut out = Vec::new();
+                for unit in lane_units {
+                    for index in unit {
+                        out.push((
+                            *index,
+                            complete_work_batch_entry(batch, &batch.entries[*index], handler),
+                        ));
+                    }
+                }
+                out
+            }));
+        }
+        joins
+            .into_iter()
+            .map(|join| join.join().expect("batch lane panicked"))
+            .collect()
+    });
+    // The units partition every entry index, so restoring submit order is a sort
+    // rather than a scatter with a hole to fill.
+    let mut completed: Vec<(usize, EntryCompletion)> = unit_results.into_iter().flatten().collect();
+    completed.sort_by_key(|(index, _)| *index);
+    let results = completed
+        .into_iter()
+        .map(|(_, completion)| completion)
+        .collect();
+    Ok(CompletionBatch::from_results(batch, results))
 }
 
 pub fn map_work_batch_entries(

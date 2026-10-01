@@ -15,3 +15,8 @@ description: Add or change Bot protocol conformance, Runner batch tests, fake pl
   (accepted/dropped, self-sent skipped, `matched_sources` in ingress output).
 
 Report whether validation used unit, fake-server or real-account smoke coverage.
+
+For large-blob consumers (#182), preserve the injected Host gateway path. Pair consumer/fake
+tests with the SQLite owner 8 MiB async-create/sync-read/restart test; never claim standalone
+provider tests establish live QQ/Bilibili behavior. The safe bridge contract is in
+../../../../docs/architecture/async-resource-creation.md.

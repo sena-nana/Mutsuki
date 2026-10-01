@@ -29,7 +29,7 @@ use mutsuki_runtime_sdk::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-pub use mutsuki_bot_conversation::{ConversationContextStore, MemoryConversationContextStore};
+use mutsuki_bot_conversation::ConversationContextStore;
 
 pub const BOT_CONVERSATION_CONTEXT_PLUGIN_ID: &str = "mutsuki.plugin.bot.conversation.context";
 pub const BOT_CONVERSATION_CONTEXT_RUNNER_ID: &str = "mutsuki.bot.conversation.context";
@@ -190,7 +190,7 @@ impl Runner for ConversationContextRunner {
                 .decode_shared::<BotNodeInvocation>()
                 .map_err(|error| runtime_error(task, error))?;
             let mut event: BotEvent =
-                serde_json::from_value(invocation.input.payload.value.clone())
+                serde::Deserialize::deserialize(&invocation.input.payload.value)
                     .map_err(|error| runtime_error(task, error))?;
             match task.protocol_id.as_str() {
                 BOT_CONVERSATION_RECORD_ICL_PROTOCOL_ID => {
@@ -217,7 +217,7 @@ fn record_icl(
     config: &Value,
 ) -> Result<(), String> {
     let config: IclConfig =
-        serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
+        serde::Deserialize::deserialize(config).map_err(|error| error.to_string())?;
     let Some(entry) = icl_entry(event) else {
         return Ok(());
     };
@@ -230,7 +230,7 @@ fn attach_icl(
     config: &Value,
 ) -> Result<(), String> {
     let config: IclConfig =
-        serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
+        serde::Deserialize::deserialize(config).map_err(|error| error.to_string())?;
     let entries = store.load_icl(&event.target.conversation_key(), config.max_count)?;
     event.ext.insert(
         BOT_EXT_CONVERSATION_ICL.into(),
@@ -332,6 +332,8 @@ fn runtime_error(
 
 #[cfg(test)]
 mod tests {
+    use mutsuki_bot_testkit::MemoryConversationContextStore;
+
     use mutsuki_bot_protocol::{
         BotAccountRef, BotEventKind, BotMessage, BotPlatform, BotUser, format_icl_summary,
     };

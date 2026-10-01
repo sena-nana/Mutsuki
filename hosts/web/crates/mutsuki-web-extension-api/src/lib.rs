@@ -12,8 +12,8 @@ mod manifest;
 mod rpc;
 
 pub use manifest::{
-    BUNDLED_ENTRY_ASSET, ManifestError, content_hash, load_bundled_manifest, load_manifest,
-    validate_manifest,
+    BUNDLED_ENTRY_ASSET, BundledAssets, BundledManifest, ManifestError, content_hash,
+    load_bundled_manifest, load_manifest, materialize_bundled_assets, validate_manifest,
 };
 pub use rpc::{AsyncRpcHandler, EventRegistry, RpcCallContext, RpcFuture, RpcHandler, RpcRegistry};
 

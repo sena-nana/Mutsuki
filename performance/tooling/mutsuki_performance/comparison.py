@@ -38,6 +38,14 @@ def _case_key(case: dict[str, Any]) -> tuple[str, str, str]:
     )
 
 
+def _disabled_trace_metrics_complete(case: dict[str, Any]) -> bool:
+    required = {
+        "time": ("latency_ns", "throughput_per_second"),
+        "allocation": ("allocated_bytes",),
+    }.get(case["measurement_mode"], ())
+    return bool(required) and all(name in case["metrics"] for name in required)
+
+
 def compare_reports(
     baseline: dict[str, Any], current: dict[str, Any]
 ) -> dict[str, Any]:
@@ -65,19 +73,30 @@ def compare_reports(
     _append_zero_tolerance_counters(
         "report", current["correctness"]["counters"], findings
     )
-    for case in current["cases"]:
-        old = previous.get(_case_key(case))
-        if old is None:
+    for gate in current.get("gates", []):
+        findings.append({"case_id": "report", "metric": gate["gate_id"],
+                         "kind": "owner-gate", "passed": gate["passed"]})
+    if current["suite_version"] == "mutsuki-core/v2":
+        lanes = {case["measurement_mode"] for case in current["cases"]} & {"time", "allocation"}
+        for lane in sorted(lanes):
+            findings.append({
+                "case_id": "core.observability.disabled-trace",
+                "measurement_mode": lane, "kind": "required-current",
+                "passed": any(case["case_id"] == "core.observability.disabled-trace"
+                              and case["measurement_mode"] == lane
+                              for case in current["cases"]),
+            })
+    current_keys = {_case_key(case) for case in current["cases"]}
+    for key, case in previous.items():
+        if case["case_id"] == "core.observability.disabled-trace" and key not in current_keys:
             findings.append(
-                {"case_id": case["case_id"], "kind": "unmatched", "passed": True}
+                {
+                    "case_id": case["case_id"],
+                    "measurement_mode": case["measurement_mode"],
+                    "kind": "missing-current", "passed": False,
+                }
             )
-            continue
-        _compare_distribution(case, old, "latency_ns", findings)
-        _compare_distribution(
-            case, old, "throughput_per_second", findings, lower_is_better=False
-        )
-        _compare_scalar(case, old, "allocated_bytes", findings, minimum_delta=64.0)
-        _compare_scalar(case, old, "peak_rss_bytes", findings)
+    for case in current["cases"]:
         findings.append(
             {
                 "case_id": case["case_id"],
@@ -102,6 +121,39 @@ def compare_reports(
                     "passed": slope <= 0,
                 }
             )
+        old = previous.get(_case_key(case))
+        if old is None:
+            findings.append(
+                {
+                    "case_id": case["case_id"],
+                    "kind": "unmatched",
+                    # Issue #185: this new hot-path gate needs an explicitly
+                    # approved baseline; older reports must not skip it.
+                    "passed": case["case_id"] != "core.observability.disabled-trace",
+                }
+            )
+            continue
+        if case["case_id"] == "core.observability.disabled-trace":
+            comparable = (
+                _disabled_trace_metrics_complete(case)
+                and _disabled_trace_metrics_complete(old)
+            )
+            findings.append(
+                {
+                    "case_id": case["case_id"],
+                    "kind": "required-metrics",
+                    "measurement_mode": case["measurement_mode"],
+                    "passed": comparable,
+                }
+            )
+            if not comparable:
+                continue
+        _compare_distribution(case, old, "latency_ns", findings)
+        _compare_distribution(
+            case, old, "throughput_per_second", findings, lower_is_better=False
+        )
+        _compare_scalar(case, old, "allocated_bytes", findings, minimum_delta=64.0)
+        _compare_scalar(case, old, "peak_rss_bytes", findings)
     return {"passed": all(item["passed"] for item in findings), "findings": findings}
 
 

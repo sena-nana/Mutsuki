@@ -23,9 +23,19 @@ fn product_for(deployment: &Path, mode: &str) -> (tempfile::TempDir, PathBuf) {
     let root = tempdir().unwrap();
     let product = root.path().join("product.toml");
     let deployment = deployment.to_string_lossy().replace('\\', "/");
+    // A `[service]` home inside the TempDir. Without it the config declares no
+    // home at all, so loading it resolved to the developer's real `~/.mutsuki`
+    // and the test created data, logs, run state and a control token there.
+    let home = root
+        .path()
+        .join("runtime")
+        .to_string_lossy()
+        .replace('\\', "/");
     fs::write(
         &product,
-        format!("[distribution]\nmode = \"{mode}\"\ndeployment = \"{deployment}\"\n"),
+        format!(
+            "[service]\nhome_dir = \"{home}\"\n\n[distribution]\nmode = \"{mode}\"\ndeployment = \"{deployment}\"\n"
+        ),
     )
     .unwrap();
     (root, product)
@@ -78,7 +88,11 @@ mode = "disabled"
     assert_eq!(distribution.health_snapshot()["state"], "disabled");
     let runtime = distribution
         .attach_health_probe(
-            assemble_service(service, mutsuki_bot_web_console::empty_config_service()).unwrap(),
+            assemble_service(
+                service,
+                mutsuki_bot_web_host_integration::empty_config_service(),
+            )
+            .unwrap(),
         )
         .start()
         .await
@@ -190,7 +204,11 @@ async fn explicit_fast_fallback_starts_only_as_visible_degraded_local_execution(
     );
     let runtime = distribution
         .attach_health_probe(
-            assemble_service(service, mutsuki_bot_web_console::empty_config_service()).unwrap(),
+            assemble_service(
+                service,
+                mutsuki_bot_web_host_integration::empty_config_service(),
+            )
+            .unwrap(),
         )
         .start()
         .await

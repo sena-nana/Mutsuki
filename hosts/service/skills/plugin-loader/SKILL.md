@@ -13,3 +13,5 @@ description: Change ServiceHost plugin.toml discovery, manifest validation, buil
 - Keep the builtin registry manifest-only; never attach an arbitrary host-call facade to a domain plugin.
 
 Test discovery, invalid manifests, missing artifacts/capabilities and breaking reload rejection.
+
+Provider ABI lifecycle uses `ExecuteResourceProviderRequest` (opcode 0x300c, `resource.provider.execute`) and a `ResourceProviderResponse` containing result plus invalidations. Wire schema 1.4.0 handshake rejects older revisions; rebuild provider binaries. Native providers migrate to `execute`; no receipt-only fallback. Runner-facing resource replies retain their shapes. Python mirrors DTOs and registry/artifacts, without implementing a provider endpoint.

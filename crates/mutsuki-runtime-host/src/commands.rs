@@ -48,6 +48,7 @@ pub enum HostRuntimeCommand {
         limit: usize,
     },
     OpenResourceDescriptor(String),
+    ResourceDescriptors,
     CreateBlobResource {
         provider_id: String,
         schema: String,
@@ -95,9 +96,7 @@ pub enum HostRuntimeReply {
     Idle(RunnerLoopReport),
     TaskCancelled(TaskHandle),
     DrainStarted(RuntimeStopState),
-    RuntimeAborted {
-        cancelled_tasks: usize,
-    },
+    RuntimeAborted { cancelled_tasks: usize },
     StopState(RuntimeStopState),
     Statistics(RuntimeStatistics),
     DriveState(HostRuntimeDriveState),
@@ -109,15 +108,10 @@ pub enum HostRuntimeReply {
     Events(ObservabilityPage<RuntimeEvent>),
     TraceSpans(ObservabilityPage<TraceSpan>),
     ResourceDescriptor(ResourceRef),
-    ResourceCreated {
-        descriptor: ResourceRef,
-        descriptor_removals: Vec<String>,
-    },
+    ResourceCreated(ResourceRef),
+    ResourceDescriptors(Vec<ResourceRef>),
     ResourceBytes(Vec<u8>),
-    Snapshot {
-        snapshot: SnapshotDescriptor,
-        descriptor_removals: Vec<String>,
-    },
+    Snapshot(SnapshotDescriptor),
     StreamPlan(StreamPlan),
     PlanReceipt(PlanReceipt),
     PlanReceipts(Vec<PlanReceipt>),

@@ -93,7 +93,7 @@ async fn run_task(
     media_provider_id: String,
 ) -> RuntimeResult<RunnerResult> {
     let payload: Value = task.payload.clone().into();
-    let invocation = serde_json::from_value::<BotNodeInvocation>(payload.clone()).ok();
+    let invocation = <BotNodeInvocation as serde::Deserialize>::deserialize(&payload).ok();
     let request = match &invocation {
         Some(invocation) => {
             mihuashi_request_from_invocation(invocation).map_err(|error| fail(&task, error))?
@@ -438,8 +438,8 @@ fn mihuashi_request_from_invocation(
     invocation: &BotNodeInvocation,
 ) -> Result<MihuashiResolveRequest, String> {
     let config: MihuashiFlowConfig =
-        serde_json::from_value(invocation.config.clone()).map_err(|error| error.to_string())?;
-    let event: BotEvent = serde_json::from_value(invocation.input.payload.value.clone())
+        serde::Deserialize::deserialize(&invocation.config).map_err(|error| error.to_string())?;
+    let event: BotEvent = serde::Deserialize::deserialize(&invocation.input.payload.value)
         .map_err(|error| error.to_string())?;
     let url = config
         .url

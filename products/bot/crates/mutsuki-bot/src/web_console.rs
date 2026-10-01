@@ -11,7 +11,7 @@ use mutsuki_bot_service_host_integration::{
     BilibiliConsoleBridge, BotDatabaseConsoleBridge, BotFlowConsoleBridge, LocalAgentConsoleBridge,
     QqConsoleBridge, SANDBOX_SERVICE_ID, SandboxConsoleBridge,
 };
-use mutsuki_bot_web_console::{
+use mutsuki_bot_web_host_integration::{
     BotAgentConsoleServices, ConfigNavigationGroup, ConfigNavigationItem, ConsoleAssetDirs,
     ControlChangeBridge, ManagementChangeBridge, SecretKeyResolver, SecretMonitor,
     WebConsoleConfig, WebConsolePaths, WebConsoleSecrets, attach_control_changed_bridge,

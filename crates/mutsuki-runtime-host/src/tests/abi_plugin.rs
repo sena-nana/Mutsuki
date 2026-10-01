@@ -1,3 +1,4 @@
+use mutsuki_runtime_sdk::{ResourceProviderReply as R, ResourceProviderRequest as Q};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -51,19 +52,45 @@ fn real_abi_v2_library_loads_callbacks_resources_and_closes() {
     assert_eq!(plugin.runners.len(), 1);
     assert_eq!(plugin.resource_providers.len(), 1);
     let provider = plugin.resource_providers[0].provider.as_ref();
-    let resource = provider
-        .create_blob_resource("fixture.v1", b"input".to_vec())
-        .unwrap();
+    let R::Created(resource) = provider
+        .execute(Q::CreateBlob {
+            schema: "fixture.v1".into(),
+            bytes: b"input".to_vec(),
+        })
+        .result
+        .unwrap()
+    else {
+        panic!("expected resource");
+    };
+    let R::Bytes(bytes) = provider
+        .execute(Q::Collect(ReadPlan {
+            plan_id: "fixture-read".into(),
+            resource: resource.clone(),
+            operation: "collect".into(),
+            args: json!({}),
+        }))
+        .result
+        .unwrap()
+    else {
+        panic!("expected bytes");
+    };
+    assert_eq!(bytes, b"fixture-resource");
+
+    let outcome = provider.execute(Q::Command(mutsuki_runtime_contracts::CommandPlan {
+        plan_id: "abi-partial".into(),
+        capability: resource.clone(),
+        operation: "invalidate-then-fail".into(),
+        args: json!({}),
+        idempotency_key: None,
+    }));
+    assert!(outcome.result.is_err());
     assert_eq!(
-        provider
-            .collect_read_plan(&ReadPlan {
-                plan_id: "fixture-read".into(),
-                resource,
-                operation: "collect".into(),
-                args: json!({}),
-            })
-            .unwrap(),
-        b"fixture-resource"
+        outcome.invalidations,
+        vec![mutsuki_runtime_contracts::ResourceDescriptorInvalidation {
+            provider_id: resource.provider_id,
+            ref_id: resource.ref_id,
+            generation: resource.generation
+        }]
     );
 
     drop(plugin);
@@ -212,16 +239,35 @@ fn build_real_fixture() -> PathBuf {
                 .join("fixtures")
                 .join("abi-v2-plugin")
                 .join("Cargo.toml");
-            let status = Command::new(env!("CARGO"))
-                .args(["build", "--manifest-path"])
+            let output = Command::new(env!("CARGO"))
+                .args([
+                    "build",
+                    "--locked",
+                    "--message-format=json",
+                    "--manifest-path",
+                ])
                 .arg(&manifest)
-                .status()
+                .output()
                 .expect("build real ABI v2 fixture");
-            assert!(status.success(), "real ABI v2 fixture build failed");
-            let library = workspace_root()
-                .join("target")
-                .join("debug")
-                .join(library_file_name());
+            assert!(
+                output.status.success(),
+                "real ABI v2 fixture build failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            // Cargo owns the output location (including CARGO_TARGET_DIR). Do
+            // not assume that an independent clone builds into ./target.
+            let library = String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                .filter(|message| message["reason"] == "compiler-artifact")
+                .filter_map(|message| message["filenames"].as_array().cloned())
+                .flatten()
+                .filter_map(|name| name.as_str().map(PathBuf::from))
+                .find(|path| {
+                    path.file_name()
+                        .is_some_and(|name| name == library_file_name())
+                })
+                .expect("Cargo must report the real ABI fixture artifact");
             assert!(library.is_file(), "fixture artifact: {}", library.display());
             library
         })

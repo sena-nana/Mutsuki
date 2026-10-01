@@ -347,8 +347,13 @@ pub fn aggregate_samples(
     Ok(reports)
 }
 
+pub const DISABLED_TRACE_CASE_ID: &str = "core.observability.disabled-trace";
+
 fn standard_case_id(case: &CaseResult) -> String {
     let id = case.id.as_str();
+    if id == DISABLED_TRACE_CASE_ID {
+        return id.into();
+    }
     if id == "longevity/idle-tick/24h-equivalent" {
         return "core.idle-runtime".into();
     }

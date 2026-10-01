@@ -124,6 +124,13 @@ async fn run_connection_workload(idle_window: Option<Duration>) -> ConnectionRun
             flow_registry,
         ))
         .unwrap();
+    // The Bot catalog binds the QQ adapter to `DEFAULT_MEDIA_PROVIDER_ID`, so the
+    // adapter manifest requires that resource provider capability. Products supply
+    // the provider themselves; without it here the LoadPlan is rejected with
+    // `registry.unauthorized` before a single benchmark case runs.
+    catalog
+        .register(mutsuki_std_service_host_integration::SqliteResourcePluginFactory)
+        .unwrap();
     let runtime = ServiceRuntimeBuilder::new(service)
         .with_configured_plugin_catalog(catalog)
         .register_builtin_plugin(echo_manifest(1))
@@ -220,6 +227,11 @@ reconnect_max_delay_ms = 20
 reconnect_jitter_ms = 0
 
 [[plugins.configured]]
+id = "{}"
+[plugins.configured.config]
+database_path = "{}"
+
+[[plugins.configured]]
 id = "example.bot.echo"
 
 [security]
@@ -237,6 +249,10 @@ panic_file = "panic.log"
         qq.client_secret_key,
         qq.token_url,
         qq.openapi_base_url,
+        mutsuki_plugin_resource_sqlite::PLUGIN_ID,
+        root.join("resources.sqlite")
+            .to_string_lossy()
+            .replace('\\', "/"),
     )
 }
 

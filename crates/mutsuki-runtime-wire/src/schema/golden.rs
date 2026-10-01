@@ -246,7 +246,12 @@ pub fn generated_binary_golden_value() -> Value {
                 "kind_id": "fixture.capability",
                 "schema": "fixture.capability.v1",
             }),
-            resource,
+            resource.clone(),
+        ),
+        operation(
+            Opcode::ResourceProviderExecute,
+            json!({ "provider_id": "fixture.provider", "operation": { "CreateBlob": { "schema": "fixture.v1", "bytes": [1,2,3] } } }),
+            json!({ "result": { "Ok": { "Created": resource } }, "invalidations": [] }),
         ),
     ];
     json!({

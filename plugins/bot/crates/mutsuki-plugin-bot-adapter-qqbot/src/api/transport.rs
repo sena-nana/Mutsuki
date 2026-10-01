@@ -41,7 +41,7 @@ impl QqOpenApiTransport {
     }
 
     pub fn execute_json(
-        &mut self,
+        &self,
         method: HttpMethod,
         path: String,
         body: Value,
@@ -54,7 +54,7 @@ impl QqOpenApiTransport {
             let token = self.auth.bearer_token(
                 &self.config,
                 self.credentials.as_ref(),
-                self.http.as_mut(),
+                self.http.as_ref(),
             )?;
             let mut request = match &method {
                 HttpMethod::Get => request_empty(method.clone(), url.clone()),
@@ -77,16 +77,20 @@ impl QqOpenApiTransport {
                         headers: response.headers,
                         body: response.body,
                     };
-                    if error.retryable() && transient_attempt < max_attempts {
-                        self.backoff(transient_attempt, error.retry_after_ms());
+                    if error.retryable()
+                        && transient_attempt < max_attempts
+                        && self.backoff(transient_attempt, error.retry_after_ms())
+                    {
                         transient_attempt = transient_attempt.saturating_add(1);
                         continue;
                     }
                     return Err(error);
                 }
                 Err(error) => {
-                    if error.retryable() && transient_attempt < max_attempts {
-                        self.backoff(transient_attempt, error.retry_after_ms());
+                    if error.retryable()
+                        && transient_attempt < max_attempts
+                        && self.backoff(transient_attempt, error.retry_after_ms())
+                    {
                         transient_attempt = transient_attempt.saturating_add(1);
                         continue;
                     }
@@ -96,36 +100,56 @@ impl QqOpenApiTransport {
         }
     }
 
-    pub fn access_token(&mut self) -> Result<String, QqOpenApiError> {
+    pub fn access_token(&self) -> Result<String, QqOpenApiError> {
         self.auth
-            .bearer_token(&self.config, self.credentials.as_ref(), self.http.as_mut())
+            .bearer_token(&self.config, self.credentials.as_ref(), self.http.as_ref())
     }
 
     pub fn invalidate_token(&self) {
         self.auth.invalidate();
     }
 
-    pub fn http(&mut self) -> &mut dyn QqHttpClient {
-        self.http.as_mut()
+    pub fn http(&self) -> &dyn QqHttpClient {
+        self.http.as_ref()
     }
 
     pub fn config(&self) -> &QqBotConfig {
         &self.config
     }
 
-    fn backoff(&self, attempt: u8, server_delay_ms: Option<u64>) {
-        let exponent = u32::from(attempt.saturating_sub(1)).min(20);
-        let configured = self
-            .config
-            .retry_base_delay_ms
-            .saturating_mul(1_u64 << exponent)
-            .min(self.config.retry_max_delay_ms);
-        let delay = server_delay_ms
-            .unwrap_or(configured)
-            .min(self.config.retry_max_delay_ms);
+    /// Waits before the next in-process attempt.
+    ///
+    /// Returns `false` when the caller must stop retrying in-process. A server
+    /// that answers `Retry-After: 60` is naming a deadline; clamping that to the
+    /// local maximum used to mean retrying twelve times too early and tripping
+    /// the same limit again. Anything longer than the local budget is handed
+    /// back as a structured failure so the durable retry path reschedules it
+    /// instead of this thread sleeping through it.
+    fn backoff(&self, attempt: u8, server_delay_ms: Option<u64>) -> bool {
+        let delay = match server_delay_ms {
+            Some(server) if server > self.config.retry_max_delay_ms => return false,
+            Some(server) => server,
+            None => {
+                let exponent = u32::from(attempt.saturating_sub(1)).min(20);
+                let configured = self
+                    .config
+                    .retry_base_delay_ms
+                    .saturating_mul(1_u64 << exponent)
+                    .min(self.config.retry_max_delay_ms);
+                // Without spread, a global 429 releases every in-flight send at
+                // the same instant; the gateway reconnect path already does this.
+                let jitter = if self.config.retry_jitter_ms == 0 {
+                    0
+                } else {
+                    fastrand::u64(0..=self.config.retry_jitter_ms)
+                };
+                configured.saturating_add(jitter)
+            }
+        };
         if delay > 0 {
             std::thread::sleep(Duration::from_millis(delay));
         }
+        true
     }
 }
 

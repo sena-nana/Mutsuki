@@ -64,7 +64,7 @@ The diagram is ownership-oriented, not permission to add every downward dependen
 - Package names stay stable; no root facade crate or global feature matrix is introduced.
 - A clean clone can build without former sibling repositories.
 
-`skills/monorepo-maintenance/scripts/check_workspace.py` enforces the mechanical subset of these
+`skills/governance/monorepo-maintenance/scripts/check_workspace.py` enforces the mechanical subset of these
 rules. Cargo tests, contract conformance and scoped integration tests enforce behavior.
 
 ## Non-Rust packages
@@ -92,3 +92,9 @@ distribution role moved to `products/bot`; Bot source, runtime changes and Issue
 this monorepo.
 Exact revisions and Issue counts live in
 [`docs/migration/issue-44-ledger.md`](../migration/issue-44-ledger.md).
+
+Resource lifecycle consistency spans contracts (explicit invalidations), Core (descriptor identity/removal), SDK (provider outcomes), Host (ordered actor application) and SQLite (committed removal facts). Provider ABI and Python DTO mirrors share runtime-wire 1.4.0.
+
+Async resource registry creation (#182) adds a Rust SDK/Host interface, reusing existing wire
+1.4.0 DTOs. Provider execution remains outside the actor for async/Offloaded routes; the Host
+actor owns descriptor registration and completion. See [the migration and bridge contract](async-resource-creation.md).

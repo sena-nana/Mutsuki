@@ -24,8 +24,7 @@ use mutsuki_runtime_contracts::{
 };
 use mutsuki_runtime_core::{RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
-    LoadedPlugin, PluginBuilder, ResourcePlanGateway, ResourceProviderExecution,
-    ResourceProviderGateway,
+    LoadedPlugin, PluginBuilder, ResourceProviderExecution, ResourceProviderGateway,
 };
 use rusqlite::{Connection, TransactionBehavior};
 use serde::Deserialize;
@@ -104,13 +103,15 @@ impl SqliteResourceConfig {
 #[derive(Debug)]
 struct SqliteResourceState {
     connection: Connection,
-    /// Ids reclaimed during create, keyed by the new resource's `ref_id`.
     reclaimed_by_create: HashMap<String, Vec<String>>,
+    invalidations:
+        std::cell::RefCell<Vec<mutsuki_runtime_contracts::ResourceDescriptorInvalidation>>,
 }
 
 #[derive(Debug)]
 pub struct SqliteResourceProvider {
     state: Mutex<SqliteResourceState>,
+    operation: Mutex<()>,
     /// Effective `journal_mode` after open (`wal`, or a non-WAL fallback such
     /// as `memory` for in-memory databases).
     journal_mode: String,
@@ -171,7 +172,9 @@ impl SqliteResourceProvider {
             state: Mutex::new(SqliteResourceState {
                 connection,
                 reclaimed_by_create: HashMap::new(),
+                invalidations: std::cell::RefCell::default(),
             }),
+            operation: Mutex::new(()),
             journal_mode,
             retention,
         })
@@ -212,8 +215,7 @@ impl SqliteResourceProvider {
                 max_total_bytes,
             ));
         }
-        // Sweep and insert share one transaction so a failed insert does not
-        // leave hub descriptors for dropped rows.
+        // Reclamation and insertion commit together; publish removals only after commit.
         let transaction = state
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -344,13 +346,12 @@ impl SqliteResourceProvider {
                     .and_then(Value::as_str)
                     .ok_or_else(|| unsupported("resource.sqlite.command.delete", "missing ref_id"))?
                     .to_string();
-                let deleted = state
-                    .connection
-                    .prepare_cached("DELETE FROM resources WHERE ref_id = ?1")
-                    .and_then(|mut statement| statement.execute([target_ref_id.as_str()]))
-                    .map_err(|error| {
-                        storage_failure("resource.sqlite.command.delete", &error.to_string())
-                    })?;
+                let deleted = delete_resources(
+                    state,
+                    "DELETE FROM resources WHERE ref_id = ?1 RETURNING ref_id",
+                    [target_ref_id.as_str()],
+                    "resource.sqlite.command.delete",
+                )?;
                 if deleted == 0 {
                     return Err(runtime_failure(
                         ERR_RESOURCE_NOT_FOUND,
@@ -373,7 +374,7 @@ impl SqliteResourceProvider {
     }
 }
 
-impl ResourcePlanGateway for SqliteResourceProvider {
+impl SqliteResourceProvider {
     fn collect_read_plan(&self, plan: &ReadPlan) -> RuntimeResult<Vec<u8>> {
         match plan.operation.as_str() {
             "collect" | "get" => self.with_entry(
@@ -417,7 +418,7 @@ impl ResourcePlanGateway for SqliteResourceProvider {
         })
     }
 
-    fn open_stream_plan(&self, plan: &ReadPlan) -> RuntimeResult<StreamPlan> {
+    fn open_stream_plan(plan: &ReadPlan) -> RuntimeResult<StreamPlan> {
         Err(unsupported("resource.sqlite.stream", &plan.operation))
     }
 
@@ -596,7 +597,7 @@ impl ResourcePlanGateway for SqliteResourceProvider {
     }
 }
 
-impl ResourceProviderGateway for SqliteResourceProvider {
+impl SqliteResourceProvider {
     fn create_blob_resource(&self, schema: &str, bytes: Vec<u8>) -> RuntimeResult<ResourceRef> {
         self.create_resource(BLOB_KIND_ID, ResourceSemantic::FrozenValue, schema, bytes)
     }
@@ -627,14 +628,96 @@ impl ResourceProviderGateway for SqliteResourceProvider {
             Vec::new(),
         )
     }
+}
 
-    /// Every stored row, so the Host can put the rows written before a restart
-    /// back into the resource registry. The blob stays in the database:
-    /// `length(bytes)` is enough to rebuild the descriptor.
-    ///
-    /// Rows the retention sweep already reclaimed are simply absent, and the
-    /// generation stays `1` for the life of a row — this provider rewrites
-    /// bytes in place under a version guard and never re-generations a slot.
+impl ResourceProviderGateway for SqliteResourceProvider {
+    fn execute(
+        &self,
+        request: mutsuki_runtime_sdk::ResourceProviderRequest,
+    ) -> mutsuki_runtime_sdk::ResourceProviderOutcome<mutsuki_runtime_sdk::ResourceProviderReply>
+    {
+        use mutsuki_runtime_sdk::{ResourceProviderReply as R, ResourceProviderRequest as Q};
+        let Ok(_operation) = self.operation.lock() else {
+            return mutsuki_runtime_sdk::ResourceProviderOutcome::new(Err(storage_failure(
+                "resource.sqlite.execute",
+                "operation mutex poisoned",
+            )));
+        };
+        let result = match request {
+            Q::CreateBlob { schema, bytes } => {
+                self.create_blob_resource(&schema, bytes).map(R::Created)
+            }
+            Q::CreateCow {
+                kind_id,
+                schema,
+                bytes,
+            } => self
+                .create_cow_state_resource(&kind_id, &schema, bytes)
+                .map(R::Created),
+            Q::CreateCapability { kind_id, schema } => self
+                .create_capability_resource(&kind_id, &schema)
+                .map(R::Created),
+            Q::Collect(plan) => self.collect_read_plan(&plan).map(R::Bytes),
+            Q::Snapshot {
+                plan,
+                kind_id,
+                schema,
+            } => self
+                .snapshot_read_plan(&plan, &kind_id, &schema)
+                .map(|value| R::Snapshot(Box::new(value))),
+            Q::OpenStream(plan) => Self::open_stream_plan(&plan).map(R::Stream),
+            Q::Export(plan) => self
+                .execute_export_plan(&plan)
+                .map(|value| R::Receipt(Box::new(value))),
+            Q::Commit { plan, bytes } => self
+                .commit_write_plan(&plan, bytes)
+                .map(|value| R::Receipt(Box::new(value))),
+            Q::Command(plan) => self
+                .execute_command_plan(&plan)
+                .map(|value| R::Receipt(Box::new(value))),
+            Q::Batch(batch) => self.execute_command_batch(&batch).map(R::Receipts),
+            Q::Saga(saga) => self.execute_saga_plan(&saga).map(R::Receipts),
+        };
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let created_ref_id = match &result {
+            Ok(R::Created(descriptor)) => Some(descriptor.ref_id.to_string()),
+            Ok(R::Snapshot(snapshot)) => Some(snapshot.snapshot_ref.ref_id.to_string()),
+            _ => None,
+        };
+        let mut invalidations = std::mem::take(&mut *state.invalidations.borrow_mut());
+        if let Some(ref_id) = created_ref_id {
+            invalidations.extend(
+                state
+                    .reclaimed_by_create
+                    .remove(&ref_id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(
+                        |ref_id| mutsuki_runtime_contracts::ResourceDescriptorInvalidation {
+                            provider_id: PROVIDER_ID.into(),
+                            ref_id: ref_id.into(),
+                            generation: 1,
+                        },
+                    ),
+            );
+        }
+        mutsuki_runtime_sdk::ResourceProviderOutcome {
+            result,
+            invalidations,
+        }
+    }
+
+    fn take_reclaimed_ref_ids(&self, created_ref_id: &str) -> RuntimeResult<Vec<String>> {
+        let mut state = self.lock_state("resource.sqlite.reclaim")?;
+        Ok(state
+            .reclaimed_by_create
+            .remove(created_ref_id)
+            .unwrap_or_default())
+    }
+
     fn restore_descriptors(&self) -> RuntimeResult<Vec<ResourceRef>> {
         const ROUTE: &str = "resource.sqlite.restore";
         let state = self.lock_state(ROUTE)?;
@@ -675,16 +758,12 @@ impl ResourceProviderGateway for SqliteResourceProvider {
 
     /// Every plan here reaches a SQLite file, so none of them belong on the
     /// Core actor thread.
-    fn execution(&self) -> ResourceProviderExecution {
-        ResourceProviderExecution::Offloaded
+    fn ordering(&self) -> mutsuki_runtime_sdk::ResourceProviderOrdering {
+        mutsuki_runtime_sdk::ResourceProviderOrdering::Ordered
     }
 
-    fn take_reclaimed_ref_ids(&self, created_ref_id: &str) -> RuntimeResult<Vec<String>> {
-        let mut state = self.lock_state("resource.sqlite.reclaim")?;
-        Ok(state
-            .reclaimed_by_create
-            .remove(created_ref_id)
-            .unwrap_or_default())
+    fn execution(&self) -> ResourceProviderExecution {
+        ResourceProviderExecution::Offloaded
     }
 }
 
@@ -917,6 +996,42 @@ fn column_exists(connection: &Connection, table: &str, column: &str) -> rusqlite
 ///
 /// `incoming_len` is reserved in the size bound so the subsequent insert cannot
 /// push `SUM(length(bytes))` past `max_total_bytes`.
+/// Collect identities inside the deletion transaction; publish only after commit.
+fn delete_resources(
+    state: &SqliteResourceState,
+    sql: &str,
+    params: impl rusqlite::Params,
+    route: &str,
+) -> RuntimeResult<usize> {
+    let transaction = state
+        .connection
+        .unchecked_transaction()
+        .map_err(|e| storage_failure(route, &e.to_string()))?;
+    let ids = transaction
+        .prepare(sql)
+        .and_then(|mut statement| {
+            statement
+                .query_map(params, |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .map_err(|e| storage_failure(route, &e.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|e| storage_failure(route, &e.to_string()))?;
+    let count = ids.len();
+    state
+        .invalidations
+        .borrow_mut()
+        .extend(ids.into_iter().map(|ref_id| {
+            mutsuki_runtime_contracts::ResourceDescriptorInvalidation {
+                provider_id: PROVIDER_ID.into(),
+                ref_id: ref_id.into(),
+                generation: 1,
+            }
+        }));
+    Ok(count)
+}
+
 fn sweep_retention(
     connection: &Connection,
     retention: SqliteRetentionConfig,
@@ -974,37 +1089,29 @@ fn sweep_total_bytes(
         .prepare_cached("SELECT COALESCE(SUM(length(bytes)), 0) FROM resources")
         .and_then(|mut statement| statement.query_row([], |row| row.get::<_, i64>(0)))
         .map_err(|error| storage_failure(route, &error.to_string()))?;
-    let mut over = stored_u64(total, route, "length")?.saturating_sub(target);
+    let over = stored_u64(total, route, "length")?.saturating_sub(target);
     if over == 0 {
         return Ok(Vec::new());
     }
-    let candidates = connection
+    let over = stored_i64(over, route, "length")?;
+    connection
         .prepare_cached(
-            "SELECT ref_id, length(bytes) FROM resources
-             WHERE semantic <> 'capability_resource'
-             ORDER BY slot ASC",
+            "DELETE FROM resources WHERE ref_id IN (
+             SELECT ref_id FROM (
+                 SELECT ref_id,
+                     COALESCE(SUM(length(bytes)) OVER (
+                         ORDER BY slot ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                     ), 0) AS preceding_bytes
+                 FROM resources WHERE semantic <> 'capability_resource'
+             ) WHERE preceding_bytes < ?1
+         ) RETURNING ref_id",
         )
         .and_then(|mut statement| {
             statement
-                .query_map([], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-                })?
+                .query_map([over], |row| row.get::<_, String>(0))?
                 .collect::<rusqlite::Result<Vec<_>>>()
         })
-        .map_err(|error| storage_failure(route, &error.to_string()))?;
-    let mut reclaimed = Vec::new();
-    for (ref_id, size) in candidates {
-        if over == 0 {
-            break;
-        }
-        connection
-            .prepare_cached("DELETE FROM resources WHERE ref_id = ?1")
-            .and_then(|mut statement| statement.execute([ref_id.as_str()]))
-            .map_err(|error| storage_failure(route, &error.to_string()))?;
-        over = over.saturating_sub(stored_u64(size, route, "length")?);
-        reclaimed.push(ref_id);
-    }
-    Ok(reclaimed)
+        .map_err(|error| storage_failure(route, &error.to_string()))
 }
 
 fn now_unix_ms(route: &str) -> RuntimeResult<u64> {
@@ -1823,3 +1930,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod lifecycle_tests;

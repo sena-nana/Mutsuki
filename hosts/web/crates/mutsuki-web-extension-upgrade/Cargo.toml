@@ -1,0 +1,25 @@
+[package]
+name = "mutsuki-web-extension-upgrade"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Bot auto-upgrade WebExtension: release set pin checks, Git fetch/build/ABI planning."
+
+[dependencies]
+mutsuki-web-extension-control = { workspace = true }
+mutsuki-module-catalog = { workspace = true }
+mutsuki-web-extension-api = { workspace = true }
+mutsuki-web-protocol = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+futures.workspace = true
+mutsuki-module-catalog = { workspace = true }
+mutsuki-web-host = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "time"] }
+tokio-tungstenite.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

@@ -312,3 +312,104 @@ fn reload_drains_inflight_async_invocation_before_generation_swap() {
         Some(TaskStatus::Completed)
     );
 }
+
+#[test]
+fn resource_completion_during_runner_reload_drain_releases_its_lane() {
+    use super::async_resources::{FactoryAsyncProvider, factory_read};
+    let runner = async_descriptor(1);
+    let runner_started = Arc::new(AtomicUsize::new(0));
+    let runner_release = Arc::new(tokio::sync::Notify::new());
+    let resource_entered = Arc::new(tokio::sync::Notify::new());
+    let resource_release = Arc::new(tokio::sync::Notify::new());
+    let mut manifest = runner_manifest("plugin-a", vec![runner.clone()]);
+    manifest.provides.resource_providers = vec!["draining".into()];
+    let mut bootstrap = RuntimeBootstrapper::new();
+    bootstrap.register_manifest(manifest.clone());
+    bootstrap.register_async_handler(Arc::new(GatedAsyncHandler {
+        descriptor: runner.clone(),
+        started: runner_started.clone(),
+        release: runner_release.clone(),
+    }));
+    bootstrap.register_async_resource_provider(
+        "draining",
+        Arc::new(FactoryAsyncProvider {
+            calls: Arc::new(AtomicUsize::new(0)),
+            panic: false,
+            pause: Some((resource_entered.clone(), resource_release.clone())),
+        }),
+    );
+    let mut host = bootstrap
+        .into_host_runtime_with_config(
+            runtime_profile(),
+            HostRuntimeConfig::default().with_async_executor(Arc::new(
+                TokioAsyncExecutor::new(2, 4, 8, 1024 * 1024).unwrap(),
+            )),
+        )
+        .unwrap();
+    submit_tasks(&host, 1);
+    host.dispatch(HostRuntimeCommand::TickOnce).unwrap();
+    let gateway = host.host_context().async_resource_gateway_ref().unwrap();
+    let tokio = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    tokio.block_on(async {
+        let first_gateway = gateway.clone();
+        let first = tokio::spawn(async move {
+            first_gateway
+                .collect_read_plan(factory_read("draining"))
+                .await
+        });
+        resource_entered.notified().await;
+        let mut candidate = RuntimeBootstrapper::new();
+        candidate.register_manifest(manifest);
+        candidate.register_async_handler(Arc::new(GatedAsyncHandler {
+            descriptor: runner,
+            started: Arc::new(AtomicUsize::new(0)),
+            release: Arc::new(tokio::sync::Notify::new()),
+        }));
+        candidate.register_async_resource_provider(
+            "draining",
+            Arc::new(FactoryAsyncProvider {
+                calls: Arc::new(AtomicUsize::new(0)),
+                panic: false,
+                pause: None,
+            }),
+        );
+        let prepared = candidate.prepare_reload(runtime_profile(), 2).unwrap();
+        let reload = std::thread::spawn(move || {
+            let result = host.reload(prepared, Duration::from_secs(5));
+            (host, result)
+        });
+        // Observe the drain through its structured response, not scheduling sleeps.
+        let entered_drain = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let error = gateway
+                    .collect_read_plan(factory_read("unknown"))
+                    .await
+                    .unwrap_err();
+                if error.error().route == "host.reload.busy" {
+                    break;
+                }
+            }
+        })
+        .await;
+        resource_release.notify_one();
+        let first_result = tokio::time::timeout(Duration::from_secs(2), first).await;
+        runner_release.notify_one();
+        let (host, reload_result) = reload.join().unwrap();
+        let next = tokio::time::timeout(
+            Duration::from_secs(2),
+            gateway.collect_read_plan(factory_read("draining")),
+        )
+        .await;
+        // A stale busy lane would otherwise hang Host::drop on regression.
+        if next.is_err() {
+            std::mem::forget(host);
+        }
+        assert!(entered_drain.is_ok());
+        first_result.unwrap().unwrap().unwrap();
+        reload_result.unwrap();
+        next.unwrap().unwrap();
+    });
+}

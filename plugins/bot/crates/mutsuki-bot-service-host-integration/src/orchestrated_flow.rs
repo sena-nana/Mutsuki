@@ -483,18 +483,8 @@ mod tests {
     use super::*;
 
     fn first_party_catalog() -> BotNodeCatalog {
-        BotNodeCatalog::from_manifests(&[
-            qqbot_adapter_manifest(1, false),
-            flow_router_manifest(),
-            bot_command_manifest(1),
-            bot_conversation_context_manifest(),
-            bot_agent_bridge_manifest(),
-            bot_reply_manifest(),
-            bot_reply_delivery_manifest(),
-            bot_persona_manifest(),
-            bot_interaction_manifest(),
-        ])
-        .expect("first-party catalogs merge")
+        BotNodeCatalog::from_manifests(&crate::configured::tests::reference_catalog_manifests())
+            .expect("first-party catalogs merge")
     }
 
     #[test]
@@ -697,6 +687,40 @@ mod tests {
         assert_eq!(
             selector.event_type.as_ref().unwrap().type_id,
             "mutsuki.bot.event.bilibili"
+        );
+    }
+
+    /// Every committed example graph must still validate against the first-party
+    /// node catalog.
+    ///
+    /// `flow-full.example.json` is pinned to `qq_full_business_flow` by the test
+    /// below, but the other examples had no assertion at all: a node type rename or
+    /// a config-schema change would leave them silently stale, and they are what a
+    /// user copies when building their own graph.
+    #[test]
+    fn committed_example_graphs_validate_against_the_node_catalog() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../configs");
+        let catalog = first_party_catalog();
+        let mut checked = 0;
+        for entry in std::fs::read_dir(&dir).expect("configs directory is committed") {
+            let path = entry.expect("readable entry").path();
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            if !name.starts_with("flow-") || !name.ends_with(".example.json") {
+                continue;
+            }
+            let raw = std::fs::read_to_string(&path).expect("example json is readable");
+            let json: serde_json::Value =
+                serde_json::from_str(&raw).unwrap_or_else(|error| panic!("{name} parses: {error}"));
+            let flow: BotFlowDocument =
+                serde_json::from_value(json.get("flow").expect("flow envelope").clone())
+                    .unwrap_or_else(|error| panic!("{name} decodes: {error}"));
+            let result = validate_flow(&flow, &catalog);
+            assert!(result.valid, "{name} is stale: {:#?}", result.issues);
+            checked += 1;
+        }
+        assert!(
+            checked >= 2,
+            "expected several example graphs, found {checked}"
         );
     }
 

@@ -48,7 +48,7 @@ impl QqOpenApiService {
         }
     }
 
-    pub fn send_message(&mut self, payload: SendMessagePayload) -> Result<Value, QqOpenApiError> {
+    pub fn send_message(&self, payload: SendMessagePayload) -> Result<Value, QqOpenApiError> {
         let mut body = payload
             .validated_body()
             .map_err(|error| QqOpenApiError::InvalidPayload(error.to_string()))?;
@@ -60,7 +60,7 @@ impl QqOpenApiService {
         )
     }
 
-    pub fn send_bot_message(&mut self, message: BotMessage) -> Result<Value, QqOpenApiError> {
+    pub fn send_bot_message(&self, message: BotMessage) -> Result<Value, QqOpenApiError> {
         let (scene, target_openid) = qq_scene_and_openid(&message.target)
             .ok_or_else(|| QqOpenApiError::InvalidPayload("unsupported QQ target".into()))?;
         let mut reply_to = message.reply_to;
@@ -179,7 +179,7 @@ impl QqOpenApiService {
     }
 
     fn send_segment_group(
-        &mut self,
+        &self,
         scene: crate::api::QqScene,
         target_openid: String,
         segments: Vec<MessageSegment>,
@@ -197,7 +197,7 @@ impl QqOpenApiService {
         })
     }
 
-    pub fn get_account(&mut self) -> Result<Value, QqOpenApiError> {
+    pub fn get_account(&self) -> Result<Value, QqOpenApiError> {
         let config = self.transport.config().clone();
         let openapi_user =
             self.transport
@@ -214,7 +214,7 @@ impl QqOpenApiService {
         }))
     }
 
-    pub fn gateway_status(&mut self) -> Result<Value, QqOpenApiError> {
+    pub fn gateway_status(&self) -> Result<Value, QqOpenApiError> {
         let config = self.transport.config().clone();
         let gateway =
             self.transport
@@ -228,7 +228,7 @@ impl QqOpenApiService {
         }))
     }
 
-    pub fn upload_media(&mut self, payload: MediaUploadPayload) -> Result<Value, QqOpenApiError> {
+    pub fn upload_media(&self, payload: MediaUploadPayload) -> Result<Value, QqOpenApiError> {
         payload
             .validate()
             .map_err(|error| QqOpenApiError::InvalidPayload(error.to_string()))?;
@@ -254,10 +254,7 @@ impl QqOpenApiService {
         Ok(response)
     }
 
-    pub fn recall_message(
-        &mut self,
-        payload: RecallMessagePayload,
-    ) -> Result<Value, QqOpenApiError> {
+    pub fn recall_message(&self, payload: RecallMessagePayload) -> Result<Value, QqOpenApiError> {
         if payload.target_openid.trim().is_empty() || payload.message_id.trim().is_empty() {
             return Err(QqOpenApiError::InvalidPayload(
                 "target_openid and message_id are required".into(),
@@ -272,7 +269,7 @@ impl QqOpenApiService {
         )
     }
 
-    pub fn raw_call(&mut self, payload: RawCallPayload) -> Result<Value, QqOpenApiError> {
+    pub fn raw_call(&self, payload: RawCallPayload) -> Result<Value, QqOpenApiError> {
         let method = match payload.method.as_str() {
             "POST" | "post" => HttpMethod::Post,
             "PUT" | "put" => HttpMethod::Put,
@@ -284,7 +281,7 @@ impl QqOpenApiService {
     }
 
     fn exchange_upload_id(
-        &mut self,
+        &self,
         payload: &MediaUploadPayload,
         upload_id: &str,
     ) -> Result<Value, QqOpenApiError> {
@@ -297,10 +294,7 @@ impl QqOpenApiService {
         Ok(response)
     }
 
-    fn upload_resource_chunks(
-        &mut self,
-        payload: MediaUploadPayload,
-    ) -> Result<Value, QqOpenApiError> {
+    fn upload_resource_chunks(&self, payload: MediaUploadPayload) -> Result<Value, QqOpenApiError> {
         let resource_ref = payload
             .resource_ref
             .clone()
@@ -324,7 +318,7 @@ impl QqOpenApiService {
             .ok_or_else(|| QqOpenApiError::InvalidResponse("block_size".into()))?;
         let chunks = self
             .media
-            .as_mut()
+            .as_ref()
             .ok_or_else(|| QqOpenApiError::Media("media provider is not configured".into()))?
             .read_chunks(&resource_ref, block_size)
             .map_err(|error| QqOpenApiError::Media(error.to_string()))?;

@@ -5,7 +5,7 @@ use mutsuki_plugin_resource_shared_memory::{
     SharedMemoryProviderConfig, SharedMemoryResourceProvider,
 };
 use mutsuki_runtime_contracts::ReadPlan;
-use mutsuki_runtime_sdk::{ResourcePlanGateway, ResourceProviderGateway};
+use mutsuki_runtime_sdk::ResourcePlanGateway;
 use serde_json::{Value, json};
 
 const RESOURCE_BYTES: usize = 100 * 1024 * 1024;

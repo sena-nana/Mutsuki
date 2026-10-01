@@ -4,8 +4,9 @@ use std::sync::Arc;
 use mutsuki_bot_flow::BotFlowRegistry;
 use mutsuki_bot_protocol::{
     BOT_FLOW_ERROR_TYPE, BOT_FLOW_INGRESS_PROTOCOL_ID, BOT_FLOW_NODE_EXECUTE_PROTOCOL_ID, BotEvent,
-    BotFlowEdge, BotFlowEdgeKind, BotFlowErrorEvent, BotFlowEventEnvelope, BotFlowNode,
-    BotFlowNodeExecution, BotFlowPayload, BotFlowTypeRef, BotNodeInvocation, BotNodeResult,
+    BotFlowDocument, BotFlowEdge, BotFlowEdgeKind, BotFlowErrorEvent, BotFlowEventEnvelope,
+    BotFlowNode, BotFlowNodeExecution, BotFlowPayload, BotFlowTypeRef, BotNodeInvocation,
+    BotNodeResult, BotNodeWiring,
 };
 use mutsuki_runtime_contracts::{
     ExecutionClass, InvocationMode, PluginManifest, RunnerBatchCapability, RunnerConcurrency,
@@ -18,7 +19,7 @@ use mutsuki_runtime_sdk::{
     RunnerDescriptorBuilder, RuntimeClientRef, RuntimeFailure, RuntimeResult,
     TaskAwaitRunnerAdapter, map_work_batch_entries,
 };
-use serde::{Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::json;
 
 use crate::{
@@ -94,24 +95,6 @@ fn protocol_descriptor(
         .build()
 }
 
-pub fn flow_router_runners(
-    client: RuntimeClientRef,
-    registry: Arc<BotFlowRegistry>,
-) -> Vec<Box<dyn Runner>> {
-    let node_registry = registry.clone();
-    let descriptor = node_descriptor(&node_registry.catalog());
-    let factory: BoxedTaskAwaitRunner = Box::new(move |ctx, task| {
-        let registry = node_registry.clone();
-        Box::pin(run_node(ctx, task, registry))
-    });
-    vec![
-        Box::new(BotFlowIngressRunner::new(registry)),
-        Box::new(
-            TaskAwaitRunnerAdapter::new(descriptor, client, factory).with_self_call_policy(false),
-        ),
-    ]
-}
-
 pub fn flow_ingress_runner(registry: Arc<BotFlowRegistry>) -> Box<dyn Runner> {
     Box::new(BotFlowIngressRunner::new(registry))
 }
@@ -131,31 +114,140 @@ pub fn flow_node_runner(
 pub struct BotFlowIngressRunner {
     descriptor: mutsuki_runtime_contracts::RunnerDescriptor,
     registry: Arc<BotFlowRegistry>,
-    source_index: Option<(u64, Arc<SourceIndex>)>,
+    graph_index: Option<(u64, Arc<GraphIndex>)>,
 }
 
-type SelectorIndex = HashMap<(String, Option<(String, u32)>), Vec<usize>>;
+/// Source nodes of one ingress protocol, split so a lookup borrows its key.
+#[derive(Default)]
+struct ProtocolSources {
+    /// Sources that accept every event type on the protocol.
+    wildcard: Vec<usize>,
+    by_type: HashMap<String, HashMap<u32, Vec<usize>>>,
+}
 
-struct SourceIndex {
+type SelectorIndex = HashMap<String, ProtocolSources>;
+
+/// Everything the router derives from one immutable graph revision.
+///
+/// The document is pinned for the lifetime of an execution, so node lookup,
+/// outgoing edges and port wiring are all fixed the moment a revision is applied.
+/// Recomputing them per hop cost a linear scan of `nodes` and `edges` plus fresh
+/// allocations on every single event; `node_wiring` alone walked every edge and
+/// sorted two vectors. Building this once per revision turns each of those into a
+/// hash lookup, and lets every hop of an execution share one `Arc` of the document
+/// instead of deep-cloning it per batch.
+struct GraphIndex {
+    flow: Arc<BotFlowDocument>,
+    node_by_id: HashMap<String, usize>,
+    /// Indices into `flow.edges`, in document order so fan-out ordinals are stable.
+    event_edges_from: HashMap<String, Vec<usize>>,
+    error_edges_from: HashMap<String, Vec<usize>>,
+    wiring_by_node: HashMap<String, BotNodeWiring>,
     by_selector: SelectorIndex,
 }
 
-fn source_index_for(flow: &mutsuki_bot_protocol::BotFlowDocument) -> SourceIndex {
-    let mut by_selector = SelectorIndex::new();
-    for (index, node) in flow.nodes.iter().enumerate() {
-        let Some(selector) = node.source.as_ref() else {
-            continue;
-        };
-        let event_type = selector
-            .event_type
-            .as_ref()
-            .map(|event_type| (event_type.type_id.clone(), event_type.version));
-        by_selector
-            .entry((selector.protocol_id.clone(), event_type))
-            .or_default()
-            .push(index);
+impl GraphIndex {
+    fn new(flow: Arc<BotFlowDocument>) -> Self {
+        let mut node_by_id = HashMap::with_capacity(flow.nodes.len());
+        let mut by_selector = SelectorIndex::new();
+        for (index, node) in flow.nodes.iter().enumerate() {
+            node_by_id.insert(node.node_id.clone(), index);
+            let Some(selector) = node.source.as_ref() else {
+                continue;
+            };
+            let sources = by_selector.entry(selector.protocol_id.clone()).or_default();
+            match selector.event_type.as_ref() {
+                Some(event_type) => sources
+                    .by_type
+                    .entry(event_type.type_id.clone())
+                    .or_default()
+                    .entry(event_type.version)
+                    .or_default()
+                    .push(index),
+                None => sources.wildcard.push(index),
+            }
+        }
+
+        let mut event_edges_from: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut error_edges_from: HashMap<String, Vec<usize>> = HashMap::new();
+        for (index, edge) in flow.edges.iter().enumerate() {
+            let bucket = match edge.kind {
+                BotFlowEdgeKind::Event => &mut event_edges_from,
+                BotFlowEdgeKind::Error => &mut error_edges_from,
+            };
+            bucket
+                .entry(edge.from_node_id.clone())
+                .or_default()
+                .push(index);
+        }
+
+        let wiring_by_node = flow
+            .nodes
+            .iter()
+            .map(|node| {
+                (
+                    node.node_id.clone(),
+                    mutsuki_bot_flow::node_wiring(&flow, &node.node_id).unwrap_or_default(),
+                )
+            })
+            .collect();
+
+        Self {
+            flow,
+            node_by_id,
+            event_edges_from,
+            error_edges_from,
+            wiring_by_node,
+            by_selector,
+        }
     }
-    SourceIndex { by_selector }
+
+    fn node(&self, node_id: &str) -> Option<&BotFlowNode> {
+        self.node_by_id
+            .get(node_id)
+            .map(|index| &self.flow.nodes[*index])
+    }
+
+    fn event_edges(&self, from_node_id: &str) -> impl Iterator<Item = &BotFlowEdge> {
+        self.event_edges_from
+            .get(from_node_id)
+            .map_or(&[][..], Vec::as_slice)
+            .iter()
+            .map(|index| &self.flow.edges[*index])
+    }
+
+    fn error_edges(&self, from_node_id: &str) -> impl Iterator<Item = &BotFlowEdge> {
+        self.error_edges_from
+            .get(from_node_id)
+            .map_or(&[][..], Vec::as_slice)
+            .iter()
+            .map(|index| &self.flow.edges[*index])
+    }
+
+    fn wiring(&self, node_id: &str) -> BotNodeWiring {
+        self.wiring_by_node
+            .get(node_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Source node indices matching one ingress selector, exact types first.
+    fn sources_for(&self, protocol_id: &str, event_type: (&str, u32)) -> Vec<usize> {
+        let Some(sources) = self.by_selector.get(protocol_id) else {
+            return Vec::new();
+        };
+        let exact = sources
+            .by_type
+            .get(event_type.0)
+            .and_then(|versions| versions.get(&event_type.1))
+            .map_or(&[][..], Vec::as_slice);
+        let mut matched = Vec::with_capacity(exact.len() + sources.wildcard.len());
+        matched.extend_from_slice(exact);
+        matched.extend_from_slice(&sources.wildcard);
+        matched.sort_unstable();
+        matched.dedup();
+        matched
+    }
 }
 
 /// Shares the immutable flow for native router tasks while preserving the
@@ -164,11 +256,13 @@ fn source_index_for(flow: &mutsuki_bot_protocol::BotFlowDocument) -> SourceIndex
 #[derive(Clone)]
 struct PinnedBotFlowNodeExecution {
     graph_revision: u64,
-    flow: Arc<mutsuki_bot_protocol::BotFlowDocument>,
+    index: Arc<GraphIndex>,
     execution_id: String,
     node_id: String,
     input_port_id: String,
-    event: BotFlowEventEnvelope,
+    /// Shared rather than owned: one node's output fans out to every wired edge,
+    /// and the envelope carries the whole event payload.
+    event: Arc<BotFlowEventEnvelope>,
 }
 
 impl Serialize for PinnedBotFlowNodeExecution {
@@ -178,11 +272,11 @@ impl Serialize for PinnedBotFlowNodeExecution {
     {
         BotFlowNodeExecution {
             graph_revision: self.graph_revision,
-            flow: self.flow.as_ref().clone(),
+            flow: self.index.flow.as_ref().clone(),
             execution_id: self.execution_id.clone(),
             node_id: self.node_id.clone(),
             input_port_id: self.input_port_id.clone(),
-            event: self.event.clone(),
+            event: self.event.as_ref().clone(),
         }
         .serialize(serializer)
     }
@@ -192,11 +286,13 @@ impl From<BotFlowNodeExecution> for PinnedBotFlowNodeExecution {
     fn from(execution: BotFlowNodeExecution) -> Self {
         Self {
             graph_revision: execution.graph_revision,
-            flow: Arc::new(execution.flow),
+            // Only reached when a task crossed a process boundary: the in-process
+            // path shares the index built once for the revision.
+            index: Arc::new(GraphIndex::new(Arc::new(execution.flow))),
             execution_id: execution.execution_id,
             node_id: execution.node_id,
             input_port_id: execution.input_port_id,
-            event: execution.event,
+            event: Arc::new(execution.event),
         }
     }
 }
@@ -206,22 +302,22 @@ impl BotFlowIngressRunner {
         Self {
             descriptor: ingress_descriptor(),
             registry,
-            source_index: None,
+            graph_index: None,
         }
     }
 
-    fn source_index(
-        &mut self,
-        revision: u64,
-        flow: &mutsuki_bot_protocol::BotFlowDocument,
-    ) -> Arc<SourceIndex> {
-        if let Some((cached_revision, index)) = &self.source_index
-            && *cached_revision == revision
+    /// The derived index for the active revision, rebuilt only when it changes.
+    ///
+    /// The document is cloned out of the snapshot once per revision rather than
+    /// once per batch; every hop of every execution then shares that one `Arc`.
+    fn graph_index(&mut self, snapshot: &mutsuki_bot_protocol::BotFlowSnapshot) -> Arc<GraphIndex> {
+        if let Some((cached_revision, index)) = &self.graph_index
+            && *cached_revision == snapshot.revision
         {
             return index.clone();
         }
-        let index = Arc::new(source_index_for(flow));
-        self.source_index = Some((revision, index.clone()));
+        let index = Arc::new(GraphIndex::new(Arc::new(snapshot.flow.clone())));
+        self.graph_index = Some((snapshot.revision, index.clone()));
         index
     }
 }
@@ -238,62 +334,48 @@ impl Runner for BotFlowIngressRunner {
     ) -> RuntimeResult<mutsuki_runtime_contracts::CompletionBatch> {
         let snapshot = self.registry.active();
         let graph_revision = snapshot.revision;
-        let flow = Arc::new(snapshot.flow.clone());
-        let index = self.source_index(graph_revision, flow.as_ref());
+        let index = self.graph_index(&snapshot);
         let stats = self.registry.ingress_stats();
         map_work_batch_entries(&batch, |task| {
             let envelope = task
                 .payload
                 .decode_shared::<BotFlowEventEnvelope>()
                 .map_err(|error| runtime_error(task, "ingress.decode", error))?;
-            let event = serde_json::from_value::<BotEvent>(envelope.payload.value.clone()).ok();
-            let mut source_indexes = Vec::new();
-            if let Some(exact) = index.by_selector.get(&(
-                envelope.protocol_id.clone(),
-                Some((
-                    envelope.payload.event_type.type_id.clone(),
+            // Borrowed rather than cloned: the payload is the whole inbound event.
+            let event = BotEvent::deserialize(&envelope.payload.value).ok();
+            let source_indexes = index.sources_for(
+                &envelope.protocol_id,
+                (
+                    &envelope.payload.event_type.type_id,
                     envelope.payload.event_type.version,
-                )),
-            )) {
-                source_indexes.extend(exact.iter().copied());
-            }
-            if let Some(wildcard) = index.by_selector.get(&(envelope.protocol_id.clone(), None)) {
-                source_indexes.extend(wildcard.iter().copied());
-            }
-            source_indexes.sort_unstable();
-            source_indexes.dedup();
+                ),
+            );
+            // Invariant across sources and edges, so it is built once per event.
+            let execution_id = format!(
+                "flow:{}:{}:{}",
+                graph_revision, index.flow.flow_id, envelope.event_id
+            );
             let mut matched_sources = 0_usize;
             let mut tasks = Vec::new();
             for source_index in source_indexes {
-                let source = &flow.nodes[source_index];
+                let source = &index.flow.nodes[source_index];
                 if !source_accepts_event(source, event.as_ref()) {
                     continue;
                 }
                 matched_sources += 1;
-                let execution_id = format!(
-                    "flow:{}:{}:{}",
-                    graph_revision, flow.flow_id, envelope.event_id
-                );
-                let outgoing = flow.edges.iter().filter(|edge| {
-                    edge.kind == BotFlowEdgeKind::Event && edge.from_node_id == source.node_id
-                });
-                for (ordinal, edge) in outgoing.enumerate() {
-                    let Some(target) = flow
-                        .nodes
-                        .iter()
-                        .find(|node| node.node_id == edge.to_node_id)
-                    else {
+                for (ordinal, edge) in index.event_edges(&source.node_id).enumerate() {
+                    let Some(target) = index.node(&edge.to_node_id) else {
                         continue;
                     };
                     tasks.push(
                         downstream_task(
                             task,
                             graph_revision,
-                            flow.clone(),
+                            index.clone(),
                             &execution_id,
                             target,
                             edge,
-                            envelope.as_ref().clone(),
+                            envelope.clone(),
                             ctx.registry_generation,
                             ordinal,
                         )
@@ -362,11 +444,9 @@ async fn run_node(
             .map_err(|error| failure(&task, "node.decode", error))?;
         Arc::new(PinnedBotFlowNodeExecution::from(wire.as_ref().clone()))
     };
-    let flow = execution.flow.as_ref();
-    let node = flow
-        .nodes
-        .iter()
-        .find(|node| node.node_id == execution.node_id)
+    let index = execution.index.clone();
+    let node = index
+        .node(&execution.node_id)
         .ok_or_else(|| failure(&task, "node.missing", &execution.node_id))?;
     let descriptor = registry
         .descriptor(&node.node_type_id, node.node_type_version)
@@ -375,7 +455,7 @@ async fn run_node(
         .binding
         .as_ref()
         .ok_or_else(|| failure(&task, "node.binding_missing", &node.node_type_id))?;
-    let invocation = node_invocation(flow, &execution, node);
+    let invocation = node_invocation(&index, &execution, node);
     let payload = serde_json::to_value(invocation)
         .map_err(|error| failure(&task, "node.invocation.encode", error))?;
     let child = ctx
@@ -392,13 +472,7 @@ async fn run_node(
     let node_result = match child.and_then(|outcome| decode_node_result(&task, outcome)) {
         Ok(result) => result,
         Err(error) => {
-            let error_edges = flow
-                .edges
-                .iter()
-                .filter(|edge| {
-                    edge.kind == BotFlowEdgeKind::Error && edge.from_node_id == node.node_id
-                })
-                .collect::<Vec<_>>();
+            let error_edges = index.error_edges(&node.node_id).collect::<Vec<_>>();
             if error_edges.is_empty() {
                 return Err(error);
             }
@@ -410,7 +484,7 @@ async fn run_node(
                     value: serde_json::to_value(BotFlowErrorEvent {
                         failed_node_id: node.node_id.clone(),
                         error: error.error().clone(),
-                        input: execution.event.clone(),
+                        input: execution.event.as_ref().clone(),
                     })
                     .map_err(|encode| failure(&task, "node.error.encode", encode))?,
                 },
@@ -418,44 +492,47 @@ async fn run_node(
                 trace_id: execution.event.trace_id.clone(),
                 correlation_id: execution.event.correlation_id.clone(),
             };
+            let envelope = Arc::new(envelope);
             return fan_out(
                 &task,
-                flow,
+                &index,
                 &execution,
                 error_edges.into_iter().map(|edge| (edge, envelope.clone())),
             );
         }
     };
-    let outputs = node_result.outputs.iter().flat_map(|output| {
-        flow.edges
-            .iter()
-            .filter(move |edge| {
-                edge.kind == BotFlowEdgeKind::Event
-                    && edge.from_node_id == node.node_id
-                    && edge.from_port_id == output.port_id
-            })
-            .map(move |edge| (edge, output.event.clone()))
+    // One Arc per node output, shared by every edge wired to that port.
+    let outputs = node_result
+        .outputs
+        .iter()
+        .map(|output| (output, Arc::new(output.event.clone())))
+        .collect::<Vec<_>>();
+    let outputs = outputs.iter().flat_map(|(output, event)| {
+        index
+            .event_edges(&node.node_id)
+            .filter(move |edge| edge.from_port_id == output.port_id)
+            .map(move |edge| (edge, event.clone()))
     });
-    fan_out(&task, flow, &execution, outputs)
+    fan_out(&task, &index, &execution, outputs)
 }
 
 /// Builds the plugin-facing invocation for one node execution. The wiring is
 /// derived from the pinned immutable graph so the node learns whether it is
 /// connected without holding the document itself.
 fn node_invocation(
-    flow: &mutsuki_bot_protocol::BotFlowDocument,
+    index: &GraphIndex,
     execution: &PinnedBotFlowNodeExecution,
     node: &BotFlowNode,
 ) -> BotNodeInvocation {
     BotNodeInvocation {
-        flow_id: flow.flow_id.clone(),
+        flow_id: index.flow.flow_id.clone(),
         graph_revision: execution.graph_revision,
         execution_id: execution.execution_id.clone(),
         node_id: execution.node_id.clone(),
         input_port_id: execution.input_port_id.clone(),
-        wiring: mutsuki_bot_flow::node_wiring(flow, &execution.node_id).unwrap_or_default(),
+        wiring: index.wiring(&execution.node_id),
         config: node.config.clone(),
-        input: execution.event.clone(),
+        input: execution.event.as_ref().clone(),
     }
 }
 
@@ -484,21 +561,19 @@ fn decode_node_result(
 
 fn fan_out<'a>(
     task: &Task,
-    flow: &mutsuki_bot_protocol::BotFlowDocument,
+    index: &Arc<GraphIndex>,
     execution: &PinnedBotFlowNodeExecution,
-    outputs: impl IntoIterator<Item = (&'a BotFlowEdge, BotFlowEventEnvelope)>,
+    outputs: impl IntoIterator<Item = (&'a BotFlowEdge, Arc<BotFlowEventEnvelope>)>,
 ) -> RuntimeResult<RunnerResult> {
     let mut result = RunnerResult::completed(task.task_id.clone());
     for (ordinal, (edge, envelope)) in outputs.into_iter().enumerate() {
-        let target = flow
-            .nodes
-            .iter()
-            .find(|candidate| candidate.node_id == edge.to_node_id)
+        let target = index
+            .node(&edge.to_node_id)
             .ok_or_else(|| failure(task, "node.edge_target_missing", &edge.to_node_id))?;
         result.tasks.push(downstream_task(
             task,
             execution.graph_revision,
-            execution.flow.clone(),
+            index.clone(),
             &execution.execution_id,
             target,
             edge,
@@ -514,17 +589,17 @@ fn fan_out<'a>(
 fn downstream_task(
     parent: &Task,
     revision: u64,
-    flow: Arc<mutsuki_bot_protocol::BotFlowDocument>,
+    index: Arc<GraphIndex>,
     execution_id: &str,
     target: &BotFlowNode,
     edge: &BotFlowEdge,
-    event: BotFlowEventEnvelope,
+    event: Arc<BotFlowEventEnvelope>,
     registry_generation: u64,
     ordinal: usize,
 ) -> RuntimeResult<Task> {
     let execution = PinnedBotFlowNodeExecution {
         graph_revision: revision,
-        flow,
+        index,
         execution_id: execution_id.into(),
         node_id: target.node_id.clone(),
         input_port_id: edge.to_port_id.clone(),
@@ -533,7 +608,7 @@ fn downstream_task(
     let mut task = Task::new(
         format!(
             "{}:graph:{revision}:flow:{}:edge:{}:output:{ordinal}:node:{}",
-            parent.task_id, execution.flow.flow_id, edge.edge_id, target.node_id
+            parent.task_id, execution.index.flow.flow_id, edge.edge_id, target.node_id
         ),
         BOT_FLOW_NODE_EXECUTE_PROTOCOL_ID,
         mutsuki_runtime_contracts::TaskPayload::from_local(execution),
@@ -625,8 +700,8 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{
-        PinnedBotFlowNodeExecution, downstream_task, node_descriptor, node_invocation,
-        record_ingress_outcome, source_accepts_envelope, source_index_for,
+        GraphIndex, PinnedBotFlowNodeExecution, downstream_task, node_descriptor, node_invocation,
+        record_ingress_outcome, source_accepts_envelope,
     };
 
     fn message_event(actor_id: &str, self_sent: bool) -> BotEvent {
@@ -721,25 +796,19 @@ mod tests {
             ],
             edges: vec![],
         };
-        let index = source_index_for(&flow);
-        let exact = index
-            .by_selector
-            .get(&(ingest.into(), Some(("mutsuki.bot.event".into(), 1))))
-            .cloned()
-            .unwrap_or_default();
-        let wildcard = index
-            .by_selector
-            .get(&(ingest.into(), None))
-            .cloned()
-            .unwrap_or_default();
-        let command_nodes = index
-            .by_selector
-            .get(&(command.into(), None))
-            .cloned()
-            .unwrap_or_default();
-        assert_eq!(exact, vec![0]);
-        assert_eq!(wildcard, vec![1]);
-        assert_eq!(command_nodes, vec![2]);
+        let index = GraphIndex::new(Arc::new(flow));
+        // An exactly-typed source and a wildcard source on the same protocol both
+        // match, merged and deduped in node order.
+        assert_eq!(
+            index.sources_for(ingest, ("mutsuki.bot.event", 1)),
+            vec![0, 1]
+        );
+        // A different event type on that protocol leaves only the wildcard.
+        assert_eq!(index.sources_for(ingest, ("other.event", 1)), vec![1]);
+        // A version mismatch is not an exact match either.
+        assert_eq!(index.sources_for(ingest, ("mutsuki.bot.event", 2)), vec![1]);
+        assert_eq!(index.sources_for(command, ("anything", 1)), vec![2]);
+        assert!(index.sources_for("no.such.protocol", ("x", 1)).is_empty());
     }
 
     #[test]
@@ -784,16 +853,17 @@ mod tests {
             }],
             edges: vec![],
         };
-        let index = source_index_for(&flow);
-        let matched = index
-            .by_selector
-            .get(&(
-                ingest.into(),
-                Some(("mutsuki.bot.event.bilibili".into(), 1)),
-            ))
-            .cloned()
-            .unwrap_or_default();
-        assert_eq!(matched, vec![0]);
+        let index = GraphIndex::new(Arc::new(flow.clone()));
+        assert_eq!(
+            index.sources_for(ingest, ("mutsuki.bot.event.bilibili", 1)),
+            vec![0]
+        );
+        assert!(
+            index
+                .sources_for(ingest, ("mutsuki.bot.event", 1))
+                .is_empty(),
+            "a typed source must not answer a different event type"
+        );
 
         let envelope = BotFlowEventEnvelope {
             event_id: "notify-1".into(),
@@ -925,11 +995,11 @@ mod tests {
         let left = downstream_task(
             &parent,
             1,
-            Arc::new(flow.clone()),
+            Arc::new(GraphIndex::new(Arc::new(flow.clone()))),
             "execution",
             &left_target,
             &left_edge,
-            envelope.clone(),
+            Arc::new(envelope.clone()),
             1,
             0,
         )
@@ -937,11 +1007,11 @@ mod tests {
         let right = downstream_task(
             &parent,
             1,
-            Arc::new(flow),
+            Arc::new(GraphIndex::new(Arc::new(flow))),
             "execution",
             &right_target,
             &right_edge,
-            envelope,
+            Arc::new(envelope),
             1,
             0,
         )
@@ -1008,13 +1078,14 @@ mod tests {
         };
         let source_node = flow.nodes[0].clone();
         let downstream_node = flow.nodes[1].clone();
+        let index = GraphIndex::new(Arc::new(flow.clone()));
 
-        let source = node_invocation(&flow, &execution_for("source"), &source_node);
+        let source = node_invocation(&index, &execution_for("source"), &source_node);
         assert_eq!(source.wiring.wired_outputs, vec!["event".to_owned()]);
         assert!(source.wiring.wired_inputs.is_empty());
         assert!(source.wiring.is_connected());
 
-        let downstream = node_invocation(&flow, &execution_for("downstream"), &downstream_node);
+        let downstream = node_invocation(&index, &execution_for("downstream"), &downstream_node);
         assert_eq!(downstream.wiring.wired_inputs, vec!["input".to_owned()]);
         assert!(downstream.wiring.wired_outputs.is_empty());
         assert!(downstream.wiring.is_connected());

@@ -59,8 +59,11 @@ impl std::fmt::Debug for QqHttpResponse {
     }
 }
 
-pub trait QqHttpClient: Send {
-    fn send(&mut self, request: QqHttpRequest) -> Result<QqHttpResponse, QqOpenApiError>;
+/// `Sync` with `&self` sends: the outbound runner executes independent
+/// conversations concurrently, so the client is shared rather than owned by one
+/// in-flight request at a time.
+pub trait QqHttpClient: Send + Sync {
+    fn send(&self, request: QqHttpRequest) -> Result<QqHttpResponse, QqOpenApiError>;
 }
 
 pub trait QqCredentialProvider: Send + Sync {
@@ -126,8 +129,8 @@ impl QqCredentialProvider for SharedQqCredentials {
     }
 }
 
-pub trait QqIdSource: Send {
-    fn next_msg_seq(&mut self) -> u64;
+pub trait QqIdSource: Send + Sync {
+    fn next_msg_seq(&self) -> u64;
 }
 
 pub struct QqBotClients {
@@ -180,7 +183,7 @@ impl QqAuthManager {
         &self,
         config: &QqBotConfig,
         credentials: &dyn QqCredentialProvider,
-        client: &mut dyn QqHttpClient,
+        client: &dyn QqHttpClient,
     ) -> Result<String, QqOpenApiError> {
         self.bearer_token_at(config, credentials, client, unix_now_secs()?)
     }
@@ -189,7 +192,7 @@ impl QqAuthManager {
         &self,
         config: &QqBotConfig,
         credentials: &dyn QqCredentialProvider,
-        client: &mut dyn QqHttpClient,
+        client: &dyn QqHttpClient,
         now_secs: u64,
     ) -> Result<String, QqOpenApiError> {
         if let Some(token) = self.token.lock().expect("QQBot auth mutex").as_ref()
@@ -286,7 +289,16 @@ impl ReqwestQqHttpClient {
             .map_err(network_error)?;
         let body_limit = config.response_body_limit_bytes;
         let (tx, rx) = mpsc::channel::<HttpJob>();
-        let runtime = tokio::runtime::Builder::new_current_thread()
+        // Multi-threaded, and each job is spawned rather than blocked on. A
+        // current-thread runtime driven by `block_on` per job made this client a
+        // global serialisation point: callers may issue sends concurrently (the
+        // outbound runner overlaps independent conversations), but every request
+        // still queued behind the one in flight. Requests are IO-bound futures,
+        // so a small pool drives many of them at once; the real bound on
+        // concurrency is the caller's, not this pool's size.
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name(format!("qqbot-http-io-{}", config.account_id))
             .enable_all()
             .build()
             .map_err(network_error)?;
@@ -294,9 +306,17 @@ impl ReqwestQqHttpClient {
             .name(format!("qqbot-http-{}", config.account_id))
             .spawn(move || {
                 while let Ok(job) = rx.recv() {
-                    let result = runtime.block_on(send_reqwest(&client, job.request, body_limit));
-                    let _ = job.reply.send(result);
+                    let client = client.clone();
+                    runtime.spawn(async move {
+                        let result = send_reqwest(&client, job.request, body_limit).await;
+                        // A dropped receiver means the caller gave up; the
+                        // request itself already happened either way.
+                        let _ = job.reply.send(result);
+                    });
                 }
+                // Dropping the runtime here cancels anything still in flight,
+                // which is the intended shutdown behaviour: `tx` is only dropped
+                // when the client is.
             })
             .map_err(network_error)?;
         Ok(Self {
@@ -307,7 +327,7 @@ impl ReqwestQqHttpClient {
 }
 
 impl QqHttpClient for ReqwestQqHttpClient {
-    fn send(&mut self, request: QqHttpRequest) -> Result<QqHttpResponse, QqOpenApiError> {
+    fn send(&self, request: QqHttpRequest) -> Result<QqHttpResponse, QqOpenApiError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.tx
             .as_ref()
@@ -490,7 +510,7 @@ mod production_tests {
         });
         let mut config = local_config(&url);
         config.response_body_limit_bytes = 8;
-        let mut client = ReqwestQqHttpClient::new(&config).unwrap();
+        let client = ReqwestQqHttpClient::new(&config).unwrap();
 
         let error = client
             .send(request_empty(HttpMethod::Get, url))
@@ -513,7 +533,7 @@ mod production_tests {
         });
         let mut config = local_config(&url);
         config.request_timeout_ms = 25;
-        let mut client = ReqwestQqHttpClient::new(&config).unwrap();
+        let client = ReqwestQqHttpClient::new(&config).unwrap();
 
         let error = client
             .send(request_empty(HttpMethod::Get, url))
@@ -538,11 +558,11 @@ mod production_tests {
             let config = config.clone();
             let requests = requests.clone();
             std::thread::spawn(move || {
-                let mut client = SlowTokenClient {
+                let client = SlowTokenClient {
                     requests,
-                    started: Some(started_tx),
+                    started: Mutex::new(Some(started_tx)),
                 };
-                auth.bearer_token_at(&config, credentials.as_ref(), &mut client, 1_000)
+                auth.bearer_token_at(&config, credentials.as_ref(), &client, 1_000)
                     .unwrap()
             })
         };
@@ -553,11 +573,11 @@ mod production_tests {
             let config = config.clone();
             let requests = requests.clone();
             std::thread::spawn(move || {
-                let mut client = SlowTokenClient {
+                let client = SlowTokenClient {
                     requests,
-                    started: None,
+                    started: Mutex::new(None),
                 };
-                auth.bearer_token_at(&config, credentials.as_ref(), &mut client, 1_000)
+                auth.bearer_token_at(&config, credentials.as_ref(), &client, 1_000)
                     .unwrap()
             })
         };
@@ -569,13 +589,13 @@ mod production_tests {
 
     struct SlowTokenClient {
         requests: Arc<AtomicUsize>,
-        started: Option<std::sync::mpsc::Sender<()>>,
+        started: Mutex<Option<std::sync::mpsc::Sender<()>>>,
     }
 
     impl QqHttpClient for SlowTokenClient {
-        fn send(&mut self, _request: QqHttpRequest) -> Result<QqHttpResponse, QqOpenApiError> {
+        fn send(&self, _request: QqHttpRequest) -> Result<QqHttpResponse, QqOpenApiError> {
             self.requests.fetch_add(1, Ordering::SeqCst);
-            if let Some(started) = self.started.take() {
+            if let Some(started) = self.started.lock().unwrap().take() {
                 let _ = started.send(());
                 std::thread::sleep(Duration::from_millis(100));
             }
@@ -597,6 +617,59 @@ mod production_tests {
         config.openapi_base_url = url.into();
         config.connect_timeout_ms = 500;
         config
+    }
+
+    /// The outbound runner overlaps independent conversations, which is wasted if
+    /// the client funnels every request through one in-flight slot. The server
+    /// here answers only once both requests have arrived, so this passes only
+    /// when they are genuinely concurrent -- and fails on the request timeout
+    /// rather than hanging when they are not.
+    #[test]
+    fn production_http_sends_concurrent_requests_concurrently() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let url = format!("http://{address}/test");
+        let server = std::thread::spawn(move || {
+            let mut accepted = Vec::new();
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0_u8; 1024];
+                let _ = stream.read(&mut request).unwrap();
+                accepted.push(stream);
+            }
+            for mut stream in accepted {
+                stream
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+                    )
+                    .unwrap();
+            }
+        });
+
+        let mut config = local_config(&url);
+        config.request_timeout_ms = 3_000;
+        let client = Arc::new(ReqwestQqHttpClient::new(&config).unwrap());
+
+        let senders: Vec<_> = (0..2)
+            .map(|_| {
+                let client = client.clone();
+                let url = url.clone();
+                std::thread::spawn(move || client.send(request_empty(HttpMethod::Get, url)))
+            })
+            .collect();
+        let outcomes: Vec<_> = senders
+            .into_iter()
+            .map(|sender| sender.join().unwrap())
+            .collect();
+
+        for outcome in &outcomes {
+            assert!(
+                outcome.is_ok(),
+                "both requests must be in flight together: {outcome:?}"
+            );
+        }
+        drop(client);
+        server.join().unwrap();
     }
 
     fn serve_once(

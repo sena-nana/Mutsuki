@@ -13,3 +13,5 @@ description: Implement or change QQBot or other platform gateway connections, au
 - Report disconnect, auth, rate-limit and unsupported operation failures structurally.
 
 Test translation, reconnect, heartbeat, retry/rate limit, media and redaction with external-boundary fakes.
+
+Large media writes from AsyncBatchHandler must use `spawn_blocking` around the synchronous Host bridge, or migrate to AsyncResourceRegistryGateway; never block the async executor on SQLite.

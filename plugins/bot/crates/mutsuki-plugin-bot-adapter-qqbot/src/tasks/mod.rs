@@ -1,13 +1,12 @@
 use std::collections::BTreeMap;
 
 use mutsuki_bot_protocol::{
-    BOT_EVENT_INGEST_PROTOCOL_ID, BOT_FLOW_BOT_EVENT_TYPE, BOT_FLOW_INGRESS_PROTOCOL_ID,
-    BOT_MEDIA_UPLOAD_PROTOCOL_ID, BOT_MESSAGE_RECALL_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID,
-    BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID, BotEvent, BotFlowContext, BotFlowEventEnvelope,
-    BotFlowPayload, BotFlowTypeRef, BotMediaUploadRequest, BotMessage, BotMessageRecallRequest,
-    BotNodeBinding, BotNodeCatalogFragment, BotNodeDescriptor, BotNodeInvocation, BotNodeOutput,
-    BotNodePortDescriptor, BotNodePortDirection, BotNodeResult, BotNodeRole,
-    BotReplyDeliveryRequest, MessageSegment, QQBOT_ACCOUNT_GET_PROTOCOL_ID,
+    BOT_FLOW_INGRESS_PROTOCOL_ID, BOT_MEDIA_UPLOAD_PROTOCOL_ID, BOT_MESSAGE_RECALL_PROTOCOL_ID,
+    BOT_MESSAGE_SEND_PROTOCOL_ID, BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID, BotEvent,
+    BotFlowEventEnvelope, BotFlowTypeRef, BotMediaUploadRequest, BotMessage,
+    BotMessageRecallRequest, BotNodeBinding, BotNodeCatalogFragment, BotNodeDescriptor,
+    BotNodeInvocation, BotNodeOutput, BotNodePortDescriptor, BotNodePortDirection, BotNodeResult,
+    BotNodeRole, BotReplyDeliveryRequest, MessageSegment, QQBOT_ACCOUNT_GET_PROTOCOL_ID,
     QQBOT_CAPABILITY_GET_PROTOCOL_ID, QQBOT_GATEWAY_STATUS_PROTOCOL_ID, QQBOT_RAW_CALL_PROTOCOL_ID,
     QqBotAccountGetRequest, QqBotCapabilityGetRequest, QqBotGatewayStatusRequest,
 };
@@ -19,7 +18,10 @@ use mutsuki_runtime_contracts::{
     WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
-use mutsuki_runtime_sdk::{PluginBuilder, ProtocolDescriptorBuilder, map_work_batch_entries};
+use mutsuki_runtime_sdk::{
+    PluginBuilder, ProtocolDescriptorBuilder, map_work_batch_entries,
+    map_work_batch_entries_grouped,
+};
 use serde_json::{Value, json};
 
 use crate::adapter::{
@@ -457,97 +459,114 @@ impl Runner for QqOpenApiRunner {
         batch: WorkBatch,
     ) -> RuntimeResult<CompletionBatch> {
         let account_id = self.service.account_id().to_owned();
-        map_work_batch_entries(&batch, |task| {
-            if task.protocol_id.as_str() == BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID {
-                return complete_forward_fold(task);
-            }
-            let (payload, invocation) = node_payload(task)?;
-            let response = match task.protocol_id.as_str() {
-                BOT_MESSAGE_SEND_PROTOCOL_ID => {
-                    let message = message_from_node_payload(&payload, invocation.as_ref())
-                        .map_err(|error| failure("mutsuki.bot.message.send.decode", error))?;
-                    self.service.send_bot_message(message)
+        // Grouped, not sequential: sends to different conversations are
+        // independent, and the plan already says which entries may overlap.
+        map_work_batch_entries_grouped(
+            &batch,
+            self.descriptor.batch.max_entry_concurrency,
+            |task| {
+                if task.protocol_id.as_str() == BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID {
+                    return complete_forward_fold(task);
                 }
-                BOT_MEDIA_UPLOAD_PROTOCOL_ID => {
-                    let request: BotMediaUploadRequest = parse_payload(payload.clone())
-                        .map_err(|error| failure("mutsuki.bot.media.upload.payload", error))?;
-                    self.service.upload_media(
-                        bot_media_upload_to_qq_upload(request).map_err(|error| {
-                            failure("mutsuki.bot.media.upload.map.qqbot", error)
-                        })?,
-                    )
+                let (payload, invocation) = node_payload(task)?;
+                let response = match task.protocol_id.as_str() {
+                    BOT_MESSAGE_SEND_PROTOCOL_ID => {
+                        let message = message_from_node_payload(&payload, invocation.as_ref())
+                            .map_err(|error| failure("mutsuki.bot.message.send.decode", error))?;
+                        self.service.send_bot_message(message)
+                    }
+                    BOT_MEDIA_UPLOAD_PROTOCOL_ID => {
+                        let request: BotMediaUploadRequest = parse_payload(payload.clone())
+                            .map_err(|error| failure("mutsuki.bot.media.upload.payload", error))?;
+                        self.service
+                            .upload_media(bot_media_upload_to_qq_upload(request).map_err(
+                                |error| failure("mutsuki.bot.media.upload.map.qqbot", error),
+                            )?)
+                    }
+                    BOT_MESSAGE_RECALL_PROTOCOL_ID => {
+                        let request: BotMessageRecallRequest = parse_payload(payload.clone())
+                            .map_err(|error| {
+                                failure("mutsuki.bot.message.recall.payload", error)
+                            })?;
+                        self.service
+                            .recall_message(bot_recall_to_qq_recall(request).map_err(|error| {
+                                failure("mutsuki.bot.message.recall.map.qqbot", error)
+                            })?)
+                    }
+                    QQBOT_ACCOUNT_GET_PROTOCOL_ID => {
+                        let _: QqBotAccountGetRequest = parse_payload(task.payload.clone().into())
+                            .map_err(|error| {
+                                failure("mutsuki.bot.qqbot.account.get.payload", error)
+                            })?;
+                        self.service.get_account()
+                    }
+                    QQBOT_GATEWAY_STATUS_PROTOCOL_ID => {
+                        let _: QqBotGatewayStatusRequest =
+                            parse_payload(task.payload.clone().into()).map_err(|error| {
+                                failure("mutsuki.bot.qqbot.gateway.status.payload", error)
+                            })?;
+                        self.service.gateway_status()
+                    }
+                    QQBOT_CAPABILITY_GET_PROTOCOL_ID => {
+                        let _: QqBotCapabilityGetRequest =
+                            parse_payload(task.payload.clone().into()).map_err(|error| {
+                                failure("mutsuki.bot.qqbot.capability.get.payload", error)
+                            })?;
+                        serde_json::to_value(self.service.config().capability_matrix())
+                            .map_err(|error| QqOpenApiError::InvalidPayload(error.to_string()))
+                    }
+                    QQBOT_RAW_CALL_PROTOCOL_ID => self.service.raw_call(
+                        parse_payload::<RawCallPayload>(task.payload.clone().into()).map_err(
+                            |error| failure("mutsuki.bot.qqbot.raw.call.payload", error),
+                        )?,
+                    ),
+                    _ => Err(QqOpenApiError::InvalidPayload(format!(
+                        "unsupported task protocol {}",
+                        task.protocol_id
+                    ))),
                 }
-                BOT_MESSAGE_RECALL_PROTOCOL_ID => {
-                    let request: BotMessageRecallRequest = parse_payload(payload.clone())
-                        .map_err(|error| failure("mutsuki.bot.message.recall.payload", error))?;
-                    self.service.recall_message(
-                        bot_recall_to_qq_recall(request).map_err(|error| {
-                            failure("mutsuki.bot.message.recall.map.qqbot", error)
-                        })?,
-                    )
-                }
-                QQBOT_ACCOUNT_GET_PROTOCOL_ID => {
-                    let _: QqBotAccountGetRequest = parse_payload(task.payload.clone().into())
-                        .map_err(|error| failure("mutsuki.bot.qqbot.account.get.payload", error))?;
-                    self.service.get_account()
-                }
-                QQBOT_GATEWAY_STATUS_PROTOCOL_ID => {
-                    let _: QqBotGatewayStatusRequest = parse_payload(task.payload.clone().into())
-                        .map_err(|error| {
-                        failure("mutsuki.bot.qqbot.gateway.status.payload", error)
-                    })?;
-                    self.service.gateway_status()
-                }
-                QQBOT_CAPABILITY_GET_PROTOCOL_ID => {
-                    let _: QqBotCapabilityGetRequest = parse_payload(task.payload.clone().into())
-                        .map_err(|error| {
-                        failure("mutsuki.bot.qqbot.capability.get.payload", error)
-                    })?;
-                    serde_json::to_value(self.service.config().capability_matrix())
-                        .map_err(|error| QqOpenApiError::InvalidPayload(error.to_string()))
-                }
-                QQBOT_RAW_CALL_PROTOCOL_ID => self.service.raw_call(
-                    parse_payload::<RawCallPayload>(task.payload.clone().into())
-                        .map_err(|error| failure("mutsuki.bot.qqbot.raw.call.payload", error))?,
-                ),
-                _ => Err(QqOpenApiError::InvalidPayload(format!(
-                    "unsupported task protocol {}",
-                    task.protocol_id
-                ))),
-            }
-            .map_err(|error| openapi_failure(task.protocol_id.as_str(), error))?;
+                .map_err(|error| openapi_failure(task.protocol_id.as_str(), error))?;
 
-            tracing::info!(
-                account_id = %account_id,
-                task_id = %task.task_id,
-                runner_id = QQBOT_OPENAPI_RUNNER_ID,
-                protocol_id = %task.protocol_id,
-                correlation_id = task.correlation_id.as_deref().unwrap_or(""),
-                reply_request_id = %task.task_id,
-                "QQBot OpenAPI request completed"
-            );
+                tracing::info!(
+                    account_id = %account_id,
+                    task_id = %task.task_id,
+                    runner_id = QQBOT_OPENAPI_RUNNER_ID,
+                    protocol_id = %task.protocol_id,
+                    correlation_id = task.correlation_id.as_deref().unwrap_or(""),
+                    reply_request_id = %task.task_id,
+                    "QQBot OpenAPI request completed"
+                );
 
-            let mut result = RunnerResult::completed(task.task_id.clone());
-            result.output = Some(if invocation.is_some() {
-                serde_json::to_value(BotNodeResult {
-                    outputs: Vec::new(),
-                    metadata: BTreeMap::from([("receipt".into(), response.clone())]),
-                })
-                .map_err(|error| failure("mutsuki.bot.qqbot.node.result", error))?
-            } else {
-                response.clone()
-            });
-            result.events.push(result_event(task, response));
-            Ok(result)
-        })
+                let mut result = RunnerResult::completed(task.task_id.clone());
+                result.output = Some(if invocation.is_some() {
+                    serde_json::to_value(BotNodeResult {
+                        outputs: Vec::new(),
+                        metadata: BTreeMap::from([("receipt".into(), response.clone())]),
+                    })
+                    .map_err(|error| failure("mutsuki.bot.qqbot.node.result", error))?
+                } else {
+                    response.clone()
+                });
+                result.events.push(result_event(task, response));
+                Ok(result)
+            },
+        )
     }
 }
 
+/// Splits an outbound task into its request body and, when the send came from a
+/// graph node, the invocation around it.
+///
+/// This runs for every outbound message. Probing the shape used to clone the whole
+/// payload tree to own it, clone it again to hand to `from_value`, then clone the
+/// inner request out of the parsed invocation -- three deep copies of the same JSON
+/// before a single byte reached QQ. Deserializing from the borrowed payload leaves
+/// only the copy the caller actually keeps.
 fn node_payload(task: &Task) -> Result<(Value, Option<BotNodeInvocation>), RuntimeError> {
-    let value = task.payload.to_value();
-    match serde_json::from_value::<BotNodeInvocation>(value.clone()) {
+    let value = task.payload.as_value();
+    match <BotNodeInvocation as serde::Deserialize>::deserialize(value) {
         Ok(invocation) => Ok((invocation.input.payload.value.clone(), Some(invocation))),
-        Err(_) => Ok((value, None)),
+        Err(_) => Ok((value.clone(), None)),
     }
 }
 
@@ -557,7 +576,7 @@ fn complete_forward_fold(task: &Task) -> Result<RunnerResult, RuntimeError> {
         .decode_shared::<BotNodeInvocation>()
         .map_err(|error| failure("mutsuki.bot.qq.reply.forward-fold.decode", error))?;
     let mut request: BotReplyDeliveryRequest =
-        serde_json::from_value(invocation.input.payload.value.clone())
+        serde::Deserialize::deserialize(&invocation.input.payload.value)
             .map_err(|error| failure("mutsuki.bot.qq.reply.forward-fold.payload", error))?;
     apply_forward_fold(&invocation.config, &mut request)
         .map_err(|error| failure("mutsuki.bot.qq.reply.forward-fold.apply", error))?;
@@ -658,29 +677,14 @@ fn incoming_reply_to(invocation: Option<&BotNodeInvocation>) -> Option<String> {
         .and_then(|event| event.message.and_then(|item| item.message_id))
 }
 
+/// Thin adapter-side wrapper mapping the encode failure into a runtime error.
 pub fn flow_envelope(
     event: mutsuki_bot_protocol::BotEvent,
     trace_id: Option<String>,
     correlation_id: Option<String>,
 ) -> Result<BotFlowEventEnvelope, RuntimeError> {
-    let context = BotFlowContext {
-        bot: Some(event.bot.clone()),
-        target: Some(event.target.clone()),
-        actor: event.actor.clone(),
-        ext: event.ext.clone(),
-    };
-    Ok(BotFlowEventEnvelope {
-        event_id: event.event_id.clone(),
-        protocol_id: BOT_EVENT_INGEST_PROTOCOL_ID.into(),
-        payload: BotFlowPayload {
-            event_type: BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1),
-            value: serde_json::to_value(event)
-                .map_err(|error| failure("mutsuki.bot.qqbot.flow.event", error))?,
-        },
-        context,
-        trace_id,
-        correlation_id,
-    })
+    BotFlowEventEnvelope::from_bot_event(event, trace_id, correlation_id)
+        .map_err(|error| failure("mutsuki.bot.qqbot.flow.event", error))
 }
 
 pub fn gateway_descriptor(plugin_generation: u64) -> RunnerDescriptor {
@@ -742,7 +746,13 @@ pub fn openapi_descriptor(plugin_generation: u64, media_enabled: bool) -> Runner
         output_schema: json!({
             "events": [QQBOT_OPENAPI_RESULT_EVENT]
         }),
-        batch: native_batch_capability(RunnerSideEffect::External, 1, 32),
+        // A batch of one could never overlap anything. Entries are ordered per
+        // conversation by the plan, so several may be claimed together and the
+        // independent ones run side by side.
+        batch: RunnerBatchCapability {
+            max_entry_concurrency: 8,
+            ..native_batch_capability(RunnerSideEffect::External, 8, 32)
+        },
         payload: RunnerPayloadCapability::default(),
         resources: resource_capability(),
         ordering: preserve_submit_order(),

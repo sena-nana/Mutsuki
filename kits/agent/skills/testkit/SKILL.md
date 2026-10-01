@@ -12,3 +12,5 @@ description: Add or change Agent conformance helpers, fake models, fake tools, f
 - Verify model/tool/memory round trips and manifest conformance.
 
 Run targeted package tests first, then workspace tests.
+
+ServiceConfig-based test fixtures explicitly set data/log/plugin/run directories under their temporary root. A home override alone must not let tests access the real user service directories.

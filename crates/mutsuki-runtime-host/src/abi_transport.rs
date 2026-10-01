@@ -1,17 +1,10 @@
 use std::sync::Arc;
 
-use mutsuki_runtime_contracts::resource::experimental::{CommandBatch, SagaPlan};
-use mutsuki_runtime_contracts::{
-    CommandPlan, CompletionBatch, ExportPlan, PlanReceipt, ReadPlan, ResourceRef, RunnerDescriptor,
-    SnapshotDescriptor, StreamPlan, WorkBatch, WritePlan,
-};
+use mutsuki_runtime_contracts::{CompletionBatch, RunnerDescriptor, WorkBatch};
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
-use mutsuki_runtime_sdk::{ResourcePlanGateway, ResourceProviderGateway};
+use mutsuki_runtime_sdk::ResourceProviderGateway;
 use mutsuki_runtime_wire::{
-    CancelRunnerRequest, CollectReadPlanRequest, CommandBatchRequest, CommandPlanRequest,
-    CommitWritePlanRequest, CreateBlobRequest, CreateCapabilityRequest, CreateCowStateRequest,
-    DisposeRunnerRequest, ExportPlanRequest, OpenStreamPlanRequest, RunBatchRequest,
-    SagaPlanRequest, SnapshotReadPlanRequest, WireRequest,
+    CancelRunnerRequest, DisposeRunnerRequest, RunBatchRequest, WireRequest,
 };
 
 /// Transport-independent typed Runtime Wire request surface.
@@ -92,104 +85,32 @@ impl<T> TransportResourceProvider<T> {
     }
 }
 
-impl<T: TypedRequestTransport> ResourcePlanGateway for TransportResourceProvider<T> {
-    fn collect_read_plan(&self, plan: &ReadPlan) -> RuntimeResult<Vec<u8>> {
-        self.transport.request(&CollectReadPlanRequest {
-            provider_id: Some(self.provider_id.clone()),
-            plan: plan.clone(),
-        })
-    }
-
-    fn snapshot_read_plan(
-        &self,
-        plan: &ReadPlan,
-        kind_id: &str,
-        schema: &str,
-    ) -> RuntimeResult<SnapshotDescriptor> {
-        self.transport.request(&SnapshotReadPlanRequest {
-            provider_id: Some(self.provider_id.clone()),
-            plan: plan.clone(),
-            kind_id: kind_id.into(),
-            schema: schema.into(),
-        })
-    }
-
-    fn open_stream_plan(&self, plan: &ReadPlan) -> RuntimeResult<StreamPlan> {
-        self.transport.request(&OpenStreamPlanRequest {
-            provider_id: Some(self.provider_id.clone()),
-            plan: plan.clone(),
-        })
-    }
-
-    fn execute_export_plan(&self, plan: &ExportPlan) -> RuntimeResult<PlanReceipt> {
-        self.transport.request(&ExportPlanRequest {
-            provider_id: Some(self.provider_id.clone()),
-            plan: plan.clone(),
-        })
-    }
-
-    fn commit_write_plan(&self, plan: &WritePlan, bytes: Vec<u8>) -> RuntimeResult<PlanReceipt> {
-        self.transport.request(&CommitWritePlanRequest {
-            provider_id: Some(self.provider_id.clone()),
-            plan: plan.clone(),
-            bytes,
-        })
-    }
-
-    fn execute_command_plan(&self, plan: &CommandPlan) -> RuntimeResult<PlanReceipt> {
-        self.transport.request(&CommandPlanRequest {
-            provider_id: Some(self.provider_id.clone()),
-            plan: plan.clone(),
-        })
-    }
-
-    fn execute_command_batch(&self, batch: &CommandBatch) -> RuntimeResult<Vec<PlanReceipt>> {
-        self.transport.request(&CommandBatchRequest {
-            provider_id: Some(self.provider_id.clone()),
-            batch: batch.clone(),
-        })
-    }
-
-    fn execute_saga_plan(&self, saga: &SagaPlan) -> RuntimeResult<Vec<PlanReceipt>> {
-        self.transport.request(&SagaPlanRequest {
-            provider_id: Some(self.provider_id.clone()),
-            saga: saga.clone(),
-        })
-    }
-}
-
 impl<T: TypedRequestTransport> ResourceProviderGateway for TransportResourceProvider<T> {
-    fn create_blob_resource(&self, schema: &str, bytes: Vec<u8>) -> RuntimeResult<ResourceRef> {
-        self.transport.request(&CreateBlobRequest {
-            provider_id: Some(self.provider_id.clone()),
-            schema: schema.into(),
-            bytes,
-        })
-    }
-
-    fn create_cow_state_resource(
+    fn execute(
         &self,
-        kind_id: &str,
-        schema: &str,
-        bytes: Vec<u8>,
-    ) -> RuntimeResult<ResourceRef> {
-        self.transport.request(&CreateCowStateRequest {
-            provider_id: Some(self.provider_id.clone()),
-            kind_id: kind_id.into(),
-            schema: schema.into(),
-            bytes,
-        })
+        operation: mutsuki_runtime_sdk::ResourceProviderRequest,
+    ) -> mutsuki_runtime_sdk::ResourceProviderOutcome<mutsuki_runtime_sdk::ResourceProviderReply>
+    {
+        match self
+            .transport
+            .request(&mutsuki_runtime_wire::ExecuteResourceProviderRequest {
+                provider_id: self.provider_id.clone(),
+                operation,
+            }) {
+            Ok(response) => mutsuki_runtime_sdk::ResourceProviderOutcome {
+                result: response
+                    .result
+                    .map_err(mutsuki_runtime_core::RuntimeFailure::new),
+                invalidations: response.invalidations,
+            },
+            Err(error) => mutsuki_runtime_sdk::ResourceProviderOutcome::new(Err(error)),
+        }
     }
-
-    fn create_capability_resource(
-        &self,
-        kind_id: &str,
-        schema: &str,
-    ) -> RuntimeResult<ResourceRef> {
-        self.transport.request(&CreateCapabilityRequest {
-            provider_id: Some(self.provider_id.clone()),
-            kind_id: kind_id.into(),
-            schema: schema.into(),
-        })
+    // The ABI does not expose concrete provider locks. Conservative ordering preserves lifecycle effects.
+    fn ordering(&self) -> mutsuki_runtime_sdk::ResourceProviderOrdering {
+        mutsuki_runtime_sdk::ResourceProviderOrdering::Ordered
+    }
+    fn execution(&self) -> mutsuki_runtime_sdk::ResourceProviderExecution {
+        mutsuki_runtime_sdk::ResourceProviderExecution::Offloaded
     }
 }
