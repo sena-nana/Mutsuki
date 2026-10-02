@@ -1332,6 +1332,11 @@ mod tests {
             snapshot.snapshot_ref.semantic,
             ResourceSemantic::VersionedSnapshot
         );
+        assert_eq!(snapshot.snapshot_version, snapshot.snapshot_ref.version);
+        assert_eq!(snapshot.source_version, 1);
+        assert!(!snapshot.is_stale);
+        assert!(snapshot.is_latest);
+        assert_eq!(snapshot.snapshot_ref.seal_state, ResourceSealState::Sealed);
         let snapshot_read = ReadPlan {
             plan_id: "read:snapshot".into(),
             resource: snapshot.snapshot_ref,
