@@ -216,7 +216,7 @@ const MEDIA_RESOURCE_MAX_TOTAL_BYTES: u64 = 512 * 1024 * 1024;
 
 /// Seeds the persistent media resource provider every product plugin binds to.
 /// An existing selection keeps its configured database path and its enable
-/// switch; only a missing path falls back to the instance data directory.
+/// switch; only missing path or retention fields fall back to product defaults.
 ///
 /// Disabling the selection is the owner's call: the media plugins declare the
 /// provider surface as a hard requirement, so the LoadPlan then fails with a
@@ -242,13 +242,46 @@ fn ensure_sqlite_resource_plugin(service: &mut ServiceConfig, root: &Path) -> Re
         .iter_mut()
         .find(|plugin| plugin.id == mutsuki_plugin_resource_sqlite::PLUGIN_ID)
     {
-        if plugin
-            .config
+        let Some(object) = plugin.config.as_object_mut() else {
+            plugin.config = config;
+            return Ok(());
+        };
+        if object
             .get("database_path")
             .and_then(serde_json::Value::as_str)
             .is_none_or(|path| path.trim().is_empty())
         {
-            plugin.config = config;
+            object.insert("database_path".into(), config["database_path"].clone());
+        }
+        // The product owns this inventory and must never leave it unbounded.
+        // Preserve an operator's explicit bounds, but fill a missing bound (or
+        // a missing retention object) with the product defaults.
+        let retention = object
+            .entry("retention")
+            .or_insert_with(|| config["retention"].clone());
+        if retention.is_null() {
+            *retention = config["retention"].clone();
+        }
+        let Some(retention) = retention.as_object_mut() else {
+            return Err("sqlite resource provider retention config must be an object".into());
+        };
+        if retention
+            .get("max_age_seconds")
+            .is_none_or(serde_json::Value::is_null)
+        {
+            retention.insert(
+                "max_age_seconds".into(),
+                config["retention"]["max_age_seconds"].clone(),
+            );
+        }
+        if retention
+            .get("max_total_bytes")
+            .is_none_or(serde_json::Value::is_null)
+        {
+            retention.insert(
+                "max_total_bytes".into(),
+                config["retention"]["max_total_bytes"].clone(),
+            );
         }
         return Ok(());
     }
@@ -608,7 +641,10 @@ mod tests {
             .push(mutsuki_service_config::ConfiguredPluginSelection {
                 id: mutsuki_plugin_resource_sqlite::PLUGIN_ID.into(),
                 enabled: false,
-                config: serde_json::json!({ "database_path": "/var/lib/mutsuki/resources.sqlite" }),
+                config: serde_json::json!({
+                    "database_path": "/var/lib/mutsuki/resources.sqlite",
+                    "retention": { "max_total_bytes": 1024 }
+                }),
             });
         ensure_sqlite_resource_plugin(&mut service, root.path()).unwrap();
         let selection = &service.plugins.configured[0];
@@ -620,6 +656,11 @@ mod tests {
             selection.config["database_path"], "/var/lib/mutsuki/resources.sqlite",
             "an owner-configured path is preserved"
         );
+        assert_eq!(
+            selection.config["retention"]["max_age_seconds"],
+            MEDIA_RESOURCE_MAX_AGE_SECONDS
+        );
+        assert_eq!(selection.config["retention"]["max_total_bytes"], 1024);
     }
 
     #[test]
