@@ -166,6 +166,21 @@ impl SqliteResourceProvider {
     fn prepare(connection: Connection, retention: SqliteRetentionConfig) -> RuntimeResult<Self> {
         let journal_mode = configure_connection(&connection)
             .map_err(|error| storage_failure("resource.sqlite.open", &error.to_string()))?;
+        // A newer provider may have changed column meaning or invariants. Do
+        // not silently operate on a schema that this binary cannot interpret;
+        // `user_version >= current` would otherwise make a downgrade look
+        // successful while writes corrupt the newer layout.
+        let user_version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .map_err(|error| storage_failure("resource.sqlite.open", &error.to_string()))?;
+        if user_version > SCHEMA_VERSION {
+            return Err(storage_failure(
+                "resource.sqlite.open",
+                &format!(
+                    "unsupported resource schema version {user_version}; maximum supported is {SCHEMA_VERSION}"
+                ),
+            ));
+        }
         migrate_schema(&connection)
             .map_err(|error| storage_failure("resource.sqlite.open", &error.to_string()))?;
         Ok(Self {
@@ -1724,6 +1739,25 @@ mod tests {
             args: Value::Null,
         };
         assert_eq!(provider.collect_read_plan(&read).unwrap(), b"kept");
+    }
+
+    #[test]
+    fn refuses_a_database_created_by_a_newer_provider() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("future.db");
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .pragma_update(None, "user_version", SCHEMA_VERSION + 1)
+            .unwrap();
+        drop(connection);
+
+        let error = SqliteResourceProvider::open(&path).unwrap_err();
+        let detail = error.error().evidence.get("detail").unwrap();
+        assert!(matches!(
+            detail,
+            ScalarValue::String(detail)
+                if detail.contains("unsupported resource schema version")
+        ));
     }
 
     #[test]

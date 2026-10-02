@@ -51,7 +51,9 @@ description: Implement or change standard memory, shared-memory, database, state
   does: `busy_timeout`, prefer `journal_mode=WAL` with a recorded fallback for
   in-memory or shared-memory-less file systems, then `synchronous=NORMAL`. Schema
   changes go through `PRAGMA user_version` migrations, never through
-  `CREATE TABLE IF NOT EXISTS` alone.
+  `CREATE TABLE IF NOT EXISTS` alone. A provider must reject a database whose
+  `user_version` is newer than the provider understands; silently opening a
+  future schema risks writing with incompatible column semantics.
 
 Test create/read/update, sealing, lease expiry, restart persistence and invalid descriptor behavior.
 
