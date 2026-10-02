@@ -1246,7 +1246,11 @@ fn now_unix_ms(route: &str) -> RuntimeResult<u64> {
 /// same file (staged reload keeps two generations alive at once).
 fn allocate_slot(connection: &Connection) -> rusqlite::Result<i64> {
     connection.query_row(
-        "UPDATE resource_slot_sequence SET next_slot = next_slot + 1
+        "UPDATE resource_slot_sequence
+         SET next_slot = MAX(
+             next_slot,
+             COALESCE((SELECT MAX(slot) FROM resources), 0)
+         ) + 1
          WHERE singleton = 1 RETURNING next_slot",
         [],
         |row| row.get(0),
@@ -1752,7 +1756,7 @@ mod tests {
     fn resources_persist_across_reopen() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("resources.db");
-        let stale_write;
+        let (blob_ref, state_ref, stale_write);
         {
             let provider = SqliteResourceProvider::open(&file).unwrap();
             let blob = provider
@@ -1764,27 +1768,27 @@ mod tests {
             provider
                 .commit_write_plan(&write_plan("write:1", state.clone()), b"v2".to_vec())
                 .unwrap();
-            stale_write = write_plan("write:stale", state);
+            stale_write = write_plan("write:stale", state.clone());
             let read = ReadPlan {
                 plan_id: "read:before".into(),
-                resource: blob,
+                resource: blob.clone(),
                 operation: "collect".into(),
                 args: Value::Null,
             };
             assert_eq!(provider.collect_read_plan(&read).unwrap(), b"persisted");
+            blob_ref = blob;
+            state_ref = state;
         }
 
         let provider = SqliteResourceProvider::open(&file).unwrap();
+        let restored = provider.restore_descriptors().unwrap();
         let blob = ReadPlan {
             plan_id: "read:after".into(),
-            resource: resource_ref(
-                "sqlite-resource-1",
-                BLOB_KIND_ID,
-                ResourceSemantic::FrozenValue,
-                "text.v1",
-                1,
-                None,
-            ),
+            resource: restored
+                .iter()
+                .find(|resource| resource.ref_id == blob_ref.ref_id)
+                .cloned()
+                .expect("blob descriptor survives reopen"),
             operation: "collect".into(),
             args: Value::Null,
         };
@@ -1792,14 +1796,11 @@ mod tests {
 
         let committed = ReadPlan {
             plan_id: "read:after:state".into(),
-            resource: resource_ref(
-                "sqlite-resource-2",
-                "text_buffer",
-                ResourceSemantic::CowVersionedState,
-                "text.state.v1",
-                2,
-                None,
-            ),
+            resource: restored
+                .iter()
+                .find(|resource| resource.ref_id == state_ref.ref_id)
+                .cloned()
+                .expect("committed descriptor survives reopen"),
             operation: "collect".into(),
             args: Value::Null,
         };
@@ -1816,7 +1817,8 @@ mod tests {
             .create_blob_resource("text.v1", b"after".to_vec())
             .unwrap();
         assert!(
-            !["sqlite-resource-1", "sqlite-resource-2"].contains(&created.ref_id.as_str()),
+            ![blob_ref.ref_id.as_str(), state_ref.ref_id.as_str()]
+                .contains(&created.ref_id.as_str()),
             "reopened provider reused {}",
             created.ref_id
         );
@@ -1855,6 +1857,42 @@ mod tests {
             created.ref_id, recycled,
             "a deleted ref_id was reissued and now points at different bytes"
         );
+    }
+
+    #[test]
+    fn deleted_ref_ids_are_not_reused_when_database_is_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("resources.db");
+        let recycled;
+        {
+            let provider = SqliteResourceProvider::open(&path).unwrap();
+            let capability = provider
+                .create_capability_resource("sqlite_query", "sqlite.query.v1")
+                .unwrap();
+            let capability_ref_id = capability.ref_id.clone();
+            let doomed = provider
+                .create_blob_resource("text.v1", b"only-row".to_vec())
+                .unwrap();
+            recycled = doomed.ref_id.clone();
+            for ref_id in [doomed.ref_id, capability_ref_id] {
+                provider
+                    .execute_command_plan(&CommandPlan {
+                        plan_id: format!("command:delete:{ref_id}"),
+                        capability: capability.clone(),
+                        operation: "delete".into(),
+                        args: json!({ "ref_id": ref_id }),
+                        idempotency_key: None,
+                    })
+                    .unwrap();
+            }
+            assert!(provider.restore_descriptors().unwrap().is_empty());
+        }
+
+        let provider = SqliteResourceProvider::open(&path).unwrap();
+        let created = provider
+            .create_blob_resource("text.v1", b"new-row".to_vec())
+            .unwrap();
+        assert_ne!(created.ref_id, recycled);
     }
 
     #[test]
