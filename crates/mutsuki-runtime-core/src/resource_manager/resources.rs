@@ -10,6 +10,24 @@ use super::{
     resource_not_found,
 };
 
+/// Validate the identity fields that make a descriptor safe to put in the
+/// hub.  A zero generation/version cannot be addressed by the provider
+/// lifecycle contracts (invalidations reject generation zero), so accepting
+/// one during restore would create a permanently unreachable descriptor.
+fn validate_descriptor_identity(descriptor: &ResourceRef, route: &str) -> RuntimeResult<()> {
+    if descriptor.generation == 0
+        || descriptor.version == 0
+        || descriptor.resource_id.generation != descriptor.generation
+        || descriptor.resource_id.version != descriptor.version
+    {
+        return Err(resource_generation_mismatch(format!(
+            "{route}.{}",
+            descriptor.ref_id
+        )));
+    }
+    Ok(())
+}
+
 impl ResourceManager {
     /// Validate the complete removal set before changing the registry.
     pub fn invalidate_resource_descriptors(
@@ -63,14 +81,7 @@ impl ResourceManager {
         &mut self,
         descriptor: ResourceRef,
     ) -> RuntimeResult<ResourceRef> {
-        if descriptor.resource_id.generation != descriptor.generation
-            || descriptor.resource_id.version != descriptor.version
-        {
-            return Err(resource_generation_mismatch(format!(
-                "resource.register.{}",
-                descriptor.ref_id
-            )));
-        }
+        validate_descriptor_identity(&descriptor, "resource.register")?;
         if self.hub.get(&descriptor.ref_id).is_some() {
             return Err(crate::runtime_failure(
                 ERR_CAPABILITY_EXHAUSTED,
@@ -93,14 +104,7 @@ impl ResourceManager {
         &mut self,
         descriptor: ResourceRef,
     ) -> RuntimeResult<ResourceRef> {
-        if descriptor.resource_id.generation != descriptor.generation
-            || descriptor.resource_id.version != descriptor.version
-        {
-            return Err(resource_generation_mismatch(format!(
-                "resource.sync.{}",
-                descriptor.ref_id
-            )));
-        }
+        validate_descriptor_identity(&descriptor, "resource.sync")?;
 
         if let Some(existing) = self.hub.get(&descriptor.ref_id).cloned() {
             if descriptor.generation < existing.descriptor.generation
