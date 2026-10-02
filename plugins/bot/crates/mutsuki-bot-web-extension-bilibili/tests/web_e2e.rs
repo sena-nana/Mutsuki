@@ -10,7 +10,7 @@ use mutsuki_bot_management::{
 };
 use mutsuki_bot_protocol::BotTarget;
 use mutsuki_bot_web_extension_bilibili::*;
-use mutsuki_web_extension_api::{WebExtension, content_hash};
+use mutsuki_web_extension_api::{RpcCallContext, RpcRegistry, WebExtension, content_hash};
 use mutsuki_web_host::{MinimalWebApplication, MutsukiWebHost, WebHost};
 use mutsuki_web_protocol::{
     DeploymentMode, RpcRequest, WEB_PROTOCOL_VERSION, WebApplicationDescriptor, WebShellAssets,
@@ -348,6 +348,24 @@ async fn web_login_stays_available_when_subscription_management_is_disabled() {
     );
 
     host.stop().await.unwrap();
+}
+
+#[test]
+fn login_poll_requires_runtime_write_capability() {
+    let api = Arc::new(Api::default());
+    let extension = BilibiliWebExtension::new(api);
+    let mut registry = RpcRegistry::new(PLUGIN_ID);
+    extension.register_rpc(&mut registry).unwrap();
+
+    let error = registry
+        .call_with_context(
+            "login.poll",
+            json!({}),
+            RpcCallContext::authenticated("read-only", &[CAPABILITY_RUNTIME_READ.into()]),
+        )
+        .unwrap_err();
+    assert_eq!(error.rpc_code(), "capability_denied");
+    assert_eq!(error.to_string(), "capability denied: runtime.write");
 }
 
 async fn rpc(address: &str, method: &str, params: Value) -> Result<Value, String> {
