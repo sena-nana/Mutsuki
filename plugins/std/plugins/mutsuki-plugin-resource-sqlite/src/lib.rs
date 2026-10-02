@@ -140,6 +140,9 @@ impl SqliteResourceProvider {
         path: &Path,
         retention: SqliteRetentionConfig,
     ) -> RuntimeResult<Self> {
+        retention
+            .validate()
+            .map_err(|detail| unsupported("resource.sqlite.open", &detail))?;
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
         {
@@ -1800,6 +1803,27 @@ mod tests {
             config.retention.unwrap().max_total_bytes,
             Some(1024),
             "retention bounds round-trip through the plugin document"
+        );
+    }
+
+    #[test]
+    fn direct_provider_open_rejects_zero_retention_bounds() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = SqliteResourceProvider::open_with_retention(
+            &dir.path().join("resources.db"),
+            SqliteRetentionConfig {
+                max_age_seconds: Some(0),
+                max_total_bytes: None,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.error().code, ERR_RESOURCE_UNSUPPORTED);
+        assert!(
+            matches!(
+                error.error().evidence.get("detail"),
+                Some(ScalarValue::String(detail)) if detail.contains("max_age_seconds")
+            ),
+            "the invalid bound should be reported as structured provider evidence"
         );
     }
 
