@@ -220,7 +220,7 @@ impl SqliteResourceProvider {
     ) -> RuntimeResult<ResourceRef> {
         const ROUTE: &str = "resource.sqlite.create";
         let mut state = self.lock_state(ROUTE)?;
-        let incoming_len = match semantic {
+        let incoming_len = match &semantic {
             ResourceSemantic::CapabilityResource => 0,
             _ => bytes.len() as u64,
         };
@@ -402,7 +402,12 @@ impl SqliteResourceProvider {
             "collect" | "get" => self.with_entry(
                 &plan.resource,
                 "resource.sqlite.read",
-                |_descriptor, bytes| Ok(bytes),
+                |descriptor, bytes| {
+                    if descriptor.semantic == ResourceSemantic::CapabilityResource {
+                        return Err(unsupported("resource.sqlite.read", "resource_semantic"));
+                    }
+                    Ok(bytes)
+                },
             ),
             operation => Err(unsupported("resource.sqlite.read", operation)),
         }
@@ -417,7 +422,10 @@ impl SqliteResourceProvider {
         let (source_ref, source_version, bytes) = self.with_entry(
             &plan.resource,
             "resource.sqlite.snapshot",
-            |descriptor, bytes| Ok((descriptor.clone(), descriptor.version, bytes)),
+            |descriptor, bytes| {
+                ensure_materializable_semantic(descriptor, "resource.sqlite.snapshot")?;
+                Ok((descriptor.clone(), descriptor.version, bytes))
+            },
         )?;
         let kind_id = if kind_id.is_empty() {
             SNAPSHOT_KIND_ID
@@ -452,6 +460,7 @@ impl SqliteResourceProvider {
             &plan.resource,
             "resource.sqlite.export",
             |descriptor, bytes| {
+                ensure_materializable_semantic(descriptor, "resource.sqlite.export")?;
                 let text = String::from_utf8(bytes).map_err(|error| {
                     let mut runtime_error = RuntimeError::new(
                         ERR_RESOURCE_UNSUPPORTED,
@@ -481,18 +490,58 @@ impl SqliteResourceProvider {
     fn commit_write_plan(&self, plan: &WritePlan, bytes: Vec<u8>) -> RuntimeResult<PlanReceipt> {
         const ROUTE: &str = "resource.sqlite.write";
         ensure_provider(&plan.resource, ROUTE)?;
-        let state = self.lock_state(ROUTE)?;
-        let (stored_semantic, stored_version) = state
+        let mut state = self.lock_state(ROUTE)?;
+        let incoming_len = bytes.len() as u64;
+        if let Some(max_total_bytes) = self.retention.max_total_bytes
+            && incoming_len > max_total_bytes
+        {
+            return Err(payload_exceeds_retention(
+                ROUTE,
+                incoming_len,
+                max_total_bytes,
+            ));
+        }
+        // Keep the descriptor read, capacity sweep and compare-and-swap in a
+        // single write transaction. This makes a COW update obey the same
+        // retention bound as create, even with another provider generation
+        // sharing this SQLite file.
+        let transaction = state
             .connection
-            .prepare_cached("SELECT semantic, version FROM resources WHERE ref_id = ?1")
-            .and_then(|mut statement| {
-                statement.query_row([plan.resource.ref_id.as_str()], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| storage_failure(ROUTE, &error.to_string()))?;
+        // Read the canonical descriptor fields along with the version.  The
+        // caller's ResourceRef is an input and can carry stale or forged
+        // kind/schema metadata; the receipt must never echo those fields back
+        // into the Host registry after a successful write.
+        let (stored_kind_id, stored_semantic, stored_schema, stored_version, stored_size) =
+            transaction
+                .prepare_cached(
+                    "SELECT kind_id, semantic, schema, version, length(bytes)
+                 FROM resources WHERE ref_id = ?1",
+                )
+                .and_then(|mut statement| {
+                    statement.query_row([plan.resource.ref_id.as_str()], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, i64>(3)?,
+                            row.get::<_, i64>(4)?,
+                        ))
+                    })
                 })
-            })
-            .map_err(|error| lookup_failure(&error, ROUTE, plan.resource.ref_id.as_str()))?;
+                .map_err(|error| lookup_failure(&error, ROUTE, plan.resource.ref_id.as_str()))?;
         let semantic = semantic_from_key(&stored_semantic, ROUTE)?;
         let current_version = stored_u64(stored_version, ROUTE, "version")?;
+        let current = resource_ref(
+            plan.resource.ref_id.as_str(),
+            &stored_kind_id,
+            semantic.clone(),
+            &stored_schema,
+            current_version,
+            Some(stored_u64(stored_size, ROUTE, "length")?),
+        );
+        ensure_descriptor_current(&plan.resource, &current, ROUTE)?;
         if plan.resource.semantic != ResourceSemantic::CowVersionedState
             || semantic != ResourceSemantic::CowVersionedState
             || plan.base_version != current_version
@@ -504,14 +553,25 @@ impl SqliteResourceProvider {
             ));
         }
 
+        let reclaimed = if let Some(max_total_bytes) = self.retention.max_total_bytes {
+            sweep_total_bytes_excluding(
+                &transaction,
+                max_total_bytes,
+                incoming_len,
+                plan.resource.ref_id.as_str(),
+                ROUTE,
+            )?
+        } else {
+            Vec::new()
+        };
+
         let new_version = current_version + 1;
         let next_version = stored_i64(new_version, ROUTE, "version")?;
         // The version predicate makes the commit compare-and-swap rather than
         // last-writer-wins. The provider mutex only orders writers inside one
         // process; another process or another provider generation sharing the
         // file can still commit between the read above and this update.
-        let updated = state
-            .connection
+        let updated = transaction
             .prepare_cached(
                 "UPDATE resources SET version = ?2, bytes = ?3
                  WHERE ref_id = ?1 AND version = ?4",
@@ -531,11 +591,27 @@ impl SqliteResourceProvider {
                 format!("{ROUTE}.{}", plan.resource.ref_id),
             ));
         }
+        transaction
+            .commit()
+            .map_err(|error| storage_failure(ROUTE, &error.to_string()))?;
+        if !reclaimed.is_empty() {
+            state
+                .invalidations
+                .borrow_mut()
+                .extend(reclaimed.into_iter().map(|ref_id| {
+                    mutsuki_runtime_contracts::ResourceDescriptorInvalidation {
+                        provider_id: PROVIDER_ID.into(),
+                        ref_id: ref_id.into(),
+                        generation: 1,
+                    }
+                }));
+            let _ = state.connection.execute_batch("PRAGMA incremental_vacuum;");
+        }
         let descriptor = resource_ref(
             plan.resource.ref_id.as_str(),
-            &plan.resource.resource_kind,
+            &stored_kind_id,
             ResourceSemantic::CowVersionedState,
-            &plan.resource.schema,
+            &stored_schema,
             new_version,
             Some(bytes.len() as u64),
         );
@@ -1106,10 +1182,28 @@ fn sweep_total_bytes(
     incoming_len: u64,
     route: &str,
 ) -> RuntimeResult<Vec<String>> {
+    sweep_total_bytes_excluding(connection, max_total_bytes, incoming_len, "", route)
+}
+
+/// Capacity sweep variant used by COW updates. The row being replaced is
+/// excluded from both the total and deletion candidate set, so an update
+/// cannot reclaim its own descriptor before the CAS runs.
+fn sweep_total_bytes_excluding(
+    connection: &Connection,
+    max_total_bytes: u64,
+    incoming_len: u64,
+    excluded_ref_id: &str,
+    route: &str,
+) -> RuntimeResult<Vec<String>> {
     let target = max_total_bytes.saturating_sub(incoming_len);
     let total = connection
-        .prepare_cached("SELECT COALESCE(SUM(length(bytes)), 0) FROM resources")
-        .and_then(|mut statement| statement.query_row([], |row| row.get::<_, i64>(0)))
+        .prepare_cached(
+            "SELECT COALESCE(SUM(length(bytes)), 0) FROM resources
+             WHERE ref_id <> ?1",
+        )
+        .and_then(|mut statement| {
+            statement.query_row([excluded_ref_id], |row| row.get::<_, i64>(0))
+        })
         .map_err(|error| storage_failure(route, &error.to_string()))?;
     let over = stored_u64(total, route, "length")?.saturating_sub(target);
     if over == 0 {
@@ -1125,12 +1219,15 @@ fn sweep_total_bytes(
                          ORDER BY slot ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
                      ), 0) AS preceding_bytes
                  FROM resources WHERE semantic <> 'capability_resource'
+                   AND ref_id <> ?2
              ) WHERE preceding_bytes < ?1
          ) RETURNING ref_id",
         )
         .and_then(|mut statement| {
             statement
-                .query_map([over], |row| row.get::<_, String>(0))?
+                .query_map(rusqlite::params![over, excluded_ref_id], |row| {
+                    row.get::<_, String>(0)
+                })?
                 .collect::<rusqlite::Result<Vec<_>>>()
         })
         .map_err(|error| storage_failure(route, &error.to_string()))
@@ -1187,6 +1284,22 @@ fn semantic_from_key(key: &str, route: &str) -> RuntimeResult<ResourceSemantic> 
 fn ensure_provider(resource: &ResourceRef, route: &str) -> RuntimeResult<()> {
     if resource.provider_id != PROVIDER_ID {
         return Err(unsupported(route, &resource.provider_id));
+    }
+    Ok(())
+}
+
+/// Provider RPC plans may be constructed directly by a host or ABI caller,
+/// bypassing the typed SDK semantic gates. Capability, stream and transaction
+/// resources do not expose a byte snapshot/export surface, so reject those
+/// plans at the provider boundary as well.
+fn ensure_materializable_semantic(descriptor: &ResourceRef, route: &str) -> RuntimeResult<()> {
+    if matches!(
+        &descriptor.semantic,
+        ResourceSemantic::CapabilityResource
+            | ResourceSemantic::StreamResource
+            | ResourceSemantic::TransactionResource
+    ) {
+        return Err(unsupported(route, "resource_semantic"));
     }
     Ok(())
 }
@@ -1314,6 +1427,115 @@ mod tests {
     }
 
     #[test]
+    fn cow_commit_receipt_keeps_canonical_stored_descriptor_metadata() {
+        let provider = SqliteResourceProvider::open_in_memory().unwrap();
+        let state = provider
+            .create_cow_state_resource("stored_kind", "stored.schema.v1", b"old".to_vec())
+            .unwrap();
+        let mut write = write_plan("write:canonical", state);
+        // Plans are caller input. A stale or forged kind/schema must not be
+        // copied into the descriptor synchronized back into the Host hub.
+        write.resource.resource_kind = "forged_kind".into();
+        write.resource.resource_id.kind_id = "forged_kind".into();
+        write.resource.schema = "forged.schema.v1".into();
+
+        let receipt = provider.commit_write_plan(&write, b"new".to_vec()).unwrap();
+        let descriptor = receipt.resource_ref.expect("committed descriptor");
+        assert_eq!(descriptor.resource_kind, "stored_kind");
+        assert_eq!(descriptor.resource_id.kind_id, "stored_kind");
+        assert_eq!(descriptor.schema, "stored.schema.v1");
+        assert_eq!(descriptor.version, 2);
+    }
+
+    #[test]
+    fn cow_commit_rejects_payload_over_capacity_without_changing_the_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let provider = SqliteResourceProvider::open_with_retention(
+            &dir.path().join("resources.db"),
+            SqliteRetentionConfig {
+                max_age_seconds: None,
+                max_total_bytes: Some(16),
+            },
+        )
+        .unwrap();
+        let state = provider
+            .create_cow_state_resource("stored_kind", "stored.schema.v1", b"old".to_vec())
+            .unwrap();
+        let error = provider
+            .commit_write_plan(&write_plan("write:oversized", state.clone()), vec![1; 17])
+            .unwrap_err();
+        assert_eq!(error.error().code, ERR_RESOURCE_UNSUPPORTED);
+        assert_eq!(
+            provider
+                .collect_read_plan(&ReadPlan {
+                    plan_id: "read:unchanged".into(),
+                    resource: state,
+                    operation: "collect".into(),
+                    args: Value::Null,
+                })
+                .unwrap(),
+            b"old"
+        );
+    }
+
+    #[test]
+    fn cow_commit_capacity_sweep_publishes_reclaimed_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        let provider = SqliteResourceProvider::open_with_retention(
+            &dir.path().join("resources.db"),
+            SqliteRetentionConfig {
+                max_age_seconds: None,
+                max_total_bytes: Some(8),
+            },
+        )
+        .unwrap();
+        let old = provider
+            .create_blob_resource("stored_kind", vec![1; 6])
+            .unwrap();
+        let state = provider
+            .create_cow_state_resource("stored_kind", "stored.schema.v1", vec![2])
+            .unwrap();
+        let outcome = provider.execute(mutsuki_runtime_sdk::ResourceProviderRequest::Commit {
+            plan: Box::new(write_plan("write:sweep", state.clone())),
+            bytes: vec![3; 4],
+        });
+        assert!(outcome.result.is_ok());
+        assert_eq!(outcome.invalidations.len(), 1);
+        assert_eq!(outcome.invalidations[0].ref_id, old.ref_id);
+        assert_eq!(
+            provider
+                .collect_read_plan(&ReadPlan {
+                    plan_id: "read:state".into(),
+                    resource: ResourceRef {
+                        version: 2,
+                        resource_id: ResourceId {
+                            version: 2,
+                            ..state.resource_id.clone()
+                        },
+                        ..state
+                    },
+                    operation: "collect".into(),
+                    args: Value::Null,
+                })
+                .unwrap(),
+            vec![3; 4]
+        );
+        assert_eq!(
+            provider
+                .collect_read_plan(&ReadPlan {
+                    plan_id: "read:old".into(),
+                    resource: old,
+                    operation: "collect".into(),
+                    args: Value::Null,
+                })
+                .unwrap_err()
+                .error()
+                .code,
+            ERR_RESOURCE_NOT_FOUND
+        );
+    }
+
+    #[test]
     fn snapshot_returns_usable_snapshot_descriptor() {
         let provider = SqliteResourceProvider::open_in_memory().unwrap();
         let blob = provider
@@ -1347,6 +1569,39 @@ mod tests {
             provider.collect_read_plan(&snapshot_read).unwrap(),
             b"hello"
         );
+    }
+
+    #[test]
+    fn capability_cannot_be_snapshotted_or_exported_through_raw_provider_plans() {
+        let provider = SqliteResourceProvider::open_in_memory().unwrap();
+        let capability = provider
+            .create_capability_resource("sqlite_query", "sqlite.query.v1")
+            .unwrap();
+        let collect = provider.collect_read_plan(&ReadPlan {
+            plan_id: "read:capability".into(),
+            resource: capability.clone(),
+            operation: "collect".into(),
+            args: Value::Null,
+        });
+        assert_eq!(collect.unwrap_err().error().code, ERR_RESOURCE_UNSUPPORTED);
+        let snapshot = provider.snapshot_read_plan(
+            &ReadPlan {
+                plan_id: "snapshot:capability".into(),
+                resource: capability.clone(),
+                operation: "snapshot".into(),
+                args: Value::Null,
+            },
+            "snapshot",
+            "snapshot.v1",
+        );
+        assert_eq!(snapshot.unwrap_err().error().code, ERR_RESOURCE_UNSUPPORTED);
+        let export = provider.execute_export_plan(&ExportPlan {
+            plan_id: "export:capability".into(),
+            resource: capability,
+            target: "inline_utf8".into(),
+            args: Value::Null,
+        });
+        assert_eq!(export.unwrap_err().error().code, ERR_RESOURCE_UNSUPPORTED);
     }
 
     #[test]
