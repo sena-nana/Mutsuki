@@ -3748,7 +3748,7 @@ mod tests {
             Arc::new(RecordingConfigStore::default()),
             Arc::new(AlwaysPresentSecrets),
         ));
-        let mut runner = BilibiliRunner::new(
+        let runner = BilibiliRunner::new(
             Box::new(FakeTransport(Arc::new(Mutex::new(
                 FakeTransportState::default(),
             )))),
@@ -3759,6 +3759,7 @@ mod tests {
         .with_management(shared.clone(), management);
         repository.set_qr_session("admin", "qr-key").unwrap();
         runner
+            .commands()
             .run_command(&command_task(
                 "login-status-admin",
                 "admin",
@@ -3772,6 +3773,7 @@ mod tests {
             next
         });
         let forbidden = runner
+            .commands()
             .run_command(&command_task(
                 "login-status-empty",
                 "admin",
