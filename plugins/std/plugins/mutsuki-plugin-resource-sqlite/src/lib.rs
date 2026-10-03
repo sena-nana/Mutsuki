@@ -509,38 +509,10 @@ impl SqliteResourceProvider {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| storage_failure(ROUTE, &error.to_string()))?;
-        // Read the canonical descriptor fields along with the version.  The
-        // caller's ResourceRef is an input and can carry stale or forged
-        // kind/schema metadata; the receipt must never echo those fields back
-        // into the Host registry after a successful write.
-        let (stored_kind_id, stored_semantic, stored_schema, stored_version, stored_size) =
-            transaction
-                .prepare_cached(
-                    "SELECT kind_id, semantic, schema, version, length(bytes)
-                 FROM resources WHERE ref_id = ?1",
-                )
-                .and_then(|mut statement| {
-                    statement.query_row([plan.resource.ref_id.as_str()], |row| {
-                        Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, String>(1)?,
-                            row.get::<_, String>(2)?,
-                            row.get::<_, i64>(3)?,
-                            row.get::<_, i64>(4)?,
-                        ))
-                    })
-                })
-                .map_err(|error| lookup_failure(&error, ROUTE, plan.resource.ref_id.as_str()))?;
-        let semantic = semantic_from_key(&stored_semantic, ROUTE)?;
-        let current_version = stored_u64(stored_version, ROUTE, "version")?;
-        let current = resource_ref(
-            plan.resource.ref_id.as_str(),
-            &stored_kind_id,
-            semantic.clone(),
-            &stored_schema,
-            current_version,
-            Some(stored_u64(stored_size, ROUTE, "length")?),
-        );
+        let (current, stored_version) =
+            Self::load_current_descriptor(&transaction, plan.resource.ref_id.as_str(), ROUTE)?;
+        let semantic = current.semantic.clone();
+        let current_version = current.version;
         ensure_descriptor_current(&plan.resource, &current, ROUTE)?;
         if plan.resource.semantic != ResourceSemantic::CowVersionedState
             || semantic != ResourceSemantic::CowVersionedState
@@ -609,9 +581,9 @@ impl SqliteResourceProvider {
         }
         let descriptor = resource_ref(
             plan.resource.ref_id.as_str(),
-            &stored_kind_id,
+            &current.resource_kind,
             ResourceSemantic::CowVersionedState,
-            &stored_schema,
+            &current.schema,
             new_version,
             Some(bytes.len() as u64),
         );
@@ -625,6 +597,37 @@ impl SqliteResourceProvider {
             new_version: Some(new_version),
             output: Value::Null,
         })
+    }
+
+    fn load_current_descriptor(
+        transaction: &rusqlite::Transaction<'_>,
+        ref_id: &str,
+        route: &str,
+    ) -> RuntimeResult<(ResourceRef, i64)> {
+        let (kind_id, semantic, schema, stored_version, stored_size) = transaction
+            .prepare_cached(
+                "SELECT kind_id, semantic, schema, version, length(bytes)
+             FROM resources WHERE ref_id = ?1",
+            )
+            .and_then(|mut statement| {
+                statement.query_row([ref_id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, i64>(4)?,
+                    ))
+                })
+            })
+            .map_err(|error| lookup_failure(&error, route, ref_id))?;
+        let semantic = semantic_from_key(&semantic, route)?;
+        let version = stored_u64(stored_version, route, "version")?;
+        let size = stored_u64(stored_size, route, "length")?;
+        Ok((
+            resource_ref(ref_id, &kind_id, semantic, &schema, version, Some(size)),
+            stored_version,
+        ))
     }
 
     fn execute_command_plan(&self, plan: &CommandPlan) -> RuntimeResult<PlanReceipt> {
