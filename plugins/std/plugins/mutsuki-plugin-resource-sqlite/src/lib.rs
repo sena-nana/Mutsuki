@@ -968,9 +968,10 @@ fn migrate_schema(connection: &Connection) -> rusqlite::Result<()> {
     // v2 seeds the sequence from `MAX(slot)`, the best bound available: ids
     // deleted before the migration leave no record and can still be handed out
     // once. Every id allocated from v2 onwards is monotonic and never reused.
-    connection.execute_batch(
-        "BEGIN IMMEDIATE;
-         CREATE TABLE IF NOT EXISTS resources (
+    let transaction =
+        rusqlite::Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
+    transaction.execute_batch(
+        "CREATE TABLE IF NOT EXISTS resources (
              ref_id TEXT PRIMARY KEY,
              slot INTEGER NOT NULL UNIQUE,
              kind_id TEXT NOT NULL,
@@ -985,24 +986,24 @@ fn migrate_schema(connection: &Connection) -> rusqlite::Result<()> {
          );
          INSERT OR IGNORE INTO resource_slot_sequence(singleton, next_slot)
              SELECT 1, COALESCE(MAX(slot), 0) FROM resources;
-         COMMIT;",
+         ",
     )?;
     if user_version < 3 {
         // Rows written before v3 have no creation time. `0` keeps them outside
         // the age sweep rather than making them instantly expired.
-        if !column_exists(connection, "resources", "created_at_unix_ms")? {
-            connection.execute(
+        if !column_exists(&transaction, "resources", "created_at_unix_ms")? {
+            transaction.execute(
                 "ALTER TABLE resources ADD COLUMN created_at_unix_ms INTEGER NOT NULL DEFAULT 0",
                 [],
             )?;
         }
-        connection.execute_batch(
+        transaction.execute_batch(
             "CREATE INDEX IF NOT EXISTS resources_created_at
                  ON resources(created_at_unix_ms);",
         )?;
     }
-    connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-    Ok(())
+    transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    transaction.commit()
 }
 
 fn column_exists(connection: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
@@ -1497,22 +1498,30 @@ mod tests {
     fn resources_persist_across_reopen() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("resources.db");
+        let persisted_blob;
+        let persisted_state;
+        let committed_state;
         let stale_write;
         {
             let provider = SqliteResourceProvider::open(&file).unwrap();
-            let blob = provider
+            persisted_blob = provider
                 .create_blob_resource("text.v1", b"persisted".to_vec())
                 .unwrap();
-            let state = provider
+            persisted_state = provider
                 .create_cow_state_resource("text_buffer", "text.state.v1", b"v1".to_vec())
                 .unwrap();
-            provider
-                .commit_write_plan(&write_plan("write:1", state.clone()), b"v2".to_vec())
-                .unwrap();
-            stale_write = write_plan("write:stale", state);
+            committed_state = provider
+                .commit_write_plan(
+                    &write_plan("write:1", persisted_state.clone()),
+                    b"v2".to_vec(),
+                )
+                .unwrap()
+                .resource_ref
+                .expect("the committed descriptor is returned");
+            stale_write = write_plan("write:stale", persisted_state.clone());
             let read = ReadPlan {
                 plan_id: "read:before".into(),
-                resource: blob,
+                resource: persisted_blob.clone(),
                 operation: "collect".into(),
                 args: Value::Null,
             };
@@ -1522,14 +1531,7 @@ mod tests {
         let provider = SqliteResourceProvider::open(&file).unwrap();
         let blob = ReadPlan {
             plan_id: "read:after".into(),
-            resource: resource_ref(
-                "sqlite-resource-1",
-                BLOB_KIND_ID,
-                ResourceSemantic::FrozenValue,
-                "text.v1",
-                1,
-                None,
-            ),
+            resource: persisted_blob.clone(),
             operation: "collect".into(),
             args: Value::Null,
         };
@@ -1537,14 +1539,7 @@ mod tests {
 
         let committed = ReadPlan {
             plan_id: "read:after:state".into(),
-            resource: resource_ref(
-                "sqlite-resource-2",
-                "text_buffer",
-                ResourceSemantic::CowVersionedState,
-                "text.state.v1",
-                2,
-                None,
-            ),
+            resource: committed_state,
             operation: "collect".into(),
             args: Value::Null,
         };
@@ -1561,7 +1556,7 @@ mod tests {
             .create_blob_resource("text.v1", b"after".to_vec())
             .unwrap();
         assert!(
-            !["sqlite-resource-1", "sqlite-resource-2"].contains(&created.ref_id.as_str()),
+            created.ref_id != persisted_blob.ref_id && created.ref_id != persisted_state.ref_id,
             "reopened provider reused {}",
             created.ref_id
         );
@@ -1713,6 +1708,62 @@ mod tests {
             };
             assert_eq!(provider.collect_read_plan(&read).unwrap(), expected);
         }
+    }
+
+    #[test]
+    fn migrates_legacy_schema_without_dropping_resources_or_sequence() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("legacy.db");
+        {
+            let connection = Connection::open(&path).unwrap();
+            connection
+                .execute_batch(
+                    "CREATE TABLE resources (
+                         ref_id TEXT PRIMARY KEY,
+                         slot INTEGER NOT NULL UNIQUE,
+                         kind_id TEXT NOT NULL,
+                         semantic TEXT NOT NULL,
+                         schema TEXT NOT NULL,
+                         version INTEGER NOT NULL,
+                         bytes BLOB NOT NULL
+                     );
+                     INSERT INTO resources
+                         (ref_id, slot, kind_id, semantic, schema, version, bytes)
+                     VALUES
+                         ('sqlite-resource-7', 7, 'mutsuki.resource.sqlite.blob',
+                          'frozen_value', 'text.v1', 1, X'6C6567616379');
+                     PRAGMA user_version = 1;",
+                )
+                .unwrap();
+        }
+
+        let provider = SqliteResourceProvider::open(&path).unwrap();
+        let restored = resource_ref(
+            "sqlite-resource-7",
+            "mutsuki.resource.sqlite.blob",
+            ResourceSemantic::FrozenValue,
+            "text.v1",
+            1,
+            None,
+        );
+        assert_eq!(
+            provider
+                .collect_read_plan(&ReadPlan {
+                    plan_id: "read:legacy".into(),
+                    resource: restored,
+                    operation: "collect".into(),
+                    args: Value::Null,
+                })
+                .unwrap(),
+            b"legacy"
+        );
+
+        // The sequence is initialized from the legacy maximum and then stays
+        // in the database, so reopening another provider cannot reset it.
+        let created = provider
+            .create_blob_resource("text.v1", b"new".to_vec())
+            .unwrap();
+        assert_eq!(created.ref_id, "sqlite-resource-8");
     }
 
     #[test]

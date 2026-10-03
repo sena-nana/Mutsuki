@@ -850,7 +850,10 @@ channel. Neither receipt status nor arbitrary output JSON is a lifecycle signal.
 Providers declaring ordered execution have one operation in flight per provider id until actor
 application, including across staged reload. Timeout/disconnection does not discard committed
 lifecycle results. Panic with unknown effects poisons that provider lane. Pending work is bounded.
-SQLite retains its create-before-insert sweep and capability exemption; ids are never reused.
+SQLite retains its create-before-insert sweep and capability exemption; ids allocated after
+the sequence migration are never reused. A pre-sequence database has no tombstone/high-water
+record for rows deleted before its first upgrade, so migration can only seed from the highest
+surviving slot and cannot recover that historical edge.
 Restoration remains boot-only. No permanent tombstone history or existence I/O is added to open.
 
 Provider ABI lifecycle uses `ExecuteResourceProviderRequest` (opcode 0x300c, `resource.provider.execute`) and a `ResourceProviderResponse` containing result plus invalidations. Wire schema 1.4.0 handshake rejects older revisions; rebuild provider binaries. Native providers migrate to `execute`; no receipt-only fallback. Runner-facing resource replies retain their shapes. Python mirrors DTOs and registry/artifacts, without implementing a provider endpoint.

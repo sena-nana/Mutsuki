@@ -40,9 +40,13 @@ description: Implement or change standard memory, shared-memory, database, state
   carries the base version and a zero-row update is `resource.generation_mismatch`.
 - `idempotency_key` is not a receipt id unless the provider actually stores receipts;
   `mutsuki.std.resource.sqlite` echoes it and does not deduplicate.
-- Resource ids are allocated by the store, never by a provider-memory counter: a
-  `ref_id` must stay monotonic and must never be reissued after a delete, a reopen,
-  or while two provider generations share the same backing file during staged reload.
+- Resource ids are allocated by the store, never by a provider-memory counter. In
+  the sequence-backed schema a `ref_id` stays monotonic and is never reissued
+  after a delete, a reopen, or while two provider generations share the same
+  backing file during staged reload. Databases created before the sequence migration
+  have no tombstone/high-water
+  record for rows deleted before their first upgrade; migration can seed only from
+  the highest surviving slot, so that historical edge cannot be reconstructed.
 - A provider that blocks declares `ResourceProviderExecution::Offloaded`; leaving the
   default `Inline` on a disk- or socket-backed provider stalls the whole runtime for the
   length of every call. `mutsuki.std.resource.sqlite` is offloaded, the memory and
