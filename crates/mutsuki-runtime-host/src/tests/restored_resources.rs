@@ -6,7 +6,8 @@ use mutsuki_runtime_contracts::resource::experimental::{CommandBatch, SagaPlan};
 use mutsuki_runtime_contracts::*;
 use mutsuki_runtime_core::{RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
-    ResourcePlanGateway, ResourceProviderExecution, ResourceProviderGateway,
+    AsyncResourceProviderGateway, ResourcePlanGateway, ResourceProviderExecution,
+    ResourceProviderGateway,
 };
 
 use crate::{RuntimeBootstrapper, runner_manifest};
@@ -185,12 +186,54 @@ impl ResourceProviderGateway for PersistentProvider {
     }
 }
 
+/// Persistent providers may use the native async boundary as well. Restore is
+/// intentionally synchronous so boot can rebuild the Core registry before the
+/// actor starts, regardless of how plans execute after startup.
+struct AsyncPersistentProvider {
+    stored: Vec<ResourceRef>,
+    owner_id: String,
+}
+
+impl AsyncResourceProviderGateway for AsyncPersistentProvider {
+    fn execute(
+        &self,
+        _request: mutsuki_runtime_sdk::ResourceProviderRequest,
+    ) -> mutsuki_runtime_sdk::ResourceProviderFuture {
+        Box::pin(async {
+            mutsuki_runtime_sdk::ResourceProviderOutcome::new(Err(PersistentProvider::unsupported(
+                "execute",
+            )))
+        })
+    }
+
+    fn restore_descriptors(&self) -> RuntimeResult<Vec<ResourceRef>> {
+        Ok(self
+            .stored
+            .iter()
+            .map(|descriptor| {
+                let mut descriptor = descriptor.clone();
+                descriptor.provider_id = self.owner_id.clone();
+                descriptor
+            })
+            .collect())
+    }
+}
+
 fn bootstrapper_with(provider: PersistentProvider) -> RuntimeBootstrapper {
     let mut manifest = runner_manifest("plugin-a", Vec::new());
     manifest.provides.resource_providers = vec![PROVIDER_ID.into()];
     let mut bootstrapper = RuntimeBootstrapper::new();
     bootstrapper.register_manifest(manifest);
     bootstrapper.register_resource_provider(PROVIDER_ID, Arc::new(provider));
+    bootstrapper
+}
+
+fn bootstrapper_with_async(provider: AsyncPersistentProvider) -> RuntimeBootstrapper {
+    let mut manifest = runner_manifest("plugin-a", Vec::new());
+    manifest.provides.resource_providers = vec![PROVIDER_ID.into()];
+    let mut bootstrapper = RuntimeBootstrapper::new();
+    bootstrapper.register_manifest(manifest);
+    bootstrapper.register_async_resource_provider(PROVIDER_ID, Arc::new(provider));
     bootstrapper
 }
 
@@ -258,6 +301,210 @@ fn a_provider_with_nothing_stored_registers_nothing() {
             .error()
             .code,
         ERR_RESOURCE_NOT_FOUND
+    );
+}
+
+#[test]
+fn an_async_provider_restores_descriptors_before_actor_start() {
+    let stored = vec![PersistentProvider::descriptor(
+        "restored-async",
+        PROVIDER_ID,
+    )];
+    let runtime = bootstrapper_with_async(AsyncPersistentProvider {
+        stored: stored.clone(),
+        owner_id: PROVIDER_ID.into(),
+    })
+    .into_host_runtime(runtime_profile())
+    .unwrap();
+
+    assert_eq!(
+        runtime
+            .host_context()
+            .resource_registry()
+            .open_resource_descriptor("restored-async")
+            .unwrap(),
+        stored[0]
+    );
+}
+
+#[test]
+fn malformed_restored_access_route_is_rejected_before_host_start() {
+    let mut descriptor = PersistentProvider::descriptor("malformed-access", PROVIDER_ID);
+    descriptor.access = ResourceAccess::ProviderRpc {
+        provider_id: "some.other.provider".into(),
+        method: "restore".into(),
+    };
+    let result = bootstrapper_with(PersistentProvider {
+        stored: vec![descriptor],
+        owner_id: PROVIDER_ID.into(),
+    })
+    .into_host_runtime(runtime_profile());
+    let error = match result {
+        Ok(_) => panic!("a restored descriptor must not route through another provider"),
+        Err(error) => error,
+    };
+    assert_eq!(error.error().code, ERR_REGISTRY_UNAUTHORIZED);
+}
+
+#[test]
+fn malformed_restored_identity_is_rejected_before_host_start() {
+    let mut malformed = PersistentProvider::descriptor("malformed-identity", PROVIDER_ID);
+    malformed.generation = 0;
+    malformed.resource_id.generation = 0;
+    let result = bootstrapper_with(PersistentProvider {
+        stored: vec![malformed],
+        owner_id: PROVIDER_ID.into(),
+    })
+    .into_host_runtime(runtime_profile());
+    let error = match result {
+        Ok(_) => panic!("zero generation cannot be restored into the registry"),
+        Err(error) => error,
+    };
+    assert_eq!(error.error().code, ERR_REGISTRY_UNAUTHORIZED);
+
+    let mut malformed = PersistentProvider::descriptor("malformed-version", PROVIDER_ID);
+    malformed.version = 0;
+    malformed.resource_id.version = 0;
+    let result = bootstrapper_with(PersistentProvider {
+        stored: vec![malformed],
+        owner_id: PROVIDER_ID.into(),
+    })
+    .into_host_runtime(runtime_profile());
+    let error = match result {
+        Ok(_) => panic!("zero version cannot be restored into the registry"),
+        Err(error) => error,
+    };
+    assert_eq!(error.error().code, ERR_REGISTRY_UNAUTHORIZED);
+
+    let mut malformed = PersistentProvider::descriptor("mismatched-identity", PROVIDER_ID);
+    malformed.resource_id.version = malformed.version + 1;
+    let result = bootstrapper_with(PersistentProvider {
+        stored: vec![malformed],
+        owner_id: PROVIDER_ID.into(),
+    })
+    .into_host_runtime(runtime_profile());
+    let error = match result {
+        Ok(_) => panic!("resource identity version must match the descriptor"),
+        Err(error) => error,
+    };
+    assert_eq!(error.error().code, ERR_REGISTRY_UNAUTHORIZED);
+}
+
+#[test]
+fn sync_and_async_routes_for_one_provider_are_rejected() {
+    let result = bootstrapper_with(PersistentProvider {
+        stored: Vec::new(),
+        owner_id: PROVIDER_ID.into(),
+    })
+    .into_host_runtime_with_config(
+        runtime_profile(),
+        crate::HostRuntimeConfig::default().with_async_resource_provider(
+            PROVIDER_ID,
+            Arc::new(AsyncPersistentProvider {
+                stored: Vec::new(),
+                owner_id: PROVIDER_ID.into(),
+            }),
+        ),
+    );
+    let error = match result {
+        Ok(_) => panic!("one provider id cannot have sync and async routes"),
+        Err(error) => error,
+    };
+    assert_eq!(error.error().code, ERR_REGISTRY_UNAUTHORIZED);
+}
+
+#[test]
+fn inactive_provider_rows_are_not_restored() {
+    let mut manifest = runner_manifest("plugin-a", Vec::new());
+    manifest.provides.resource_providers = vec!["active.provider".into()];
+    let mut bootstrapper = RuntimeBootstrapper::new();
+    bootstrapper.register_manifest(manifest);
+    bootstrapper.register_resource_provider(
+        "active.provider",
+        Arc::new(PersistentProvider {
+            stored: Vec::new(),
+            owner_id: "active.provider".into(),
+        }),
+    );
+    bootstrapper.register_resource_provider(
+        "inactive.provider",
+        Arc::new(PersistentProvider {
+            stored: vec![PersistentProvider::descriptor(
+                "inactive-resource",
+                "inactive.provider",
+            )],
+            owner_id: "inactive.provider".into(),
+        }),
+    );
+    let runtime = bootstrapper
+        .into_host_runtime(runtime_profile())
+        .expect("inactive provider registration is ignored by the resolved plan");
+    assert_eq!(
+        runtime
+            .host_context()
+            .resource_registry()
+            .open_resource_descriptor("inactive-resource")
+            .unwrap_err()
+            .error()
+            .code,
+        ERR_RESOURCE_NOT_FOUND
+    );
+    assert_eq!(
+        runtime
+            .host_context()
+            .resource_registry()
+            .create_blob_resource("inactive.provider", "fixture.v1", b"blocked".to_vec())
+            .unwrap_err()
+            .error()
+            .code,
+        ERR_REGISTRY_UNAUTHORIZED
+    );
+}
+
+#[test]
+fn explicit_host_provider_route_survives_inactive_plugin_filtering() {
+    let mut manifest = runner_manifest("plugin-a", Vec::new());
+    manifest.provides.resource_providers = vec!["active.provider".into()];
+    let mut bootstrapper = RuntimeBootstrapper::new();
+    bootstrapper.register_manifest(manifest);
+    bootstrapper.register_resource_provider(
+        "active.provider",
+        Arc::new(PersistentProvider {
+            stored: Vec::new(),
+            owner_id: "active.provider".into(),
+        }),
+    );
+    let explicit_descriptor =
+        PersistentProvider::descriptor("explicit-restored", "explicit.provider");
+    let runtime = bootstrapper
+        .into_host_runtime_with_config(
+            runtime_profile(),
+            crate::HostRuntimeConfig::default().with_resource_provider(
+                "explicit.provider",
+                Arc::new(PersistentProvider {
+                    stored: vec![explicit_descriptor.clone()],
+                    owner_id: "explicit.provider".into(),
+                }),
+            ),
+        )
+        .unwrap();
+    assert_eq!(
+        runtime
+            .host_context()
+            .resource_registry()
+            .open_resource_descriptor("explicit-restored")
+            .unwrap(),
+        explicit_descriptor
+    );
+    assert_eq!(
+        runtime
+            .host_context()
+            .resource_registry()
+            .create_blob_resource("explicit.provider", "fixture.v1", b"explicit".to_vec())
+            .unwrap_err()
+            .error()
+            .code,
+        ERR_RESOURCE_UNSUPPORTED
     );
 }
 
