@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, Weak, mpsc};
@@ -6,7 +6,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use mutsuki_runtime_contracts::{
-    ObservabilityPage, ObservabilityProfile, RuntimeEvent, TaskStatus, TraceSpan,
+    ObservabilityPage, ObservabilityProfile, ResourceAccess, ResourceRef, RuntimeEvent, TaskStatus,
+    TraceSpan,
 };
 use mutsuki_runtime_core::{
     CoreRuntime, ReloadDecision, RuntimeFailure, RuntimeResult, RuntimeStatistics,
@@ -570,12 +571,19 @@ impl HostRuntime {
         registry_generation: u64,
         scopes: PluginScopeSet,
     ) -> RuntimeResult<Self> {
-        validate_runner_limits(&config.default_runner_limits, &config.runner_limits)?;
+        if let Err(error) =
+            validate_runner_limits(&config.default_runner_limits, &config.runner_limits)
+        {
+            return boot_start_failure(scopes, error);
+        }
         if config.tick_interval.is_zero() {
-            return Err(host_failure(
-                "host.driver.tick_interval",
-                "tick_interval must be greater than zero",
-            ));
+            return boot_start_failure(
+                scopes,
+                host_failure(
+                    "host.driver.tick_interval",
+                    "tick_interval must be greater than zero",
+                ),
+            );
         }
         if let Some(observability) = config.observability.clone() {
             core.configure_observability(observability);
@@ -585,12 +593,17 @@ impl HostRuntime {
             || config.actor_data_queue_limit == 0
             || config.actor_control_quota == 0
         {
-            return Err(host_failure(
-                "host.actor.config",
-                "actor queue limits and control quota must be positive",
-            ));
+            return boot_start_failure(
+                scopes,
+                host_failure(
+                    "host.actor.config",
+                    "actor queue limits and control quota must be positive",
+                ),
+            );
         }
-        restore_resource_descriptors(&mut core, &config)?;
+        if let Err(error) = restore_resource_descriptors(&mut core, &config) {
+            return boot_start_failure(scopes, error);
+        }
         let metrics = Arc::new(HostRuntimeMetrics::default());
         config.actor_metrics = metrics.clone();
         let (wake_tx, wake_rx) = mpsc::channel();
@@ -601,15 +614,21 @@ impl HostRuntime {
         config.async_event_sink = Some(Arc::new(move |event| {
             let _ = async_event_tx.send(CoreActorMsg::AsyncEvent(event));
         }));
-        let pools = worker_pools(&config, actor_tx)?;
-        let management = crate::management::ManagementExecutor::new(
+        let pools = match worker_pools(&config, actor_tx) {
+            Ok(pools) => pools,
+            Err(error) => return boot_start_failure(scopes, error),
+        };
+        let management = match crate::management::ManagementExecutor::new(
             config.management_threads,
             config.management_queue_limit,
             tx.clone(),
-        )?;
+        ) {
+            Ok(management) => management,
+            Err(error) => return boot_start_failure(scopes, error),
+        };
         let completion_hub = Arc::new(TaskCompletionHub::default());
         let actor_completion_hub = completion_hub.clone();
-        let actor = thread::Builder::new()
+        let actor = match thread::Builder::new()
             .name("mutsuki-core-actor".into())
             .spawn(move || {
                 core_actor_loop(
@@ -622,8 +641,15 @@ impl HostRuntime {
                     management,
                     actor_completion_hub,
                 )
-            })
-            .map_err(|error| host_failure("host.actor.spawn", error.to_string()))?;
+            }) {
+            Ok(actor) => actor,
+            Err(error) => {
+                return boot_start_failure(
+                    scopes,
+                    host_failure("host.actor.spawn", error.to_string()),
+                );
+            }
+        };
         let capabilities = Arc::new(capabilities);
         let context = build_host_context(
             tx.clone(),
@@ -1197,26 +1223,90 @@ fn restore_resource_descriptors(
     core: &mut CoreRuntime,
     config: &HostRuntimeConfig,
 ) -> RuntimeResult<()> {
-    let restored = config
+    // Bootstrap has already filtered registered routes to the active plan;
+    // routes left in this config are therefore either active plugin providers
+    // or explicitly injected Host providers.
+    let provider_ids: BTreeSet<_> = config
         .resource_providers
-        .iter()
-        .map(|(provider_id, provider)| (provider_id, provider.restore_descriptors()))
-        .chain(
-            config
-                .async_resource_providers
-                .iter()
-                .map(|(provider_id, provider)| (provider_id, provider.restore_descriptors())),
-        );
-    for (provider_id, descriptors) in restored {
+        .keys()
+        .chain(config.async_resource_providers.keys())
+        .cloned()
+        .collect();
+
+    for provider_id in provider_ids {
+        // A provider id has exactly one execution route. Bootstrap validation
+        // rejects duplicate registrations; keep the same invariant for callers
+        // that inject routes directly through HostRuntimeConfig.
+        let descriptors = if let Some(provider) = config.resource_providers.get(&provider_id) {
+            provider.restore_descriptors()
+        } else if let Some(provider) = config.async_resource_providers.get(&provider_id) {
+            provider.restore_descriptors()
+        } else {
+            return Err(crate::error::resource_provider_missing(&provider_id));
+        };
         for descriptor in descriptors? {
-            if descriptor.provider_id != *provider_id {
-                return Err(crate::error::resource_provider_unsupported(format!(
-                    "provider {provider_id} restored descriptor owned by {}",
-                    descriptor.provider_id
-                )));
-            }
+            validate_restored_descriptor(&provider_id, &descriptor)?;
             core.register_resource_descriptor(descriptor)?;
         }
+    }
+    Ok(())
+}
+
+fn boot_start_failure<T>(scopes: PluginScopeSet, error: RuntimeFailure) -> RuntimeResult<T> {
+    match scopes
+        .manager()
+        .shutdown_scope_blocking(scopes.root_scope(), Duration::from_secs(30))
+    {
+        Ok(_) => Err(error),
+        Err(cleanup_error) => Err(host_failure(
+            "host.scope.boot_cleanup_failed",
+            format!("host startup failed: {error}; scope cleanup failed: {cleanup_error}"),
+        )),
+    }
+}
+
+fn validate_restored_descriptor(provider_id: &str, descriptor: &ResourceRef) -> RuntimeResult<()> {
+    if descriptor.provider_id != provider_id {
+        return Err(crate::error::resource_provider_unsupported(format!(
+            "provider {provider_id} restored descriptor owned by {}",
+            descriptor.provider_id
+        )));
+    }
+    if descriptor.ref_id.as_str().trim().is_empty() {
+        return Err(crate::error::resource_provider_unsupported(format!(
+            "provider {provider_id} restored a descriptor with an empty ref_id"
+        )));
+    }
+    if descriptor.generation == 0 || descriptor.version == 0 {
+        return Err(crate::error::resource_provider_unsupported(format!(
+            "provider {provider_id} restored descriptor {} has zero generation or version",
+            descriptor.ref_id
+        )));
+    }
+    if descriptor.resource_id.generation != descriptor.generation
+        || descriptor.resource_id.version != descriptor.version
+    {
+        return Err(crate::error::resource_provider_unsupported(format!(
+            "provider {provider_id} restored descriptor {} has mismatched resource identity",
+            descriptor.ref_id
+        )));
+    }
+    if let ResourceAccess::ProviderRpc {
+        provider_id: access_provider_id,
+        ..
+    } = &descriptor.access
+        && access_provider_id != provider_id
+    {
+        return Err(crate::error::resource_provider_unsupported(format!(
+            "provider {provider_id} restored descriptor {} has access route {access_provider_id}",
+            descriptor.ref_id
+        )));
+    }
+    if descriptor.lease.is_some() {
+        return Err(crate::error::resource_provider_unsupported(format!(
+            "provider {provider_id} restored descriptor {} carries a transient lease",
+            descriptor.ref_id
+        )));
     }
     Ok(())
 }

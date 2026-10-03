@@ -189,12 +189,30 @@ impl PreparedHostRuntime {
 
     pub fn start(self) -> RuntimeResult<HostRuntime> {
         let booted = boot_prepared_runtime(self.prepared)?;
-        let config = configure_resource_provider(
+        let config = match configure_resource_provider(
             self.config,
             &booted.active_resource_providers,
             booted.resource_providers,
             booted.async_resource_providers,
-        )?;
+        ) {
+            Ok(config) => config,
+            Err(error) => {
+                let cleanup_timeout = Duration::from_secs(30);
+                return match booted
+                    .scopes
+                    .manager()
+                    .shutdown_scope_blocking(booted.scopes.root_scope(), cleanup_timeout)
+                {
+                    Ok(_) => Err(error),
+                    Err(cleanup_error) => Err(crate::error::host_failure(
+                        "host.scope.boot_cleanup_failed",
+                        format!(
+                            "resource provider configuration failed: {error}; scope cleanup failed: {cleanup_error}"
+                        ),
+                    )),
+                };
+            }
+        };
         HostRuntime::start(
             booted.core,
             config,
@@ -1282,17 +1300,40 @@ fn configure_resource_provider(
     resource_providers: Vec<RegisteredResourceProvider>,
     async_resource_providers: Vec<RegisteredAsyncResourceProvider>,
 ) -> RuntimeResult<HostRuntimeConfig> {
+    // Keep routes supplied explicitly by the host (for example the Tauri
+    // bridge), while only exposing providers selected by the resolved load
+    // plan. An inactive plugin provider must not become callable merely
+    // because it was discovered during bootstrap.
+    let active_provider_ids: BTreeSet<_> = active_provider_ids.iter().map(String::as_str).collect();
     for registered in resource_providers {
+        if !active_provider_ids.contains(registered.provider_id.as_str()) {
+            continue;
+        }
         config
             .resource_providers
             .entry(registered.provider_id)
             .or_insert(registered.provider);
     }
     for registered in async_resource_providers {
+        if !active_provider_ids.contains(registered.provider_id.as_str()) {
+            continue;
+        }
         config
             .async_resource_providers
             .entry(registered.provider_id)
             .or_insert(registered.provider);
+    }
+
+    // A provider id selects one execution boundary.  Registrations supplied
+    // through HostRuntimeConfig bypass the bootstrapper's vector validation,
+    // so reject a sync/async collision here instead of silently preferring the
+    // synchronous route during restore and command dispatch.
+    let duplicate_routes = config
+        .resource_providers
+        .keys()
+        .find(|provider_id| config.async_resource_providers.contains_key(*provider_id));
+    if let Some(provider_id) = duplicate_routes {
+        return Err(resource_provider_duplicate(provider_id));
     }
 
     for provider_id in active_provider_ids {

@@ -65,6 +65,30 @@ fn resource_manager_supports_value_refs_descriptors_and_write_lease_fencing() {
         ERR_RESOURCE_GENERATION_MISMATCH
     );
 
+    // Generation and version zero cannot participate in the lifecycle
+    // contracts (invalidation rejects generation zero), so a provider must
+    // not be able to restore or sync such an unreachable descriptor.
+    for (generation, version) in [(0, 1), (1, 0)] {
+        let mut invalid = external_resource_ref(
+            &format!("resource:invalid-{generation}-{version}"),
+            "bytes",
+            "bytes.v1",
+            "mutsuki.std.resource.memory",
+        );
+        invalid.generation = generation;
+        invalid.version = version;
+        invalid.resource_id.generation = generation;
+        invalid.resource_id.version = version;
+        assert_eq!(
+            resources
+                .register_resource_descriptor(invalid)
+                .unwrap_err()
+                .error()
+                .code,
+            ERR_RESOURCE_GENERATION_MISMATCH
+        );
+    }
+
     let lease = resources
         .acquire_write_lease(&resource.ref_id, "runner-a", Some(5))
         .unwrap();
