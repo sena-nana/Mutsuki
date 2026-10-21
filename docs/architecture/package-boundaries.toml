@@ -54,12 +54,20 @@ source_roots = [
   "crates/mutsuki-module-catalog",
   "crates/mutsuki-plugin-api",
   "crates/mutsuki-plugin-host",
+  "crates/mutsuki-runtime-plugin-loader",
   "hosts",
   "kits",
   "plugins",
   "products",
 ]
 forbidden_target_roots = ["crates/mutsuki-runtime-core"]
+
+[[rules]]
+# ServiceHost and TauriHost both read plugin.toml through this crate, so it may not reach back
+# into either Host or into domain packages.
+name = "runtime-plugin-loader-stays-host-neutral"
+source_roots = ["crates/mutsuki-runtime-plugin-loader"]
+forbidden_target_roots = ["hosts", "kits", "plugins", "products", "crates/mutsuki-runtime-host"]
 
 [[rules]]
 name = "link-does-not-own-host-or-business-behavior"

@@ -20,13 +20,13 @@ use std::process::Command;
 use std::time::Instant;
 
 use mutsuki_runtime_contracts::{ArtifactType, PluginArtifact, Task, TaskBatch};
+use mutsuki_runtime_plugin_loader::{ExternalRuntimeSpec, PluginToml};
 use mutsuki_service_benchmarks::{FixtureRunner, PLUGIN_ID, fixture_manifest_for};
 use mutsuki_service_config::{ConfiguredPluginSelection, ServiceConfig};
 use mutsuki_service_control::{
     ControlCommand, ControlResponse, ControlResult, TaskSubmitBatchParam, TaskWaitParam,
 };
 use mutsuki_service_ipc::ControlClient;
-use mutsuki_service_plugin_loader::{ExternalRuntimeSpec, PluginToml};
 use mutsuki_service_runtime::{ServiceRuntime, ServiceRuntimeBuilder};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};

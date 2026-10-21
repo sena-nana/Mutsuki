@@ -21,13 +21,13 @@ use mutsuki_runtime_host::{
     DefaultScheduler, ExecutionDomainConfig, HostRuntimeConfig, RunnerLimits, ScheduleInput,
     SchedulerPolicy,
 };
+use mutsuki_runtime_plugin_loader::{ExternalRuntimeSpec, PluginToml};
 use mutsuki_runtime_sdk::{ProtocolSpec, SdkProtocol, TaskAwaitRunnerAdapter};
 use mutsuki_runtime_sdk::{Runner, RunnerContext, RuntimeResult};
 use mutsuki_tauri_bridge::{
     ApprovalAttribution, ApprovalDecision, ApprovalResponse, FrontendContext, FrontendTaskRequest,
     MutsukiFrontendEvent,
 };
-use serde::Serialize;
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -990,7 +990,7 @@ fn loader_records_malformed_plugin_manifest() {
 }
 
 #[test]
-fn loader_records_missing_runner_spec() {
+fn loader_records_process_plugin_without_runtime_table() {
     let workspace = TestWorkspace::new("missing-runner");
     write_plugin_manifest(
         &workspace.config.paths.plugins_dir.join("plugin"),
@@ -1019,7 +1019,7 @@ fn loader_records_missing_runner_spec() {
         plugins[0]
             .error
             .as_deref()
-            .is_some_and(|error| error.contains("missing runner.toml"))
+            .is_some_and(|error| error.contains("has no [runtime] table"))
     );
     assert!(!status.healthy);
     assert!(!status.plugins_health.healthy);
@@ -1081,7 +1081,7 @@ fn loader_records_unsupported_plugin_artifact() {
 }
 
 #[test]
-fn loader_records_duplicate_plugin_and_runner_ids() {
+fn loader_records_duplicate_plugin_ids() {
     let workspace = TestWorkspace::new("duplicates");
     write_plugin_manifest(
         &workspace.config.paths.plugins_dir.join("one"),
@@ -1101,25 +1101,6 @@ fn loader_records_duplicate_plugin_and_runner_ids() {
             Vec::new(),
         ),
     );
-    write_runner_spec(
-        &workspace.config.paths.runners_dir.join("one"),
-        &runner_launch_spec(
-            "fixture.duplicate.runner",
-            "fixture.duplicate",
-            "powershell.exe",
-            Vec::new(),
-        ),
-    );
-    write_runner_spec(
-        &workspace.config.paths.runners_dir.join("two"),
-        &runner_launch_spec(
-            "fixture.duplicate.runner",
-            "fixture.duplicate",
-            "powershell.exe",
-            Vec::new(),
-        ),
-    );
-
     let host = MutsukiTauriHost::builder()
         .config(workspace.config())
         .build()
@@ -1133,21 +1114,13 @@ fn loader_records_duplicate_plugin_and_runner_ids() {
                 .as_deref()
                 .is_some_and(|error| error.contains("duplicate"))
     }));
-    assert!(host.runners().iter().any(|runner| {
-        runner.runner_id == "fixture.duplicate.runner"
-            && !runner.enabled
-            && runner
-                .error
-                .as_deref()
-                .is_some_and(|error| error.contains("duplicate"))
-    }));
 }
 
 #[test]
 fn external_process_runner_completes_task_and_forwards_stderr() {
     let workspace = TestWorkspace::new("external-runner");
     let runner = binary_fixture_runner();
-    write_plugin_manifest(
+    write_process_plugin(
         &workspace.config.paths.plugins_dir.join("plugin"),
         plugin_manifest(
             "fixture.process",
@@ -1158,12 +1131,7 @@ fn external_process_runner_completes_task_and_forwards_stderr() {
                 "fixture.process.echo",
             )],
         ),
-    );
-    write_runner_spec(
-        &workspace.config.paths.runners_dir.join("runner"),
-        &runner_launch_spec(
-            "fixture.process.runner",
-            "fixture.process",
+        process_runtime(
             runner.to_str().expect("fixture runner path is UTF-8"),
             Vec::new(),
         ),
@@ -1242,7 +1210,7 @@ fn external_process_runner_completes_task_and_forwards_stderr() {
 fn health_reports_external_runner_runtime_failure() {
     let workspace = TestWorkspace::new("external-runner-failure");
     let runner = binary_fixture_runner();
-    write_plugin_manifest(
+    write_process_plugin(
         &workspace.config.paths.plugins_dir.join("plugin"),
         plugin_manifest(
             "fixture.failing_process",
@@ -1253,12 +1221,7 @@ fn health_reports_external_runner_runtime_failure() {
                 "fixture.failing_process.echo",
             )],
         ),
-    );
-    write_runner_spec(
-        &workspace.config.paths.runners_dir.join("runner"),
-        &runner_launch_spec(
-            "fixture.failing_process.runner",
-            "fixture.failing_process",
+        process_runtime(
             runner.to_str().expect("fixture runner path is UTF-8"),
             vec!["--fail".into()],
         ),
@@ -1636,7 +1599,6 @@ impl TestWorkspace {
             logs_dir: root.join("logs"),
             plugins_dir: root.join("plugins"),
             resources_dir: root.join("resources"),
-            runners_dir: root.join("runners"),
         };
         let mut config = MutsukiTauriConfig::for_app(format!("MutsukiTauriHostTest-{name}"));
         config.paths = paths;
@@ -1654,10 +1616,28 @@ impl Drop for TestWorkspace {
     }
 }
 
-fn write_plugin_manifest(dir: &Path, manifest: PluginManifest) {
+fn write_plugin_toml(dir: &Path, manifest: PluginManifest, runtime: Option<ExternalRuntimeSpec>) {
     std::fs::create_dir_all(dir).expect("plugin dir created");
-    let text = toml::to_string(&manifest).expect("plugin manifest serializes");
-    std::fs::write(dir.join("plugin.toml"), text).expect("plugin manifest written");
+    let text = toml::to_string(&PluginToml { manifest, runtime }).expect("plugin.toml serializes");
+    std::fs::write(dir.join("plugin.toml"), text).expect("plugin.toml written");
+}
+
+fn write_plugin_manifest(dir: &Path, manifest: PluginManifest) {
+    write_plugin_toml(dir, manifest, None);
+}
+
+fn write_process_plugin(dir: &Path, manifest: PluginManifest, runtime: ExternalRuntimeSpec) {
+    write_plugin_toml(dir, manifest, Some(runtime));
+}
+
+fn process_runtime(command: &str, args: Vec<String>) -> ExternalRuntimeSpec {
+    ExternalRuntimeSpec {
+        command: command.into(),
+        args,
+        env: BTreeMap::new(),
+        cwd: None,
+        runner_link: "binary-stdio".into(),
+    }
 }
 
 fn plugin_manifest(
@@ -1720,44 +1700,6 @@ fn runner_descriptor(runner_id: &str, protocol_id: &str) -> RunnerDescriptor {
         metadata: BTreeMap::new(),
         contract_surfaces: vec![format!("task_protocol:{protocol_id}").into()],
     }
-}
-
-#[derive(Serialize)]
-struct RunnerSpecFixture {
-    runner_id: String,
-    plugin_id: String,
-    command: String,
-    args: Vec<String>,
-    env: BTreeMap<String, String>,
-    env_inherit: Vec<String>,
-}
-
-fn runner_launch_spec(
-    runner_id: &str,
-    plugin_id: &str,
-    command: &str,
-    args: Vec<String>,
-) -> RunnerSpecFixture {
-    RunnerSpecFixture {
-        runner_id: runner_id.into(),
-        plugin_id: plugin_id.into(),
-        command: command.into(),
-        args,
-        env: BTreeMap::new(),
-        env_inherit: vec![
-            "PATH".into(),
-            "SystemRoot".into(),
-            "WINDIR".into(),
-            "ComSpec".into(),
-            "PATHEXT".into(),
-        ],
-    }
-}
-
-fn write_runner_spec(dir: &Path, spec: &RunnerSpecFixture) {
-    std::fs::create_dir_all(dir).expect("runner dir created");
-    let text = toml::to_string(spec).expect("runner spec serializes");
-    std::fs::write(dir.join("runner.toml"), text).expect("runner spec written");
 }
 
 fn binary_fixture_runner() -> PathBuf {

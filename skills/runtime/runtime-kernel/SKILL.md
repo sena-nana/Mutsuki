@@ -17,6 +17,7 @@ source of task, runner, lease, generation, ordering, cancellation, trace, and co
   worker. Kernel commit/event tasks keep typed local payloads; count wire bytes with
   `compact_json_len` instead of encoding.
 - Retain in-flight provider calls through actor result application across timeout, reload, and shutdown. Ordered lanes fence older results; concurrent lanes remain parallel.
+- Components built before boot take `mutsuki_runtime_host::DeferredHostClient` and the embedder binds it once from the booted `HostContext`. Do not write per-Host deferred wrappers; every call still goes through the actor gateways.
 - Keep observability semantic: disabled tracing allocates no span capacity, enabled tracing retains the configured bounded history. Time and allocation gates are separate.
 
 Test single and multi-entry batches, partial failure, cancellation, lease/generation mismatch, ordered

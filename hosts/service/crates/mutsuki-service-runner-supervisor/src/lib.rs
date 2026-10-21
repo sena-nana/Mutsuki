@@ -14,8 +14,8 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Instant;
 
+use mutsuki_runtime_plugin_loader::ExternalRuntimeSpec;
 use mutsuki_service_config::{filtered_environment, generate_runner_session_token};
-use mutsuki_service_plugin_loader::ExternalRuntimeSpec;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
@@ -917,7 +917,7 @@ mod tests {
         ManagedRunnerSpec {
             runner_id: runner_id.into(),
             plugin_id: "plugin-a".into(),
-            runtime: mutsuki_service_plugin_loader::ExternalRuntimeSpec {
+            runtime: mutsuki_runtime_plugin_loader::ExternalRuntimeSpec {
                 command,
                 args,
                 env: BTreeMap::new(),
@@ -945,7 +945,7 @@ mod tests {
         ManagedRunnerSpec {
             runner_id: runner_id.into(),
             plugin_id: "plugin-a".into(),
-            runtime: mutsuki_service_plugin_loader::ExternalRuntimeSpec {
+            runtime: mutsuki_runtime_plugin_loader::ExternalRuntimeSpec {
                 command,
                 args,
                 env: BTreeMap::new(),
@@ -969,7 +969,7 @@ mod tests {
         ManagedRunnerSpec {
             runner_id: runner_id.into(),
             plugin_id: "plugin-a".into(),
-            runtime: mutsuki_service_plugin_loader::ExternalRuntimeSpec {
+            runtime: mutsuki_runtime_plugin_loader::ExternalRuntimeSpec {
                 command,
                 args,
                 env: BTreeMap::new(),

@@ -5,6 +5,7 @@ description: Change ServiceHost plugin.toml discovery, manifest validation, buil
 
 # Plugin Loader
 
+- `plugin.toml` parsing, validation and the on-disk scan belong to `crates/mutsuki-runtime-plugin-loader`, shared with TauriHost; change the format there, never in one Host.
 - Map `plugin.toml` to Core `PluginManifest` without Host-private capability semantics.
 - Register builtin capabilities only from real upstream crates; otherwise report unavailable.
 - Validate deployment, API version, artifacts, capabilities and secret references before boot.

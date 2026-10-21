@@ -1,14 +1,18 @@
 use crate::config::MutsukiTauriConfig;
 use crate::error::{HostError, HostResult};
 use crate::health::HostHealthState;
-use crate::plugin_abi::{DeferredPluginHost, connect_packaged_plugin};
+use crate::plugin_abi::connect_packaged_plugin;
 use crate::plugin_package::{PluginPackageRecord, scan_momoplug_packages};
 use mutsuki_runtime_contracts::{
     ArtifactType, CompletionBatch, PluginDeploymentKind, PluginId, PluginManifest, PluginProvides,
-    ProtocolClass, ProtocolId, RunnerDescriptor, RunnerId, RuntimeError, ScalarValue, WorkBatch,
+    ProtocolClass, ProtocolId, RunnerDescriptor, RuntimeError, ScalarValue, WorkBatch,
 };
+use mutsuki_runtime_host::DeferredHostClient;
 use mutsuki_runtime_host::{
     ProcessRunnerSpec, RuntimeBootstrapper, SpawnedBinaryRunner, runner_manifest,
+};
+use mutsuki_runtime_plugin_loader::{
+    ExternalRuntimeSpec, PluginToml, read_plugin_toml, validate_plugin_toml,
 };
 use mutsuki_runtime_sdk::{
     AsyncBatchHandler, Runner, RunnerContext, RuntimeFailure, RuntimeResult,
@@ -18,7 +22,6 @@ use mutsuki_tauri_bridge::{
     EventHub, FrontendLogRecord, MutsukiFrontendEvent, PluginSummary, RunnerSummary,
     redact_log_record,
 };
-use serde::Deserialize;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -51,39 +54,17 @@ pub(crate) type RuntimeClientRunnerFactory =
 pub(crate) type BuiltinAsyncHandlerFactory =
     Arc<dyn Fn() -> Arc<dyn AsyncBatchHandler> + Send + Sync + 'static>;
 
-#[derive(Clone, Debug, Deserialize)]
-struct RunnerLaunchSpec {
-    runner_id: String,
-    plugin_id: String,
-    command: String,
-    #[serde(default)]
-    args: Vec<String>,
-    #[serde(default)]
-    cwd: Option<PathBuf>,
-    #[serde(default)]
-    env: BTreeMap<String, String>,
-    #[serde(default)]
-    env_inherit: Vec<String>,
-}
-
-#[derive(Clone, Debug)]
-struct LocatedRunnerSpec {
-    spec: RunnerLaunchSpec,
-    source: PathBuf,
-}
-
 pub(crate) fn scan_plugin_runners(
     config: &MutsukiTauriConfig,
     events: Arc<EventHub>,
     health: Arc<HostHealthState>,
-    abi_host: Arc<DeferredPluginHost>,
+    abi_host: Arc<DeferredHostClient>,
 ) -> HostResult<PluginRunnerLoad> {
     let plugin_files = find_named_files(&config.paths.plugins_dir, "plugin.toml")?;
-    let runner_files = find_named_files(&config.paths.runners_dir, "runner.toml")?;
 
     let mut plugins = Vec::new();
     let mut runners = Vec::new();
-    let mut manifests_by_id = BTreeMap::<PluginId, (PluginManifest, PathBuf)>::new();
+    let mut manifests_by_id = BTreeMap::<PluginId, (PluginToml, PathBuf)>::new();
     let mut seen_plugin_ids = BTreeSet::<PluginId>::new();
     let packages = scan_momoplug_packages(config)?;
     let mut loaded_plugins = Vec::new();
@@ -143,19 +124,22 @@ pub(crate) fn scan_plugin_runners(
         }
     }
     for path in plugin_files {
-        match read_plugin_manifest(&path) {
-            Ok(manifest) if !seen_plugin_ids.insert(manifest.plugin_id.clone()) => {
+        let plugin = read_plugin_toml(&path)
+            .and_then(|plugin| validate_plugin_toml(&plugin).map(|()| plugin))
+            .map_err(|error| error.to_string());
+        match plugin {
+            Ok(plugin) if !seen_plugin_ids.insert(plugin.manifest.plugin_id.clone()) => {
                 plugins.push(failed_plugin_with_deployment(
-                    manifest.plugin_id,
-                    manifest.version,
+                    plugin.manifest.plugin_id,
+                    plugin.manifest.version,
                     deployment_label(&PluginDeploymentKind::default_for_artifact(
-                        &manifest.artifact.artifact_type,
+                        &plugin.manifest.artifact.artifact_type,
                     )),
                     "duplicate plugin id",
                 ));
             }
-            Ok(manifest) => {
-                manifests_by_id.insert(manifest.plugin_id.clone(), (manifest, path));
+            Ok(plugin) => {
+                manifests_by_id.insert(plugin.manifest.plugin_id.clone(), (plugin, path));
             }
             Err(error) => plugins.push(failed_plugin(
                 invalid_id(&config.paths.plugins_dir, &path),
@@ -165,34 +149,6 @@ pub(crate) fn scan_plugin_runners(
         }
     }
 
-    let mut specs_by_runner_id = BTreeMap::<RunnerId, LocatedRunnerSpec>::new();
-    let mut seen_runner_ids = BTreeSet::<RunnerId>::new();
-    for path in runner_files {
-        match read_runner_spec(&path) {
-            Ok(spec) if !seen_runner_ids.insert(RunnerId::from(spec.runner_id.as_str())) => {
-                runners.push(failed_runner(
-                    spec.runner_id,
-                    spec.plugin_id,
-                    "process",
-                    "duplicate runner id",
-                ));
-            }
-            Ok(spec) => {
-                specs_by_runner_id.insert(
-                    RunnerId::from(spec.runner_id.as_str()),
-                    LocatedRunnerSpec { spec, source: path },
-                );
-            }
-            Err(error) => runners.push(failed_runner(
-                invalid_id(&config.paths.runners_dir, &path),
-                String::new(),
-                "process",
-                error,
-            )),
-        }
-    }
-
-    let mut claimed_runner_specs = BTreeSet::<RunnerId>::new();
     let mut load = PluginRunnerLoad {
         manifests: Vec::new(),
         loaded_plugins,
@@ -202,7 +158,8 @@ pub(crate) fn scan_plugin_runners(
         packages,
     };
 
-    for (plugin_id, (manifest, manifest_path)) in manifests_by_id {
+    for (plugin_id, (plugin, manifest_path)) in manifests_by_id {
+        let PluginToml { manifest, runtime } = plugin;
         if manifest.artifact.artifact_type != ArtifactType::Process {
             let deployment =
                 PluginDeploymentKind::default_for_artifact(&manifest.artifact.artifact_type);
@@ -219,41 +176,32 @@ pub(crate) fn scan_plugin_runners(
             continue;
         }
 
+        let runtime = match process_runtime(runtime.as_ref(), &manifest_path) {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                load.runners
+                    .extend(manifest.provides.runners.iter().map(|descriptor| {
+                        failed_runner(
+                            descriptor.runner_id.clone(),
+                            plugin_id.clone(),
+                            "process",
+                            error.clone(),
+                        )
+                    }));
+                load.plugins
+                    .push(failed_plugin(plugin_id, manifest.version, error));
+                continue;
+            }
+        };
+
         let mut plugin_runners = Vec::new();
         let mut plugin_runner_summaries = Vec::new();
         let mut plugin_error = None;
         for descriptor in &manifest.provides.runners {
-            let Some(located) = specs_by_runner_id.get(&descriptor.runner_id) else {
-                plugin_error = Some(format!(
-                    "missing runner.toml for runner {}",
-                    descriptor.runner_id
-                ));
-                plugin_runner_summaries.push(failed_runner(
-                    descriptor.runner_id.clone(),
-                    plugin_id.clone(),
-                    "process",
-                    "missing runner launch spec",
-                ));
-                continue;
-            };
-            claimed_runner_specs.insert(descriptor.runner_id.clone());
-            if plugin_id != located.spec.plugin_id {
-                plugin_error = Some(format!(
-                    "runner {} belongs to plugin {}",
-                    descriptor.runner_id, located.spec.plugin_id
-                ));
-                plugin_runner_summaries.push(failed_runner(
-                    descriptor.runner_id.clone(),
-                    plugin_id.clone(),
-                    "process",
-                    "runner launch spec plugin_id mismatch",
-                ));
-                continue;
-            }
-
             match ExternalProcessRunner::spawn(
                 descriptor.clone(),
-                located,
+                &runtime,
+                &manifest_path,
                 &config.profile_id,
                 events.clone(),
                 health.clone(),
@@ -295,22 +243,32 @@ pub(crate) fn scan_plugin_runners(
         load.manifests.push(manifest);
     }
 
-    for (runner_id, located) in specs_by_runner_id {
-        if !claimed_runner_specs.contains(&runner_id) {
-            load.runners.push(failed_runner(
-                runner_id,
-                located.spec.plugin_id,
-                "process",
-                "runner spec is not referenced by a loaded plugin manifest",
-            ));
-        }
-    }
-
     load.plugins
         .sort_by(|left, right| left.plugin_id.cmp(&right.plugin_id));
     load.runners
         .sort_by(|left, right| left.runner_id.cmp(&right.runner_id));
     Ok(load)
+}
+
+/// The `[runtime]` table a process plugin needs, with paths resolved against its `plugin.toml`.
+fn process_runtime(
+    runtime: Option<&ExternalRuntimeSpec>,
+    manifest_path: &Path,
+) -> Result<ExternalRuntimeSpec, String> {
+    let runtime = runtime.ok_or_else(|| {
+        format!(
+            "process plugin {} has no [runtime] table",
+            manifest_path.display()
+        )
+    })?;
+    if runtime.runner_link != "binary-stdio" {
+        return Err(format!(
+            "runner_link {} is not supported by the desktop Host; use binary-stdio",
+            runtime.runner_link
+        ));
+    }
+    let plugin_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
+    Ok(runtime.resolved_against(plugin_dir))
 }
 
 pub(crate) fn loaded_builtin_plugin_summary(manifest: &PluginManifest) -> PluginSummary {
@@ -466,12 +424,6 @@ pub(crate) fn loaded_builtin_runner_summary(descriptor: &RunnerDescriptor) -> Ru
     loaded_runner_summary(descriptor, "builtin")
 }
 
-fn read_plugin_manifest(path: &Path) -> Result<PluginManifest, String> {
-    let text = fs::read_to_string(path)
-        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-    toml::from_str(&text).map_err(|error| format!("failed to parse {}: {error}", path.display()))
-}
-
 fn ensure_process_plugin_backend(mut manifest: PluginManifest) -> PluginManifest {
     // A manifest that already declares any process backend keeps it as is.
     if manifest
@@ -489,12 +441,6 @@ fn ensure_process_plugin_backend(mut manifest: PluginManifest) -> PluginManifest
         &PluginDeploymentKind::Process,
     );
     manifest
-}
-
-fn read_runner_spec(path: &Path) -> Result<RunnerLaunchSpec, String> {
-    let text = fs::read_to_string(path)
-        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-    toml::from_str(&text).map_err(|error| format!("failed to parse {}: {error}", path.display()))
 }
 
 fn find_named_files(root: &Path, file_name: &str) -> HostResult<Vec<PathBuf>> {
@@ -639,29 +585,17 @@ pub(crate) struct ExternalProcessRunner {
 impl ExternalProcessRunner {
     fn spawn(
         descriptor: RunnerDescriptor,
-        located: &LocatedRunnerSpec,
+        runtime: &ExternalRuntimeSpec,
+        manifest_path: &Path,
         profile_id: &str,
         events: Arc<EventHub>,
         health: Arc<HostHealthState>,
     ) -> HostResult<Self> {
-        let source_dir = located.source.parent().ok_or_else(|| {
-            HostError::Config(format!(
-                "runner spec has no parent: {}",
-                located.source.display()
-            ))
-        })?;
-        let cwd = resolve_cwd(source_dir, located.spec.cwd.as_deref());
-        let command_path = resolve_command(source_dir, &located.spec.command);
         let session_token = Uuid::new_v4().to_string();
 
         let mut env = BTreeMap::new();
         inherit_required_env(&mut env);
-        for key in &located.spec.env_inherit {
-            if let Ok(value) = std::env::var(key) {
-                env.insert(key.clone(), value);
-            }
-        }
-        for (key, value) in &located.spec.env {
+        for (key, value) in &runtime.env {
             env.insert(key.clone(), value.clone());
         }
         env.insert("MUTSUKI_RUNNER_SESSION_TOKEN".into(), session_token);
@@ -669,16 +603,16 @@ impl ExternalProcessRunner {
         env.insert("MUTSUKI_RUNNER_ID".into(), descriptor.runner_id.to_string());
         env.insert("MUTSUKI_PROFILE_ID".into(), profile_id.into());
         let spec = ProcessRunnerSpec {
-            command: command_path,
-            args: located.spec.args.clone(),
-            cwd: Some(cwd),
+            command: PathBuf::from(&runtime.command),
+            args: runtime.args.clone(),
+            cwd: runtime.cwd.clone(),
             env,
         };
         let mut inner = SpawnedBinaryRunner::spawn(descriptor.clone(), &spec).map_err(|error| {
             HostError::Config(format!(
                 "failed to spawn runner {} from {}: {error}",
                 descriptor.runner_id,
-                located.source.display()
+                manifest_path.display()
             ))
         })?;
         let stderr = inner.take_stderr().ok_or_else(|| {
@@ -758,29 +692,10 @@ impl Drop for ExternalProcessRunner {
     }
 }
 
-fn resolve_cwd(source_dir: &Path, cwd: Option<&Path>) -> PathBuf {
-    match cwd {
-        Some(path) if path.is_absolute() => path.to_path_buf(),
-        Some(path) => source_dir.join(path),
-        None => source_dir.to_path_buf(),
-    }
-}
-
-fn resolve_command(source_dir: &Path, command: &str) -> PathBuf {
-    let path = PathBuf::from(command);
-    if path.is_absolute() || command.contains('\\') || command.contains('/') {
-        if path.is_absolute() {
-            path
-        } else {
-            source_dir.join(path)
-        }
-    } else {
-        path
-    }
-}
-
+/// The same base environment ServiceHost's default `env_allowlist` passes to runners; a plugin
+/// cannot ask for further host variables, only set its own in `[runtime].env`.
 fn inherit_required_env(env: &mut BTreeMap<String, String>) {
-    for key in ["SystemRoot", "WINDIR", "ComSpec", "PATHEXT"] {
+    for key in ["PATH", "SystemRoot", "WINDIR", "ComSpec", "PATHEXT"] {
         if let Ok(value) = std::env::var(key) {
             env.insert(key.into(), value);
         }

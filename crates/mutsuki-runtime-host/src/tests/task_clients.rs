@@ -247,3 +247,30 @@ fn split_frames(bytes: &[u8]) -> Vec<&[u8]> {
     }
     frames
 }
+
+#[test]
+fn deferred_host_client_fails_until_bound_then_forwards_through_the_actor() {
+    let deferred = crate::DeferredHostClient::new("test.embedder");
+    let task = Task::new("deferred-task", "raw.input", json!({}));
+
+    let unbound = TaskSubmitter::submit_task(&deferred, task.clone())
+        .expect_err("an unbound client has no actor to submit to");
+    assert_eq!(unbound.error().route, "runtime_client.not_bound");
+    assert_eq!(unbound.error().source, "test.embedder");
+
+    let host = host_with_echo_runner()
+        .into_host_runtime(runtime_profile())
+        .unwrap();
+    deferred.bind(host.host_context()).unwrap();
+    let rebound = deferred
+        .bind(host.host_context())
+        .expect_err("binding twice would silently swap the actor behind live callers");
+    assert_eq!(rebound.error().route, "runtime_client.already_bound");
+
+    let handle = TaskSubmitter::submit_task(&deferred, task).unwrap();
+    TaskSubmitter::cancel_task(&deferred, &handle).unwrap();
+    assert!(matches!(
+        TaskSubmitter::task_outcome(&deferred, &handle).unwrap(),
+        Some(TaskOutcome::Cancelled { task_id, .. }) if task_id == "deferred-task"
+    ));
+}

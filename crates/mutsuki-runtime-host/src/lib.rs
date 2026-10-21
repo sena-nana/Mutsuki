@@ -72,7 +72,7 @@ pub use backend::{HostExtension, PluginBackend};
 pub use binary::{BinaryRunner, BinaryTransport};
 pub use bootstrapper::{PreparedHostRuntime, PreparedRuntimeReload, RuntimeBootstrapper};
 pub use capabilities::HostCapabilityRegistry;
-pub use clients::{AbiResourceClient, AbiTaskClient, LocalResourceClient};
+pub use clients::{AbiResourceClient, AbiTaskClient, DeferredHostClient, LocalResourceClient};
 pub use commands::{HostRuntimeCommand, HostRuntimeReply, HostTaskState};
 pub use group::{
     ExplicitRuntimeDomainRouter, RuntimeDomainRouter, RuntimeDomainSnapshot, RuntimeGroupHost,

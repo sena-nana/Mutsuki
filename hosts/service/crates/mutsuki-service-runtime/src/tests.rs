@@ -1578,7 +1578,7 @@ async fn plugin_list_reflects_catalog_after_successful_reload() {
     manifest.artifact.artifact_type = ArtifactType::Process;
     manifest.artifact.path = "dynamic-test".into();
     manifest.artifact.sha256 = "sha256:dynamic-test".into();
-    let plugin = mutsuki_service_plugin_loader::PluginToml {
+    let plugin = mutsuki_runtime_plugin_loader::PluginToml {
         manifest,
         runtime: None,
     };
@@ -2330,7 +2330,7 @@ async fn test_started_runtime_inner_with_core(
     for record in registry.load_all().expect("builtin components").records {
         components.register_manifest(record.manifest);
     }
-    let runtime_client = Arc::new(DeferredRuntimeClient::default());
+    let runtime_client = Arc::new(DeferredHostClient::new(SERVICE_RUNTIME_SOURCE));
     let (host_runtime, _) = boot_core(
         &config,
         &catalog,

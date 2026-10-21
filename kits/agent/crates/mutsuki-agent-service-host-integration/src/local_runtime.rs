@@ -2,8 +2,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::Duration;
 
@@ -39,17 +39,16 @@ use mutsuki_config_service::{
     ValidationResult,
 };
 use mutsuki_runtime_contracts::{
-    PluginDeploymentKind, PluginManifest, RuntimeError, RuntimeProfile, RuntimeProfileMode, Task,
-    TaskBatch, TaskHandle, TaskOutcome,
+    PluginDeploymentKind, PluginManifest, RuntimeProfile, RuntimeProfileMode, Task, TaskHandle,
+    TaskOutcome,
 };
 use mutsuki_runtime_host::{
-    HostRuntime, HostRuntimeConfig, RuntimeBootstrapper, TokioAsyncExecutor,
+    DeferredHostClient, HostRuntime, HostRuntimeConfig, RuntimeBootstrapper, TokioAsyncExecutor,
 };
 use mutsuki_runtime_sdk::{
-    HostControl as _, LoadedPlugin, PluginBuilder, RuntimeBootstrapperService, RuntimeClient,
-    RuntimeClientRef, TaskSubmitterRuntimeClient,
+    HostControl as _, LoadedPlugin, PluginBuilder, RuntimeBootstrapperService, RuntimeClientRef,
 };
-use mutsuki_runtime_sdk::{Runner, RuntimeFailure, RuntimeResult};
+use mutsuki_runtime_sdk::{Runner, RuntimeFailure};
 use mutsuki_service_config::HostSecretStore;
 use mutsuki_service_runtime::{
     ConfiguredPluginFactory, LoadPlanLifecycleHook, ServiceRuntimeBuilder,
@@ -1021,40 +1020,6 @@ impl CredentialBroker for HostSecretCredentialBroker {
     }
 }
 
-#[derive(Default)]
-struct DeferredAgentClient {
-    client: OnceLock<RuntimeClientRef>,
-}
-
-impl DeferredAgentClient {
-    fn bind(&self, runtime: &HostRuntime) -> Result<(), String> {
-        let submitter = runtime.host_context().task_submitter_ref();
-        self.client
-            .set(TaskSubmitterRuntimeClient::new(submitter).into_runtime_client())
-            .map_err(|_| "local Agent runtime client was already bound".to_string())
-    }
-
-    fn client(&self) -> RuntimeResult<RuntimeClientRef> {
-        self.client.get().cloned().ok_or_else(|| {
-            RuntimeFailure::new(RuntimeError::new(
-                mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
-                LOCAL_AGENT_PLUGIN_ID,
-                "runtime_client.not_bound",
-            ))
-        })
-    }
-}
-
-impl RuntimeClient for DeferredAgentClient {
-    fn submit_batch(&self, batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
-        self.client()?.submit_batch(batch)
-    }
-
-    fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
-        self.client()?.task_outcome(handle)
-    }
-}
-
 /// Runner factory invoked with the embedded runtime client when the local
 /// Agent engine boots.
 pub type LocalAgentRunnerFactory = Arc<dyn Fn(RuntimeClientRef) -> Box<dyn Runner> + Send + Sync>;
@@ -1181,7 +1146,7 @@ impl LocalAgentEngine {
             bundle.context.set_tools(prompt_tools);
         }
 
-        let deferred = Arc::new(DeferredAgentClient::default());
+        let deferred = Arc::new(DeferredHostClient::new(LOCAL_AGENT_PLUGIN_ID));
         let client: RuntimeClientRef = deferred.clone();
         let manifests = bundle.manifests();
         let mut bootstrapper = RuntimeBootstrapper::new();
@@ -1235,7 +1200,9 @@ impl LocalAgentEngine {
                 },
             )
             .map_err(|error| error.to_string())?;
-        deferred.bind(&runtime)?;
+        deferred
+            .bind(runtime.host_context())
+            .map_err(|error| error.to_string())?;
         Ok(Self {
             runtime: Arc::new(runtime),
             sessions,

@@ -1,3 +1,10 @@
+//! Host-neutral discovery and validation of dynamic plugin packages.
+//!
+//! Every Host reads the same `plugin.toml`: a `[manifest]` table mapping to
+//! [`PluginManifest`] and an optional `[runtime]` table ([`ExternalRuntimeSpec`]) for
+//! process runners. This crate owns that format, its validation, ABI artifact integrity and
+//! the on-disk inventory scan; Hosts own selection, staging and process supervision.
+
 // Pedantic lints below are inherited from the workspace and still fire in this
 // package. They are listed explicitly so the remaining debt stays auditable and
 // every other pedantic lint keeps failing the build.
@@ -47,7 +54,7 @@ pub enum PluginLoaderError {
         "plugin {plugin_id} runtime env contains secret-like key {key}; pass secrets by host backend or environment references"
     )]
     SecretInManifest { plugin_id: PluginId, key: String },
-    #[error("requested builtin plugin {0} is not linked into this ServiceHost build")]
+    #[error("requested builtin plugin {0} is not linked into this Host build")]
     BuiltinUnavailable(PluginId),
     #[error("dynamic plugin {0} declares a native artifact that is not linked into this build")]
     DynamicNative(PluginId),
@@ -99,12 +106,52 @@ pub struct ExternalRuntimeSpec {
     pub runner_link: String,
 }
 
+impl ExternalRuntimeSpec {
+    /// Resolves a path-like `command` and a relative `cwd` against the directory holding
+    /// `plugin.toml`, so a package behaves the same wherever it is installed and in every Host.
+    /// A bare command name stays as given and is looked up on `PATH`; no `cwd` means the plugin
+    /// directory.
+    #[must_use]
+    pub fn resolved_against(&self, plugin_dir: &Path) -> Self {
+        let command_path = Path::new(&self.command);
+        let command = if command_path.is_absolute()
+            || !(self.command.contains('/') || self.command.contains('\\'))
+        {
+            self.command.clone()
+        } else {
+            plugin_dir.join(command_path).to_string_lossy().into_owned()
+        };
+        let cwd = match &self.cwd {
+            Some(cwd) if cwd.is_absolute() => cwd.clone(),
+            Some(cwd) => plugin_dir.join(cwd),
+            None => plugin_dir.to_path_buf(),
+        };
+        Self {
+            command,
+            cwd: Some(cwd),
+            ..self.clone()
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct PluginRecord {
     pub manifest_path: PathBuf,
     pub manifest: PluginManifest,
     pub runtime: Option<ExternalRuntimeSpec>,
     pub resolved_artifact: Option<PathBuf>,
+}
+
+impl PluginRecord {
+    /// The `[runtime]` table with paths resolved against this record's `plugin.toml`.
+    #[must_use]
+    pub fn resolved_runtime(&self) -> Option<ExternalRuntimeSpec> {
+        let runtime = self.runtime.as_ref()?;
+        Some(match self.manifest_path.parent() {
+            Some(plugin_dir) => runtime.resolved_against(plugin_dir),
+            None => runtime.clone(),
+        })
+    }
 }
 
 #[derive(Clone, Default)]
@@ -215,7 +262,7 @@ impl PluginInventory {
                 {
                     continue;
                 }
-                let record = match read_plugin_manifest(&manifest_path) {
+                let record = match read_plugin_toml(&manifest_path) {
                     Ok(record) => record,
                     Err(error) => {
                         diagnostics.push(PluginDiagnostic {
@@ -470,15 +517,27 @@ fn platform_library_extension() -> &'static str {
     }
 }
 
-fn read_plugin_manifest(path: &Path) -> PluginLoaderResult<PluginToml> {
+/// Reads one `plugin.toml` from disk.
+pub fn read_plugin_toml(path: &Path) -> PluginLoaderResult<PluginToml> {
     let content = fs::read_to_string(path).map_err(|source| PluginLoaderError::ReadManifest {
         path: path.to_path_buf(),
         source,
     })?;
-    toml::from_str(&content).map_err(|source| PluginLoaderError::ParseManifest {
-        path: path.to_path_buf(),
+    parse_plugin_toml(&content, path)
+}
+
+/// Parses `plugin.toml` text, e.g. read from a package archive; `origin` names it in errors.
+pub fn parse_plugin_toml(content: &str, origin: &Path) -> PluginLoaderResult<PluginToml> {
+    toml::from_str(content).map_err(|source| PluginLoaderError::ParseManifest {
+        path: origin.to_path_buf(),
         source: Box::new(source),
     })
+}
+
+/// Checks the API version, deployment/artifact pairing and that `[runtime].env` carries no
+/// secret-like keys.
+pub fn validate_plugin_toml(plugin: &PluginToml) -> PluginLoaderResult<()> {
+    validate_manifest(&plugin.manifest, plugin.runtime.as_ref())
 }
 
 fn validate_manifest(
@@ -537,6 +596,42 @@ mod tests {
         LifecyclePolicy, PermissionGrant, PluginArtifact, PluginBackendDescriptor, PluginProvides,
     };
     use tempfile::tempdir;
+
+    #[test]
+    fn plugin_toml_requires_the_manifest_table() {
+        let flat = "plugin_id = \"flat\"\nversion = \"1.0.0\"\n";
+        let error = parse_plugin_toml(flat, Path::new("plugin.toml"))
+            .expect_err("a bare manifest is not the shared plugin.toml format");
+        assert!(matches!(error, PluginLoaderError::ParseManifest { .. }));
+    }
+
+    #[test]
+    fn runtime_paths_resolve_against_the_plugin_directory() {
+        let root = tempdir().unwrap();
+        let plugin_dir = root.path();
+        let spec = ExternalRuntimeSpec {
+            command: "bin/runner".into(),
+            args: Vec::new(),
+            env: BTreeMap::new(),
+            cwd: Some("work".into()),
+            runner_link: default_runner_link(),
+        };
+        let resolved = spec.resolved_against(plugin_dir);
+        assert_eq!(
+            resolved.command,
+            plugin_dir.join("bin/runner").to_string_lossy()
+        );
+        assert_eq!(resolved.cwd, Some(plugin_dir.join("work")));
+
+        let on_path = ExternalRuntimeSpec {
+            command: "python3".into(),
+            cwd: None,
+            ..spec
+        }
+        .resolved_against(plugin_dir);
+        assert_eq!(on_path.command, "python3", "bare names stay on PATH");
+        assert_eq!(on_path.cwd, Some(plugin_dir.to_path_buf()));
+    }
 
     #[test]
     fn scan_resolves_and_verifies_abi_artifact() {

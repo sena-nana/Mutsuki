@@ -17,7 +17,7 @@ Mutsuki 是单一 Rust workspace，同时维护 Runtime/Core、Hosts、Kits、Pl
 | --- | --- | --- | --- |
 | 协议与契约 | `crates/mutsuki-runtime-contracts`、`crates/mutsuki-runtime-wire`、`plugins/*/protocols` | DTO、wire、协议 ID、错误码、跨语言镜像 | `skills/protocol/SKILL.md` |
 | Runtime 与资源 | `crates/mutsuki-runtime-core`、`crates/mutsuki-runtime-host`、`crates/mutsuki-runtime-benchmarks` | TaskPool、Runner、资源、状态、effect、LoadPlan、reload | `skills/runtime/runtime-kernel/SKILL.md`、`skills/runtime/resource-state-effects/SKILL.md`、`skills/runtime/load-plan-reload/SKILL.md` |
-| 组合与治理 | `crates/mutsuki-plugin-api`、`crates/mutsuki-plugin-host`、workspace 迁移 | PluginScope、Host service、生命周期、依赖和发布基线 | `skills/composition/plugin-capability-composition/SKILL.md`、`skills/governance/monorepo-maintenance/SKILL.md` |
+| 组合与治理 | `crates/mutsuki-plugin-api`、`crates/mutsuki-plugin-host`、`crates/mutsuki-runtime-plugin-loader`、workspace 迁移 | PluginScope、Host service、生命周期、依赖和发布基线 | `skills/composition/plugin-capability-composition/SKILL.md`、`skills/governance/monorepo-maintenance/SKILL.md` |
 | SDK 与执行后端 | `crates/mutsuki-runtime-sdk*`、`kits/*` | SDK、宏、Runner backend、ABI/Link 适配 | `skills/sdk/sdk-runner-host/SKILL.md` |
 | Link | `crates/link` | Link 协议、transport、发现、配对、重连 | `crates/link/skills/` |
 | Hosts | `hosts/*` | Service、CLI、Tauri、Web、Distributed 的运行环境和桥接 | 最近 Host 的 `skills/` |

@@ -2,13 +2,13 @@ use crate::config::{MutsukiTauriConfig, PathsConfig};
 use crate::error::{HostError, HostResult};
 use crate::health::HostHealthState;
 use crate::host::{HostComponents, MutsukiTauriHost};
-use crate::plugin_abi::DeferredPluginHost;
 use crate::plugin_runner::{
     BuiltinAsyncHandlerFactory, BuiltinRunnerFactory, RuntimeClientRunnerFactory,
     declared_permission_grant_manifest, register_builtin_runtime, register_discovered_plugins,
     register_permission_grants, scan_plugin_runners,
 };
 use mutsuki_runtime_contracts::{PluginId, RuntimeProfile, RuntimeProfileMode};
+use mutsuki_runtime_host::DeferredHostClient;
 use mutsuki_runtime_host::{HostRuntimeConfig, RuntimeBootstrapper, TokioAsyncExecutor};
 use mutsuki_runtime_sdk::{AsyncBatchHandler, Runner};
 use mutsuki_runtime_sdk::{RuntimeClientRef, TaskSubmitterRuntimeClient};
@@ -99,14 +99,12 @@ impl MutsukiTauriHostBuilder {
             .map_err(|error| HostError::Config(error.to_string()))?;
         std::fs::create_dir_all(&self.config.paths.plugins_dir)
             .map_err(|error| HostError::Config(error.to_string()))?;
-        std::fs::create_dir_all(&self.config.paths.runners_dir)
-            .map_err(|error| HostError::Config(error.to_string()))?;
 
         let resource_store = Arc::new(TauriResourceStore::new(&self.config.paths.resources_dir));
         let event_buffer = self.config.event_buffer;
         let events = Arc::new(EventHub::new(event_buffer));
         let health = Arc::new(HostHealthState::default());
-        let abi_host = Arc::new(DeferredPluginHost::default());
+        let abi_host = Arc::new(DeferredHostClient::new("mutsuki_tauri_host.abi"));
         let runtime_client =
             TaskSubmitterRuntimeClient::new(abi_host.clone()).into_runtime_client();
         let mut loaded = scan_plugin_runners(
@@ -172,7 +170,9 @@ impl MutsukiTauriHostBuilder {
                 resource_store.provider(),
             ),
         )?;
-        abi_host.bind(&runtime).map_err(HostError::Config)?;
+        abi_host
+            .bind(runtime.host_context())
+            .map_err(|error| HostError::Config(error.to_string()))?;
         Ok(MutsukiTauriHost::new(
             self.config,
             HostComponents {

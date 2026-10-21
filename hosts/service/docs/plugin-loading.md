@@ -1,6 +1,7 @@
 # Plugin Loading
 
 Dynamic plugin files are named `plugin.toml`. The `[manifest]` table maps to `mutsuki_runtime_contracts::PluginManifest`.
+The format is owned by `crates/mutsuki-runtime-plugin-loader` and read identically by ServiceHost and TauriHost.
 
 ServiceHost validates:
 
@@ -19,6 +20,10 @@ env = {}
 cwd = "optional-working-directory"
 runner_link = "binary-stdio"
 ```
+
+A path-like `command` (containing `/` or `\\`) and a relative `cwd` resolve against the directory holding
+`plugin.toml`; a bare command name is looked up on `PATH`, and an omitted `cwd` means the plugin directory.
+The runner receives only the Host allowlisted environment (`PATH` by default) plus `[runtime].env`.
 
 `binary-stdio` is the first Core-connected runner link. ServiceHost resolves the exact environment
 and launches the child through `mutsuki-runtime-host::SpawnedBinaryRunner` (`runner.run_batch`). Other external processes can still be

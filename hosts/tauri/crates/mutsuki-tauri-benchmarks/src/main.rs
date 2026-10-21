@@ -400,7 +400,6 @@ fn benchmark_config(root: &std::path::Path) -> MutsukiTauriConfig {
         logs_dir: root.join("logs"),
         plugins_dir: root.join("plugins"),
         resources_dir: root.join("resources"),
-        runners_dir: root.join("runners"),
     };
     config
 }

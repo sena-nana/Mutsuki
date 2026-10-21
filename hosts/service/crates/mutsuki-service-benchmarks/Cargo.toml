@@ -14,7 +14,7 @@ mutsuki-service-abi-fixture = { path = "../../fixtures/abi-plugin" }
 mutsuki-service-config.workspace = true
 mutsuki-service-control.workspace = true
 mutsuki-service-ipc.workspace = true
-mutsuki-service-plugin-loader.workspace = true
+mutsuki-runtime-plugin-loader.workspace = true
 mutsuki-service-runtime.workspace = true
 serde.workspace = true
 serde_json.workspace = true

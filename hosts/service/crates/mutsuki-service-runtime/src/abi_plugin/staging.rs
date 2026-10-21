@@ -1,8 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use mutsuki_runtime_plugin_loader::PluginRecord;
 use mutsuki_service_config::ServiceConfig;
-use mutsuki_service_plugin_loader::PluginRecord;
 
 use crate::{ServiceRuntimeError, ServiceRuntimeResult};
 

@@ -159,12 +159,13 @@ fn load_package(
     };
 
     let plugin_text = read_small_text_entry(&mut archive, plugin_toml_name)?;
-    let plugin_value: toml::Value = toml::from_str(&plugin_text)
-        .map_err(|error| format!("failed to parse {plugin_toml_name}: {error}"))?;
-    let runtime_manifest: PluginManifest = plugin_value
-        .clone()
-        .try_into()
-        .map_err(|error| format!("failed to parse {plugin_toml_name}: {error}"))?;
+    let plugin =
+        mutsuki_runtime_plugin_loader::parse_plugin_toml(&plugin_text, Path::new(plugin_toml_name))
+            .and_then(|plugin| {
+                mutsuki_runtime_plugin_loader::validate_plugin_toml(&plugin).map(|()| plugin)
+            })
+            .map_err(|error| error.to_string())?;
+    let runtime_manifest = plugin.manifest;
     validate_identity(
         "plugin.toml",
         runtime_manifest.plugin_id.as_str(),
@@ -799,7 +800,11 @@ mod tests {
         let artifact_path = format!("bin/{library_name}");
         let artifact_hash = hash_reader(library_bytes.as_slice()).unwrap();
         let manifest = mutsuki_tauri_abi_fixture::fixture_manifest(&artifact_path, &artifact_hash);
-        let plugin_toml = toml::to_string(&manifest).expect("fixture manifest serializes");
+        let plugin_toml = toml::to_string(&mutsuki_runtime_plugin_loader::PluginToml {
+            manifest: manifest.clone(),
+            runtime: None,
+        })
+        .expect("fixture plugin.toml serializes");
         let archive_artifact = format!("fixture/{artifact_path}");
         let package_path = workspace.package_path("abi-v2");
         write_package(
@@ -868,7 +873,6 @@ mod tests {
                 logs_dir: root.join("logs"),
                 plugins_dir,
                 resources_dir: root.join("resources"),
-                runners_dir: root.join("runners"),
             };
             Self { root, config }
         }
@@ -912,7 +916,16 @@ mod tests {
                 artifact_type: ArtifactType::Abi,
                 path: artifact_path.into(),
                 sha256: hash_reader(artifact_bytes).unwrap(),
-                companion_artifacts: Vec::new(),
+                companion_artifacts: companion
+                    .map(|(path, bytes, executable, role)| {
+                        vec![mutsuki_runtime_contracts::CompanionArtifact {
+                            path: path.into(),
+                            sha256: hash_reader(bytes).unwrap(),
+                            executable,
+                            role: Some(role.into()),
+                        }]
+                    })
+                    .unwrap_or_default(),
             },
             provides: PluginProvides::default(),
             requires: Vec::new(),
@@ -929,14 +942,11 @@ mod tests {
             },
             metadata: BTreeMap::new(),
         };
-        let mut text = toml::to_string(&manifest).expect("manifest serializes");
-        if let Some((path, bytes, executable, role)) = companion {
-            text.push_str(&format!(
-                "\n[[artifact.companion_artifacts]]\npath = {path:?}\nsha256 = {:?}\nexecutable = {executable}\nrole = {role:?}\n",
-                hash_reader(bytes).unwrap()
-            ));
-        }
-        text
+        toml::to_string(&mutsuki_runtime_plugin_loader::PluginToml {
+            manifest,
+            runtime: None,
+        })
+        .expect("plugin.toml serializes")
     }
 
     fn write_package(path: &Path, entries: &[(&str, &[u8])]) {

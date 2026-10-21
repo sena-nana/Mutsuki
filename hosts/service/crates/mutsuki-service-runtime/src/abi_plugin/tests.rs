@@ -9,15 +9,15 @@ use mutsuki_runtime_contracts::{
     PluginDeploymentKind, ReadPlan, RuntimeProfile, RuntimeProfileMode, Task, TaskStatus,
 };
 use mutsuki_runtime_host::RuntimeBootstrapper;
+use mutsuki_runtime_plugin_loader::PluginRecord;
 use mutsuki_runtime_sdk::ResourceProviderGateway;
 use mutsuki_service_config::ServiceConfig;
-use mutsuki_service_plugin_loader::PluginRecord;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 
 use super::load_abi_plugin;
-use crate::DeferredRuntimeClient;
+use crate::{DeferredHostClient, SERVICE_RUNTIME_SOURCE};
 
 #[tokio::test]
 async fn real_cdylib_loads_runner_and_resource_provider() {
@@ -92,7 +92,7 @@ async fn real_cdylib_loads_runner_and_resource_provider() {
     let plugin = load_abi_plugin(
         record,
         config,
-        Arc::new(DeferredRuntimeClient::default()),
+        Arc::new(DeferredHostClient::new(SERVICE_RUNTIME_SOURCE)),
         json!({"fixture": true}),
     )
     .await

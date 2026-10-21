@@ -6,7 +6,7 @@ license.workspace = true
 
 [dependencies]
 mutsuki-service-config.workspace = true
-mutsuki-service-plugin-loader.workspace = true
+mutsuki-runtime-plugin-loader.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

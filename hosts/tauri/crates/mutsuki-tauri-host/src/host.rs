@@ -2,7 +2,6 @@ use crate::approval::ApprovalBridge;
 use crate::config::{MutsukiTauriConfig, PluginSelection};
 use crate::error::{HostError, HostResult};
 use crate::health::{HostHealthState, failed_runtime_health, runtime_health_from_snapshots};
-use crate::plugin_abi::DeferredPluginHost;
 use crate::plugin_package::PluginPackageRecord;
 use crate::plugin_runner::{
     BuiltinAsyncHandlerFactory, BuiltinRunnerFactory, RuntimeClientRunnerFactory,
@@ -14,6 +13,7 @@ use mutsuki_runtime_contracts::{
     RuntimeEvent, RuntimeEventKind, RuntimeProfile, RuntimeProfileMode, ScalarValue, Task,
     TaskBatch, TaskHandle, TaskId, TaskStatus, TraceSpan,
 };
+use mutsuki_runtime_host::DeferredHostClient;
 use mutsuki_runtime_host::{
     HostRuntime, HostRuntimeCommand, HostRuntimeReply, HostTaskSnapshot, HostTaskState,
     RuntimeBootstrapper, TaskCompletionSubscription,
@@ -56,7 +56,7 @@ pub struct MutsukiTauriHost {
     async_handler_factories: Vec<BuiltinAsyncHandlerFactory>,
     runtime_client: RuntimeClientRef,
     observability: ObservabilityProfile,
-    abi_host: Arc<DeferredPluginHost>,
+    abi_host: Arc<DeferredHostClient>,
 }
 
 struct DesktopPluginState {
@@ -82,7 +82,7 @@ pub(crate) struct HostComponents {
     pub async_handler_factories: Vec<BuiltinAsyncHandlerFactory>,
     pub runtime_client: RuntimeClientRef,
     pub observability: ObservabilityProfile,
-    pub abi_host: Arc<DeferredPluginHost>,
+    pub abi_host: Arc<DeferredHostClient>,
 }
 
 #[derive(Debug)]

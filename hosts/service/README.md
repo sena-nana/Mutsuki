@@ -17,7 +17,8 @@ It owns the operating environment around the core:
 It deliberately does not implement Agent, Bot, QQBot, model provider, Python SDK, plugin marketplace,
 or GUI/business logic. Those belong in Core, StdPlugins, runner kits, or UI hosts.
 
-Runtime crates come from the root Workspace. The interactive terminal client lives at `hosts/cli`.
+Runtime crates come from the root Workspace; `plugin.toml` discovery and validation live in the
+Host-neutral `crates/mutsuki-runtime-plugin-loader`, shared with TauriHost. The interactive terminal client lives at `hosts/cli`.
 
 ## Workspace
 
@@ -26,7 +27,6 @@ crates/
   mutsuki-service-host              CLI binary
   mutsuki-service-runtime           service lifecycle and Core bootstrap
   mutsuki-service-config            config/profile/path/token loading
-  mutsuki-service-plugin-loader     plugin.toml discovery and validation
   mutsuki-service-runner-supervisor external process supervision
   mutsuki-service-control           control request/response API
   mutsuki-service-ipc               named pipe / Unix socket / TCP debug transport

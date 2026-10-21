@@ -3,18 +3,18 @@ mod staging;
 use std::sync::Arc;
 
 use mutsuki_runtime_host::{AbiPluginLoadRequest, load_abi_plugin_v2};
+use mutsuki_runtime_plugin_loader::PluginRecord;
 use mutsuki_runtime_sdk::LoadedPlugin;
 use mutsuki_service_config::ServiceConfig;
-use mutsuki_service_plugin_loader::PluginRecord;
 use serde_json::Value;
 
 use self::staging::stage_artifact;
-use super::{DeferredRuntimeClient, ServiceRuntimeError, ServiceRuntimeResult};
+use super::{DeferredHostClient, ServiceRuntimeError, ServiceRuntimeResult};
 
 pub(crate) async fn load_abi_plugin(
     record: PluginRecord,
     config: ServiceConfig,
-    runtime: Arc<DeferredRuntimeClient>,
+    runtime: Arc<DeferredHostClient>,
     plugin_config: Value,
 ) -> ServiceRuntimeResult<LoadedPlugin> {
     let plugin_id = record.manifest.plugin_id.clone();
@@ -31,7 +31,7 @@ pub(crate) async fn load_abi_plugin(
 fn load_abi_plugin_blocking(
     record: PluginRecord,
     config: ServiceConfig,
-    runtime: Arc<DeferredRuntimeClient>,
+    runtime: Arc<DeferredHostClient>,
     plugin_config: Value,
 ) -> ServiceRuntimeResult<LoadedPlugin> {
     let source =

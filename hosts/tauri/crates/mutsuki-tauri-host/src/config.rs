@@ -20,7 +20,6 @@ pub struct PathsConfig {
     pub logs_dir: PathBuf,
     pub plugins_dir: PathBuf,
     pub resources_dir: PathBuf,
-    pub runners_dir: PathBuf,
 }
 
 /// 平台标准数据目录，行为对齐原 `dirs::data_dir()`：
@@ -57,7 +56,6 @@ impl PathsConfig {
             logs_dir: base.join("logs"),
             plugins_dir: base.join("plugins"),
             resources_dir: base.join("resources"),
-            runners_dir: base.join("runners"),
         }
     }
 }

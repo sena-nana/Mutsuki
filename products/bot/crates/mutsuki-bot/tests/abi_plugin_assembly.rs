@@ -9,13 +9,13 @@ use std::process::Command;
 
 use mutsuki_bot::assemble_service;
 use mutsuki_runtime_contracts::PluginDeploymentKind;
+use mutsuki_runtime_plugin_loader::PluginToml;
 use mutsuki_service_config::{ConfigOverrides, ServiceConfig};
 use mutsuki_service_control::{
     ControlCommand, ControlResponse, ControlResult, PluginDeploymentClearParam,
     PluginDeploymentParam,
 };
 use mutsuki_service_ipc::ControlClient;
-use mutsuki_service_plugin_loader::PluginToml;
 use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 

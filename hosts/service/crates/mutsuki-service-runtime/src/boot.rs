@@ -16,7 +16,7 @@ pub(crate) struct CoreBootInputs<'a> {
 pub(crate) async fn boot_core(
     config: &ServiceConfig,
     catalog: &PluginCatalog,
-    runtime_client: Arc<DeferredRuntimeClient>,
+    runtime_client: Arc<DeferredHostClient>,
     inputs: CoreBootInputs<'_>,
 ) -> ServiceRuntimeResult<(HostRuntime, RuntimeLoadPlan)> {
     let (bootstrapper, profile) = runtime_bootstrapper(
@@ -223,7 +223,7 @@ pub(crate) async fn runtime_bootstrapper(
     native_runner_factories: &[NativeRunnerFactory],
     async_handler_factories: &[AsyncHandlerFactory],
     loaded_plugin_factories: &BTreeMap<PluginId, LoadedPluginFactory>,
-    runtime_client: Arc<DeferredRuntimeClient>,
+    runtime_client: Arc<DeferredHostClient>,
 ) -> ServiceRuntimeResult<(RuntimeBootstrapper, RuntimeProfile)> {
     let mut bootstrapper = RuntimeBootstrapper::new();
     let mut enabled_plugins = Vec::new();
@@ -263,8 +263,8 @@ pub(crate) async fn runtime_bootstrapper(
             bootstrapper.register_manifest(record.manifest.clone());
         }
 
-        if let Some(runtime) = &record.runtime {
-            register_stdio_runners(config, &mut bootstrapper, record, runtime, deployment)?;
+        if let Some(runtime) = record.resolved_runtime() {
+            register_stdio_runners(config, &mut bootstrapper, record, &runtime, deployment)?;
         }
     }
 

@@ -151,13 +151,8 @@ fn token_accepted(accepted_tokens: &[String], presented: &str) -> bool {
 }
 
 fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
-    let mut diff = u8::from(left.len() != right.len());
-    for index in 0..left.len().max(right.len()) {
-        let lhs = left.get(index).copied().unwrap_or(0);
-        let rhs = right.get(index).copied().unwrap_or(0);
-        diff |= lhs ^ rhs;
-    }
-    diff == 0
+    use subtle::ConstantTimeEq;
+    left.ct_eq(right).into()
 }
 
 struct SessionState {

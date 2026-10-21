@@ -9,6 +9,7 @@ members = [
     "crates/mutsuki-plugin-api",
     "crates/mutsuki-plugin-host",
     "crates/mutsuki-module-catalog",
+    "crates/mutsuki-runtime-plugin-loader",
     "crates/mutsuki-runtime-benchmarks",
     "crates/mutsuki-runtime-host/fixtures/abi-v2-plugin",
     "crates/link/crates/*",
@@ -88,6 +89,7 @@ serde_json = { version = "1.0.151", features = ["raw_value"] }
 sha2 = "0.11.0"
 socket2 = "0.6.5"
 stats_alloc = "0.1.10"
+subtle = "2.6"
 syn = { version = "3.0.5", features = ["full", "parsing"] }
 tauri = { version = "2", default-features = false }
 tempfile = "3.27"
@@ -132,7 +134,7 @@ mutsuki-service-daemon = { path = "hosts/service/crates/mutsuki-service-daemon" 
 mutsuki-service-ipc = { path = "hosts/service/crates/mutsuki-service-ipc" }
 mutsuki-service-link = { path = "hosts/service/crates/mutsuki-service-link" }
 mutsuki-service-observe = { path = "hosts/service/crates/mutsuki-service-observe" }
-mutsuki-service-plugin-loader = { path = "hosts/service/crates/mutsuki-service-plugin-loader" }
+mutsuki-runtime-plugin-loader = { path = "crates/mutsuki-runtime-plugin-loader" }
 mutsuki-service-runner-supervisor = { path = "hosts/service/crates/mutsuki-service-runner-supervisor" }
 mutsuki-service-runtime = { path = "hosts/service/crates/mutsuki-service-runtime" }
 

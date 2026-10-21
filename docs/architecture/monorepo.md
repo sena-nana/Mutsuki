@@ -14,6 +14,7 @@ Mutsuki/
 │   ├── mutsuki-runtime-*/
 │   ├── mutsuki-plugin-api/       # domain-neutral plugin ABI v2 contracts
 │   ├── mutsuki-plugin-host/      # ABI v2 dynamic-library loader/lifecycle host
+│   ├── mutsuki-runtime-plugin-loader/ # Host-neutral plugin.toml format, validation and scan
 │   └── link/
 ├── hosts/{cli,service,tauri,web,distributed}/
 ├── kits/{agent,python-runner}/

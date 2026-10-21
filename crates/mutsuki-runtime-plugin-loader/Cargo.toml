@@ -1,5 +1,5 @@
 [package]
-name = "mutsuki-service-plugin-loader"
+name = "mutsuki-runtime-plugin-loader"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

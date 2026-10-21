@@ -56,6 +56,8 @@ Large resources use bounded 64 KiB invoke chunks. Preview/object URLs are backed
 `mutsuki-resource` protocol and can be explicitly released; a 1 MiB or 64 MiB body is never embedded
 in command/event JSON.
 
+Process plugins are directories under `plugins_dir` holding a `plugin.toml` with a `[manifest]` table and
+a `[runtime]` table, the same format ServiceHost reads (`crates/mutsuki-runtime-plugin-loader`).
 Executable desktop plugins may be installed as `.momoplug` ZIP archives under `plugins_dir`.
 Each archive has one root directory with the product `manifest.json` and a Mutsuki `plugin.toml`;
 their plugin IDs and versions must match. The Host validates every ZIP path and declared SHA-256,

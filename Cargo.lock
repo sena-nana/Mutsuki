@@ -3808,11 +3808,11 @@ dependencies = [
  "mutsuki-plugin-resource-sqlite",
  "mutsuki-protocol-browser",
  "mutsuki-runtime-contracts",
+ "mutsuki-runtime-plugin-loader",
  "mutsuki-runtime-sdk",
  "mutsuki-service-config",
  "mutsuki-service-control",
  "mutsuki-service-ipc",
- "mutsuki-service-plugin-loader",
  "mutsuki-service-runtime",
  "mutsuki-std-service-host-integration",
  "mutsuki-web-extension-control",
@@ -5139,6 +5139,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "mutsuki-runtime-plugin-loader"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "mutsuki-runtime-contracts",
+ "serde",
+ "sha2 0.11.0",
+ "tempfile",
+ "thiserror 2.0.20",
+ "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
 name = "mutsuki-runtime-sdk"
 version = "0.1.0"
 dependencies = [
@@ -5187,13 +5200,13 @@ dependencies = [
  "hex",
  "libc",
  "mutsuki-runtime-contracts",
+ "mutsuki-runtime-plugin-loader",
  "mutsuki-runtime-sdk",
  "mutsuki-runtime-wire",
  "mutsuki-service-abi-fixture",
  "mutsuki-service-config",
  "mutsuki-service-control",
  "mutsuki-service-ipc",
- "mutsuki-service-plugin-loader",
  "mutsuki-service-runtime",
  "serde",
  "serde_json",
@@ -5294,24 +5307,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "mutsuki-service-plugin-loader"
-version = "0.1.0"
-dependencies = [
- "hex",
- "mutsuki-runtime-contracts",
- "serde",
- "sha2 0.11.0",
- "tempfile",
- "thiserror 2.0.20",
- "toml 1.1.6+spec-1.1.0",
-]
-
-[[package]]
 name = "mutsuki-service-runner-supervisor"
 version = "0.1.0"
 dependencies = [
+ "mutsuki-runtime-plugin-loader",
  "mutsuki-service-config",
- "mutsuki-service-plugin-loader",
  "serde",
  "tempfile",
  "thiserror 2.0.20",
@@ -5328,6 +5328,7 @@ dependencies = [
  "libc",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-host",
+ "mutsuki-runtime-plugin-loader",
  "mutsuki-runtime-sdk",
  "mutsuki-runtime-wire",
  "mutsuki-service-abi-fixture",
@@ -5336,12 +5337,12 @@ dependencies = [
  "mutsuki-service-ipc",
  "mutsuki-service-link",
  "mutsuki-service-observe",
- "mutsuki-service-plugin-loader",
  "mutsuki-service-runner-supervisor",
  "rustls",
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "subtle",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
@@ -5491,6 +5492,7 @@ dependencies = [
  "mutsuki-plugin-agent-model-gateway",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-host",
+ "mutsuki-runtime-plugin-loader",
  "mutsuki-runtime-sdk",
  "mutsuki-tauri-abi-fixture",
  "mutsuki-tauri-bridge",
@@ -5530,6 +5532,7 @@ dependencies = [
  "mutsuki-web-protocol",
  "serde",
  "serde_json",
+ "subtle",
  "tokio",
  "uuid",
 ]
