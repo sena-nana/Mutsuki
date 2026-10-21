@@ -22,6 +22,7 @@
 mod local_runtime;
 
 pub use local_runtime::*;
+pub use mutsuki_agent_local_engine::*;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, mpsc};

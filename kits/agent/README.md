@@ -43,8 +43,9 @@ MutsukiAgentKit   Runtime + Adapter + Plugin
 - `crates/mutsuki-agent-service-host-integration` · configured connection catalog、健康状态、
   revision-fenced 管理与 Local Link connector；endpoint/认证仍由 connector owner 配置
 - `crates/mutsuki-agent-sdk` · `mutsuki-agent-macros`
-- `crates/mutsuki-plugin-agent-*` · `mutsuki-agent-testkit`
+- `crates/mutsuki-plugin-agent-*`（prompt/knowledge/skills/session/memory-router/credential 合并为 `mutsuki-plugin-agent-essentials`）· `mutsuki-agent-testkit`
 - `crates/mutsuki-agent-bundle` · Host-neutral Agent services 与 manifest 集合
+- `crates/mutsuki-agent-local-engine` · Host-neutral 内嵌 Agent 引擎（SQLite 会话、OpenAI 兼容模型、wire 与会话管理）
 - `schemas/` · `manifests/` · `examples/` · `templates/` · `docs/`
 
 ## 协议映射（Issue #1）
@@ -83,7 +84,8 @@ provider 资源存储，runtime task 只携带 `ResourceRef`。
 | model-gateway | deterministic/provider-neutral model 编排与 Host-driven async provider | AgentLoop 与 bundle |
 | `mutsuki-agent-testkit` | fake model/tool 与 conformance | workspace tests、跨仓库产品验收 |
 | `mutsuki-agent-bundle` | Host-neutral manifest/runner catalog | ServiceHost 或产品装配层 |
-| `mutsuki-agent-service-host-integration` | `AgentConnectionRegistry`、connector catalog、握手/重连/原子 generation 切换 | ServiceHost 产品与 Bot Agent |
+| `mutsuki-agent-local-engine` | 内嵌 Agent 引擎与本地 Agent 配置文档；凭据经 `CredentialBroker` 注入 | 任意 Host；ServiceHost 经 integration 装配 |
+| `mutsuki-agent-service-host-integration` | `AgentConnectionRegistry`、connector catalog、握手/重连/原子 generation 切换；本地引擎的 ServiceHost 装配（密钥、factory、health、load-plan hook） | ServiceHost 产品与 Bot Agent |
 
 这些 plugin crate 保留独立 manifest、runner 与可选装配边界；它们不是第二套 runtime，产品
 可只注册实际选择的能力。

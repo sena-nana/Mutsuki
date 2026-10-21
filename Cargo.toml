@@ -160,6 +160,7 @@ mutsuki-agent-adapter-openai = { path = "kits/agent/crates/mutsuki-agent-adapter
 mutsuki-agent-bundle = { path = "kits/agent/crates/mutsuki-agent-bundle" }
 mutsuki-agent-client = { path = "kits/agent/crates/mutsuki-agent-client" }
 mutsuki-agent-contracts = { path = "kits/agent/crates/mutsuki-agent-contracts" }
+mutsuki-agent-local-engine = { path = "kits/agent/crates/mutsuki-agent-local-engine" }
 mutsuki-agent-distributed-integration = { path = "kits/agent/crates/mutsuki-agent-distributed-integration" }
 mutsuki-agent-macros = { path = "kits/agent/crates/mutsuki-agent-macros" }
 mutsuki-agent-plugin-api = { path = "kits/agent/crates/mutsuki-agent-plugin-api" }

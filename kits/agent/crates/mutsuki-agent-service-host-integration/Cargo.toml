@@ -13,6 +13,7 @@ mutsuki-agent-adapter-openai.workspace = true
 mutsuki-agent-bundle.workspace = true
 mutsuki-agent-client.workspace = true
 mutsuki-agent-contracts.workspace = true
+mutsuki-agent-local-engine.workspace = true
 mutsuki-agent-runtime.workspace = true
 mutsuki-agent-sdk.workspace = true
 mutsuki-link-core.workspace = true
