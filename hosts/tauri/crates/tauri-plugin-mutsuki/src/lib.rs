@@ -5,10 +5,10 @@
 
 use mutsuki_runtime_contracts::ResourceRef;
 use mutsuki_tauri_bridge::{
-    ApprovalResponse, FrontendError, FrontendEventEnvelope, FrontendTaskRequest,
-    FrontendTaskResult, FrontendTaskRun, HostStatus, PluginReloadRequest, PluginReloadResult,
-    PluginSummary, PreviewHandle, ResourceBytes, ResourceChunk, ResourceText, RunnerSummary,
-    TaskCancelRequest, TaskResultRequest, decode_bridge_payload, encode_bridge_payload,
+    ApprovalResponse, FrontendError, FrontendTaskRequest, FrontendTaskResult, FrontendTaskRun,
+    HostStatus, PluginReloadRequest, PluginReloadResult, PluginSummary, PreviewHandle,
+    ResourceBytes, ResourceChunk, ResourceText, RunnerSummary, TaskCancelRequest,
+    TaskResultRequest, decode_bridge_payload, encode_bridge_payload,
 };
 use mutsuki_tauri_host::{HostResult, MutsukiTauriHost, MutsukiTauriHostBuilder, PluginSelection};
 use serde::Serialize;
@@ -67,7 +67,10 @@ where
             if matches!(event, tauri::RunEvent::Exit)
                 && let Some(host) = app.try_state::<Arc<MutsukiTauriHost>>()
             {
-                host.shutdown();
+                // Windows are gone at Exit; give in-flight tasks the configured
+                // budget before aborting, matching the Service host's drain.
+                let budget = Duration::from_millis(host.config().shutdown_drain_ms);
+                host.shutdown_with_drain(budget);
             }
         })
         .setup(move |app, _api| {
@@ -92,19 +95,25 @@ fn forward_events<R: Runtime>(app: AppHandle<R>, host: Arc<MutsukiTauriHost>) {
 }
 
 #[tauri::command]
-fn mutsuki_call(
+async fn mutsuki_call(
     host: State<'_, Arc<MutsukiTauriHost>>,
     request: FrontendTaskRequest,
 ) -> Result<FrontendTaskResult, FrontendError> {
-    host.call(request).map_err(FrontendError::from)
+    off_main_thread(host.inner(), move |host| {
+        host.call(request).map_err(FrontendError::from)
+    })
+    .await
 }
 
 #[tauri::command]
-fn mutsuki_call_binary(
+async fn mutsuki_call_binary(
     host: State<'_, Arc<MutsukiTauriHost>>,
     request: Vec<u8>,
 ) -> Result<Vec<u8>, FrontendError> {
-    invoke_binary(host.inner(), request, MutsukiTauriHost::call)
+    off_main_thread(host.inner(), move |host| {
+        invoke_binary(host, request, MutsukiTauriHost::call)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -124,35 +133,47 @@ fn mutsuki_start_task_binary(
 }
 
 #[tauri::command]
-fn mutsuki_task_result(
+async fn mutsuki_task_result(
     host: State<'_, Arc<MutsukiTauriHost>>,
     request: TaskResultRequest,
 ) -> Result<FrontendTaskResult, FrontendError> {
-    host.task_result(request).map_err(FrontendError::from)
+    off_main_thread(host.inner(), move |host| {
+        host.task_result(request).map_err(FrontendError::from)
+    })
+    .await
 }
 
 #[tauri::command]
-fn mutsuki_task_result_binary(
+async fn mutsuki_task_result_binary(
     host: State<'_, Arc<MutsukiTauriHost>>,
     request: Vec<u8>,
 ) -> Result<Vec<u8>, FrontendError> {
-    invoke_binary(host.inner(), request, MutsukiTauriHost::task_result)
+    off_main_thread(host.inner(), move |host| {
+        invoke_binary(host, request, MutsukiTauriHost::task_result)
+    })
+    .await
 }
 
 #[tauri::command]
-fn mutsuki_peek_task_result(
+async fn mutsuki_peek_task_result(
     host: State<'_, Arc<MutsukiTauriHost>>,
     request: TaskResultRequest,
 ) -> Result<FrontendTaskResult, FrontendError> {
-    host.peek_task_result(request).map_err(FrontendError::from)
+    off_main_thread(host.inner(), move |host| {
+        host.peek_task_result(request).map_err(FrontendError::from)
+    })
+    .await
 }
 
 #[tauri::command]
-fn mutsuki_peek_task_result_binary(
+async fn mutsuki_peek_task_result_binary(
     host: State<'_, Arc<MutsukiTauriHost>>,
     request: Vec<u8>,
 ) -> Result<Vec<u8>, FrontendError> {
-    invoke_binary(host.inner(), request, MutsukiTauriHost::peek_task_result)
+    off_main_thread(host.inner(), move |host| {
+        invoke_binary(host, request, MutsukiTauriHost::peek_task_result)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -169,6 +190,19 @@ fn mutsuki_cancel_task_binary(
     request: Vec<u8>,
 ) -> Result<Vec<u8>, FrontendError> {
     invoke_binary(host.inner(), request, MutsukiTauriHost::cancel_task)
+}
+
+/// Synchronous Tauri commands run on the UI thread. Commands that wait for a
+/// task to finish must instead wait on the blocking pool so the window stays
+/// responsive while Core works.
+async fn off_main_thread<T: Send + 'static>(
+    host: &Arc<MutsukiTauriHost>,
+    call: impl FnOnce(&MutsukiTauriHost) -> Result<T, FrontendError> + Send + 'static,
+) -> Result<T, FrontendError> {
+    let host = Arc::clone(host);
+    tauri::async_runtime::spawn_blocking(move || call(&host))
+        .await
+        .map_err(|error| FrontendError::new("task.wait.join_failed", error.to_string()))?
 }
 
 fn invoke_binary<T, U>(
@@ -358,6 +392,3 @@ fn mutsuki_approval_pending(
 ) -> Vec<mutsuki_tauri_bridge::ApprovalRequest> {
     host.pending_approvals()
 }
-
-#[allow(dead_code)]
-fn _assert_event_serializable(_event: FrontendEventEnvelope) {}

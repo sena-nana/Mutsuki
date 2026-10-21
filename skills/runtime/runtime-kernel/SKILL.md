@@ -12,6 +12,10 @@ source of task, runner, lease, generation, ordering, cancellation, trace, and co
 - Reject undeclared protocols and runners with structured failures. Never add fallback dispatch.
 - Inject time, IDs, and host services into deterministic paths; do not read ambient globals.
 - Nothing that blocks on disk, sockets, or locks runs on the actor. Offloaded/native async work is admitted first and its result is applied back on the actor.
+- A failed scheduler pass is recorded (`scheduler_failures`) and never ends the actor loop. Async
+  executor completions reach the actor through `send_nonblocking`, never a blocking send on a runtime
+  worker. Kernel commit/event tasks keep typed local payloads; count wire bytes with
+  `compact_json_len` instead of encoding.
 - Retain in-flight provider calls through actor result application across timeout, reload, and shutdown. Ordered lanes fence older results; concurrent lanes remain parallel.
 - Keep observability semantic: disabled tracing allocates no span capacity, enabled tracing retains the configured bounded history. Time and allocation gates are separate.
 

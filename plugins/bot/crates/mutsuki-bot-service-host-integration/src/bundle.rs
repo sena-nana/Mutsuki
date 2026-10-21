@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU16, Ordering};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use mutsuki_bot_delivery::{
@@ -51,7 +51,7 @@ use crate::console_bridge::{
 };
 use crate::delivery_recovery::BotTaskRecoveryEventSource;
 use crate::event_source::{QqGatewayControlHandle, QqGatewayEventSource, QqGatewayHealthHandle};
-use crate::sandbox_intercept::{
+use mutsuki_bot_sandbox::{
     SandboxAwareDeliveryGateway, SandboxAwareOpenApiRunner, SandboxInterceptHandle,
 };
 
@@ -174,20 +174,19 @@ impl QqBotPluginBundle {
         let management_health = self.health.clone();
         let management_credentials = self.credentials.clone();
         let workspace_sandbox = self.workspace_sandbox.clone();
-        let repository = match self.state_repository.clone() {
-            Some(repository) => repository,
-            None => {
-                let state_dir = builder.data_dir().join("bot");
-                std::fs::create_dir_all(&state_dir).map_err(|error| {
-                    QqOpenApiError::InvalidPayload(format!(
-                        "failed to create QQ management state directory: {error}"
-                    ))
-                })?;
-                Arc::new(
-                    BotStateDbRepository::open(state_dir.join("state.sqlite3"))
-                        .map_err(|error| QqOpenApiError::InvalidPayload(error.to_string()))?,
-                )
-            }
+        let repository = if let Some(repository) = self.state_repository.clone() {
+            repository
+        } else {
+            let state_dir = builder.data_dir().join("bot");
+            std::fs::create_dir_all(&state_dir).map_err(|error| {
+                QqOpenApiError::InvalidPayload(format!(
+                    "failed to create QQ management state directory: {error}"
+                ))
+            })?;
+            Arc::new(
+                BotStateDbRepository::open(state_dir.join("state.sqlite3"))
+                    .map_err(|error| QqOpenApiError::InvalidPayload(error.to_string()))?,
+            )
         };
         let repository_for_factory = repository.clone();
         let repository_for_delivery = repository.clone();
@@ -818,63 +817,55 @@ impl DeliveryGateway for RuntimeDeliveryGateway {
         let handle = self.runtime.submit_one(task).map_err(|error| {
             qq_delivery_failure(&format!("qq.runtime.submit:{error}"), true, Vec::new())
         })?;
-        let deadline = Instant::now() + Duration::from_secs(15);
-        loop {
-            match self.runtime.task_outcome(&handle) {
-                Ok(Some(TaskOutcome::Completed { output, .. })) => {
-                    let mut message_ids = Vec::new();
-                    if let Some(output) = output {
-                        collect_message_ids(&output, &mut message_ids);
-                    }
-                    if message_ids.is_empty() {
-                        return Err(qq_delivery_failure(
-                            "qq.response.message_id_missing",
-                            false,
-                            Vec::new(),
-                        ));
-                    }
-                    let part_receipts = message_ids
-                        .iter()
-                        .enumerate()
-                        .map(|(index, message_id)| BotDeliveryPartReceipt {
-                            part_index: index as u32,
-                            status: DeliveryPartStatus::Succeeded,
-                            platform_message_id: Some(message_id.clone()),
-                            error_code: None,
-                        })
-                        .collect();
-                    return Ok(DeliverySuccess {
-                        platform_message_ids: message_ids,
-                        part_receipts,
-                    });
+        // One event-driven wait with the 15 s delivery budget; no sleep polling.
+        match self
+            .runtime
+            .wait_outcome(&handle, Some(Duration::from_secs(15)))
+        {
+            Ok(Some(TaskOutcome::Completed { output, .. })) => {
+                let mut message_ids = Vec::new();
+                if let Some(output) = output {
+                    collect_message_ids(&output, &mut message_ids);
                 }
-                Ok(Some(TaskOutcome::Failed { error, .. })) => {
-                    let transient = error.code.contains("rate")
-                        || error.code.contains("transient")
-                        || error.code.contains("timeout");
-                    return Err(qq_delivery_failure(&error.code, transient, Vec::new()));
-                }
-                Ok(Some(other)) => {
+                if message_ids.is_empty() {
                     return Err(qq_delivery_failure(
-                        &format!("qq.runtime.{other:?}"),
+                        "qq.response.message_id_missing",
                         false,
                         Vec::new(),
                     ));
                 }
-                Ok(None) if Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(5));
-                }
-                Ok(None) => {
-                    return Err(qq_delivery_failure("qq.runtime.timeout", true, Vec::new()));
-                }
-                Err(error) => {
-                    return Err(qq_delivery_failure(
-                        &format!("qq.runtime.outcome:{error}"),
-                        true,
-                        Vec::new(),
-                    ));
-                }
+                let part_receipts = message_ids
+                    .iter()
+                    .enumerate()
+                    .map(|(index, message_id)| BotDeliveryPartReceipt {
+                        part_index: index as u32,
+                        status: DeliveryPartStatus::Succeeded,
+                        platform_message_id: Some(message_id.clone()),
+                        error_code: None,
+                    })
+                    .collect();
+                Ok(DeliverySuccess {
+                    platform_message_ids: message_ids,
+                    part_receipts,
+                })
             }
+            Ok(Some(TaskOutcome::Failed { error, .. })) => {
+                let transient = error.code.contains("rate")
+                    || error.code.contains("transient")
+                    || error.code.contains("timeout");
+                Err(qq_delivery_failure(&error.code, transient, Vec::new()))
+            }
+            Ok(Some(other)) => Err(qq_delivery_failure(
+                &format!("qq.runtime.{other:?}"),
+                false,
+                Vec::new(),
+            )),
+            Ok(None) => Err(qq_delivery_failure("qq.runtime.timeout", true, Vec::new())),
+            Err(error) => Err(qq_delivery_failure(
+                &format!("qq.runtime.outcome:{error}"),
+                true,
+                Vec::new(),
+            )),
         }
     }
 }

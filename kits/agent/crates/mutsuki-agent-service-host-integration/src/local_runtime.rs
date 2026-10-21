@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use mutsuki_agent_adapter_api::{
     CredentialBroker, CredentialFuture, CredentialValue, ModelProtocolAdapter,
@@ -98,14 +98,15 @@ fn persona_capability_catalog() -> PersonaCapabilityCatalog {
     }
     PERSONA_CAPABILITY_CATALOG
         .lock()
-        .unwrap_or_else(|poison| poison.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone()
 }
 
 fn set_persona_capability_catalog(tools: Vec<String>, skills: Vec<String>) {
     *PERSONA_CAPABILITY_CATALOG
         .lock()
-        .unwrap_or_else(|poison| poison.into_inner()) = PersonaCapabilityCatalog { tools, skills };
+        .unwrap_or_else(std::sync::PoisonError::into_inner) =
+        PersonaCapabilityCatalog { tools, skills };
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -143,7 +144,7 @@ impl LocalAgentPersona {
         if self.persona_id.trim().is_empty() {
             return Err("persona_id is required".into());
         }
-        if self.begin_dialogs.len() % 2 != 0 {
+        if !self.begin_dialogs.len().is_multiple_of(2) {
             return Err("begin_dialogs must be even-length user/assistant pairs".into());
         }
         if self.begin_dialogs.iter().any(|turn| turn.trim().is_empty()) {
@@ -213,7 +214,8 @@ impl LocalAgentConfig {
             persona.persona_id = "default".into();
         }
         if persona.system_prompt.trim().is_empty() {
-            persona.system_prompt = self.resolved_system_prompt().to_owned();
+            self.resolved_system_prompt()
+                .clone_into(&mut persona.system_prompt);
         }
         persona
     }
@@ -593,7 +595,7 @@ fn persona_config_value(persona: &LocalAgentPersona) -> ConfigValue {
             ),
             (
                 "tools_mode".into(),
-                ConfigValue::String(allowlist_mode(&persona.allowed_tools).into()),
+                ConfigValue::String(allowlist_mode(persona.allowed_tools.as_ref()).into()),
             ),
             (
                 "allowed_tools".into(),
@@ -609,7 +611,7 @@ fn persona_config_value(persona: &LocalAgentPersona) -> ConfigValue {
             ),
             (
                 "skills_mode".into(),
-                ConfigValue::String(allowlist_mode(&persona.allowed_skills).into()),
+                ConfigValue::String(allowlist_mode(persona.allowed_skills.as_ref()).into()),
             ),
             (
                 "allowed_skills".into(),
@@ -629,7 +631,7 @@ fn persona_config_value(persona: &LocalAgentPersona) -> ConfigValue {
     )
 }
 
-fn allowlist_mode(list: &Option<Vec<String>>) -> &'static str {
+fn allowlist_mode(list: Option<&Vec<String>>) -> &'static str {
     match list {
         None => "all",
         Some(ids) if ids.is_empty() => "none",
@@ -707,7 +709,7 @@ pub fn persona_from_config_json(
     if persona.system_prompt.trim().is_empty()
         && let Some(fallback) = fallback_prompt
     {
-        persona.system_prompt = fallback.to_owned();
+        fallback.clone_into(&mut persona.system_prompt);
     }
     persona.validate()?;
     Ok(persona)
@@ -1266,31 +1268,27 @@ impl LocalAgentEngine {
             .lock()
             .unwrap()
             .insert((session_id.into(), turn_id.into()), handle.clone());
-        let deadline = Instant::now() + Duration::from_secs(120);
-        let outcome = loop {
-            if let Some(outcome) = self
-                .runtime
-                .task_outcome(&handle)
-                .map_err(runtime_wire_error)?
-            {
-                break outcome;
+        // Event-driven wait on the Host actor instead of a 1 ms poll loop.
+        let waited = self
+            .runtime
+            .wait_task_states(vec![handle.clone()], Duration::from_secs(120))
+            .map_err(runtime_wire_error)?
+            .into_iter()
+            .find_map(|state| state.outcome);
+        let Some(outcome) = waited else {
+            let _ = self.runtime.cancel_task(&handle);
+            self.active
+                .lock()
+                .unwrap()
+                .remove(&(session_id.into(), turn_id.into()));
+            if !self.custom_error_message.trim().is_empty() {
+                return self.persist_custom_error(session_id, turn_id);
             }
-            if Instant::now() >= deadline {
-                let _ = self.runtime.cancel_task(&handle);
-                self.active
-                    .lock()
-                    .unwrap()
-                    .remove(&(session_id.into(), turn_id.into()));
-                if !self.custom_error_message.trim().is_empty() {
-                    return self.persist_custom_error(session_id, turn_id);
-                }
-                return Err(wire_error(
-                    "agent.local.turn_timeout",
-                    "Agent turn exceeded its time budget".into(),
-                    true,
-                ));
-            }
-            thread::sleep(Duration::from_millis(1));
+            return Err(wire_error(
+                "agent.local.turn_timeout",
+                "Agent turn exceeded its time budget".into(),
+                true,
+            ));
         };
         self.active
             .lock()

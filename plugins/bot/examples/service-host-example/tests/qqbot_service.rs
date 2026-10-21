@@ -287,6 +287,9 @@ async fn test_service_config() -> (ServiceConfig, tempfile::TempDir) {
     let mut service = ServiceConfig::default();
     service.service.instance_id = "qqbot-integration".into();
     service.service.home_dir = home.path().to_path_buf();
+    // Every Host directory lives in the temp home; the default relative
+    // `data` would otherwise write state.sqlite3 into the source tree.
+    service.service.data_dir = home.path().join("data");
     service.service.log_dir = home.path().join("logs");
     service.service.run_dir = home.path().join("run");
     service.plugins.dynamic_dirs.clear();
@@ -302,7 +305,9 @@ async fn test_service_config() -> (ServiceConfig, tempfile::TempDir) {
 }
 
 async fn control(config: &ServiceConfig, command: ControlCommand) -> ControlResult {
-    let client = mutsuki_service_ipc::ControlClient::new(config.into());
+    let client = mutsuki_service_ipc::ControlClient::new(
+        mutsuki_service_runtime::local_control_client_config(config),
+    );
     match client.request(command).await.unwrap() {
         ControlResponse::Ok(result) => result,
         response => panic!("control failed: {response:?}"),

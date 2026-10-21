@@ -6,8 +6,7 @@ use mutsuki_distributed_contracts::{
 use mutsuki_runtime_contracts::ContentId;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs::{self};
 use std::path::PathBuf;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -20,6 +19,12 @@ pub struct RepairJob {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct CatalogSnapshot {
     records: BTreeMap<String, ResourceCatalogRecord>,
+}
+
+/// Borrowed write-side twin of [`CatalogSnapshot`]; same wire shape.
+#[derive(Serialize)]
+struct CatalogSnapshotRef<'a> {
+    records: &'a BTreeMap<String, ResourceCatalogRecord>,
 }
 
 pub struct ResourceCatalog {
@@ -230,24 +235,14 @@ impl ResourceCatalog {
     }
 
     fn persist(&self) -> Result<(), DistributedError> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent).map_err(|_| registry_storage_error())?;
-        }
-        let temporary = self.path.with_extension("tmp");
-        let bytes = serde_json::to_vec(&CatalogSnapshot {
-            records: self.records.clone(),
+        // Serialize by reference: refcount changes persist on every call, and
+        // cloning the whole catalog first doubled the per-change cost.
+        let bytes = serde_json::to_vec(&CatalogSnapshotRef {
+            records: &self.records,
         })
         .map_err(|_| registry_corrupt_error())?;
-        let mut file = OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .open(&temporary)
-            .map_err(|_| registry_storage_error())?;
-        file.write_all(&bytes)
-            .and_then(|()| file.sync_all())
-            .map_err(|_| registry_storage_error())?;
-        fs::rename(temporary, &self.path).map_err(|_| registry_storage_error())
+        crate::durable_io::replace_file(&self.path, &bytes, true)
+            .map_err(|_| registry_storage_error())
     }
 }
 

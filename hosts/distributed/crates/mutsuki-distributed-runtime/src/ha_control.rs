@@ -73,21 +73,9 @@ impl ControlNode {
     }
 
     fn persist(&self) -> Result<(), DistributedError> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent).map_err(|_| control_storage_error())?;
-        }
         let bytes = serde_json::to_vec(&self.snapshot).map_err(|_| control_corrupt_error())?;
-        let temporary = self.path.with_extension("tmp");
-        let mut file = OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .open(&temporary)
-            .map_err(|_| control_storage_error())?;
-        file.write_all(&bytes)
-            .and_then(|()| file.sync_all())
-            .map_err(|_| control_storage_error())?;
-        fs::rename(temporary, &self.path).map_err(|_| control_storage_error())
+        crate::durable_io::replace_file(&self.path, &bytes, true)
+            .map_err(|_| control_storage_error())
     }
 
     fn last_index(&self) -> u64 {

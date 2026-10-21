@@ -4,8 +4,7 @@ use crate::health::HostHealthState;
 use crate::plugin_abi::{DeferredPluginHost, connect_packaged_plugin};
 use crate::plugin_package::{PluginPackageRecord, scan_momoplug_packages};
 use mutsuki_runtime_contracts::{
-    ArtifactType, CompletionBatch, HostExtensionDescriptor, HostExtensionKind,
-    PluginBackendDescriptor, PluginDeploymentKind, PluginId, PluginManifest, PluginProvides,
+    ArtifactType, CompletionBatch, PluginDeploymentKind, PluginId, PluginManifest, PluginProvides,
     ProtocolClass, ProtocolId, RunnerDescriptor, RunnerId, RuntimeError, ScalarValue, WorkBatch,
 };
 use mutsuki_runtime_core::{
@@ -474,37 +473,21 @@ fn read_plugin_manifest(path: &Path) -> Result<PluginManifest, String> {
 }
 
 fn ensure_process_plugin_backend(mut manifest: PluginManifest) -> PluginManifest {
-    let has_process_backend = manifest
+    // A manifest that already declares any process backend keeps it as is.
+    if manifest
         .provides
         .plugin_backends
         .iter()
-        .any(|backend| backend.deployment_kind == PluginDeploymentKind::Process);
-    if has_process_backend {
+        .any(|backend| backend.deployment_kind == PluginDeploymentKind::Process)
+    {
         return manifest;
     }
-
-    let plugin_id = &manifest.plugin_id;
-    manifest
-        .provides
-        .host_extensions
-        .push(HostExtensionDescriptor {
-            extension_id: format!("host.extension.{plugin_id}.process"),
-            kind: HostExtensionKind::PluginBackend,
-            supported_deployments: vec![PluginDeploymentKind::Process],
-            reload_policy: "drain_and_swap".into(),
-            drain_required: true,
-        });
-    manifest
-        .provides
-        .plugin_backends
-        .push(PluginBackendDescriptor {
-            backend_id: format!("plugin.backend.{plugin_id}.process"),
-            deployment_kind: PluginDeploymentKind::Process,
-            task_client_protocol: "mutsuki.task.v1".into(),
-            resource_client_protocol: "mutsuki.resource-plan.v1".into(),
-            codec_id: None,
-            bridge_id: None,
-        });
+    let plugin_id = manifest.plugin_id.to_string();
+    mutsuki_runtime_sdk::ensure_plugin_backend_descriptors(
+        &plugin_id,
+        &mut manifest.provides,
+        &PluginDeploymentKind::Process,
+    );
     manifest
 }
 

@@ -851,35 +851,26 @@ impl NextEditPlanner for RuntimeClientNextEditPlanner {
                 "TaskPool did not return a next-edit generate handle",
             )
         })?;
-        let result = loop {
-            match self
-                .client
-                .task_outcome(&handle)
-                .map_err(runtime_client_agent_error)?
-            {
-                Some(mutsuki_runtime_sdk::contracts::TaskOutcome::Completed {
-                    output: Some(output),
-                    ..
-                }) => {
-                    break serde_json::from_value::<AgentModelGenerateResult>(output).map_err(
-                        |error| {
-                            AgentError::new(
-                                "agent.next_edit.invalid_model_output",
-                                error.to_string(),
-                            )
-                        },
-                    )?;
-                }
-                Some(mutsuki_runtime_sdk::contracts::TaskOutcome::Failed { error, .. }) => {
-                    return Err(AgentError::new(error.code, error.route));
-                }
-                Some(_) => {
-                    return Err(AgentError::new(
-                        "agent.next_edit.incomplete",
-                        "next edit generate did not complete",
-                    ));
-                }
-                None => std::thread::yield_now(),
+        // Event-driven blocking wait (no spin) for the generate child task.
+        let result = match self
+            .client
+            .wait_outcome(&handle, None)
+            .map_err(runtime_client_agent_error)?
+        {
+            Some(mutsuki_runtime_sdk::contracts::TaskOutcome::Completed {
+                output: Some(output),
+                ..
+            }) => serde_json::from_value::<AgentModelGenerateResult>(output).map_err(|error| {
+                AgentError::new("agent.next_edit.invalid_model_output", error.to_string())
+            })?,
+            Some(mutsuki_runtime_sdk::contracts::TaskOutcome::Failed { error, .. }) => {
+                return Err(AgentError::new(error.code, error.route));
+            }
+            Some(_) | None => {
+                return Err(AgentError::new(
+                    "agent.next_edit.incomplete",
+                    "next edit generate did not complete",
+                ));
             }
         };
         parse_next_edit_plan(request, targets, result)

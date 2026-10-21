@@ -63,8 +63,10 @@ publishes the Gateway connection, identification, heartbeat, ACK, event,
 reconnect and last-error snapshot through the standard health control surface.
 
 Simulate-mode sandbox traffic stays on the same QQ-shaped Bot contracts, but
-`sandbox:` conversation ids are intercepted by the ServiceHost integration
-before `mutsuki.bot.message/send@1` reaches QQ OpenAPI:
+`sandbox:` conversation ids are intercepted before `mutsuki.bot.message/send@1`
+reaches QQ OpenAPI. The interception runner and delivery gateway are owned by
+`mutsuki-bot-sandbox` (`SandboxAwareOpenApiRunner`, `SandboxAwareDeliveryGateway`);
+the ServiceHost integration only wires them around the QQ adapter:
 
 ```text
 Sandbox console (virtual user)

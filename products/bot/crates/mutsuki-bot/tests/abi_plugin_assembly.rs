@@ -14,7 +14,7 @@ use mutsuki_service_control::{
     ControlCommand, ControlResponse, ControlResult, PluginDeploymentClearParam,
     PluginDeploymentParam,
 };
-use mutsuki_service_ipc::{ControlClient, ControlClientConfig};
+use mutsuki_service_ipc::ControlClient;
 use mutsuki_service_plugin_loader::PluginToml;
 use sha2::{Digest, Sha256};
 use tempfile::tempdir;
@@ -160,7 +160,9 @@ panic_file = "panic.log"
     .start()
     .await
     .unwrap();
-    let client = ControlClient::new(ControlClientConfig::from(&service));
+    let client = ControlClient::new(mutsuki_service_runtime::local_control_client_config(
+        &service,
+    ));
     let switched = client
         .request(ControlCommand::PluginDeploymentSet(PluginDeploymentParam {
             plugin_id: "mutsuki.bot.command".into(),
@@ -192,7 +194,9 @@ panic_file = "panic.log"
     )
     .unwrap();
     assert_eq!(abi_lock["plugin_deployments"]["mutsuki.bot.command"], "abi");
-    let client = ControlClient::new(ControlClientConfig::from(&service));
+    let client = ControlClient::new(mutsuki_service_runtime::local_control_client_config(
+        &service,
+    ));
     let cleared = client
         .request(ControlCommand::PluginDeploymentClear(
             PluginDeploymentClearParam {

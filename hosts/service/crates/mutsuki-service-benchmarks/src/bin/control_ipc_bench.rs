@@ -25,7 +25,7 @@ use mutsuki_service_control::{
     ControlCommand, ControlError, ControlHandler, ControlRequest, ControlResponse, ControlResult,
     LogTailParams, LogTailResponse,
 };
-use mutsuki_service_ipc::{ControlClientConfig, ControlSession, IpcServer, start_server};
+use mutsuki_service_ipc::{ControlSession, IpcServer, start_server};
 use serde::Serialize;
 use tempfile::TempDir;
 
@@ -242,7 +242,7 @@ async fn run_case(
     warmup: usize,
 ) -> Result<CaseResult, Box<dyn std::error::Error>> {
     let (_tmp, config, server) = start_echo_server(mode.codec()).await?;
-    let client_config = ControlClientConfig::from(&config);
+    let client_config = mutsuki_service_runtime::local_control_client_config(&config);
     let payload = ControlCommand::LogTail(LogTailParams {
         cursor: None,
         lines: Some(1),

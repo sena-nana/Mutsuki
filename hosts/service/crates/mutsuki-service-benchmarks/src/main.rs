@@ -25,7 +25,7 @@ use mutsuki_service_config::{ConfiguredPluginSelection, ServiceConfig};
 use mutsuki_service_control::{
     ControlCommand, ControlResponse, ControlResult, TaskSubmitBatchParam, TaskWaitParam,
 };
-use mutsuki_service_ipc::{ControlClient, ControlClientConfig};
+use mutsuki_service_ipc::ControlClient;
 use mutsuki_service_plugin_loader::{ExternalRuntimeSpec, PluginToml};
 use mutsuki_service_runtime::{ServiceRuntime, ServiceRuntimeBuilder};
 use serde_json::{Value, json};
@@ -128,7 +128,9 @@ async fn run_sample(
     let startup = Instant::now();
     let prepared = start_runtime(deployment).await?;
     let startup_ns = startup.elapsed().as_nanos() as f64;
-    let client = ControlClient::new(ControlClientConfig::from(&prepared.config));
+    let client = ControlClient::new(mutsuki_service_runtime::local_control_client_config(
+        &prepared.config,
+    ));
 
     let health = Instant::now();
     match checked_request(&client, ControlCommand::HealthCheck).await? {

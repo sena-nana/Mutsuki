@@ -41,6 +41,20 @@ pub trait TaskSubmitter: Send + Sync {
     }
     fn cancel_task(&self, handle: &TaskHandle) -> RuntimeResult<()>;
     fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>>;
+    /// Blocks the calling thread until `handle` has an outcome or `timeout`
+    /// elapses (`None` waits without a deadline); `Ok(None)` means timed out.
+    ///
+    /// Host-actor clients override this with an event-driven wait. The default
+    /// polls with bounded exponential backoff, so no client ever spins a CPU.
+    /// Inside a Runner prefer a `TaskAwait` continuation: a blocking wait holds
+    /// a worker slot for the child's whole lifetime.
+    fn wait_outcome(
+        &self,
+        handle: &TaskHandle,
+        timeout: Option<Duration>,
+    ) -> RuntimeResult<Option<TaskOutcome>> {
+        crate::poll_outcome_with_backoff(timeout, || self.task_outcome(handle))
+    }
 }
 
 #[derive(Clone)]
@@ -65,6 +79,14 @@ impl RuntimeClient for TaskSubmitterRuntimeClient {
 
     fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
         self.submitter.task_outcome(handle)
+    }
+
+    fn wait_outcome(
+        &self,
+        handle: &TaskHandle,
+        timeout: Option<Duration>,
+    ) -> RuntimeResult<Option<TaskOutcome>> {
+        self.submitter.wait_outcome(handle, timeout)
     }
 }
 

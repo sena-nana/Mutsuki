@@ -38,6 +38,7 @@ use std::sync::{Arc, Mutex};
 
 mod content_localization;
 mod content_store;
+mod durable_io;
 mod ha_control;
 mod localization_io;
 mod persistent_registry;

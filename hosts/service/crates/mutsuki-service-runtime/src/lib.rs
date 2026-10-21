@@ -425,6 +425,14 @@ impl RuntimeClient for DeferredRuntimeClient {
             client.register_waker(handle, waker);
         }
     }
+
+    fn wait_outcome(
+        &self,
+        handle: &TaskHandle,
+        timeout: Option<Duration>,
+    ) -> RuntimeResult<Option<TaskOutcome>> {
+        self.client()?.wait_outcome(handle, timeout)
+    }
 }
 
 impl TaskSubmitter for DeferredRuntimeClient {
@@ -438,6 +446,14 @@ impl TaskSubmitter for DeferredRuntimeClient {
 
     fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
         self.task_submitter()?.task_outcome(handle)
+    }
+
+    fn wait_outcome(
+        &self,
+        handle: &TaskHandle,
+        timeout: Option<Duration>,
+    ) -> RuntimeResult<Option<TaskOutcome>> {
+        self.task_submitter()?.wait_outcome(handle, timeout)
     }
 }
 
@@ -1618,7 +1634,7 @@ impl ServiceRuntime {
 
         // 2. Wait for in-flight tasks, bounded by the same budget used for runner shutdown.
         if drain_started {
-            self.await_core_drain(graceful).await;
+            self.await_core_drain(graceful);
         }
 
         // 3. Close ingress. No new control requests or upstream events can arrive after this.
@@ -1646,34 +1662,26 @@ impl ServiceRuntime {
         }
     }
 
-    /// Polls Core until no task is running or ready, or the budget expires.
+    /// Waits (event-driven on task completions) until no task is running or
+    /// ready, or the budget expires.
     ///
     /// A timeout is not an error: the remaining work is abandoned deliberately, which is what
     /// the `graceful_shutdown_ms` budget means. It is logged so an operator can tell a clean
     /// stop from a truncated one.
-    async fn await_core_drain(&self, budget: Duration) {
-        let deadline = Instant::now() + budget;
-        loop {
-            let outstanding = {
-                let runtime = self.inner.host_runtime.lock().expect("host runtime mutex");
-                match runtime.as_ref().map(HostRuntime::statistics) {
-                    Some(Ok(statistics)) => statistics.tasks.running + statistics.tasks.ready,
-                    // Core is gone or unreachable; there is nothing left to wait for.
-                    Some(Err(_)) | None => 0,
-                }
-            };
-            if outstanding == 0 {
-                return;
-            }
-            if Instant::now() >= deadline {
-                tracing::warn!(
-                    outstanding,
-                    budget_ms = budget.as_millis(),
-                    "core drain budget expired with tasks still outstanding"
-                );
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+    fn await_core_drain(&self, budget: Duration) {
+        let outstanding = run_blocking_on_worker(|| {
+            let runtime = self.inner.host_runtime.lock().expect("host runtime mutex");
+            // Core gone or unreachable: there is nothing left to wait for.
+            runtime
+                .as_ref()
+                .map_or(0, |runtime| runtime.wait_until_idle(budget).unwrap_or(0))
+        });
+        if outstanding > 0 {
+            tracing::warn!(
+                outstanding,
+                budget_ms = budget.as_millis(),
+                "core drain budget expired with tasks still outstanding"
+            );
         }
     }
 
@@ -2197,10 +2205,8 @@ impl ServiceRuntimeInner {
             let runtime = runtime
                 .as_mut()
                 .ok_or(ServiceRuntimeError::RuntimeUnavailable)?;
-            runtime.reload(
-                prepared,
-                reload_drain_timeout(&candidate_config, &new_catalog),
-            )
+            let drain_timeout = reload_drain_timeout(&candidate_config, &new_catalog);
+            run_blocking_on_worker(|| runtime.reload(prepared, drain_timeout))
         };
         if let Err(error) = decision {
             let restore_lock = restore_runtime_lock(&runtime_lock_path, previous_runtime_lock);
@@ -2345,7 +2351,7 @@ impl ServiceRuntimeInner {
             ControlCommand::TaskCancel(param) => self.task_cancel(param),
             ControlCommand::TaskOutcome(param) => self.task_outcome(param),
             ControlCommand::TaskOutcomesBatch(param) => self.task_outcomes_batch(param),
-            ControlCommand::TaskWait(param) => self.task_wait(param),
+            ControlCommand::TaskWait(param) => self.task_wait(param).await,
             ControlCommand::TaskEventsAfter(param) => self.task_events_after(param),
             ControlCommand::HealthCheck => self.health_check().await,
             ControlCommand::LogTail(param) => self.log_tail(param),
@@ -2562,7 +2568,7 @@ impl ServiceRuntimeInner {
             Ok(catalog) => catalog,
             Err(error) => return ControlResponse::err(ControlError::Failed(error.to_string())),
         };
-        self.reload_catalog_unlocked(new_catalog).await
+        self.reload_catalog_unlocked(&config, new_catalog).await
     }
 
     async fn plugin_deployment_set(&self, param: PluginDeploymentParam) -> ControlResponse {
@@ -2625,7 +2631,7 @@ impl ServiceRuntimeInner {
         if let Err(error) = save_deployment_state(&self.config, &next) {
             return ControlResponse::err(ControlError::Failed(error.to_string()));
         }
-        let response = self.reload_catalog_unlocked(new_catalog).await;
+        let response = self.reload_catalog_unlocked(&config, new_catalog).await;
         if response.is_ok() {
             *self
                 .deployment_state
@@ -2644,7 +2650,16 @@ impl ServiceRuntimeInner {
         }
     }
 
-    async fn reload_catalog_unlocked(&self, new_catalog: PluginCatalog) -> ControlResponse {
+    /// Full catalog reload. `config` must be the *current* effective config
+    /// (`current_config()`), never the boot-time `self.config`: configured plugin
+    /// selections changed by `reconfigure_plugins` live only in the former, and
+    /// re-initializing ABI plugins or sidecars from the boot snapshot would
+    /// silently restore their old settings.
+    async fn reload_catalog_unlocked(
+        &self,
+        config: &ServiceConfig,
+        new_catalog: PluginCatalog,
+    ) -> ControlResponse {
         let previous_generation = {
             let guard = self.host_runtime.lock().expect("host runtime mutex");
             let Some(runtime) = guard.as_ref() else {
@@ -2669,7 +2684,7 @@ impl ServiceRuntimeInner {
         let runner_limits =
             resolve_runner_limits(&configured_runner_limits, &runner_limit_factories);
         let prepared = match runtime_bootstrapper(
-            &self.config,
+            config,
             &new_catalog,
             &native_runner_factories,
             &async_handler_factories,
@@ -2698,9 +2713,9 @@ impl ServiceRuntimeInner {
                 return ControlResponse::err(ControlError::Failed(error));
             }
         }
-        let drain_timeout = reload_drain_timeout(&self.config, &new_catalog);
+        let drain_timeout = reload_drain_timeout(config, &new_catalog);
         let plugin_count = new_catalog.records.len();
-        let sidecars = sidecar_specs(&self.config, &new_catalog);
+        let sidecars = sidecar_specs(config, &new_catalog);
         let runtime_lock_path = self.config.service.run_dir.join("runtime.lock.json");
         let previous_runtime_lock = fs::read(&runtime_lock_path).ok();
         if let Err(error) = write_runtime_lock(&self.config, &runtime_lock) {
@@ -2711,7 +2726,7 @@ impl ServiceRuntimeInner {
             let Some(runtime) = guard.as_mut() else {
                 return ControlResponse::err(ControlError::CoreUnavailable);
             };
-            match runtime.reload(prepared, drain_timeout) {
+            match run_blocking_on_worker(|| runtime.reload(prepared, drain_timeout)) {
                 Ok(decision) => decision,
                 Err(error) => {
                     let restore = restore_runtime_lock(&runtime_lock_path, previous_runtime_lock);
@@ -2956,11 +2971,17 @@ impl ServiceRuntimeInner {
         }
     }
 
-    fn task_wait(&self, param: TaskWaitParam) -> ControlResponse {
+    async fn task_wait(&self, param: TaskWaitParam) -> ControlResponse {
         if param.ids.is_empty() {
             return ControlResponse::err(ControlError::BadRequest(
                 "task wait requires at least one id".into(),
             ));
+        }
+        if param.timeout_ms > mutsuki_service_control::MAX_TASK_WAIT_TIMEOUT_MS {
+            return ControlResponse::err(ControlError::BadRequest(format!(
+                "task wait timeout_ms must be at most {}",
+                mutsuki_service_control::MAX_TASK_WAIT_TIMEOUT_MS
+            )));
         }
         let (subscription, handles) = {
             let guard = self.host_runtime.lock().expect("host runtime mutex");
@@ -2999,8 +3020,16 @@ impl ServiceRuntimeInner {
             if now >= deadline {
                 return task_wait_response(states, true);
             }
-            match subscription.wait_after_timeout(revision, deadline.saturating_duration_since(now))
-            {
+            // The completion wait is a condvar wait: run it on the blocking pool
+            // so no async worker parks, and so the IPC connection can drop this
+            // future (the detached wait ends at the capped deadline).
+            let remaining = deadline.saturating_duration_since(now);
+            let waiter = subscription.clone();
+            let notified =
+                tokio::task::spawn_blocking(move || waiter.wait_after_timeout(revision, remaining))
+                    .await
+                    .unwrap_or(None);
+            match notified {
                 Some(next_revision) => revision = next_revision,
                 None => {
                     let guard = self.host_runtime.lock().expect("host runtime mutex");
@@ -3302,20 +3331,13 @@ fn save_deployment_state(
             detail: error.to_string(),
         }
     })?;
-    let temporary = path.with_extension("json.pending");
-    fs::write(&temporary, bytes).map_err(|error| ServiceRuntimeError::PluginDeploymentState {
-        path: temporary.display().to_string(),
-        detail: error.to_string(),
-    })?;
-    if path.exists() {
-        fs::remove_file(&path).map_err(|error| ServiceRuntimeError::PluginDeploymentState {
+    // Rename over the old file: deleting it first would lose the deployment
+    // state if the process died between the two steps.
+    mutsuki_service_config::write_managed_file_atomically(&path, &bytes).map_err(|error| {
+        ServiceRuntimeError::PluginDeploymentState {
             path: path.display().to_string(),
             detail: error.to_string(),
-        })?;
-    }
-    fs::rename(&temporary, &path).map_err(|error| ServiceRuntimeError::PluginDeploymentState {
-        path: path.display().to_string(),
-        detail: error.to_string(),
+        }
     })
 }
 
@@ -3563,15 +3585,18 @@ fn write_runtime_lock(
             detail: error.to_string(),
         }
     })?;
-    fs::write(&path, bytes).map_err(|error| ServiceRuntimeError::PluginDeploymentState {
-        path: path.display().to_string(),
-        detail: error.to_string(),
+    mutsuki_service_config::write_managed_file_atomically(&path, &bytes).map_err(|error| {
+        ServiceRuntimeError::PluginDeploymentState {
+            path: path.display().to_string(),
+            detail: error.to_string(),
+        }
     })
 }
 
 fn restore_runtime_lock(path: &std::path::Path, previous: Option<Vec<u8>>) -> std::io::Result<()> {
     match previous {
-        Some(bytes) => fs::write(path, bytes),
+        Some(bytes) => mutsuki_service_config::write_managed_file_atomically(path, &bytes)
+            .map_err(std::io::Error::other),
         None if path.exists() => fs::remove_file(path),
         None => Ok(()),
     }
@@ -4032,6 +4057,33 @@ fn drain_blocking_stderr(runner_id: String, stderr: std::process::ChildStderr) {
     let reader = BufReader::new(stderr);
     for line in reader.lines().map_while(Result::ok) {
         tracing::warn!(runner_id, stream = "stderr", line);
+    }
+}
+
+/// Client settings for the control endpoint of a locally configured service.
+/// Lives with the server-side config owner: the public IPC client only takes
+/// transport, endpoint and token and never sees `ServiceConfig`.
+pub fn local_control_client_config(
+    config: &ServiceConfig,
+) -> mutsuki_service_ipc::ControlClientConfig {
+    mutsuki_service_ipc::ControlClientConfig::new(
+        config.ipc.transport.clone(),
+        config.ipc_endpoint(),
+        config.control_token(),
+    )
+    .with_profile(mutsuki_service_ipc::ControlIpcProfile::from_config(config))
+}
+
+/// Runs a synchronous, potentially long Host call (reload drain, bounded
+/// waits) without parking an async runtime worker. On a multi-thread runtime
+/// the worker hands its other tasks off for the duration; elsewhere (tests on a
+/// current-thread runtime, or no runtime) the call simply runs inline.
+fn run_blocking_on_worker<T>(call: impl FnOnce() -> T) -> T {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+            tokio::task::block_in_place(call)
+        }
+        _ => call(),
     }
 }
 
@@ -4531,6 +4583,22 @@ generation = 7
             }]
         );
 
+        // A later full reload must bootstrap from the reconfigured selections,
+        // not the boot-time config snapshot (ABI plugins are re-initialized
+        // from `configured_plugin_config`).
+        assert_eq!(
+            configured_plugin_config(&runtime.inner.current_config(), "test.target"),
+            json!({"generation": 2})
+        );
+        assert!(runtime.inner.plugin_reload().await.is_ok());
+        assert_eq!(
+            runtime
+                .host_service::<GenerationService>("service.target")
+                .unwrap()
+                .0,
+            2
+        );
+
         assert!(
             runtime
                 .reconfigure_plugins(&[ConfiguredPluginSelection {
@@ -4556,7 +4624,9 @@ generation = 7
         );
         runtime.shutdown().await;
         assert_eq!(target_hook_v1.deactivations.load(Ordering::SeqCst), 1);
-        assert_eq!(target_hook_v2.deactivations.load(Ordering::SeqCst), 1);
+        // The full reload above retires and re-activates every owned hook once.
+        assert_eq!(target_hook_v2.activations.load(Ordering::SeqCst), 2);
+        assert_eq!(target_hook_v2.deactivations.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
@@ -5073,6 +5143,25 @@ generation = 7
         );
         assert!(snapshots[0].lease_id.is_none());
         assert!(snapshots[0].failure.is_none());
+    }
+
+    #[tokio::test]
+    async fn task_wait_rejects_timeouts_above_the_control_cap() {
+        let dir = tempdir().expect("temp dir");
+        let inner = test_started_runtime_inner("token", dir.path()).await;
+        let response = inner
+            .handle_request(ControlRequest::new(
+                "token",
+                ControlCommand::TaskWait(TaskWaitParam {
+                    ids: vec!["any".into()],
+                    timeout_ms: mutsuki_service_control::MAX_TASK_WAIT_TIMEOUT_MS + 1,
+                }),
+            ))
+            .await;
+        assert!(matches!(
+            response,
+            ControlResponse::Error(ref body) if body.code == ControlErrorCode::BadRequest
+        ));
     }
 
     #[tokio::test]

@@ -306,7 +306,9 @@ async fn agentkit_issue3_runs_real_state_machine_through_service_host_and_core()
     });
 
     let runtime = builder.start().await.unwrap();
-    let client = ControlClient::new((&service).into());
+    let client = ControlClient::new(mutsuki_service_runtime::local_control_client_config(
+        &service,
+    ));
 
     let session = submit_and_wait::<AgentSession>(
         &client,

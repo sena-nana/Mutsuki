@@ -21,8 +21,6 @@ use mutsuki_web_extension_control::{CAPABILITY_RUNTIME_READ, ControlRpcCaller};
 use mutsuki_web_protocol::{AssetEntry, ExtensionManifest, WebFrontendAssets};
 use serde_json::{Value, json};
 
-pub use mutsuki_web_extension_control::FixtureControlHandler;
-
 pub const PLUGIN_ID: &str = "overview";
 pub const PLUGIN_VERSION: &str = "0.1.0";
 

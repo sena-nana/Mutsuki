@@ -105,44 +105,41 @@ impl ChildAgentExecutor for RuntimeClientChildExecutor {
                 "TaskPool did not return a child run handle",
             )
         })?;
-        loop {
-            match self
-                .client
-                .task_outcome(&handle)
-                .map_err(runtime_client_error)?
-            {
-                Some(TaskOutcome::Completed {
-                    output: Some(output),
-                    ..
-                }) => {
-                    return serde_json::from_value(output).map_err(|error| {
-                        AgentError::new(
-                            "agent.subagent.invalid_result",
-                            format!("child run result is not an AgentRunResult: {error}"),
-                        )
-                    });
-                }
-                Some(TaskOutcome::Completed { .. }) => {
-                    return Err(AgentError::new(
-                        "agent.subagent.result_missing",
-                        "child run completed without an AgentRunResult",
-                    ));
-                }
-                Some(TaskOutcome::Failed { error, .. }) => {
-                    let message = match error.evidence.get("message") {
-                        Some(ScalarValue::String(message)) => message.clone(),
-                        _ => error.route.clone(),
-                    };
-                    return Err(AgentError::new(error.code, message));
-                }
-                Some(other) => {
-                    return Err(AgentError::new(
-                        "agent.subagent.incomplete",
-                        format!("child run did not complete: {other:?}"),
-                    ));
-                }
-                None => std::thread::yield_now(),
+        // Event-driven blocking wait (no spin): the Host actor replies when the
+        // child reaches a terminal state.
+        match self
+            .client
+            .wait_outcome(&handle, None)
+            .map_err(runtime_client_error)?
+        {
+            Some(TaskOutcome::Completed {
+                output: Some(output),
+                ..
+            }) => serde_json::from_value(output).map_err(|error| {
+                AgentError::new(
+                    "agent.subagent.invalid_result",
+                    format!("child run result is not an AgentRunResult: {error}"),
+                )
+            }),
+            Some(TaskOutcome::Completed { .. }) => Err(AgentError::new(
+                "agent.subagent.result_missing",
+                "child run completed without an AgentRunResult",
+            )),
+            Some(TaskOutcome::Failed { error, .. }) => {
+                let message = match error.evidence.get("message") {
+                    Some(ScalarValue::String(message)) => message.clone(),
+                    _ => error.route.clone(),
+                };
+                Err(AgentError::new(error.code, message))
             }
+            Some(other) => Err(AgentError::new(
+                "agent.subagent.incomplete",
+                format!("child run did not complete: {other:?}"),
+            )),
+            None => Err(AgentError::new(
+                "agent.subagent.incomplete",
+                "child run wait ended without an outcome",
+            )),
         }
     }
 }

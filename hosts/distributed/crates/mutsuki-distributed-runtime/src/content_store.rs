@@ -4,7 +4,7 @@ use mutsuki_distributed_contracts::{
 use mutsuki_runtime_contracts::ContentId;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, VecDeque};
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
@@ -440,18 +440,7 @@ fn atomic_json_write<T: serde::Serialize>(
 }
 
 fn atomic_bytes_write(path: &Path, bytes: &[u8], sync: bool) -> Result<(), DistributedError> {
-    let temporary = path.with_extension("tmp");
-    let mut file = OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(&temporary)
-        .map_err(|_| storage_error())?;
-    file.write_all(bytes).map_err(|_| storage_error())?;
-    if sync {
-        file.sync_all().map_err(|_| storage_error())?;
-    }
-    fs::rename(temporary, path).map_err(|_| storage_error())
+    crate::durable_io::replace_file(path, bytes, sync).map_err(|_| storage_error())
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, DistributedError> {

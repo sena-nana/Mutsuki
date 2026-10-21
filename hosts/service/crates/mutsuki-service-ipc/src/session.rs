@@ -50,17 +50,6 @@ impl ControlClientConfig {
     }
 }
 
-impl From<&mutsuki_service_config::ServiceConfig> for ControlClientConfig {
-    fn from(config: &mutsuki_service_config::ServiceConfig) -> Self {
-        Self::new(
-            config.ipc.transport.clone(),
-            config.ipc_endpoint(),
-            config.control_token(),
-        )
-        .with_profile(ControlIpcProfile::from_config(config))
-    }
-}
-
 struct PendingResponse {
     method: ControlMethod,
     tx: oneshot::Sender<IpcResult<ControlResponse>>,

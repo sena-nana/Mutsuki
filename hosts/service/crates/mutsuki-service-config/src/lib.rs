@@ -56,8 +56,6 @@ pub enum ConfigError {
         path: PathBuf,
         source: std::io::Error,
     },
-    #[error("control token is required; set MUTSUKI_CONTROL_TOKEN or configure [ipc].token")]
-    MissingControlToken,
     #[error("Host secret rotation requires a configured secret_file")]
     SecretRotationUnavailable,
     #[error("Host secret {key} is controlled by environment variable {variable}")]
@@ -1176,10 +1174,6 @@ impl ServiceConfig {
         if self.ipc.token.is_some() {
             return Ok(());
         }
-        if env::var("MUTSUKI_TEST_ALLOW_EMPTY_TOKEN").as_deref() == Ok("1") {
-            self.ipc.token = Some(String::new());
-            return Ok(());
-        }
         let token_path = self.service.run_dir.join("control.token");
         if let Ok(token) = fs::read_to_string(&token_path) {
             let token = token.trim().to_string();
@@ -1321,6 +1315,13 @@ fn validate_secret_entries(
     Ok(secrets)
 }
 
+/// Crash-safe replacement of a Host-managed state file: write and fsync a
+/// sibling temporary, rename it over `path`, then fsync the parent directory.
+/// A crash leaves either the previous or the new complete file, never neither.
+pub fn write_managed_file_atomically(path: &Path, bytes: &[u8]) -> ConfigResult<()> {
+    atomic_write(path, bytes, false)
+}
+
 fn atomic_write(path: &Path, bytes: &[u8], secret: bool) -> ConfigResult<()> {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1398,7 +1399,7 @@ fn verify_directory_access(path: &Path) -> ConfigResult<()> {
         path: path.to_path_buf(),
         source,
     };
-    fs::read_dir(path).map_err(&access_error)?;
+    fs::read_dir(path).map_err(access_error)?;
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
@@ -1407,7 +1408,7 @@ fn verify_directory_access(path: &Path) -> ConfigResult<()> {
         ".mutsuki-access-probe-{}-{nonce:x}",
         std::process::id()
     ));
-    fs::write(&probe, []).map_err(&access_error)?;
+    fs::write(&probe, []).map_err(access_error)?;
     fs::remove_file(probe).map_err(access_error)
 }
 

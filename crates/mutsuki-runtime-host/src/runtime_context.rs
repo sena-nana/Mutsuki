@@ -1,5 +1,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
+use std::time::{Duration, Instant};
 
 use mutsuki_runtime_contracts::resource::experimental::{CommandBatch, SagaPlan};
 use mutsuki_runtime_contracts::{
@@ -163,6 +164,41 @@ impl TaskSubmitter for ActorCommandClient {
         match self.dispatch(HostRuntimeCommand::TaskOutcome(handle.clone()))? {
             HostRuntimeReply::TaskOutcome(outcome) => Ok(outcome),
             reply => Err(unexpected_reply("task.outcome", reply)),
+        }
+    }
+
+    /// Event-driven: the actor parks the wait and replies on the terminal
+    /// transition (or deadline), so the caller blocks without polling.
+    fn wait_outcome(
+        &self,
+        handle: &TaskHandle,
+        timeout: Option<Duration>,
+    ) -> RuntimeResult<Option<TaskOutcome>> {
+        // Unbounded waits re-arm in bounded slices so a lost actor is noticed.
+        const SLICE: Duration = Duration::from_secs(30);
+        let deadline = timeout.map(|timeout| Instant::now() + timeout);
+        loop {
+            let slice_end = match deadline {
+                Some(deadline) => deadline.min(Instant::now() + SLICE),
+                None => Instant::now() + SLICE,
+            };
+            let (reply_tx, reply_rx) = mpsc::channel();
+            self.tx
+                .send(CoreActorMsg::WaitTaskStates {
+                    handles: vec![handle.clone()],
+                    deadline: slice_end,
+                    reply: reply_tx,
+                })
+                .map_err(|()| host_failure("host.actor.command", "actor mailbox closed"))?;
+            let states = reply_rx
+                .recv()
+                .map_err(|error| host_failure("host.actor.reply", error.to_string()))??;
+            if let Some(outcome) = states.into_iter().find_map(|state| state.outcome) {
+                return Ok(Some(outcome));
+            }
+            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                return Ok(None);
+            }
         }
     }
 }

@@ -6,6 +6,7 @@ mode = "embedded"
 
 [core]
 max_ticks_per_call = 64
+shutdown_drain_ms = 2000
 
 [frontend]
 event_buffer = 1024

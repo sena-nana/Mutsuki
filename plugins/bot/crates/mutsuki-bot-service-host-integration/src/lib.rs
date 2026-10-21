@@ -32,7 +32,6 @@ mod console_bridge;
 mod delivery_recovery;
 mod event_source;
 mod orchestrated_flow;
-mod sandbox_intercept;
 
 pub use ai_bundle::QqAiBotPluginBundle;
 pub use bilibili::{BilibiliPollingCredentials, BilibiliPollingEventSource};

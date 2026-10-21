@@ -1143,13 +1143,27 @@ impl MutsukiTauriHost {
     ///
     /// Panics if the associated lock is poisoned.
     pub fn shutdown(&self) {
-        let abort_error = self
-            .runtime
-            .lock()
-            .unwrap()
-            .abort("tauri_host.shutdown")
-            .err()
-            .map(|error| format!("{:?}", error.error()));
+        self.shutdown_with_drain(Duration::ZERO);
+    }
+
+    /// Graceful stop: reject new external work, let in-flight tasks finish
+    /// within `budget` (event-driven, no polling), then abort what remains.
+    /// Call it off the UI thread when `budget` is non-zero.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the associated lock is poisoned.
+    pub fn shutdown_with_drain(&self, budget: Duration) {
+        let abort_error = {
+            let runtime = self.runtime.lock().unwrap();
+            if !budget.is_zero() && runtime.begin_drain().is_ok() {
+                let _ = runtime.wait_until_idle(budget);
+            }
+            runtime
+                .abort("tauri_host.shutdown")
+                .err()
+                .map(|error| format!("{:?}", error.error()))
+        };
         self.tasks.shutdown(
             abort_error
                 .as_deref()

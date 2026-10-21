@@ -162,7 +162,21 @@ async fn run_polling(
     loop {
         tokio::select! {
             _ = ticker.tick() => {
-                let snapshot = config.snapshot();
+                let snapshot = config.current();
+                // Drop scheduling state of subscriptions/kinds that no longer
+                // exist so removed subscriptions do not leak map entries.
+                let live = |key: &(String, String)| {
+                    snapshot.subscriptions.iter().any(|subscription| {
+                        subscription.subscription_id == key.0
+                            && subscription
+                                .notifications
+                                .iter()
+                                .any(|kind| kind.protocol_id() == key.1)
+                    })
+                };
+                inflight.retain(|key, _| live(key));
+                next_due.retain(|key, _| live(key));
+                failures.retain(|key, _| live(key));
                 for subscription in &snapshot.subscriptions {
                     if subscription.paused { continue; }
                     for kind in &subscription.notifications {

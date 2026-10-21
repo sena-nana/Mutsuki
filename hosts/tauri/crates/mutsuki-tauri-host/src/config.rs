@@ -114,6 +114,10 @@ pub struct MutsukiTauriConfig {
     pub task_event_capacity_total: usize,
     #[serde(default = "default_frontend_event_batch_size")]
     pub frontend_event_batch_size: usize,
+    /// Budget for in-flight tasks to finish when the app exits, before the
+    /// remaining work is aborted. Zero aborts immediately.
+    #[serde(default = "default_shutdown_drain_ms")]
+    pub shutdown_drain_ms: u64,
     pub preview_ttl_secs: u64,
     #[serde(default)]
     pub plugin_selection: PluginSelection,
@@ -133,6 +137,7 @@ impl MutsukiTauriConfig {
             task_event_capacity_per_task: default_task_event_capacity_per_task(),
             task_event_capacity_total: default_task_event_capacity_total(),
             frontend_event_batch_size: default_frontend_event_batch_size(),
+            shutdown_drain_ms: default_shutdown_drain_ms(),
             preview_ttl_secs: 300,
             plugin_selection: PluginSelection::default(),
             paths: PathsConfig::for_app(&app_name),
@@ -152,4 +157,8 @@ const fn default_task_event_capacity_total() -> usize {
 
 const fn default_frontend_event_batch_size() -> usize {
     128
+}
+
+const fn default_shutdown_drain_ms() -> u64 {
+    2_000
 }

@@ -1,5 +1,6 @@
 [host]
 mode = "embedded"
+shutdown_drain_ms = 2000
 
 [frontend]
 event_buffer = 1024

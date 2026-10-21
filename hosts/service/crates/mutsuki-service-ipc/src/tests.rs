@@ -161,7 +161,7 @@ async fn persistent_binary_handles_multiple_requests_on_one_connection() {
         .await
         .unwrap()
         .unwrap();
-    let client = ControlClient::new((&config).into());
+    let client = ControlClient::new(client_config(&config));
     let session = ControlSession::connect(client.config().clone())
         .await
         .unwrap();
@@ -197,7 +197,9 @@ async fn binary_multiplex_cancel_and_timeout() {
     .await
     .unwrap()
     .unwrap();
-    let session = ControlSession::connect((&config).into()).await.unwrap();
+    let session = ControlSession::connect(client_config(&config))
+        .await
+        .unwrap();
     let err = session
         .request(ControlCommand::HealthCheck)
         .await
@@ -223,7 +225,7 @@ async fn drain_rejects_new_requests() {
         .await
         .unwrap()
         .unwrap();
-    ControlSession::connect((&config).into())
+    ControlSession::connect(client_config(&config))
         .await
         .expect("the server accepts sessions before it drains");
 
@@ -232,7 +234,7 @@ async fn drain_rejects_new_requests() {
     // returns. Polling for it asserts the outcome instead of guessing how long that moment is.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
-        let rejected = match ControlSession::connect((&config).into()).await {
+        let rejected = match ControlSession::connect(client_config(&config)).await {
             Err(_) => true,
             // Losing the race with the accept loop is allowed; being served is not.
             Ok(session) => {
@@ -267,7 +269,7 @@ async fn named_pipe_server_is_ready_when_start_returns() {
         .await
         .unwrap()
         .unwrap();
-    let response = ControlClient::new((&config).into())
+    let response = ControlClient::new(client_config(&config))
         .request(ControlCommand::HealthCheck)
         .await
         .unwrap();
@@ -286,4 +288,13 @@ fn encode_helpers_reuse_caller_buffers() {
         .unwrap();
     assert!(frame.len() > BINARY_LENGTH_PREFIX_LEN);
     assert!(!frame.ends_with(b"\n"));
+}
+
+fn client_config(config: &ServiceConfig) -> crate::ControlClientConfig {
+    crate::ControlClientConfig::new(
+        config.ipc.transport.clone(),
+        config.ipc_endpoint(),
+        config.control_token(),
+    )
+    .with_profile(crate::ControlIpcProfile::from_config(config))
 }

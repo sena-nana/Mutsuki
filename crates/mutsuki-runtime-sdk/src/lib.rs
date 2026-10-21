@@ -79,6 +79,7 @@ pub use plugin::{
     BuiltinPluginLoader, HostEffect, HostEffectFuture, HostEffectKind, LoadedPlugin, Plugin,
     PluginBuilder, PluginLoader, RuntimeBootstrapperAsyncResourceProvider,
     RuntimeBootstrapperEffect, RuntimeBootstrapperResourceProvider, RuntimeBootstrapperService,
+    ensure_plugin_backend_descriptors,
 };
 pub use portability::Checkpointable;
 pub use resource::{ResourceClient, ResourceKind, TypedResourceHandle};
@@ -114,6 +115,40 @@ pub trait RuntimeClient: Send + Sync {
     }
     fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>>;
     fn register_waker(&self, _handle: &TaskHandle, _waker: &Waker) {}
+    /// Blocking wait for an outcome; see [`TaskSubmitter::wait_outcome`].
+    fn wait_outcome(
+        &self,
+        handle: &TaskHandle,
+        timeout: Option<std::time::Duration>,
+    ) -> RuntimeResult<Option<TaskOutcome>> {
+        poll_outcome_with_backoff(timeout, || self.task_outcome(handle))
+    }
+}
+
+/// Bounded-backoff outcome polling for clients without a notification path:
+/// 50µs doubling to 5ms between probes, never a busy spin. `Ok(None)` means
+/// the deadline passed first.
+pub fn poll_outcome_with_backoff(
+    timeout: Option<std::time::Duration>,
+    mut probe: impl FnMut() -> RuntimeResult<Option<TaskOutcome>>,
+) -> RuntimeResult<Option<TaskOutcome>> {
+    const FIRST: std::time::Duration = std::time::Duration::from_micros(50);
+    const MAX: std::time::Duration = std::time::Duration::from_millis(5);
+    let deadline = timeout.map(|timeout| std::time::Instant::now() + timeout);
+    let mut delay = FIRST;
+    loop {
+        if let Some(outcome) = probe()? {
+            return Ok(Some(outcome));
+        }
+        let now = std::time::Instant::now();
+        let pause = match deadline {
+            Some(deadline) if now >= deadline => return Ok(None),
+            Some(deadline) => delay.min(deadline - now),
+            None => delay,
+        };
+        std::thread::sleep(pause);
+        delay = (delay * 2).min(MAX);
+    }
 }
 
 fn lane_failure(entry: &mutsuki_runtime_contracts::BatchEntry, detail: &str) -> EntryCompletion {

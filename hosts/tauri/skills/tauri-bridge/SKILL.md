@@ -20,3 +20,6 @@ Use this for `crates/tauri-plugin-mutsuki` and `crates/mutsuki-tauri-bridge`.
 - Include frontend context fields when available: window label, session id, trace id, correlation id and user action id.
 - Command payloads must remain JSON-friendly and bounded; large data moves through ResourceRef.
 - All command errors must serialize as `FrontendError`.
+- Synchronous Tauri commands run on the UI thread. Any command that can wait on Core (task results,
+  calls, reloads, resource I/O) must be `async` and wait on the blocking pool (`off_main_thread` /
+  `spawn_blocking`); only short, non-waiting dispatches stay synchronous.

@@ -694,6 +694,10 @@ fn default_task_wait_timeout_ms() -> u64 {
     5_000
 }
 
+/// Upper bound for one `TaskWait` request. Long waits must be re-issued so a
+/// single client cannot pin a control-plane wait indefinitely.
+pub const MAX_TASK_WAIT_TIMEOUT_MS: u64 = 60_000;
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct TaskWaitResponse {
     pub outcomes: Vec<TaskOutcomeView>,

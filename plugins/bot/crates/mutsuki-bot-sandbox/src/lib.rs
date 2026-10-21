@@ -16,12 +16,16 @@
 )]
 
 mod content;
+mod intercept;
 mod service;
 mod types;
 
 pub use content::{
     SandboxContentRef, SandboxRefKind, hash_bytes, normalize_segments, parse_face_id,
     remap_sandbox_media_ids,
+};
+pub use intercept::{
+    SandboxAwareDeliveryGateway, SandboxAwareOpenApiRunner, SandboxInterceptHandle,
 };
 pub use service::{
     PROACTIVE_SEND_DENIED, REPLY_TARGET_NOT_FOUND, REPLY_TARGET_NOT_USER, REPLY_WINDOW_EXPIRED,

@@ -453,42 +453,7 @@ impl PluginBuilder {
             return;
         }
         let deployment = PluginDeploymentKind::default_for_artifact(&self.artifact.artifact_type);
-        let deployment_name = match deployment {
-            PluginDeploymentKind::Builtin => "builtin",
-            PluginDeploymentKind::Abi => "abi",
-            PluginDeploymentKind::Wasm => "wasm",
-            PluginDeploymentKind::Process => "process",
-            PluginDeploymentKind::Python => "python",
-        };
-        let backend_id = format!("plugin.backend.{}.{deployment_name}", self.plugin_id);
-        if !self.provides.host_extensions.iter().any(|extension| {
-            extension.extension_id == format!("host.extension.{}.{deployment_name}", self.plugin_id)
-        }) {
-            self.provides.host_extensions.push(HostExtensionDescriptor {
-                extension_id: format!("host.extension.{}.{deployment_name}", self.plugin_id),
-                kind: HostExtensionKind::PluginBackend,
-                supported_deployments: vec![deployment.clone()],
-                reload_policy: "static".into(),
-                drain_required: false,
-            });
-        }
-        if !self
-            .provides
-            .plugin_backends
-            .iter()
-            .any(|backend| backend.backend_id == backend_id)
-        {
-            self.provides.plugin_backends.push(PluginBackendDescriptor {
-                backend_id,
-                deployment_kind: deployment.clone(),
-                task_client_protocol: "mutsuki.task.v1".into(),
-                resource_client_protocol: "mutsuki.resource-plan.v1".into(),
-                codec_id: (deployment == PluginDeploymentKind::Abi)
-                    .then(|| crate::abi::ABI_V2_CODEC_ID.into()),
-                bridge_id: (deployment == PluginDeploymentKind::Abi)
-                    .then(|| crate::abi::ABI_V2_BRIDGE_ID.into()),
-            });
-        }
+        ensure_plugin_backend_descriptors(self.plugin_id.as_str(), &mut self.provides, &deployment);
         if deployment == PluginDeploymentKind::Abi {
             if !self
                 .provides
@@ -538,5 +503,65 @@ impl PluginBuilder {
 impl Plugin for PluginBuilder {
     fn load(self: Box<Self>) -> RuntimeResult<LoadedPlugin> {
         Ok((*self).build())
+    }
+}
+
+/// Declares the Host extension and plugin backend a deployment needs, unless
+/// the manifest already declares them. Single owner for every Host that adapts
+/// manifests to a deployment (SDK builder, desktop process loader, ...).
+///
+/// Out-of-process deployments (`Process`, `Python`) hold in-flight work in a
+/// child runner, so their backend requires drain-and-swap on reload; in-process
+/// deployments swap statically.
+pub fn ensure_plugin_backend_descriptors(
+    plugin_id: &str,
+    provides: &mut PluginProvides,
+    deployment: &PluginDeploymentKind,
+) {
+    let deployment_name = match deployment {
+        PluginDeploymentKind::Builtin => "builtin",
+        PluginDeploymentKind::Abi => "abi",
+        PluginDeploymentKind::Wasm => "wasm",
+        PluginDeploymentKind::Process => "process",
+        PluginDeploymentKind::Python => "python",
+    };
+    let out_of_process = matches!(
+        deployment,
+        PluginDeploymentKind::Process | PluginDeploymentKind::Python
+    );
+    let extension_id = format!("host.extension.{plugin_id}.{deployment_name}");
+    if !provides
+        .host_extensions
+        .iter()
+        .any(|extension| extension.extension_id == extension_id)
+    {
+        provides.host_extensions.push(HostExtensionDescriptor {
+            extension_id,
+            kind: HostExtensionKind::PluginBackend,
+            supported_deployments: vec![deployment.clone()],
+            reload_policy: if out_of_process {
+                "drain_and_swap"
+            } else {
+                "static"
+            }
+            .into(),
+            drain_required: out_of_process,
+        });
+    }
+    let backend_id = format!("plugin.backend.{plugin_id}.{deployment_name}");
+    if !provides
+        .plugin_backends
+        .iter()
+        .any(|backend| backend.backend_id == backend_id)
+    {
+        let abi = *deployment == PluginDeploymentKind::Abi;
+        provides.plugin_backends.push(PluginBackendDescriptor {
+            backend_id,
+            deployment_kind: deployment.clone(),
+            task_client_protocol: "mutsuki.task.v1".into(),
+            resource_client_protocol: "mutsuki.resource-plan.v1".into(),
+            codec_id: abi.then(|| crate::abi::ABI_V2_CODEC_ID.into()),
+            bridge_id: abi.then(|| crate::abi::ABI_V2_BRIDGE_ID.into()),
+        });
     }
 }

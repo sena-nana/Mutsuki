@@ -1471,25 +1471,7 @@ fn persist_snapshot(
         snapshot.last_included_log_index,
         &payload,
     )?;
-    let temp = PathBuf::from(format!("{}.tmp", path.display()));
-    ensure_parent(path)?;
-    let mut file = OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(&temp)
-        .map_err(|_| registry_storage_error())?;
-    file.write_all(&frame)
-        .and_then(|()| file.sync_all())
-        .map_err(|_| registry_storage_error())?;
-    fs::rename(&temp, path).map_err(|_| registry_storage_error())?;
-    #[cfg(unix)]
-    sync_parent(path)?;
-    // Windows cannot open a directory through the ordinary File API used by
-    // std, and FlushFileBuffers is specified for file handles rather than
-    // directory metadata. The snapshot file itself was synced before the
-    // atomic rename, so there is no supported parent-directory flush to add.
-    Ok(())
+    crate::durable_io::replace_file(path, &frame, true).map_err(|_| registry_storage_error())
 }
 
 fn load_snapshot(
@@ -1601,16 +1583,6 @@ fn ensure_parent(path: &Path) -> Result<(), DistributedError> {
         fs::create_dir_all(parent).map_err(|_| registry_storage_error())?;
     }
     Ok(())
-}
-
-#[cfg(unix)]
-fn sync_parent(path: &Path) -> Result<(), DistributedError> {
-    let Some(parent) = path.parent() else {
-        return Ok(());
-    };
-    File::open(parent)
-        .and_then(|file| file.sync_all())
-        .map_err(|_| registry_storage_error())
 }
 
 fn validate_replica_ids(replicas: &[Arc<dyn MetadataReplica>]) -> Result<(), DistributedError> {

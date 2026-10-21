@@ -185,7 +185,9 @@ async fn flow_agent_tools_apply_through_approval_and_report_conflicts() {
     builder = builder.register_builtin_async_handler(move || model_bundle.model_async_handler());
 
     let runtime = builder.start().await.unwrap();
-    let client = ControlClient::new((&service).into());
+    let client = ControlClient::new(mutsuki_service_runtime::local_control_client_config(
+        &service,
+    ));
 
     let session = submit_and_wait::<AgentSession>(
         &client,

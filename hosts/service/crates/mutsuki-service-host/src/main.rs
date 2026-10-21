@@ -241,7 +241,9 @@ fn print_daemon_action(action: &str, config: &ServiceConfig) {
 }
 
 async fn request_and_print(config: &ServiceConfig, command: ControlCommand) -> anyhow::Result<()> {
-    let client = mutsuki_service_ipc::ControlClient::new(config.into());
+    let client = mutsuki_service_ipc::ControlClient::new(
+        mutsuki_service_runtime::local_control_client_config(config),
+    );
     let response = client.request(command).await?;
     let _ = client.close().await;
     println!("{}", serde_json::to_string_pretty(&response)?);

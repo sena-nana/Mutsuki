@@ -499,14 +499,7 @@ pub(crate) fn configured_plugin_selection_from_value(
             })
         }
         QQBOT_ADAPTER_PLUGIN_ID => {
-            let mut config: QqBotConfig = object
-                .get("runtime_config")
-                .cloned()
-                .and_then(|value| serde_json::from_value(value).ok())
-                .or_else(|| {
-                    base.and_then(|selection| serde_json::from_value(selection.config.clone()).ok())
-                })
-                .unwrap_or_default();
+            let mut config: QqBotConfig = owner_runtime_config(object, base)?;
             config.account_id = if config.account_id.trim().is_empty() {
                 "local".into()
             } else {
@@ -536,9 +529,7 @@ pub(crate) fn configured_plugin_selection_from_value(
             })
         }
         LOCAL_AGENT_CONFIG_PROVIDER_ID => {
-            let mut config: LocalAgentConfig = base
-                .and_then(|selection| serde_json::from_value(selection.config.clone()).ok())
-                .unwrap_or_default();
+            let mut config: LocalAgentConfig = base_owner_config(base)?;
             config.endpoint = string_field(object, "endpoint")?;
             config.model = string_field(object, "model")?;
             config.api_key_key = LOCAL_AGENT_API_KEY.into();
@@ -548,10 +539,15 @@ pub(crate) fn configured_plugin_selection_from_value(
             if let Some(persona_value) = object.get("persona") {
                 config.persona = persona_from_config_json(persona_value, fallback_prompt)
                     .map_err(|reason| ConfigError::ApplyRejected { reason })?;
-                config.assistant_instruction = config.persona.system_prompt.clone();
+                config
+                    .assistant_instruction
+                    .clone_from(&config.persona.system_prompt);
             } else {
                 config.assistant_instruction = string_field(object, "assistant_instruction")?;
-                config.persona.system_prompt = config.assistant_instruction.clone();
+                config
+                    .persona
+                    .system_prompt
+                    .clone_from(&config.assistant_instruction);
             }
             let enabled = bool_field(object, "enabled")?;
             if enabled {
@@ -584,14 +580,7 @@ pub(crate) fn configured_plugin_selection_from_value(
         }
         BILIBILI_PLUGIN_ID => {
             let enabled = bool_field(object, "enabled")?;
-            let mut config: BilibiliConfig = object
-                .get("runtime_config")
-                .cloned()
-                .and_then(|value| serde_json::from_value(value).ok())
-                .or_else(|| {
-                    base.and_then(|selection| serde_json::from_value(selection.config.clone()).ok())
-                })
-                .unwrap_or_default();
+            let mut config: BilibiliConfig = owner_runtime_config(object, base)?;
             // The product assembly owns the media resource provider binding;
             // owner documents no longer carry a provider id.
             config.media_provider_id = MEDIA_RESOURCE_PROVIDER_ID.into();
@@ -643,6 +632,42 @@ pub(crate) fn configured_plugin_selection_from_value(
         _ => Err(ConfigError::ApplyRejected {
             reason: format!("未知产品配置 `{provider_id}`"),
         }),
+    }
+}
+
+/// Owner config carried by a product document: an explicit `runtime_config`
+/// must parse, otherwise the currently applied selection is the base. Malformed
+/// input is rejected; it never silently falls back to the old or default config.
+fn owner_runtime_config<T>(
+    object: &serde_json::Map<String, serde_json::Value>,
+    base: Option<&ConfiguredPluginSelection>,
+) -> Result<T, ConfigError>
+where
+    T: serde::de::DeserializeOwned + Default,
+{
+    match object.get("runtime_config") {
+        Some(value) => {
+            serde_json::from_value(value.clone()).map_err(|error| ConfigError::ApplyRejected {
+                reason: format!("runtime_config 无效: {error}"),
+            })
+        }
+        None => base_owner_config(base),
+    }
+}
+
+/// The applied selection's config; an absent or `null` config is the owner
+/// default, but an unreadable stored config is an error rather than a reset.
+fn base_owner_config<T>(base: Option<&ConfiguredPluginSelection>) -> Result<T, ConfigError>
+where
+    T: serde::de::DeserializeOwned + Default,
+{
+    match base.map(|selection| &selection.config) {
+        None | Some(serde_json::Value::Null) => Ok(T::default()),
+        Some(config) => {
+            serde_json::from_value(config.clone()).map_err(|error| ConfigError::ApplyRejected {
+                reason: format!("当前插件配置无法读取: {error}"),
+            })
+        }
     }
 }
 
@@ -759,6 +784,19 @@ mod tests {
         assert!(!selected.enabled);
         let config: QqBotConfig = serde_json::from_value(selected.config).unwrap();
         assert!(config.app_id.is_empty());
+    }
+
+    #[test]
+    fn malformed_runtime_config_is_rejected_instead_of_reset() {
+        let mut document = qq_config_value(false, &QqBotConfig::default()).to_json();
+        document["runtime_config"] = serde_json::json!("not an owner config");
+        let error = configured_plugin_selection_from_value(
+            QQBOT_ADAPTER_PLUGIN_ID,
+            &ConfigValue::from_json(&document),
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(error, ConfigError::ApplyRejected { .. }));
     }
 
     #[test]
@@ -891,7 +929,10 @@ mod tests {
                 },
             });
             let error = runtime_plugin_selections(&product).unwrap_err();
-            assert!(error.to_string().contains("不得配置 owner 插件"));
+            assert!(
+                matches!(&error, ConfigError::ApplyRejected { reason } if reason.contains(plugin_id)),
+                "{plugin_id} must be rejected as an owner plugin: {error}"
+            );
         }
     }
 }

@@ -213,10 +213,12 @@ async fn explicit_fast_fallback_starts_only_as_visible_degraded_local_execution(
         .start()
         .await
         .unwrap();
-    let response = mutsuki_service_ipc::ControlClient::new((&control_config).into())
-        .request(ControlCommand::HealthCheck)
-        .await
-        .unwrap();
+    let response = mutsuki_service_ipc::ControlClient::new(
+        mutsuki_service_runtime::local_control_client_config(&control_config),
+    )
+    .request(ControlCommand::HealthCheck)
+    .await
+    .unwrap();
     let ControlResponse::Ok(ControlResult::HealthCheck(health)) = response else {
         panic!("unexpected response: {response:?}");
     };

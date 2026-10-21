@@ -1148,6 +1148,30 @@ impl HostRuntime {
         }
     }
 
+    /// Waits, event-driven on terminal completions, until no task is ready or
+    /// running, or `budget` expires. Returns the number of tasks still
+    /// outstanding (0 when idle). Pair with [`Self::begin_drain`] for a graceful
+    /// stop: drain rejects new external work while this lets in-flight work end.
+    pub fn wait_until_idle(&self, budget: Duration) -> RuntimeResult<usize> {
+        let deadline = Instant::now() + budget;
+        let subscription = self.subscribe_task_completions();
+        loop {
+            // Read the revision before the statistics so a completion landing in
+            // between still wakes the wait below.
+            let revision = subscription.revision();
+            let statistics = self.statistics()?;
+            let outstanding = statistics
+                .tasks
+                .running
+                .saturating_add(statistics.tasks.ready);
+            let now = Instant::now();
+            if outstanding == 0 || now >= deadline {
+                return Ok(outstanding);
+            }
+            let _ = subscription.wait_after_timeout(revision, deadline - now);
+        }
+    }
+
     pub fn abort(&self, reason: impl Into<String>) -> RuntimeResult<usize> {
         match self.dispatch(HostRuntimeCommand::Abort {
             reason: reason.into(),

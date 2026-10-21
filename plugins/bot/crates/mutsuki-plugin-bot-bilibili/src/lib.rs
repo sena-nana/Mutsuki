@@ -405,19 +405,26 @@ impl BilibiliConfig {
 }
 
 #[derive(Clone)]
-pub struct SharedBilibiliConfig(Arc<RwLock<BilibiliConfig>>);
+pub struct SharedBilibiliConfig(Arc<RwLock<Arc<BilibiliConfig>>>);
 
 impl SharedBilibiliConfig {
     pub fn new(config: BilibiliConfig) -> Self {
-        Self(Arc::new(RwLock::new(config)))
+        Self(Arc::new(RwLock::new(Arc::new(config))))
     }
 
+    /// Owned copy for callers that edit and `replace` the configuration.
     pub fn snapshot(&self) -> BilibiliConfig {
-        self.0.read().expect("Bilibili config read lock").clone()
+        self.current().as_ref().clone()
+    }
+
+    /// Cheap shared view of the current configuration for hot readers such as
+    /// the polling tick; replacing the config never mutates a held view.
+    pub fn current(&self) -> Arc<BilibiliConfig> {
+        Arc::clone(&self.0.read().expect("Bilibili config read lock"))
     }
 
     pub fn replace(&self, config: BilibiliConfig) {
-        *self.0.write().expect("Bilibili config write lock") = config;
+        *self.0.write().expect("Bilibili config write lock") = Arc::new(config);
     }
 }
 
@@ -2338,7 +2345,10 @@ fn runner_descriptor(risk_control: bool) -> RunnerDescriptor {
     builder
         .requires_protocol(CARD_RENDER)
         .purity(RunnerPurity::Effectful)
-        .execution_class(ExecutionClass::Orchestration)
+        // Polls, link resolution and card media use the blocking secure-fetch
+        // transport; declaring Io keeps that I/O off the orchestration domain
+        // that drives Flow.
+        .execution_class(ExecutionClass::Io)
         .batch_capability(RunnerBatchCapability {
             mode: RunnerMode::ScalarAdapter,
             side_effect: RunnerSideEffect::External,
@@ -3405,7 +3415,7 @@ mod tests {
         );
         assert_eq!(
             risk_control.provides.runners[0].execution_class,
-            ExecutionClass::Orchestration
+            ExecutionClass::Io
         );
     }
 

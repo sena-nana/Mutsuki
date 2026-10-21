@@ -365,7 +365,10 @@ impl McpTransport for HttpMcpTransport {
         if let Some(value) = self.pending.pop_front() {
             return Ok(Some(value));
         }
-        thread::sleep(timeout.min(Duration::from_millis(1)));
+        // Streamable-HTTP responses are queued synchronously by `send`, so an
+        // empty queue cannot fill while we wait. Sleep the caller's whole slice
+        // (it already bounds it for cancellation checks) instead of a 1 ms poll.
+        thread::sleep(timeout);
         Ok(None)
     }
 

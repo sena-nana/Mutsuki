@@ -13,7 +13,12 @@ mutsuki-web-extension-api = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+[features]
+# Scripted fixture ControlHandler for tests and demos only.
+testkit = []
+
 [dev-dependencies]
+mutsuki-web-extension-control = { workspace = true, features = ["testkit"] }
 mutsuki-web-host = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }

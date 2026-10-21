@@ -1,13 +1,16 @@
+//! Sandbox interception for outbound QQ delivery: messages addressed to a
+//! sandbox conversation are recorded by the sandbox service instead of
+//! reaching the platform. Owned here (not by the Host integration crate) so the
+//! routing decision lives with the sandbox it serves.
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use crate::{SandboxApi, SandboxService, is_sandbox_target, qq_conversation_from_target};
 use mutsuki_bot_delivery::{DeliveryFailure, DeliveryGateway, DeliverySuccess};
 use mutsuki_bot_protocol::{
     BOT_MESSAGE_SEND_PROTOCOL_ID, BotDeliveryContent, BotDeliveryPartReceipt, BotEvent, BotMessage,
     BotNodeInvocation, BotTarget, DeliveryPartStatus, QqConversationRef,
-};
-use mutsuki_bot_sandbox::{
-    SandboxApi, SandboxService, is_sandbox_target, qq_conversation_from_target,
 };
 use mutsuki_runtime_contracts::{
     BatchPayload, CompletionBatch, EntryCompletion, RunnerContext, RunnerDescriptor, RunnerResult,
@@ -42,10 +45,13 @@ impl SandboxInterceptHandle {
                     content.reply_to.as_deref(),
                 )
             })
-            .map(|message| message.message_id)
-            .unwrap_or_else(|| format!("sandbox-msg-{:016x}", fastrand::u64(..)))
+            .map_or_else(
+                || format!("sandbox-msg-{:016x}", fastrand::u64(..)),
+                |message| message.message_id,
+            )
     }
 
+    #[must_use]
     pub fn intercept_delivery(
         &self,
         account_id: &str,
@@ -68,6 +74,7 @@ impl SandboxInterceptHandle {
         })
     }
 
+    #[must_use]
     pub fn intercept_send(&self, account_id: &str, task: &Task) -> Option<Value> {
         if task.protocol_id != BOT_MESSAGE_SEND_PROTOCOL_ID {
             return None;
@@ -239,10 +246,10 @@ fn send_message_from_task(task: &Task) -> Option<BotMessage> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{SANDBOX_GROUP_ID, SandboxApi};
     use mutsuki_bot_protocol::{
         BotConversationKind, BotTarget, MessageSegment, QQ_CONVERSATION_REF_VERSION,
     };
-    use mutsuki_bot_sandbox::{SANDBOX_GROUP_ID, SandboxApi};
     use mutsuki_runtime_contracts::{
         BatchEntry, BatchKey, DispatchLane, OrderingRequirement, WorkResourcePlan,
     };
@@ -445,8 +452,9 @@ mod tests {
         )
         .unwrap();
         assert!(
-            messages.iter().any(|item| item.text == "pong"
-                && item.role == mutsuki_bot_sandbox::SandboxSpeakerRole::Bot)
+            messages
+                .iter()
+                .any(|item| item.text == "pong" && item.role == crate::SandboxSpeakerRole::Bot)
         );
     }
 }
