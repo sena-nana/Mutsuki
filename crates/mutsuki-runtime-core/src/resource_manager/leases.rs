@@ -61,7 +61,7 @@ impl ResourceManager {
         }
         if mode != "shared" && mode != "exclusive" {
             return Err(crate::runtime_failure(
-                "resource.lease_mode_invalid",
+                mutsuki_runtime_contracts::ERR_RESOURCE_LEASE_MODE_INVALID,
                 "runtime.resource_manager",
                 format!("resource_cell.lease.{cell_id}.{mode}"),
             ));

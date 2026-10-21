@@ -283,7 +283,7 @@ fn to_runtime_failure(error: PluginHostError) -> RuntimeFailure {
 
 fn capability_unavailable(capability: &str) -> PluginHostError {
     let mut error = PluginHostError::new(
-        "plugin.capability_unavailable",
+        mutsuki_runtime_contracts::ERR_PLUGIN_CAPABILITY_UNAVAILABLE,
         "mutsuki.runtime-host",
         "plugin.capability_unavailable",
         format!("host capability is unavailable: {capability}"),

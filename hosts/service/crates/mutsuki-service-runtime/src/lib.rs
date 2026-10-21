@@ -2329,22 +2329,49 @@ impl ServiceRuntimeInner {
         if let Err(error) = write_runtime_lock(&self.config, &runtime_lock) {
             return ControlResponse::err(ControlError::Failed(error.to_string()));
         }
-        let decision = {
+        // Validate and commit under the lock, but drain without it: control calls arriving
+        // during the drain reach the actor and get its structured `host.reload.busy` reply
+        // instead of queueing on this mutex for the whole drain budget.
+        let pending = {
             let mut guard = self.host_runtime.lock().expect("host runtime mutex");
             let Some(runtime) = guard.as_mut() else {
                 return ControlResponse::err(ControlError::CoreUnavailable);
             };
-            match run_blocking_on_worker(|| runtime.reload(prepared, drain_timeout)) {
-                Ok(decision) => decision,
-                Err(error) => {
-                    let restore = restore_runtime_lock(&runtime_lock_path, previous_runtime_lock);
-                    return ControlResponse::err(ControlError::Failed(match restore {
-                        Ok(()) => error.to_string(),
-                        Err(restore_error) => {
-                            format!("{error}; restoring runtime lock failed: {restore_error}")
-                        }
-                    }));
+            runtime.begin_reload(prepared, drain_timeout)
+        };
+        let reloaded = pending.and_then(|mut pending| {
+            run_blocking_on_worker(|| pending.dispatch());
+            let mut guard = self.host_runtime.lock().expect("host runtime mutex");
+            match guard.as_mut() {
+                Some(runtime) => run_blocking_on_worker(|| runtime.finish_reload(pending)),
+                None => {
+                    // Shutdown took the runtime while it drained; nothing is left to switch.
+                    drop(guard);
+                    if let Err(error) = pending.abandon() {
+                        tracing::warn!(%error, "abandoned reload candidate cleanup failed");
+                    }
+                    return Ok(None);
                 }
+            }
+            .map(Some)
+        });
+        let decision = match reloaded {
+            Ok(Some(decision)) => decision,
+            Ok(None) => {
+                if let Err(error) = restore_runtime_lock(&runtime_lock_path, previous_runtime_lock)
+                {
+                    tracing::warn!(%error, "restoring runtime lock after abandoned reload failed");
+                }
+                return ControlResponse::err(ControlError::CoreUnavailable);
+            }
+            Err(error) => {
+                let restore = restore_runtime_lock(&runtime_lock_path, previous_runtime_lock);
+                return ControlResponse::err(ControlError::Failed(match restore {
+                    Ok(()) => error.to_string(),
+                    Err(restore_error) => {
+                        format!("{error}; restoring runtime lock failed: {restore_error}")
+                    }
+                }));
             }
         };
         let host_lifecycle_errors = self

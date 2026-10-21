@@ -14,6 +14,7 @@ before changing discovery or assembly.
 - Classify changes as identical, additive, deprecated, removed, or breaking. Drain occupancy before removal.
 - Prepare complete candidate provider routes and scopes before switching Core. Roll back only before the switch; after success the new generation is authoritative.
 - Targeted reload preserves unaffected owners. Retain in-flight providers and apply their original-route results through the common actor completion path.
+- Embedders that guard `HostRuntime` with a lock use `begin_reload` → `PendingRuntimeReload::dispatch` → `finish_reload` and release the lock around `dispatch`, so control calls during the drain get the actor's `host.reload.busy` instead of blocking. A dropped or `abandon`ed pending reload rolls its candidate scopes back.
 
 Test deterministic resolution, missing capability, generation transitions, occupied removal, targeted and
 full reload, and breaking-change rejection.

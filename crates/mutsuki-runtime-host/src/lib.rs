@@ -84,7 +84,7 @@ pub use group::{
 pub use host::{
     AttachedEffectHandle, HostAsyncResourceProviders, HostResourceProviders, HostRuntime,
     HostRuntimeConfig, HostRuntimeDriveState, HostRuntimeMetrics, HostRuntimeMetricsSnapshot,
-    TaskChangeSubscription, TaskCompletionSubscription,
+    PendingRuntimeReload, TaskChangeSubscription, TaskCompletionSubscription,
 };
 pub use manifest::{runner_manifest, runner_manifest_with_artifact};
 pub use mutsuki_runtime_sdk::{HostTaskFailureSummary, HostTaskSnapshot};

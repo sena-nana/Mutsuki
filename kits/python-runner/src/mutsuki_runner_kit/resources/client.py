@@ -5,7 +5,11 @@ from dataclasses import dataclass
 from typing import ClassVar, Protocol, TypeVar
 
 from mutsuki_runner_kit.contracts.codec import JsonValue
-from mutsuki_runner_kit.contracts.errors import RuntimeError
+from mutsuki_runner_kit.contracts.errors import (
+    ERR_RESOURCE_KIND_MISMATCH,
+    ERR_RESOURCE_SEMANTIC_MISMATCH,
+    RuntimeError,
+)
 from mutsuki_runner_kit.contracts.resource import (
     CommandBatch,
     CommandPlan,
@@ -153,16 +157,16 @@ class ResourceClient:
 
 def _require_kind_and_semantic(resource: ResourceRef, kind: type[ResourceKind]) -> None:
     if resource.resource_id.kind_id != kind.KIND_ID:
-        raise _sdk_error("resource.kind_mismatch", f"resource.handle.{resource.ref_id}")
+        raise _sdk_error(ERR_RESOURCE_KIND_MISMATCH, f"resource.handle.{resource.ref_id}")
     if resource.semantic != kind.SEMANTIC:
-        raise _sdk_error("resource.semantic_mismatch", f"resource.handle.{resource.ref_id}")
+        raise _sdk_error(ERR_RESOURCE_SEMANTIC_MISMATCH, f"resource.handle.{resource.ref_id}")
 
 
 def _require_plan_semantic(
     resource: ResourceRef, allowed: frozenset[ResourceSemantic], route: str
 ) -> None:
     if resource.semantic not in allowed:
-        raise _sdk_error("resource.semantic_mismatch", route)
+        raise _sdk_error(ERR_RESOURCE_SEMANTIC_MISMATCH, route)
 
 
 def _sdk_error(code: str, route: str) -> RunnerInvokeError:

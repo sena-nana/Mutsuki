@@ -26,11 +26,11 @@ pub const PLUGIN_ID: &str = "mutsuki.std.db.sqlite";
 pub const RUNNER_ID: &str = "mutsuki.std.db.sqlite.runner";
 pub const EFFECT_RUNNER_ID: &str = "effect.mutsuki.std.db.sqlite.runner";
 
-pub const DB_OPEN_PROTOCOL: &str = "mutsuki.db.open";
-pub const DB_QUERY_PROTOCOL: &str = "mutsuki.db.query";
-pub const DB_EXECUTE_PROTOCOL: &str = "mutsuki.db.execute";
-pub const DB_TRANSACTION_PROTOCOL: &str = "mutsuki.db.transaction";
-pub const DB_CLOSE_PROTOCOL: &str = "mutsuki.db.close";
+pub const DB_OPEN_PROTOCOL: &str = mutsuki_protocol_db::OPEN;
+pub const DB_QUERY_PROTOCOL: &str = mutsuki_protocol_db::QUERY;
+pub const DB_EXECUTE_PROTOCOL: &str = mutsuki_protocol_db::EXECUTE;
+pub const DB_TRANSACTION_PROTOCOL: &str = mutsuki_protocol_db::TRANSACTION;
+pub const DB_CLOSE_PROTOCOL: &str = mutsuki_protocol_db::CLOSE;
 
 pub const EFFECT_DB_OPEN_PROTOCOL: &str = "effect.mutsuki.db.open";
 pub const EFFECT_DB_QUERY_PROTOCOL: &str = "effect.mutsuki.db.query";

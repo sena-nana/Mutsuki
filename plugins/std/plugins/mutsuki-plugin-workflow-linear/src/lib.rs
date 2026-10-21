@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 
 pub const PLUGIN_ID: &str = "mutsuki.std.workflow.linear";
 pub const RUNNER_ID: &str = "mutsuki.std.workflow.linear.runner";
-pub const LINEAR_RUN_PROTOCOL: &str = "mutsuki.workflow.linear.run";
+pub const LINEAR_RUN_PROTOCOL: &str = mutsuki_protocol_workflow::LINEAR_RUN;
 
 #[derive(Clone)]
 pub struct WorkflowLinearRunner {

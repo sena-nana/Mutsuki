@@ -114,7 +114,7 @@ impl CoreRuntime {
         self.ensure_not_aborted()?;
         if target_step <= self.current_step {
             return Err(crate::runtime_failure(
-                "runtime.tick.invalid",
+                mutsuki_runtime_contracts::ERR_RUNTIME_TICK_INVALID,
                 "runtime.runner_loop",
                 format!("runtime.step.{target_step}.after.{}", self.current_step),
             ));

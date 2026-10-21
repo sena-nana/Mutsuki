@@ -184,13 +184,14 @@ impl PluginHostContext {
         self
     }
 
-    pub fn dispatch_binary_request(&self, request: &[u8]) -> Vec<u8> {
-        let decoded =
-            match decode_binary_any_request(request, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS) {
-                Ok(decoded) => decoded,
-                Err(_) => return Vec::new(),
-            };
-        dispatch_decoded(self, decoded)
+    /// Handles one framed guest request.
+    ///
+    /// A frame that does not decode has no request id to answer, so it is reported as a
+    /// transport failure for the ABI `failed` channel rather than as an empty response.
+    pub fn dispatch_binary_request(&self, request: &[u8]) -> Result<Vec<u8>, String> {
+        let decoded = decode_binary_any_request(request, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS)
+            .map_err(|error| format!("undecodable host request frame: {error}"))?;
+        Ok(dispatch_decoded(self, decoded))
     }
 }
 
@@ -199,7 +200,7 @@ fn capability_missing(route: &str, capability: &str) -> PluginHostError {
         route,
         format!("host capability is unavailable: {capability}"),
     );
-    error.error.code = "plugin.capability_unavailable".to_string();
+    error.error.code = mutsuki_runtime_contracts::ERR_PLUGIN_CAPABILITY_UNAVAILABLE.to_string();
     error.error.lost_capability = Some(capability.to_string());
     error.error.recovery = Some("provide the optional gateway before loading the plugin".into());
     error
@@ -577,9 +578,10 @@ unsafe extern "C" fn close_guest(context: *mut c_void) {
     if !context.is_null() {
         // SAFETY: `context` is the pointer leaked by `plugin_api_from_guest` and the ABI
         // contract calls `close` at most once, after the last `request` has returned.
-        unsafe {
-            drop(Box::from_raw(context.cast::<Box<dyn AbiGuest>>()));
-        }
+        let guest = unsafe { Box::from_raw(context.cast::<Box<dyn AbiGuest>>()) };
+        // A panicking guest `Drop` must not unwind across `extern "C"`, which would abort the
+        // Host. `close` has no result channel, so the panic is contained and dropped here.
+        let _ = catch_unwind(AssertUnwindSafe(move || drop(guest)));
     }
 }
 
@@ -682,7 +684,9 @@ mod tests {
             mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS,
         )
         .expect("request should encode");
-        let response = context.dispatch_binary_request(&frame);
+        let response = context
+            .dispatch_binary_request(&frame)
+            .expect("frame should decode");
         decode_binary_response::<TaskOutcomeRequest>(
             &response,
             request_id,
@@ -700,7 +704,9 @@ mod tests {
         };
         let frame = encode_binary_request(7, &request, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS)
             .expect("request should encode");
-        let response = PluginHostContext::default().dispatch_binary_request(&frame);
+        let response = PluginHostContext::default()
+            .dispatch_binary_request(&frame)
+            .expect("frame should decode");
         let error = decode_binary_response::<SubmitTaskBatchRequest>(
             &response,
             7,
@@ -728,5 +734,35 @@ mod tests {
                 .code,
             ERR_TASK_NOT_FOUND
         );
+    }
+
+    #[test]
+    fn undecodable_host_request_is_a_transport_failure() {
+        let error = PluginHostContext::default()
+            .dispatch_binary_request(b"not a wire frame")
+            .expect_err("garbage must not produce an empty success response");
+        assert!(error.starts_with("undecodable host request frame"));
+    }
+
+    struct PanicOnDrop;
+
+    impl AbiGuest for PanicOnDrop {
+        fn request(&self, _request: &[u8]) -> Vec<u8> {
+            Vec::new()
+        }
+    }
+
+    impl Drop for PanicOnDrop {
+        fn drop(&mut self) {
+            panic!("guest drop panicked");
+        }
+    }
+
+    #[test]
+    fn closing_a_guest_whose_drop_panics_does_not_unwind_into_the_host() {
+        let plugin = plugin_api_from_guest(Box::new(PanicOnDrop));
+        let close = plugin.close.expect("guest exports close");
+        // SAFETY: `context` came from `plugin_api_from_guest` and is closed exactly once.
+        unsafe { close(plugin.context) };
     }
 }

@@ -844,21 +844,29 @@ impl HostRuntime {
     }
 
     pub fn dispatch(&self, command: HostRuntimeCommand) -> RuntimeResult<HostRuntimeReply> {
-        self.metrics.actor_commands.fetch_add(1, Ordering::Relaxed);
-        let (reply_tx, reply_rx) = mpsc::channel();
-        self.tx
-            .send(CoreActorMsg::Command(command, reply_tx))
-            .map_err(|_| host_failure("host.actor.command", "actor mailbox closed"))?;
-        reply_rx
-            .recv()
-            .map_err(|error| host_failure("host.actor.reply", error.to_string()))?
+        dispatch_actor_command(&self.tx, &self.metrics, command)
     }
 
     pub fn reload(
         &mut self,
-        mut prepared: PreparedRuntimeReload,
+        prepared: PreparedRuntimeReload,
         drain_timeout: Duration,
     ) -> RuntimeResult<ReloadDecision> {
+        let pending = self.begin_reload(prepared, drain_timeout)?;
+        self.finish_reload(pending)
+    }
+
+    /// Validates a prepared reload and detaches the draining actor round-trip from `&mut self`.
+    ///
+    /// Embedders that keep `HostRuntime` behind a lock call this under the lock, release it while
+    /// [`PendingRuntimeReload::dispatch`] waits for the actor to drain, then reacquire it for
+    /// [`Self::finish_reload`]. Other callers keep reaching the actor meanwhile and receive its
+    /// structured `host.reload.busy` reply instead of blocking on the embedder's lock.
+    pub fn begin_reload(
+        &mut self,
+        mut prepared: PreparedRuntimeReload,
+        drain_timeout: Duration,
+    ) -> RuntimeResult<PendingRuntimeReload> {
         self.reload_lifecycle_errors.clear();
         let reload_started = Instant::now();
         let candidate_scopes = prepared.scopes.take().ok_or_else(|| {
@@ -908,11 +916,40 @@ impl HostRuntime {
         let services = prepared.services.clone();
         let profile_id = prepared.profile_id.clone();
         let registry_generation = prepared.registry_generation;
-        let core_drain_timeout = drain_timeout.saturating_sub(reload_started.elapsed());
-        let reply = self.dispatch(HostRuntimeCommand::Reload {
-            prepared,
-            drain_timeout: core_drain_timeout,
-        });
+        Ok(PendingRuntimeReload {
+            tx: self.tx.clone(),
+            metrics: self.metrics.clone(),
+            prepared: Some(prepared),
+            reply: None,
+            candidate_scopes: Some(candidate_scopes),
+            affected_plugins,
+            capabilities,
+            services,
+            profile_id,
+            registry_generation,
+            reload_started,
+            drain_timeout,
+        })
+    }
+
+    /// Applies the actor's reload reply to the Host-owned scopes and context.
+    ///
+    /// Dispatches first when the caller has not already done so.
+    pub fn finish_reload(
+        &mut self,
+        mut pending: PendingRuntimeReload,
+    ) -> RuntimeResult<ReloadDecision> {
+        pending.dispatch();
+        let reply = pending
+            .reply
+            .take()
+            .expect("dispatch always records the actor reply");
+        let candidate_scopes = pending
+            .candidate_scopes
+            .take()
+            .expect("candidate scopes are only released by finish_reload or abandon");
+        let drain_timeout = pending.drain_timeout;
+        let reload_started = pending.reload_started;
         let reply = match reply {
             Ok(reply) => reply,
             Err(error) => {
@@ -930,8 +967,8 @@ impl HostRuntime {
                 if let Some(error) = &activation_error {
                     candidate_scopes.mark_activation_failed(&error.to_string());
                 }
-                self.capabilities = Arc::new(capabilities);
-                if let Some(affected_plugins) = &affected_plugins {
+                self.capabilities = Arc::new(std::mem::take(&mut pending.capabilities));
+                if let Some(affected_plugins) = &pending.affected_plugins {
                     for scopes in &self.scopes {
                         for plugin_id in affected_plugins {
                             let Some(scope_id) = scopes.plugin_scope(plugin_id) else {
@@ -968,10 +1005,10 @@ impl HostRuntime {
                 self.context = build_host_context(
                     self.tx.clone(),
                     self.capabilities.clone(),
-                    services,
+                    pending.services.clone(),
                     self.scopes.clone(),
-                    profile_id,
-                    registry_generation,
+                    std::mem::take(&mut pending.profile_id),
+                    pending.registry_generation,
                 );
                 if let Some(error) = activation_error {
                     self.reload_lifecycle_errors.push(
@@ -1359,6 +1396,90 @@ fn validate_restored_descriptor(provider_id: &str, descriptor: &ResourceRef) -> 
         )));
     }
     Ok(())
+}
+
+fn dispatch_actor_command(
+    tx: &ActorSender,
+    metrics: &HostRuntimeMetrics,
+    command: HostRuntimeCommand,
+) -> RuntimeResult<HostRuntimeReply> {
+    metrics.actor_commands.fetch_add(1, Ordering::Relaxed);
+    let (reply_tx, reply_rx) = mpsc::channel();
+    tx.send(CoreActorMsg::Command(command, reply_tx))
+        .map_err(|_| host_failure("host.actor.command", "actor mailbox closed"))?;
+    reply_rx
+        .recv()
+        .map_err(|error| host_failure("host.actor.reply", error.to_string()))?
+}
+
+/// A validated reload whose actor round-trip runs without borrowing [`HostRuntime`].
+///
+/// Created by [`HostRuntime::begin_reload`] and completed by [`HostRuntime::finish_reload`].
+/// Dropping it without finishing rolls the candidate scopes back.
+#[must_use = "a pending reload must be finished or abandoned"]
+pub struct PendingRuntimeReload {
+    tx: ActorSender,
+    metrics: Arc<HostRuntimeMetrics>,
+    prepared: Option<PreparedRuntimeReload>,
+    reply: Option<RuntimeResult<HostRuntimeReply>>,
+    candidate_scopes: Option<PluginScopeSet>,
+    affected_plugins: Option<BTreeSet<mutsuki_runtime_contracts::PluginId>>,
+    capabilities: HostCapabilityRegistry,
+    services: Arc<HostServiceRegistry>,
+    profile_id: String,
+    registry_generation: u64,
+    reload_started: Instant,
+    drain_timeout: Duration,
+}
+
+impl PendingRuntimeReload {
+    /// Blocks until the actor has drained and switched generations, or refused to.
+    ///
+    /// Idempotent: only the first call reaches the actor.
+    pub fn dispatch(&mut self) {
+        let Some(prepared) = self.prepared.take() else {
+            return;
+        };
+        let drain_timeout = self
+            .drain_timeout
+            .saturating_sub(self.reload_started.elapsed());
+        self.reply = Some(dispatch_actor_command(
+            &self.tx,
+            &self.metrics,
+            HostRuntimeCommand::Reload {
+                prepared,
+                drain_timeout,
+            },
+        ));
+    }
+
+    /// Rolls the candidate scopes back when the runtime this reload targeted is gone.
+    pub fn abandon(mut self) -> RuntimeResult<()> {
+        match self.candidate_scopes.take() {
+            Some(candidate) => candidate
+                .manager()
+                .rollback_activation_blocking(
+                    candidate.root_scope(),
+                    self.drain_timeout
+                        .saturating_sub(self.reload_started.elapsed()),
+                )
+                .map(|_| ()),
+            None => Ok(()),
+        }
+    }
+}
+
+impl Drop for PendingRuntimeReload {
+    fn drop(&mut self) {
+        if let Some(candidate) = self.candidate_scopes.take() {
+            let _ = rollback_candidate_scopes(
+                &candidate,
+                self.drain_timeout
+                    .saturating_sub(self.reload_started.elapsed()),
+                host_failure("host.reload.abandoned", "pending reload was dropped"),
+            );
+        }
+    }
 }
 
 fn retire_scope(

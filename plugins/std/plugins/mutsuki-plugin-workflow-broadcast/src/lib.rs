@@ -22,7 +22,7 @@ use serde_json::{Value, json};
 
 pub const PLUGIN_ID: &str = "mutsuki.std.workflow.broadcast";
 pub const RUNNER_ID: &str = "mutsuki.std.workflow.broadcast.runner";
-pub const BROADCAST_EMIT_PROTOCOL: &str = "mutsuki.workflow.broadcast.emit";
+pub const BROADCAST_EMIT_PROTOCOL: &str = mutsuki_protocol_workflow::BROADCAST_EMIT;
 
 #[derive(Clone)]
 pub struct WorkflowBroadcastRunner {

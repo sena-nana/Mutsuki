@@ -25,7 +25,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -319,7 +319,8 @@ unsafe extern "C" fn host_request(
         context.host.dispatch_binary_request(request)
     }));
     match result {
-        Ok(response) => AbiCallResult::ok(response),
+        Ok(Ok(response)) => AbiCallResult::ok(response),
+        Ok(Err(message)) => AbiCallResult::failed(message.into_bytes()),
         Err(_) => AbiCallResult::failed(b"host ABI v2 callback panicked".to_vec()),
     }
 }
@@ -379,12 +380,115 @@ struct PluginCall {
     opcode: mutsuki_runtime_wire::Opcode,
     frame: Vec<u8>,
     reply: SyncSender<Vec<u8>>,
+    state: Arc<AtomicU8>,
+}
+
+// `PluginCall::state` transitions. The caller and the worker race on these with
+// compare-exchange so exactly one side accounts for a call that outlives its timeout.
+const CALL_QUEUED: u8 = 0;
+const CALL_RUNNING: u8 = 1;
+const CALL_ANSWERED: u8 = 2;
+/// The caller timed out while a worker was inside the guest; that worker is stalled.
+const CALL_ABANDONED_RUNNING: u8 = 3;
+/// The caller timed out before any worker picked the call up; it must not be run.
+const CALL_ABANDONED_QUEUED: u8 = 4;
+
+/// One bounded worker lane in front of the guest.
+///
+/// A native call cannot be interrupted, so a call whose caller timed out keeps its worker inside
+/// the guest until the guest returns. Such workers are counted as stalled and are not replaced;
+/// once every worker of the lane is stalled, new calls fail fast with a structured error instead
+/// of blocking on a queue nobody drains.
+struct CallLane {
+    queue: SyncSender<PluginCall>,
+    workers: usize,
+    stalled: Arc<AtomicUsize>,
+}
+
+impl CallLane {
+    fn spawn(
+        name: &'static str,
+        workers: usize,
+        queue_limit: usize,
+        invoke: impl Fn(&PluginCall) -> Vec<u8> + Send + Sync + 'static,
+    ) -> Self {
+        let workers = workers.max(1);
+        let (queue, receiver) = mpsc::sync_channel(queue_limit.max(1));
+        let stalled = Arc::new(AtomicUsize::new(0));
+        spawn_workers(name, workers, receiver, stalled.clone(), Arc::new(invoke));
+        Self {
+            queue,
+            workers,
+            stalled,
+        }
+    }
+
+    fn call(
+        &self,
+        request_id: u64,
+        opcode: mutsuki_runtime_wire::Opcode,
+        frame: Vec<u8>,
+        timeout: Duration,
+    ) -> PluginResult<Vec<u8>> {
+        let stalled = self.stalled.load(Ordering::Acquire);
+        if stalled >= self.workers {
+            return Err(plugin_error(
+                "abi.v2.workers_stalled",
+                format!("all {stalled} plugin worker(s) are still inside timed-out guest calls"),
+            ));
+        }
+        let (reply, response_rx) = mpsc::sync_channel(1);
+        let state = Arc::new(AtomicU8::new(CALL_QUEUED));
+        self.queue
+            .send(PluginCall {
+                request_id,
+                opcode,
+                frame,
+                reply,
+                state: state.clone(),
+            })
+            .map_err(|_| plugin_error("abi.v2.queue", "plugin worker queue closed"))?;
+        match response_rx.recv_timeout(timeout) {
+            Ok(response) => Ok(response),
+            Err(error) => {
+                if state
+                    .compare_exchange(
+                        CALL_RUNNING,
+                        CALL_ABANDONED_RUNNING,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
+                    .is_ok()
+                {
+                    self.stalled.fetch_add(1, Ordering::AcqRel);
+                } else if state
+                    .compare_exchange(
+                        CALL_QUEUED,
+                        CALL_ABANDONED_QUEUED,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
+                    .is_err()
+                {
+                    // The worker answered between the timeout and the state change.
+                    if let Ok(response) = response_rx.try_recv() {
+                        return Ok(response);
+                    }
+                }
+                Err(plugin_failure(
+                    "plugin",
+                    "abi.v2.response",
+                    error.to_string(),
+                ))
+            }
+        }
+    }
 }
 
 struct PluginConnection {
     _lifetime: Arc<PluginLifetime>,
-    work: SyncSender<PluginCall>,
-    management: SyncSender<PluginCall>,
+    work: CallLane,
+    management: CallLane,
     next_request_id: AtomicU64,
     response_timeout: Duration,
 }
@@ -476,12 +580,22 @@ impl PluginConnection {
             _library: library,
             _host_context: host_context,
         });
-        let (work, work_rx) = mpsc::sync_channel(config.work_queue_limit.max(1));
-        let (management, management_rx) = mpsc::sync_channel(config.management_queue_limit.max(1));
-        spawn_workers(config.work_workers.max(1), work_rx, lifetime.clone());
+        let work_lifetime = lifetime.clone();
+        let work = CallLane::spawn(
+            "mutsuki-plugin-host-worker",
+            config.work_workers,
+            config.work_queue_limit,
+            move |call| invoke_plugin(&work_lifetime, call),
+        );
         // Management stays single-threaded: initialize, cancel and dispose are ordered against
         // each other, and interleaving them would let a dispose overtake the call it terminates.
-        spawn_workers(1, management_rx, lifetime.clone());
+        let management_lifetime = lifetime.clone();
+        let management = CallLane::spawn(
+            "mutsuki-plugin-host-management",
+            1,
+            config.management_queue_limit,
+            move |call| invoke_plugin(&management_lifetime, call),
+        );
         Ok(Self {
             _lifetime: lifetime,
             work,
@@ -499,25 +613,12 @@ impl PluginConnection {
             mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS,
         )
         .map_err(|error| plugin_failure("plugin", "abi.v2.encode", error.to_string()))?;
-        let (reply, response_rx) = mpsc::sync_channel(1);
-        let call = PluginCall {
-            request_id,
-            opcode: R::OPCODE,
-            frame,
-            reply,
-        };
-        if R::OPCODE.is_management() {
-            self.management
-                .send(call)
-                .map_err(|_| plugin_error("abi.v2.management_queue", "management queue closed"))?;
+        let lane = if R::OPCODE.is_management() {
+            &self.management
         } else {
-            self.work
-                .send(call)
-                .map_err(|_| plugin_error("abi.v2.work_queue", "work queue closed"))?;
-        }
-        let response = response_rx
-            .recv_timeout(self.response_timeout)
-            .map_err(|error| plugin_failure("plugin", "abi.v2.response", error.to_string()))?;
+            &self.work
+        };
+        let response = lane.call(request_id, R::OPCODE, frame, self.response_timeout)?;
         decode_binary_response::<R>(
             &response,
             request_id,
@@ -527,18 +628,56 @@ impl PluginConnection {
     }
 }
 
-fn spawn_workers(count: usize, receiver: Receiver<PluginCall>, lifetime: Arc<PluginLifetime>) {
+type CallInvoker = Arc<dyn Fn(&PluginCall) -> Vec<u8> + Send + Sync>;
+
+fn spawn_workers(
+    name: &'static str,
+    count: usize,
+    receiver: Receiver<PluginCall>,
+    stalled: Arc<AtomicUsize>,
+    invoke: CallInvoker,
+) {
     let receiver = Arc::new(Mutex::new(receiver));
     for index in 0..count {
         let receiver = receiver.clone();
-        let lifetime = lifetime.clone();
+        let stalled = stalled.clone();
+        let invoke = invoke.clone();
         std::thread::Builder::new()
-            .name(format!("mutsuki-plugin-host-worker-{index}"))
+            .name(format!("{name}-{index}"))
             .spawn(move || {
                 loop {
                     let call = receiver.lock().ok().and_then(|queue| queue.recv().ok());
                     let Some(call) = call else { break };
-                    let response_frame = invoke_plugin(&lifetime, &call);
+                    if call
+                        .state
+                        .compare_exchange(
+                            CALL_QUEUED,
+                            CALL_RUNNING,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_err()
+                    {
+                        // Its caller already gave up; running it would only repeat a side effect
+                        // nobody is waiting for.
+                        continue;
+                    }
+                    let response_frame = invoke(&call);
+                    if call
+                        .state
+                        .compare_exchange(
+                            CALL_RUNNING,
+                            CALL_ANSWERED,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_err()
+                    {
+                        // The caller timed out while this worker was inside the guest and
+                        // counted it as stalled; returning frees it again.
+                        stalled.fetch_sub(1, Ordering::AcqRel);
+                        continue;
+                    }
                     // A closed reply channel means the caller already timed out. That is not a
                     // reason to stop serving the queue.
                     let _ = call.reply.send(response_frame);
@@ -634,4 +773,97 @@ fn with_context(
     route: &str,
 ) -> PluginHostError {
     plugin_failure(plugin_id, route, format!("{error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mutsuki_runtime_wire::Opcode;
+
+    const TIMEOUT: Duration = Duration::from_millis(50);
+
+    /// A lane whose guest blocks every call until the test releases it.
+    fn gated_lane(workers: usize) -> (CallLane, mpsc::Sender<()>) {
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let release_rx = Mutex::new(release_rx);
+        let lane = CallLane::spawn("test-lane", workers, 8, move |call| {
+            let _ = release_rx.lock().unwrap().recv();
+            call.frame.clone()
+        });
+        (lane, release_tx)
+    }
+
+    #[test]
+    fn lane_fails_fast_once_every_worker_is_stalled_and_recovers_when_guest_returns() {
+        let (lane, release) = gated_lane(1);
+
+        let timed_out = lane
+            .call(1, Opcode::RunnerRunBatch, vec![1], TIMEOUT)
+            .expect_err("blocked guest call should time out");
+        assert_eq!(timed_out.error.route, "abi.v2.response");
+
+        let stalled = lane
+            .call(2, Opcode::RunnerRunBatch, vec![2], TIMEOUT)
+            .expect_err("a lane with no free worker must not queue behind the stall");
+        assert_eq!(stalled.error.route, "abi.v2.workers_stalled");
+
+        release.send(()).unwrap();
+        // The worker leaves the guest and is counted free again.
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while lane.stalled.load(Ordering::Acquire) != 0 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "worker never recovered"
+            );
+            std::thread::yield_now();
+        }
+        release.send(()).unwrap();
+        assert_eq!(
+            lane.call(3, Opcode::RunnerRunBatch, vec![3], Duration::from_secs(1))
+                .unwrap(),
+            vec![3]
+        );
+    }
+
+    #[test]
+    fn call_abandoned_while_queued_is_never_run() {
+        let ran = Arc::new(AtomicUsize::new(0));
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let release_rx = Mutex::new(release_rx);
+        let counter = ran.clone();
+        let lane = CallLane::spawn("test-lane", 1, 8, move |call| {
+            counter.fetch_add(1, Ordering::AcqRel);
+            let _ = release_rx.lock().unwrap().recv();
+            call.frame.clone()
+        });
+
+        let lane = Arc::new(lane);
+        let first = {
+            let lane = lane.clone();
+            std::thread::spawn(move || {
+                lane.call(1, Opcode::RunnerRunBatch, vec![1], Duration::from_secs(2))
+            })
+        };
+        // Wait until the first call occupies the only worker.
+        while ran.load(Ordering::Acquire) == 0 {
+            std::thread::yield_now();
+        }
+        lane.call(2, Opcode::RunnerRunBatch, vec![2], TIMEOUT)
+            .expect_err("queued call should time out behind the busy worker");
+
+        release_tx.send(()).unwrap();
+        assert_eq!(first.join().unwrap().unwrap(), vec![1]);
+        release_tx.send(()).unwrap();
+        assert_eq!(
+            lane.call(3, Opcode::RunnerRunBatch, vec![3], Duration::from_secs(1))
+                .unwrap(),
+            vec![3]
+        );
+        assert_eq!(
+            ran.load(Ordering::Acquire),
+            2,
+            "abandoned call 2 must be skipped"
+        );
+        assert_eq!(lane.stalled.load(Ordering::Acquire), 0);
+    }
 }

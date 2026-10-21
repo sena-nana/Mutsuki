@@ -796,6 +796,14 @@ binding 自动重新 fan-out；补跑必须显式生成 migration/backfill task�
 | `event.decode_failed` | EventLog 收到无法解码的事件 payload |
 | `resource.encode_failed` | value/resource 打包时序列化失败 |
 | `sdk.decode_failed` | SDK typed task 无法把 payload 解码为声明的类型 |
+| `sdk.serialize_failed` | SDK 无法把 typed 值序列化为 wire payload |
+| `task.protocol_mismatch` | typed task handle 的 protocol 与声明的 protocol 不一致 |
+| `runtime.tick.invalid` | runner loop 的目标 step 不晚于当前 step |
+| `state.rollback_decode_failed` | Committer 收到无法解码为 `StateRollback` 的 kernel task |
+| `resource.kind_mismatch` | typed resource handle 的 kind 与 ref 不一致 |
+| `resource.semantic_mismatch` | resource semantic 不支持所请求的 handle 或 plan |
+| `resource.lease_mode_invalid` | ResourceCell lease mode 既不是 shared 也不是 exclusive |
+| `plugin.capability_unavailable` | 插件请求的 Host capability（task/resource gateway）未提供 |
 
 ## 10. Runtime Domain
 

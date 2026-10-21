@@ -1296,6 +1296,72 @@ fn host_runtime_reload_waits_for_in_flight_worker_before_swap() {
 }
 
 #[test]
+fn split_reload_keeps_host_runtime_reachable_while_actor_drains() {
+    let runner_descriptor =
+        descriptor_with_class("split.runner", "split.work", ExecutionClass::Blocking);
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let mut host = RuntimeBootstrapper::new();
+    host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
+    host.register_runner(Box::new(NativeRunner::new(
+        runner_descriptor.clone(),
+        move |_ctx, tasks| {
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            Ok(RunnerResult::completed(tasks.task_id))
+        },
+    )));
+    let mut runtime = host.into_host_runtime(runtime_profile()).unwrap();
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "split-running",
+            "split.work",
+            json!({}),
+        ))))
+        .unwrap();
+    runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
+    started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+
+    let mut reload_host = RuntimeBootstrapper::new();
+    reload_host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
+    reload_host.register_runner(Box::new(NativeRunner::new(
+        runner_descriptor,
+        |_ctx, tasks| Ok(RunnerResult::completed(tasks.task_id)),
+    )));
+    let prepared = reload_host.prepare_reload(runtime_profile(), 2).unwrap();
+    let mut pending = runtime
+        .begin_reload(prepared, Duration::from_secs(2))
+        .unwrap();
+    let dispatcher = std::thread::spawn(move || {
+        pending.dispatch();
+        pending
+    });
+
+    // The embedder no longer holds `runtime` across the drain: a control command is answered
+    // by the draining actor with a structured busy error instead of waiting for it.
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    let busy = loop {
+        match runtime.dispatch(HostRuntimeCommand::Statistics) {
+            Err(error) if error.error().route == "host.reload.busy" => break error,
+            _ if std::time::Instant::now() >= deadline => {
+                panic!("draining actor never answered with host.reload.busy")
+            }
+            _ => std::thread::sleep(Duration::from_millis(5)),
+        }
+    };
+    assert_eq!(busy.error().route, "host.reload.busy");
+
+    release_tx.send(()).unwrap();
+    let pending = dispatcher.join().unwrap();
+    runtime.finish_reload(pending).unwrap();
+    assert_eq!(runtime.host_context().registry_generation(), 2);
+    assert_eq!(
+        runtime.task_status("split-running"),
+        Some(TaskStatus::Completed)
+    );
+}
+
+#[test]
 fn host_runtime_reload_timeout_preserves_active_generation() {
     let runner_descriptor = descriptor_with_class(
         "reload.timeout.runner",

@@ -18,10 +18,10 @@ use serde_json::json;
 pub const PLUGIN_ID: &str = "mutsuki.std.observe.log";
 pub const RUNNER_ID: &str = "mutsuki.std.observe.log.runner";
 
-pub const LOG_EMIT_PROTOCOL: &str = "mutsuki.log.emit";
-pub const TRACE_SPAN_START_PROTOCOL: &str = "mutsuki.trace.span_start";
-pub const TRACE_SPAN_END_PROTOCOL: &str = "mutsuki.trace.span_end";
-pub const TRACE_EVENT_PROTOCOL: &str = "mutsuki.trace.event";
+pub const LOG_EMIT_PROTOCOL: &str = mutsuki_protocol_observe::LOG_EMIT;
+pub const TRACE_SPAN_START_PROTOCOL: &str = mutsuki_protocol_observe::TRACE_SPAN_START;
+pub const TRACE_SPAN_END_PROTOCOL: &str = mutsuki_protocol_observe::TRACE_SPAN_END;
+pub const TRACE_EVENT_PROTOCOL: &str = mutsuki_protocol_observe::TRACE_EVENT;
 
 #[derive(Clone)]
 pub struct ObserveLogRunner {

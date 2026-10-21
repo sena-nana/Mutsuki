@@ -25,16 +25,16 @@ pub const PLUGIN_ID: &str = "mutsuki.std.io.fs";
 pub const RUNNER_ID: &str = "mutsuki.std.io.fs.runner";
 pub const EFFECT_RUNNER_ID: &str = "effect.mutsuki.std.io.fs.runner";
 
-pub const FS_READ_PROTOCOL: &str = "mutsuki.fs.read";
-pub const FS_WRITE_PROTOCOL: &str = "mutsuki.fs.write";
-pub const FS_APPEND_PROTOCOL: &str = "mutsuki.fs.append";
-pub const FS_COPY_PROTOCOL: &str = "mutsuki.fs.copy";
-pub const FS_MOVE_PROTOCOL: &str = "mutsuki.fs.move";
-pub const FS_REMOVE_PROTOCOL: &str = "mutsuki.fs.remove";
-pub const FS_MKDIR_PROTOCOL: &str = "mutsuki.fs.mkdir";
-pub const FS_LIST_PROTOCOL: &str = "mutsuki.fs.list";
-pub const FS_STAT_PROTOCOL: &str = "mutsuki.fs.stat";
-pub const FS_EXISTS_PROTOCOL: &str = "mutsuki.fs.exists";
+pub const FS_READ_PROTOCOL: &str = mutsuki_protocol_fs::READ;
+pub const FS_WRITE_PROTOCOL: &str = mutsuki_protocol_fs::WRITE;
+pub const FS_APPEND_PROTOCOL: &str = mutsuki_protocol_fs::APPEND;
+pub const FS_COPY_PROTOCOL: &str = mutsuki_protocol_fs::COPY;
+pub const FS_MOVE_PROTOCOL: &str = mutsuki_protocol_fs::MOVE;
+pub const FS_REMOVE_PROTOCOL: &str = mutsuki_protocol_fs::REMOVE;
+pub const FS_MKDIR_PROTOCOL: &str = mutsuki_protocol_fs::MKDIR;
+pub const FS_LIST_PROTOCOL: &str = mutsuki_protocol_fs::LIST;
+pub const FS_STAT_PROTOCOL: &str = mutsuki_protocol_fs::STAT;
+pub const FS_EXISTS_PROTOCOL: &str = mutsuki_protocol_fs::EXISTS;
 
 pub const EFFECT_FS_READ_PROTOCOL: &str = "effect.mutsuki.fs.read";
 pub const EFFECT_FS_WRITE_PROTOCOL: &str = "effect.mutsuki.fs.write";

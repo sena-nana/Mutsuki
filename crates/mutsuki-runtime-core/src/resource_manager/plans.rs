@@ -26,7 +26,7 @@ impl ResourceManager {
     pub fn open_stream_plan(&self, plan: &ReadPlan) -> RuntimeResult<StreamPlan> {
         if plan.resource.semantic != ResourceSemantic::StreamResource {
             return Err(crate::runtime_failure(
-                "resource.semantic_mismatch",
+                mutsuki_runtime_contracts::ERR_RESOURCE_SEMANTIC_MISMATCH,
                 "runtime.resource_manager",
                 format!("resource.stream_plan.{}", plan.resource.ref_id),
             ));

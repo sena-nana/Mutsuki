@@ -825,7 +825,7 @@ impl<P> Future for BatchCallFuture<P> {
 
 fn serialize_error(error: serde_json::Error) -> RuntimeFailure {
     RuntimeFailure::new(mutsuki_runtime_contracts::RuntimeError::new(
-        "sdk.serialize_failed",
+        mutsuki_runtime_contracts::ERR_SDK_SERIALIZE_FAILED,
         "runtime.sdk",
         error.to_string(),
     ))

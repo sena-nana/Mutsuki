@@ -231,8 +231,12 @@ mutsuki-module-catalog = { path = "crates/mutsuki-module-catalog" }
 mutsuki-protocol-browser = { path = "plugins/std/protocols/mutsuki-protocol-browser" }
 mutsuki-protocol-config = { path = "plugins/std/protocols/mutsuki-protocol-config" }
 mutsuki-protocol-db = { path = "plugins/std/protocols/mutsuki-protocol-db" }
+mutsuki-protocol-dev = { path = "plugins/std/protocols/mutsuki-protocol-dev" }
+mutsuki-protocol-fs = { path = "plugins/std/protocols/mutsuki-protocol-fs" }
 mutsuki-protocol-http = { path = "plugins/std/protocols/mutsuki-protocol-http" }
 mutsuki-protocol-image = { path = "plugins/std/protocols/mutsuki-protocol-image" }
+mutsuki-protocol-observe = { path = "plugins/std/protocols/mutsuki-protocol-observe" }
+mutsuki-protocol-workflow = { path = "plugins/std/protocols/mutsuki-protocol-workflow" }
 mutsuki-plugin-image-render = { path = "plugins/std/plugins/mutsuki-plugin-image-render" }
 mutsuki-plugin-db-sqlite = { path = "plugins/std/plugins/mutsuki-plugin-db-sqlite" }
 mutsuki-plugin-config-permission = { path = "plugins/std/plugins/mutsuki-plugin-config-permission" }

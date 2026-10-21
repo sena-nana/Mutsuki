@@ -147,7 +147,7 @@ impl<P> From<TypedTaskOutcome<P>> for TaskOutcome {
 
 pub(crate) fn protocol_mismatch(handle: &TaskHandle, expected: &str) -> RuntimeFailure {
     let mut error = RuntimeError::new(
-        "task.protocol_mismatch",
+        mutsuki_runtime_contracts::ERR_TASK_PROTOCOL_MISMATCH,
         "runtime.sdk",
         format!("task.handle.{}", handle.task_id),
     );

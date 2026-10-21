@@ -5,6 +5,7 @@ from typing import Protocol
 from mutsuki_runner_kit.contracts.codec import JsonValue, ScalarValue
 from mutsuki_runner_kit.contracts.errors import (
     ERR_RESOURCE_GENERATION_MISMATCH,
+    ERR_RESOURCE_SEMANTIC_MISMATCH,
     RuntimeError,
 )
 from mutsuki_runner_kit.contracts.resource import (
@@ -73,7 +74,7 @@ def snapshot_read_plan(
 def open_stream_plan(plan: ReadPlan) -> StreamPlan:
     if plan.resource.semantic != ResourceSemantic.STREAM_RESOURCE:
         raise _resource_error(
-            "resource.semantic_mismatch", f"resource.stream.{plan.resource.ref_id}"
+            ERR_RESOURCE_SEMANTIC_MISMATCH, f"resource.stream.{plan.resource.ref_id}"
         )
     return StreamPlan(
         plan_id=f"stream-plan:{plan.resource.ref_id}",
@@ -137,7 +138,7 @@ def execute_command_plan(gateway: ResourcePlanGateway, plan: CommandPlan) -> Pla
     gateway.read_resource(plan.capability)
     if plan.capability.semantic != ResourceSemantic.CAPABILITY_RESOURCE:
         raise _resource_error(
-            "resource.semantic_mismatch", f"resource.plan.command.{plan.capability.ref_id}"
+            ERR_RESOURCE_SEMANTIC_MISMATCH, f"resource.plan.command.{plan.capability.ref_id}"
         )
     if plan.operation != "query":
         raise _resource_error(
@@ -240,7 +241,9 @@ def execute_saga_plan(gateway: ResourcePlanGateway, saga: SagaPlan) -> tuple[Pla
 
 def commit_write_plan(gateway: ResourcePlanGateway, plan: WritePlan, data: bytes) -> PlanReceipt:
     if plan.resource.semantic != ResourceSemantic.COW_VERSIONED_STATE:
-        raise _resource_error("resource.semantic_mismatch", f"resource.plan.{plan.resource.ref_id}")
+        raise _resource_error(
+            ERR_RESOURCE_SEMANTIC_MISMATCH, f"resource.plan.{plan.resource.ref_id}"
+        )
     if plan.resource.version != plan.base_version:
         raise _resource_error(
             ERR_RESOURCE_GENERATION_MISMATCH, f"resource.plan.{plan.resource.ref_id}"

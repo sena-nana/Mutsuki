@@ -4869,6 +4869,7 @@ dependencies = [
 name = "mutsuki-plugin-db-sqlite"
 version = "0.1.0"
 dependencies = [
+ "mutsuki-protocol-db",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
@@ -4882,6 +4883,7 @@ dependencies = [
 name = "mutsuki-plugin-dev-mock"
 version = "0.1.0"
 dependencies = [
+ "mutsuki-protocol-dev",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
@@ -4938,6 +4940,7 @@ dependencies = [
 name = "mutsuki-plugin-io-fs"
 version = "0.1.0"
 dependencies = [
+ "mutsuki-protocol-fs",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
@@ -4968,6 +4971,7 @@ dependencies = [
 name = "mutsuki-plugin-observe-log"
 version = "0.1.0"
 dependencies = [
+ "mutsuki-protocol-observe",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
@@ -5014,6 +5018,7 @@ dependencies = [
 name = "mutsuki-plugin-workflow-broadcast"
 version = "0.1.0"
 dependencies = [
+ "mutsuki-protocol-workflow",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
@@ -5024,6 +5029,7 @@ dependencies = [
 name = "mutsuki-plugin-workflow-linear"
 version = "0.1.0"
 dependencies = [
+ "mutsuki-protocol-workflow",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",

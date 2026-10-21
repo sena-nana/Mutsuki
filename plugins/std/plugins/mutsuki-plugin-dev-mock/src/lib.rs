@@ -23,12 +23,12 @@ use serde_json::{Value, json};
 pub const PLUGIN_ID: &str = "mutsuki.std.dev.mock";
 pub const RUNNER_ID: &str = "mutsuki.std.dev.mock.runner";
 
-pub const ECHO_PROTOCOL: &str = "mutsuki.dev.echo";
-pub const SLEEP_PROTOCOL: &str = "mutsuki.dev.sleep";
-pub const FAIL_PROTOCOL: &str = "mutsuki.dev.fail";
-pub const RANDOM_FAIL_PROTOCOL: &str = "mutsuki.dev.random_fail";
-pub const PRODUCE_RESOURCE_PROTOCOL: &str = "mutsuki.dev.produce_resource";
-pub const CONSUME_RESOURCE_PROTOCOL: &str = "mutsuki.dev.consume_resource";
+pub const ECHO_PROTOCOL: &str = mutsuki_protocol_dev::ECHO;
+pub const SLEEP_PROTOCOL: &str = mutsuki_protocol_dev::SLEEP;
+pub const FAIL_PROTOCOL: &str = mutsuki_protocol_dev::FAIL;
+pub const RANDOM_FAIL_PROTOCOL: &str = mutsuki_protocol_dev::RANDOM_FAIL;
+pub const PRODUCE_RESOURCE_PROTOCOL: &str = mutsuki_protocol_dev::PRODUCE_RESOURCE;
+pub const CONSUME_RESOURCE_PROTOCOL: &str = mutsuki_protocol_dev::CONSUME_RESOURCE;
 
 #[derive(Clone)]
 pub struct DevMockRunner {

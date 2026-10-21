@@ -17,7 +17,8 @@ workflow 能力，不实现 Agent、Bot、产品配置或平台 UI。
 ## Hard Rules
 
 1. 标准插件只实现通用领域能力，不把机制下沉到 Core，也不吸收 Agent/Bot/Host 业务。
-2. 协议 crate 定义纯 wire shape；插件通过 manifest 和 RunnerDescriptor 声明真实能力。
+2. 协议 crate 定义纯 wire shape 并拥有协议 ID；插件引用协议 crate 的 ID 常量，不重复声明字符串，
+   通过 manifest 和 RunnerDescriptor 声明真实能力。
 3. Runner 只走 batch-first `run_batch`，task 操作使用 `TaskHandle`；局部失败不得污染其他 entry。
 4. 外部副作用必须由 effectful Runner/Gateway 执行；资源跨边界只传 `ResourceRef`/`ValueRef`。
 5. 能力、backend、permission、secret 或 LoadPlan 授权缺失时结构化失败，不做生产 fallback 或 shim。

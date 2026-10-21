@@ -197,13 +197,13 @@ const COMMAND_PLAN_SEMANTICS: &[ResourceSemantic] = &[ResourceSemantic::Capabili
 fn require_kind<T: ResourceKind>(resource: &ResourceRef) -> RuntimeResult<()> {
     if resource.resource_id.kind_id != T::KIND_ID {
         return Err(sdk_resource_error(
-            "resource.kind_mismatch",
+            mutsuki_runtime_contracts::ERR_RESOURCE_KIND_MISMATCH,
             format!("resource.handle.{}", resource.ref_id),
         ));
     }
     if resource.semantic != T::SEMANTIC {
         return Err(sdk_resource_error(
-            "resource.semantic_mismatch",
+            mutsuki_runtime_contracts::ERR_RESOURCE_SEMANTIC_MISMATCH,
             format!("resource.handle.{}", resource.ref_id),
         ));
     }
@@ -218,7 +218,10 @@ fn require_plan_semantic(
     if allowed.contains(&resource.semantic) {
         Ok(())
     } else {
-        Err(sdk_resource_error("resource.semantic_mismatch", route))
+        Err(sdk_resource_error(
+            mutsuki_runtime_contracts::ERR_RESOURCE_SEMANTIC_MISMATCH,
+            route,
+        ))
     }
 }
 

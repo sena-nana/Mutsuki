@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 from mutsuki_runner_kit.contracts.codec import JsonValue
-from mutsuki_runner_kit.contracts.errors import ERR_SDK_DECODE_FAILED, RuntimeError
+from mutsuki_runner_kit.contracts.errors import (
+    ERR_SDK_DECODE_FAILED,
+    ERR_TASK_PROTOCOL_MISMATCH,
+    RuntimeError,
+)
 from mutsuki_runner_kit.contracts.task import TaskHandle, TaskOutcome, TaskStatus
 from mutsuki_runner_kit.runners.protocol import RunnerInvokeError
 
@@ -15,7 +19,7 @@ class TypedTaskHandle:
         if handle.protocol_id != protocol_id:
             raise RunnerInvokeError(
                 RuntimeError(
-                    code="task.protocol_mismatch",
+                    code=ERR_TASK_PROTOCOL_MISMATCH,
                     source=_SDK_SOURCE,
                     route=f"task.handle.{handle.task_id}",
                     evidence={

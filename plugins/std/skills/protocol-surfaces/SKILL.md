@@ -7,6 +7,7 @@ description: Define or change Mutsuki standard config, database, filesystem, HTT
 
 - Keep DTOs serializable, backend-neutral and free of OS or SDK handles.
 - Use `mutsuki.<domain>.<action>` protocol IDs and keep schema, manifest provider/consumer declarations and exports aligned.
+- The `mutsuki-protocol-<domain>` crate owns the ID strings. Plugin crates alias its constants (`pub const FS_READ_PROTOCOL: &str = mutsuki_protocol_fs::READ;`) instead of repeating literals.
 - Reuse Core contracts for task, resource, effect, trace and error semantics.
 - Version breaking wire changes and update every standard plugin consumer in the same change.
 - `ConfigProvider::present` projects a stored or default value for readers (live catalogs,

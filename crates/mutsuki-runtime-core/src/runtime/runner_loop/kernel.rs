@@ -105,7 +105,7 @@ impl CoreRuntime {
     fn rollback_state(&mut self, task: &Task) -> RuntimeResult<()> {
         let request: StateRollback = task.payload.decode().map_err(|err| {
             crate::runtime_failure(
-                "state.rollback_decode_failed",
+                mutsuki_runtime_contracts::ERR_STATE_ROLLBACK_DECODE_FAILED,
                 "runtime.committer",
                 err.to_string(),
             )
