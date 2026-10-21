@@ -91,7 +91,10 @@ fn persona_catalog() -> BotNodeCatalogFragment {
                         port_id: "message".into(),
                         title: "回复".into(),
                         direction: BotNodePortDirection::Output,
-                        event_type: BotFlowTypeRef::new("mutsuki.bot.message.send", 1),
+                        event_type: BotFlowTypeRef::new(
+                            mutsuki_bot_protocol::BOT_FLOW_MESSAGE_SEND_TYPE,
+                            1,
+                        ),
                         required: false,
                     },
                     BotNodePortDescriptor {
@@ -263,7 +266,8 @@ fn completed(
         serde_json::to_value(&event).map_err(|error| runtime_error(task, error))?;
     let mut message_out = invocation.input.clone();
     message_out.protocol_id = BOT_COMMAND_REPLY_PROTOCOL_ID.into();
-    message_out.payload.event_type = BotFlowTypeRef::new("mutsuki.bot.message.send", 1);
+    message_out.payload.event_type =
+        BotFlowTypeRef::new(mutsuki_bot_protocol::BOT_FLOW_MESSAGE_SEND_TYPE, 1);
     message_out.payload.value =
         serde_json::to_value(message).map_err(|error| runtime_error(task, error))?;
     let mut result = RunnerResult::completed(task.task_id.clone());

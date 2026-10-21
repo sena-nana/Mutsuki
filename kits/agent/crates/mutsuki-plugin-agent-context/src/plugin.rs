@@ -229,7 +229,7 @@ async fn enrich_context(
                         .as_ref()
                         .and_then(|value| value.get("skill_limit"))
                         .and_then(serde_json::Value::as_u64)
-                        .unwrap_or(16) as usize,
+                        .map_or(16, |limit| usize::try_from(limit).unwrap_or(usize::MAX)),
                 )
                 .collect(),
         };

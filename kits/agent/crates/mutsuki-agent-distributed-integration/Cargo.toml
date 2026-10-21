@@ -10,7 +10,7 @@ mutsuki-agent-runtime.workspace = true
 mutsuki-distributed-contracts.workspace = true
 mutsuki-distributed-runtime.workspace = true
 mutsuki-runtime-contracts.workspace = true
-mutsuki-protocol-db = { path = "../../../../plugins/std/protocols/mutsuki-protocol-db" }
+mutsuki-protocol-db.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 hex.workspace = true
@@ -19,7 +19,7 @@ sha2.workspace = true
 [dev-dependencies]
 futures.workspace = true
 mutsuki-distributed-host-adapter.workspace = true
-mutsuki-plugin-db-sqlite = { path = "../../../../plugins/std/plugins/mutsuki-plugin-db-sqlite" }
+mutsuki-plugin-db-sqlite.workspace = true
 mutsuki-runtime-core.workspace = true
 tempfile.workspace = true
 

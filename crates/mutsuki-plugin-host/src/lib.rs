@@ -50,7 +50,7 @@ const DEFAULT_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_WORK_QUEUE_LIMIT: usize = 56;
 const DEFAULT_MANAGEMENT_QUEUE_LIMIT: usize = 8;
 const DEFAULT_WORKER_COUNT: usize = 4;
-const RETIRED_ABI_V1_ENTRY_SYMBOL: &[u8] = b"mutsuki_plugin_abi_v1\0";
+use mutsuki_plugin_api::RETIRED_ABI_V1_ENTRY_SYMBOL;
 
 #[derive(Clone, Debug)]
 pub struct PluginHostConfig {

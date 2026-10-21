@@ -4473,6 +4473,7 @@ version = "0.1.0"
 dependencies = [
  "hex",
  "libloading",
+ "mutsuki-plugin-api",
  "reqwest",
  "serde",
  "serde_json",
@@ -5483,14 +5484,12 @@ dependencies = [
 name = "mutsuki-tauri-benchmarks"
 version = "0.1.0"
 dependencies = [
- "hex",
  "libc",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
  "mutsuki-tauri-bridge",
  "mutsuki-tauri-host",
  "serde_json",
- "sha2 0.11.0",
  "tempfile",
  "tokio",
  "windows-sys 0.61.2",

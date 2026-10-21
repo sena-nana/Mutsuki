@@ -18,4 +18,10 @@ Reserve `Host` for CLI, Service, Tauri, Web, Test, or Distributed environments. 
 Bridge, storage in a Protocol, scheduling in an SDK, or business behavior in a product assembly crate.
 Update the owning `AGENTS.md` and skill whenever a new boundary is introduced.
 
+Package prefixes: `mutsuki-plugin-*` is reserved for loadable Mutsuki plugins (a `PluginBuilder`
+manifest); they never depend on one another. AgentKit tool/capability packages loaded by the Agent
+runtime use `mutsuki-agent-plugin-*`: they are Agent plugins, not Mutsuki plugins, so the plugin-to-plugin
+rule does not apply to them. A package directory carries the package name, never a backend suffix
+(the Takumi renderer lives in `plugins/std/plugins/mutsuki-plugin-image-render`).
+
 For a multi-component audit, read [naming rules](references/naming-rules.md).

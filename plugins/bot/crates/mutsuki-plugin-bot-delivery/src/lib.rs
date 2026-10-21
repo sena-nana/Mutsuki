@@ -123,31 +123,6 @@ pub fn bot_reply_delivery_manifest_for(plugin_id: &str, runner_id: &str) -> Plug
         .manifest
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use mutsuki_bot_protocol::BOT_ACTIVE_DELIVERY_PROTOCOL_ID;
-
-    #[test]
-    fn delivery_manifest_for_uses_the_owner_plugin_id() {
-        let manifest = bot_delivery_manifest_for("owner.plugin", "owner.delivery.runner");
-        assert_eq!(manifest.plugin_id, "owner.plugin");
-        let runner = manifest
-            .provides
-            .runners
-            .iter()
-            .find(|runner| {
-                runner
-                    .accepted_protocol_ids
-                    .iter()
-                    .any(|protocol| protocol == BOT_ACTIVE_DELIVERY_PROTOCOL_ID)
-            })
-            .expect("active delivery runner");
-        assert_eq!(runner.plugin_id, "owner.plugin");
-        assert_eq!(runner.runner_id, "owner.delivery.runner");
-    }
-}
-
 fn delivery_protocol_descriptor(
     protocol_id: &str,
     request_required: &[&str],
@@ -191,5 +166,30 @@ fn scheduled_delivery_node_catalog() -> BotNodeCatalogFragment {
             }],
             config_schema: serde_json::json!({"type": "object", "additionalProperties": false}),
         }],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mutsuki_bot_protocol::BOT_ACTIVE_DELIVERY_PROTOCOL_ID;
+
+    #[test]
+    fn delivery_manifest_for_uses_the_owner_plugin_id() {
+        let manifest = bot_delivery_manifest_for("owner.plugin", "owner.delivery.runner");
+        assert_eq!(manifest.plugin_id, "owner.plugin");
+        let runner = manifest
+            .provides
+            .runners
+            .iter()
+            .find(|runner| {
+                runner
+                    .accepted_protocol_ids
+                    .iter()
+                    .any(|protocol| protocol == BOT_ACTIVE_DELIVERY_PROTOCOL_ID)
+            })
+            .expect("active delivery runner");
+        assert_eq!(runner.plugin_id, "owner.plugin");
+        assert_eq!(runner.runner_id, "owner.delivery.runner");
     }
 }

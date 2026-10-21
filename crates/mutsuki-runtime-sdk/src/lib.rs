@@ -168,7 +168,7 @@ fn lane_failure(entry: &mutsuki_runtime_contracts::BatchEntry, detail: &str) -> 
 fn complete_work_batch_entry(
     batch: &WorkBatch,
     entry: &mutsuki_runtime_contracts::BatchEntry,
-    handler: &impl Fn(&Task) -> Result<RunnerResult, RuntimeError>,
+    mut handler: impl FnMut(&Task) -> Result<RunnerResult, RuntimeError>,
 ) -> EntryCompletion {
     let task = match batch.payload_task(entry.payload_index) {
         Ok(task) if task.task_id == entry.task_id => task,
@@ -340,45 +340,7 @@ pub fn map_work_batch_entries(
     let results = batch
         .entries
         .iter()
-        .map(|entry| {
-            let task = match batch.payload_task(entry.payload_index) {
-                Ok(task) if task.task_id == entry.task_id => task,
-                Ok(_) => {
-                    return EntryCompletion {
-                        entry_id: entry.entry_id.clone(),
-                        task_id: entry.task_id.clone(),
-                        result: None,
-                        error: Some(mutsuki_runtime_contracts::RuntimeError::new(
-                            mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
-                            "runtime.sdk",
-                            format!("batch.entry.{}.payload_task_id", entry.entry_id),
-                        )),
-                    };
-                }
-                Err(error) => {
-                    return EntryCompletion {
-                        entry_id: entry.entry_id.clone(),
-                        task_id: entry.task_id.clone(),
-                        result: None,
-                        error: Some(error),
-                    };
-                }
-            };
-            match handler(&task) {
-                Ok(result) => EntryCompletion {
-                    entry_id: entry.entry_id.clone(),
-                    task_id: entry.task_id.clone(),
-                    result: Some(result),
-                    error: None,
-                },
-                Err(error) => EntryCompletion {
-                    entry_id: entry.entry_id.clone(),
-                    task_id: entry.task_id.clone(),
-                    result: None,
-                    error: Some(error),
-                },
-            }
-        })
+        .map(|entry| complete_work_batch_entry(batch, entry, &mut handler))
         .collect();
     Ok(CompletionBatch::from_results(batch, results))
 }

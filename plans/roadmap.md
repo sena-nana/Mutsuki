@@ -42,7 +42,7 @@ Link、Host、AgentKit、Bot、StdPlugins 和第一方 Bot 产品的 package 组
 `mutsuki-std-web-extension-config`、`mutsuki-plugin-workflow-linear`、
 `mutsuki-plugin-workflow-broadcast`、`mutsuki-plugin-io-fs`、
 `mutsuki-plugin-io-http-client`、`mutsuki-plugin-io-browser-chromium`、
-`mutsuki-plugin-image-render-takumi` 和 `mutsuki-plugin-db-sqlite`
+`mutsuki-plugin-image-render`（Takumi 渲染后端） 和 `mutsuki-plugin-db-sqlite`
 能力。`dev-mock` 当前提供 deterministic echo / sleep / fail / random-fail /
 resource lineage mock，用于验证标准插件加载、协议声明、handler binding 和 batch runner
 路径；`observe-log` 当前提供 `mutsuki.log.emit` 与最小 trace event 协议到 DomainEvent 的

@@ -805,34 +805,6 @@ impl BilibiliConfiguredPlugin {
     }
 }
 
-/// Drives a config future from a synchronous caller.
-///
-/// The three arms are not interchangeable. On a multi-thread runtime the worker can
-/// be handed off, so `block_in_place` is enough. On a current-thread runtime the
-/// caller *is* the reactor: blocking on it would deadlock the future it is waiting
-/// for, which is why this pays for a thread instead. With no runtime at all a plain
-/// executor suffices. Only the config write path reaches here.
-fn block_on_config<F, T>(future: F) -> T
-where
-    F: std::future::Future<Output = T> + Send + 'static,
-    T: Send + 'static,
-{
-    match tokio::runtime::Handle::try_current() {
-        Ok(handle)
-            if matches!(
-                handle.runtime_flavor(),
-                tokio::runtime::RuntimeFlavor::MultiThread
-            ) =>
-        {
-            tokio::task::block_in_place(|| handle.block_on(future))
-        }
-        Ok(_) => std::thread::spawn(move || futures_executor::block_on(future))
-            .join()
-            .expect("Bilibili config worker"),
-        Err(_) => futures_executor::block_on(future),
-    }
-}
-
 struct HostBilibiliCredentialStore {
     host: HostSecretStore,
     shared: SharedBilibiliCredential,
@@ -854,7 +826,7 @@ impl BilibiliConfigStore for ConfigServiceBilibiliConfigStore {
     fn replace(&self, config: &BilibiliConfig) -> Result<(), String> {
         let service = self.0.clone();
         let config = config.clone();
-        block_on_config(async move {
+        mutsuki_service_runtime::block_on_host_future(async move {
             let snapshot = service
                 .read(
                     BILIBILI_PLUGIN_ID,
@@ -942,7 +914,7 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
             let seed = ConfigValue::from_json(
                 &serde_json::to_value(&config).expect("Bilibili config serializes"),
             );
-            let snapshot = block_on_config(async move {
+            let snapshot = mutsuki_service_runtime::block_on_host_future(async move {
                 service
                     .prepare_provider_candidate(provider, Some(seed), ConfigContext::global())
                     .await

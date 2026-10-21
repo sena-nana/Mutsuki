@@ -149,11 +149,13 @@ impl RuntimeGroupHost {
                 ),
             ));
         }
+        // One lock spans check, submit and record: two concurrent requests with
+        // the same idempotency key must not both reach the target domain.
+        let mut requests = self
+            .requests
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         {
-            let requests = self
-                .requests
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
             if let Some(existing) = requests.get(&request.idempotency_key) {
                 if existing.request_id == request.request_id
                     && existing.source_domain == request.source_domain
@@ -166,6 +168,17 @@ impl RuntimeGroupHost {
                 return Err(host_failure(
                     "host.runtime_group.idempotency_conflict",
                     format!("idempotency_key.{}", request.idempotency_key),
+                ));
+            }
+            // Idempotency records are replay facts and are never silently evicted;
+            // a full table rejects new keys instead of growing without bound.
+            if requests.len() >= self.limits.max_queued_batches {
+                return Err(mutsuki_runtime_core::RuntimeFailure::new(
+                    mutsuki_runtime_contracts::RuntimeError::new(
+                        mutsuki_runtime_contracts::ERR_CAPABILITY_EXHAUSTED,
+                        "runtime.host",
+                        "host.runtime_group.idempotency_records",
+                    ),
                 ));
             }
         }
@@ -188,10 +201,6 @@ impl RuntimeGroupHost {
             domain_id: target_domain.clone(),
             task,
         };
-        let mut requests = self
-            .requests
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
         requests.insert(
             request.idempotency_key,
             IdempotentDomainRequest {

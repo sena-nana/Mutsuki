@@ -22,7 +22,6 @@ use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
 use mutsuki_tauri_bridge::{FrontendTaskRequest, FrontendTaskResult, TaskResultRequest};
 use mutsuki_tauri_host::{MutsukiTauriConfig, MutsukiTauriHost, PathsConfig};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 
 const PROTOCOL_ID: &str = "benchmark.echo";
 
@@ -428,11 +427,6 @@ fn current_rss_bytes() -> u64 {
         .and_then(|value| value.trim().parse::<u64>().ok())
         .unwrap_or(0)
         * 1024
-}
-
-#[allow(dead_code)]
-fn stable_hash(value: &Value) -> String {
-    hex::encode(Sha256::digest(serde_json::to_vec(value).unwrap()))
 }
 
 #[cfg(unix)]

@@ -14,7 +14,7 @@ if ! command -v rg >/dev/null 2>&1; then
 fi
 
 forbidden_dependency='(^[[:space:]]*[[:alnum:]_.-]*(cluster|distributed|consensus|quorum|remote[-_]resource|trust|attestation|openraft|raft|libp2p|quinn|tonic|transport)[[:alnum:]_.-]*[[:space:]]*=)|(package[[:space:]]*=[[:space:]]*"[[:alnum:]_.-]*(cluster|distributed|consensus|quorum|remote[-_]resource|trust|attestation|openraft|raft|libp2p|quinn|tonic|transport)[[:alnum:]_.-]*")'
-if rg -n -i "$forbidden_dependency" crates/mutsuki-runtime-{contracts,core,sdk,sdk-macros}/Cargo.toml; then
+if rg -n -i "$forbidden_dependency" crates/mutsuki-runtime-{contracts,core,sdk,sdk-macros,wire,host}/Cargo.toml crates/mutsuki-plugin-{api,host}/Cargo.toml; then
   echo "distributed boundary violation: forbidden cluster/transport dependency" >&2
   exit 1
 fi
@@ -22,8 +22,13 @@ fi
 source_roots=(
   crates/mutsuki-runtime-contracts
   crates/mutsuki-runtime-core
+  crates/mutsuki-runtime-host
   crates/mutsuki-runtime-sdk
   crates/mutsuki-runtime-sdk-macros
+  crates/mutsuki-runtime-wire
+  crates/mutsuki-plugin-api
+  crates/mutsuki-plugin-host
+  hosts/cli
   kits/agent/crates/mutsuki-agent-contracts
   kits/agent/crates/mutsuki-agent-runtime
   kits/agent/crates/mutsuki-agent-sdk

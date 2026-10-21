@@ -9,7 +9,7 @@ mutsuki-plugin-api.workspace = true
 mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-core.workspace = true
 mutsuki-runtime-wire.workspace = true
-mutsuki-runtime-sdk-macros = { path = "../mutsuki-runtime-sdk-macros" }
+mutsuki-runtime-sdk-macros.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

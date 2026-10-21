@@ -10,6 +10,8 @@ pub const BOT_FLOW_NODE_EXTENSION_ID: &str = "mutsuki.bot.flow.nodes";
 pub const BOT_FLOW_NODE_EXTENSION_VERSION: u32 = 1;
 pub const BOT_FLOW_ERROR_TYPE: &str = "mutsuki.bot.flow.error";
 pub const BOT_FLOW_BOT_EVENT_TYPE: &str = "mutsuki.bot.event";
+/// Flow event type carried by outbound `mutsuki.bot.message/send@1` envelopes.
+pub const BOT_FLOW_MESSAGE_SEND_TYPE: &str = "mutsuki.bot.message.send";
 pub const BOT_FLOW_MESSAGE_EVENT_TYPE: &str = "mutsuki.bot.event.message";
 pub const BOT_FLOW_MESSAGE_DELETED_EVENT_TYPE: &str = "mutsuki.bot.event.message_deleted";
 pub const BOT_FLOW_REACTION_EVENT_TYPE: &str = "mutsuki.bot.event.reaction";
@@ -108,6 +110,24 @@ impl BotFlowEventEnvelope {
             trace_id,
             correlation_id,
         })
+    }
+
+    /// Outbound `mutsuki.bot.message/send@1` envelope derived from a node's
+    /// input: it keeps the input's Flow context, trace and correlation so the
+    /// reply stays attributed to the triggering event.
+    #[must_use]
+    pub fn outbound_message(input: &Self, event_id: impl Into<String>, message: Value) -> Self {
+        Self {
+            event_id: event_id.into(),
+            protocol_id: crate::BOT_MESSAGE_SEND_PROTOCOL_ID.into(),
+            payload: BotFlowPayload {
+                event_type: BotFlowTypeRef::new(BOT_FLOW_MESSAGE_SEND_TYPE, 1),
+                value: message,
+            },
+            context: input.context.clone(),
+            trace_id: input.trace_id.clone(),
+            correlation_id: input.correlation_id.clone(),
+        }
     }
 }
 

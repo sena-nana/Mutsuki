@@ -145,7 +145,10 @@ fn match_node_descriptor() -> BotNodeDescriptor {
                 port_id: "retry".into(),
                 title: "重试提示".into(),
                 direction: BotNodePortDirection::Output,
-                event_type: BotFlowTypeRef::new("mutsuki.bot.message.send", 1),
+                event_type: BotFlowTypeRef::new(
+                    mutsuki_bot_protocol::BOT_FLOW_MESSAGE_SEND_TYPE,
+                    1,
+                ),
                 required: false,
             },
         ],

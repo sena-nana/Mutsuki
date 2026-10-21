@@ -38,6 +38,9 @@ use mutsuki_runtime_wire::{
 
 pub const ABI_V2_TRANSPORT_VERSION: u32 = 2;
 pub const ABI_V2_ENTRY_SYMBOL: &[u8] = b"mutsuki_plugin_abi_v2\0";
+/// Entry symbol of the retired ABI v1; loaders probe it only to report a clear
+/// "rebuild for ABI v2" error.
+pub const RETIRED_ABI_V1_ENTRY_SYMBOL: &[u8] = b"mutsuki_plugin_abi_v1\0";
 pub const ABI_V2_CODEC_ID: &str = mutsuki_runtime_wire::BINARY_CODEC_ID;
 pub const ABI_V2_BRIDGE_ID: &str = "mutsuki.bridge.abi.binary.v2";
 

@@ -109,6 +109,7 @@ mutsuki-runtime-contracts = { path = "crates/mutsuki-runtime-contracts" }
 mutsuki-runtime-core = { path = "crates/mutsuki-runtime-core" }
 mutsuki-runtime-host = { path = "crates/mutsuki-runtime-host" }
 mutsuki-runtime-sdk = { path = "crates/mutsuki-runtime-sdk" }
+mutsuki-runtime-sdk-macros = { path = "crates/mutsuki-runtime-sdk-macros" }
 mutsuki-runtime-wire = { path = "crates/mutsuki-runtime-wire" }
 mutsuki-plugin-api = { path = "crates/mutsuki-plugin-api" }
 mutsuki-plugin-host = { path = "crates/mutsuki-plugin-host" }
@@ -229,9 +230,18 @@ mutsuki-module-catalog = { path = "crates/mutsuki-module-catalog" }
 
 mutsuki-protocol-browser = { path = "plugins/std/protocols/mutsuki-protocol-browser" }
 mutsuki-protocol-config = { path = "plugins/std/protocols/mutsuki-protocol-config" }
+mutsuki-protocol-db = { path = "plugins/std/protocols/mutsuki-protocol-db" }
 mutsuki-protocol-http = { path = "plugins/std/protocols/mutsuki-protocol-http" }
 mutsuki-protocol-image = { path = "plugins/std/protocols/mutsuki-protocol-image" }
-mutsuki-plugin-image-render = { path = "plugins/std/plugins/mutsuki-plugin-image-render-takumi" }
+mutsuki-plugin-image-render = { path = "plugins/std/plugins/mutsuki-plugin-image-render" }
+mutsuki-plugin-db-sqlite = { path = "plugins/std/plugins/mutsuki-plugin-db-sqlite" }
+mutsuki-plugin-config-permission = { path = "plugins/std/plugins/mutsuki-plugin-config-permission" }
+mutsuki-plugin-dev-mock = { path = "plugins/std/plugins/mutsuki-plugin-dev-mock" }
+mutsuki-plugin-io-fs = { path = "plugins/std/plugins/mutsuki-plugin-io-fs" }
+mutsuki-plugin-observe-log = { path = "plugins/std/plugins/mutsuki-plugin-observe-log" }
+mutsuki-plugin-resource-shared-memory = { path = "plugins/std/plugins/mutsuki-plugin-resource-shared-memory" }
+mutsuki-plugin-workflow-broadcast = { path = "plugins/std/plugins/mutsuki-plugin-workflow-broadcast" }
+mutsuki-plugin-workflow-linear = { path = "plugins/std/plugins/mutsuki-plugin-workflow-linear" }
 mutsuki-plugin-io-browser-chromium = { path = "plugins/std/plugins/mutsuki-plugin-io-browser-chromium" }
 mutsuki-plugin-io-http-client = { path = "plugins/std/plugins/mutsuki-plugin-io-http-client" }
 mutsuki-plugin-resource-memory = { path = "plugins/std/plugins/mutsuki-plugin-resource-memory" }
@@ -253,6 +263,9 @@ unsafe_code = "deny"
 [workspace.lints.clippy]
 all = "warn"
 pedantic = "warn"
+# New in clippy 1.99 (`style`). Its suggested `assert_ne!(v, [] as [T; 0])` rewrite
+# is less readable than `assert!(v.is_empty())`, which tests use deliberately.
+assert_is_empty = { level = "allow", priority = 1 }
 
 [profile.dev]
 debug = "line-tables-only"

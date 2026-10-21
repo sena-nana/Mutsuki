@@ -384,11 +384,11 @@ struct AbiSymbolContract {
     entry_symbol: &'static str,
 }
 
+// The ABI contract is owned by `mutsuki-plugin-api`; the catalog only probes it.
 const ABI_ENTRY_CONTRACT: AbiSymbolContract = AbiSymbolContract {
-    transport_version: 2,
+    transport_version: mutsuki_plugin_api::ABI_V2_TRANSPORT_VERSION,
     entry_symbol: "mutsuki_plugin_abi_v2",
 };
-const RETIRED_ABI_V1_ENTRY_SYMBOL: &str = "mutsuki_plugin_abi_v1";
 
 // This upgrade probe is on the workspace `unsafe_code` exception list: deciding whether a
 // downloaded artifact is a usable ABI v2 plugin requires opening it and looking for the entry
@@ -399,17 +399,19 @@ fn verify_abi_entry_symbol(path: &Path) -> Result<AbiSymbolContract, String> {
     // artifacts the catalog has already resolved inside the managed plugin root.
     let library = unsafe { libloading::Library::new(path) }
         .map_err(|error| format!("not a loadable ABI dynamic library ({error})"))?;
-    let mut symbol = ABI_ENTRY_CONTRACT.entry_symbol.as_bytes().to_vec();
-    symbol.push(0);
+    let symbol = mutsuki_plugin_api::ABI_V2_ENTRY_SYMBOL;
     // SAFETY: the symbol is resolved as an opaque `*const ()` and is only tested for presence,
     // so no signature is asserted and nothing is ever called through it.
-    if unsafe { library.get::<libloading::Symbol<*const ()>>(symbol.as_slice()) }.is_ok() {
+    if unsafe { library.get::<libloading::Symbol<*const ()>>(symbol) }.is_ok() {
         return Ok(ABI_ENTRY_CONTRACT);
     }
-    let mut retired = RETIRED_ABI_V1_ENTRY_SYMBOL.as_bytes().to_vec();
-    retired.push(0);
     // SAFETY: same as above, an opaque presence check used to report the retired ABI clearly.
-    if unsafe { library.get::<libloading::Symbol<*const ()>>(retired.as_slice()) }.is_ok() {
+    if unsafe {
+        library
+            .get::<libloading::Symbol<*const ()>>(mutsuki_plugin_api::RETIRED_ABI_V1_ENTRY_SYMBOL)
+    }
+    .is_ok()
+    {
         return Err("unsupported ABI version 1; rebuild the plugin for ABI v2".into());
     }
     Err(format!(
@@ -612,6 +614,18 @@ mod tests {
                 .steps
                 .iter()
                 .any(|step| step.id == "fetch" && step.status == StepStatus::Failed)
+        );
+    }
+}
+
+#[cfg(test)]
+mod abi_contract_tests {
+    #[test]
+    fn reported_entry_symbol_matches_the_plugin_api_owner() {
+        let owner = mutsuki_plugin_api::ABI_V2_ENTRY_SYMBOL;
+        assert_eq!(
+            super::ABI_ENTRY_CONTRACT.entry_symbol.as_bytes(),
+            &owner[..owner.len() - 1]
         );
     }
 }

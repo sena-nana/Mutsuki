@@ -14,10 +14,10 @@ use std::time::Duration;
 
 use mutsuki_bot_link_parser::{MAX_LINK_CARD_MEDIA_BYTES, ResolvedLinkCard, preferred_event_url};
 use mutsuki_bot_protocol::{
-    BOT_MESSAGE_SEND_PROTOCOL_ID, BotEvent, BotExtMap, BotFlowEventEnvelope, BotFlowPayload,
-    BotFlowTypeRef, BotMessage, BotNodeBinding, BotNodeCatalogFragment, BotNodeDescriptor,
-    BotNodeInvocation, BotNodeOutput, BotNodePortDescriptor, BotNodePortDirection, BotNodeResult,
-    BotNodeRole, BotTarget, MessageSegment,
+    BOT_MESSAGE_SEND_PROTOCOL_ID, BotEvent, BotExtMap, BotFlowEventEnvelope, BotFlowTypeRef,
+    BotMessage, BotNodeBinding, BotNodeCatalogFragment, BotNodeDescriptor, BotNodeInvocation,
+    BotNodeOutput, BotNodePortDescriptor, BotNodePortDirection, BotNodeResult, BotNodeRole,
+    BotTarget, MessageSegment,
 };
 use mutsuki_runtime_contracts::{
     CompletionBatch, ExecutionClass, ProtocolClass, RunnerContext, RunnerDescriptor, RunnerPurity,
@@ -271,7 +271,10 @@ fn workshop_node_catalog() -> BotNodeCatalogFragment {
                     port_id: "message".into(),
                     title: "发送消息".into(),
                     direction: BotNodePortDirection::Output,
-                    event_type: BotFlowTypeRef::new("mutsuki.bot.message.send", 1),
+                    event_type: BotFlowTypeRef::new(
+                        mutsuki_bot_protocol::BOT_FLOW_MESSAGE_SEND_TYPE,
+                        1,
+                    ),
                     required: false,
                 },
             ],
@@ -319,17 +322,11 @@ fn flow_message_result(
 ) -> Result<RunnerResult, RuntimeError> {
     let output = BotNodeOutput {
         port_id: "message".into(),
-        event: BotFlowEventEnvelope {
-            event_id: invocation.input.event_id.clone(),
-            protocol_id: BOT_MESSAGE_SEND_PROTOCOL_ID.into(),
-            payload: BotFlowPayload {
-                event_type: BotFlowTypeRef::new("mutsuki.bot.message.send", 1),
-                value: serde_json::to_value(message).map_err(|error| failure(task, error))?,
-            },
-            context: invocation.input.context.clone(),
-            trace_id: invocation.input.trace_id.clone(),
-            correlation_id: invocation.input.correlation_id.clone(),
-        },
+        event: BotFlowEventEnvelope::outbound_message(
+            &invocation.input,
+            invocation.input.event_id.clone(),
+            serde_json::to_value(message).map_err(|error| failure(task, error))?,
+        ),
     };
     let mut result = RunnerResult::completed(task.task_id.clone());
     result.output = Some(

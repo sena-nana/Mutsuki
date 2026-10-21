@@ -39,9 +39,10 @@ RuntimeProfile + PluginManifest
 - `plugin-api` / `plugin-host` 依赖 `contracts + wire`（`plugin-host` 另依赖 `plugin-api`），
   只实现领域中立 ABI v2 插件契约与动态库加载/生命周期宿主；不进入 Core 调度语义，
   也不携带产品或 Host 专属行为。
-- `host` 依赖 `core + contracts`，提供 `HostRuntime` 控制面门面、runtime bootstrapper
-  和 binary runner client。
-- `sdk` 依赖 `core + contracts`，只提供 Rust 插件作者侧 awaitable 包装。
+- `sdk` 依赖 `core + contracts + wire + plugin-api`（及 `sdk-macros`），提供 Rust 插件作者侧
+  awaitable 包装、Host 扩展 trait 与 ABI v2 guest 适配；不依赖 `host`。
+- `host` 依赖 `core + contracts + wire + sdk + plugin-api + plugin-host`，提供 `HostRuntime`
+  控制面门面、runtime bootstrapper、ABI v2 插件装载和 binary runner client。
 - `kits/python-runner` 镜像 contracts，提供 Python runner backend 和 stdio runner
   server；Rust crates 不依赖 Python。
 

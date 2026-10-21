@@ -213,7 +213,7 @@ pub fn validate_agent_runtime_profile(profile: &AgentRuntimeProfile) -> Result<(
             "system instructions and prompt fragments cannot be empty",
         ));
     }
-    if profile.begin_dialogs.len() % 2 != 0
+    if !profile.begin_dialogs.len().is_multiple_of(2)
         || profile
             .begin_dialogs
             .iter()

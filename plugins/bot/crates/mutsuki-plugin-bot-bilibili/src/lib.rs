@@ -1700,17 +1700,11 @@ fn wrap_management_node_result(
                 })?;
             Ok(BotNodeOutput {
                 port_id: "message".into(),
-                event: BotFlowEventEnvelope {
-                    event_id: format!("{}:message", invocation.input.event_id),
-                    protocol_id: BOT_MESSAGE_SEND_PROTOCOL_ID.into(),
-                    payload: BotFlowPayload {
-                        event_type: BotFlowTypeRef::new("mutsuki.bot.message.send", 1),
-                        value: serde_json::to_value(message).expect("BotMessage serializes"),
-                    },
-                    context: invocation.input.context.clone(),
-                    trace_id: invocation.input.trace_id.clone(),
-                    correlation_id: invocation.input.correlation_id.clone(),
-                },
+                event: BotFlowEventEnvelope::outbound_message(
+                    &invocation.input,
+                    format!("{}:message", invocation.input.event_id),
+                    serde_json::to_value(message).expect("BotMessage serializes"),
+                ),
             })
         })
         .collect::<RuntimeResult<Vec<_>>>()?;
@@ -2014,17 +2008,11 @@ async fn run_notification_card(
         serde_json::to_value(BotNodeResult {
             outputs: vec![BotNodeOutput {
                 port_id: "message".into(),
-                event: BotFlowEventEnvelope {
-                    event_id: format!("{}:message", invocation.input.event_id),
-                    protocol_id: BOT_MESSAGE_SEND_PROTOCOL_ID.into(),
-                    payload: BotFlowPayload {
-                        event_type: BotFlowTypeRef::new("mutsuki.bot.message.send", 1),
-                        value: serde_json::to_value(message).expect("BotMessage serializes"),
-                    },
-                    context: invocation.input.context.clone(),
-                    trace_id: invocation.input.trace_id.clone(),
-                    correlation_id: invocation.input.correlation_id.clone(),
-                },
+                event: BotFlowEventEnvelope::outbound_message(
+                    &invocation.input,
+                    format!("{}:message", invocation.input.event_id),
+                    serde_json::to_value(message).expect("BotMessage serializes"),
+                ),
             }],
             metadata: Default::default(),
         })
@@ -2225,7 +2213,10 @@ pub fn manifest_with_surfaces(
                 port_id: "message".into(),
                 title: "发送消息".into(),
                 direction: BotNodePortDirection::Output,
-                event_type: BotFlowTypeRef::new("mutsuki.bot.message.send", 1),
+                event_type: BotFlowTypeRef::new(
+                    mutsuki_bot_protocol::BOT_FLOW_MESSAGE_SEND_TYPE,
+                    1,
+                ),
                 required: false,
             },
         ],
@@ -2254,7 +2245,10 @@ pub fn manifest_with_surfaces(
                 port_id: "message".into(),
                 title: "发送消息".into(),
                 direction: BotNodePortDirection::Output,
-                event_type: BotFlowTypeRef::new("mutsuki.bot.message.send", 1),
+                event_type: BotFlowTypeRef::new(
+                    mutsuki_bot_protocol::BOT_FLOW_MESSAGE_SEND_TYPE,
+                    1,
+                ),
                 required: false,
             },
         ],
@@ -2296,7 +2290,10 @@ pub fn manifest_with_surfaces(
                     port_id: "message".into(),
                     title: "回复消息".into(),
                     direction: BotNodePortDirection::Output,
-                    event_type: BotFlowTypeRef::new("mutsuki.bot.message.send", 1),
+                    event_type: BotFlowTypeRef::new(
+                        mutsuki_bot_protocol::BOT_FLOW_MESSAGE_SEND_TYPE,
+                        1,
+                    ),
                     required: false,
                 },
             ],

@@ -11,16 +11,16 @@ mutsuki-protocol-http.workspace = true
 mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-core.workspace = true
 mutsuki-runtime-sdk.workspace = true
-mutsuki-plugin-config-permission = { path = "../../plugins/mutsuki-plugin-config-permission" }
-mutsuki-plugin-db-sqlite = { path = "../../plugins/mutsuki-plugin-db-sqlite" }
-mutsuki-plugin-dev-mock = { path = "../../plugins/mutsuki-plugin-dev-mock" }
-mutsuki-plugin-io-fs = { path = "../../plugins/mutsuki-plugin-io-fs" }
+mutsuki-plugin-config-permission.workspace = true
+mutsuki-plugin-db-sqlite.workspace = true
+mutsuki-plugin-dev-mock.workspace = true
+mutsuki-plugin-io-fs.workspace = true
 mutsuki-plugin-io-http-client.workspace = true
-mutsuki-plugin-observe-log = { path = "../../plugins/mutsuki-plugin-observe-log" }
+mutsuki-plugin-observe-log.workspace = true
 mutsuki-plugin-resource-memory.workspace = true
-mutsuki-plugin-resource-shared-memory = { path = "../../plugins/mutsuki-plugin-resource-shared-memory" }
-mutsuki-plugin-workflow-broadcast = { path = "../../plugins/mutsuki-plugin-workflow-broadcast" }
-mutsuki-plugin-workflow-linear = { path = "../../plugins/mutsuki-plugin-workflow-linear" }
+mutsuki-plugin-resource-shared-memory.workspace = true
+mutsuki-plugin-workflow-broadcast.workspace = true
+mutsuki-plugin-workflow-linear.workspace = true
 mutsuki-std-effect.workspace = true
 serde.workspace = true
 serde_json.workspace = true

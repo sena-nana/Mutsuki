@@ -13,10 +13,10 @@ use mutsuki_bot_link_parser::{MAX_LINK_CARD_MEDIA_BYTES, preferred_event_url};
 #[cfg(test)]
 use mutsuki_bot_protocol::BotNodeWiring;
 use mutsuki_bot_protocol::{
-    BOT_MESSAGE_SEND_PROTOCOL_ID, BotEvent, BotExtMap, BotFlowEventEnvelope, BotFlowPayload,
-    BotFlowTypeRef, BotMessage, BotNodeBinding, BotNodeCatalogFragment, BotNodeDescriptor,
-    BotNodeInvocation, BotNodeOutput, BotNodePortDescriptor, BotNodePortDirection, BotNodeResult,
-    BotNodeRole, BotTarget, MessageSegment,
+    BOT_MESSAGE_SEND_PROTOCOL_ID, BotEvent, BotExtMap, BotFlowEventEnvelope, BotFlowTypeRef,
+    BotMessage, BotNodeBinding, BotNodeCatalogFragment, BotNodeDescriptor, BotNodeInvocation,
+    BotNodeOutput, BotNodePortDescriptor, BotNodePortDirection, BotNodeResult, BotNodeRole,
+    BotTarget, MessageSegment,
 };
 use mutsuki_protocol_browser::{
     BrowserSnapshot, BrowserSnapshotRequest, BrowserWaitMode, SNAPSHOT, SNAPSHOT_SCHEMA,
@@ -410,7 +410,10 @@ fn mihuashi_node_catalog() -> BotNodeCatalogFragment {
                     port_id: "message".into(),
                     title: "发送消息".into(),
                     direction: BotNodePortDirection::Output,
-                    event_type: BotFlowTypeRef::new("mutsuki.bot.message.send", 1),
+                    event_type: BotFlowTypeRef::new(
+                        mutsuki_bot_protocol::BOT_FLOW_MESSAGE_SEND_TYPE,
+                        1,
+                    ),
                     required: false,
                 },
             ],
@@ -465,17 +468,11 @@ fn flow_message_result(
 ) -> RuntimeResult<RunnerResult> {
     let output = BotNodeOutput {
         port_id: "message".into(),
-        event: BotFlowEventEnvelope {
-            event_id: invocation.input.event_id.clone(),
-            protocol_id: BOT_MESSAGE_SEND_PROTOCOL_ID.into(),
-            payload: BotFlowPayload {
-                event_type: BotFlowTypeRef::new("mutsuki.bot.message.send", 1),
-                value: serde_json::to_value(message).map_err(|error| fail(task, error))?,
-            },
-            context: invocation.input.context.clone(),
-            trace_id: invocation.input.trace_id.clone(),
-            correlation_id: invocation.input.correlation_id.clone(),
-        },
+        event: BotFlowEventEnvelope::outbound_message(
+            &invocation.input,
+            invocation.input.event_id.clone(),
+            serde_json::to_value(message).map_err(|error| fail(task, error))?,
+        ),
     };
     let mut result = RunnerResult::completed(task.task_id.clone());
     result.output = Some(
@@ -771,7 +768,7 @@ mod tests {
             input: BotFlowEventEnvelope {
                 event_id: "e1".into(),
                 protocol_id: mutsuki_bot_protocol::BOT_EVENT_INGEST_PROTOCOL_ID.into(),
-                payload: BotFlowPayload {
+                payload: mutsuki_bot_protocol::BotFlowPayload {
                     event_type: BotFlowTypeRef::new("mutsuki.bot.event", 1),
                     value: serde_json::to_value(&event).unwrap(),
                 },
@@ -1021,7 +1018,9 @@ mod tests {
             max_dom_bytes: 2 * 1024 * 1024,
         };
         let font = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../std/plugins/mutsuki-plugin-image-render-takumi/tests/fonts/NotoSansSC-Test.ttf")
+            .join(
+                "../../../std/plugins/mutsuki-plugin-image-render/tests/fonts/NotoSansSC-Test.ttf",
+            )
             .canonicalize()
             .unwrap();
         let memory_manifest = mutsuki_plugin_resource_memory::loaded_plugin().manifest;

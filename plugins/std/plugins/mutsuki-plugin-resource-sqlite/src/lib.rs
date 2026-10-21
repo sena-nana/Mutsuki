@@ -487,6 +487,9 @@ impl SqliteResourceProvider {
         })
     }
 
+    // One transaction (validate, retain, write, receipt) kept together so the
+    // commit order is auditable in one place.
+    #[allow(clippy::too_many_lines)]
     fn commit_write_plan(&self, plan: &WritePlan, bytes: Vec<u8>) -> RuntimeResult<PlanReceipt> {
         const ROUTE: &str = "resource.sqlite.write";
         ensure_provider(&plan.resource, ROUTE)?;

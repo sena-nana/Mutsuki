@@ -555,7 +555,7 @@ impl AgentConnectionManager {
         next.connections
             .sort_by(|left, right| left.connection_id.cmp(&right.connection_id));
         let service = self.config_service.clone();
-        block_on_config(async move {
+        mutsuki_service_runtime::block_on_host_future(async move {
             service
                 .apply(
                     AGENT_CONNECTIONS_PLUGIN_ID,
@@ -790,27 +790,6 @@ impl ConfigProvider for AgentConnectionsConfigProvider {
     }
 }
 
-fn block_on_config<F, T>(future: F) -> T
-where
-    F: std::future::Future<Output = T> + Send + 'static,
-    T: Send + 'static,
-{
-    match tokio::runtime::Handle::try_current() {
-        Ok(handle)
-            if matches!(
-                handle.runtime_flavor(),
-                tokio::runtime::RuntimeFlavor::MultiThread
-            ) =>
-        {
-            tokio::task::block_in_place(|| handle.block_on(future))
-        }
-        Ok(_) => std::thread::spawn(move || futures_executor::block_on(future))
-            .join()
-            .expect("Agent config worker"),
-        Err(_) => futures_executor::block_on(future),
-    }
-}
-
 pub struct ConfiguredAgentConnectionsPlugin {
     registry: AgentConnectionRegistry,
     connectors: AgentConnectorCatalog,
@@ -853,7 +832,7 @@ impl ConfiguredPluginFactory for ConfiguredAgentConnectionsPlugin {
         });
         let config_service = self.config_service.clone();
         let candidate_provider = provider.clone();
-        block_on_config(async move {
+        mutsuki_service_runtime::block_on_host_future(async move {
             config_service
                 .prepare_provider_candidate(
                     candidate_provider,
@@ -1470,7 +1449,7 @@ mod tests {
             .unwrap();
         let service = Arc::new(ConfigService::new(providers, repository).unwrap());
         let service_for_seed = service.clone();
-        block_on_config(async move {
+        mutsuki_service_runtime::block_on_host_future(async move {
             service_for_seed
                 .create_if_absent(
                     AGENT_CONNECTIONS_PLUGIN_ID,
@@ -1509,7 +1488,7 @@ mod tests {
 
     fn persisted_config(service: &Arc<ConfigService>) -> AgentConnectionsConfig {
         let service = service.clone();
-        let snapshot = block_on_config(async move {
+        let snapshot = mutsuki_service_runtime::block_on_host_future(async move {
             service
                 .read(
                     AGENT_CONNECTIONS_PLUGIN_ID,

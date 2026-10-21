@@ -223,30 +223,7 @@ fn block_on_control<F>(future: F) -> ControlResponse
 where
     F: std::future::Future<Output = ControlResponse> + Send + 'static,
 {
-    match tokio::runtime::Handle::try_current() {
-        Ok(handle) => match handle.runtime_flavor() {
-            tokio::runtime::RuntimeFlavor::MultiThread => {
-                tokio::task::block_in_place(|| handle.block_on(future))
-            }
-            _ => std::thread::spawn(move || {
-                tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(2)
-                    .enable_all()
-                    .build()
-                    .expect("config lifecycle runtime")
-                    .block_on(future)
-            })
-            .join()
-            .expect("config lifecycle thread"),
-        },
-        Err(_) => {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("config lifecycle runtime");
-            runtime.block_on(future)
-        }
-    }
+    mutsuki_service_runtime::block_on_host_future(future)
 }
 
 fn block_on_result<F, T, E>(future: F) -> Result<T, E>
@@ -255,26 +232,5 @@ where
     T: Send + 'static,
     E: Send + 'static,
 {
-    match tokio::runtime::Handle::try_current() {
-        Ok(handle) => match handle.runtime_flavor() {
-            tokio::runtime::RuntimeFlavor::MultiThread => {
-                tokio::task::block_in_place(|| handle.block_on(future))
-            }
-            _ => std::thread::spawn(move || {
-                tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(2)
-                    .enable_all()
-                    .build()
-                    .expect("config lifecycle runtime")
-                    .block_on(future)
-            })
-            .join()
-            .expect("config lifecycle thread"),
-        },
-        Err(_) => tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("config lifecycle runtime")
-            .block_on(future),
-    }
+    mutsuki_service_runtime::block_on_host_future(future)
 }
