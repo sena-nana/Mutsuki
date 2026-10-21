@@ -10,6 +10,7 @@ mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-sdk.workspace = true
 md5.workspace = true
 sha2.workspace = true
+mutsuki-bot-management.workspace = true
 mutsuki-bot-protocol.workspace = true
 mutsuki-config-service.workspace = true
 futures.workspace = true
@@ -22,6 +23,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true
+tokio-tungstenite.workspace = true
 tracing.workspace = true
 url.workspace = true
 

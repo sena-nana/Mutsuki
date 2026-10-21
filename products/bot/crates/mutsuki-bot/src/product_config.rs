@@ -7,12 +7,13 @@ use mutsuki_agent_service_host_integration::{
     AGENT_CONNECTIONS_PLUGIN_ID, AgentConnectionsConfig, LOCAL_AGENT_API_KEY,
     LOCAL_AGENT_API_KEY_FIELD, LOCAL_AGENT_CONFIG_PROVIDER_ID, LOCAL_AGENT_PLUGIN_ID,
     LocalAgentConfig, LocalAgentConfigProvider, local_agent_config_descriptor,
-    local_agent_config_value, persona_from_config_json,
+    local_agent_config_from_value, local_agent_config_value,
 };
 use mutsuki_bot_service_host_integration::{
     BOT_COMMAND_PLUGIN_ID, BOT_INTERACTION_PLUGIN_ID, SANDBOX_SERVICE_ID,
     link_card_config_descriptor, link_card_config_value,
 };
+use mutsuki_config_service::document::{bool_field, document_object};
 use mutsuki_config_service::{
     ConfigApplyMode, ConfigConstraints, ConfigContext, ConfigDescriptor, ConfigError, ConfigExpr,
     ConfigLifecycle, ConfigMutability, ConfigNode, ConfigPersistSink, ConfigPersistTransaction,
@@ -21,17 +22,15 @@ use mutsuki_config_service::{
     MapKeyStrategy, MemoryConfigProvider, RestartPolicy, capability,
 };
 use mutsuki_plugin_bot_adapter_qqbot::{
-    QQ_CLIENT_SECRET_FIELD, QQ_CLIENT_SECRET_KEY, QQ_RECEIVE_GUILD_FIELD,
-    QQ_RECEIVE_PRIVATE_AND_GROUP_FIELD, QQBOT_ADAPTER_PLUGIN_ID, QqBotConfig,
-    apply_receive_intents, qq_config_descriptor, qq_config_value, receive_guild,
-    receive_private_and_group,
+    QQ_CLIENT_SECRET_FIELD, QQ_CLIENT_SECRET_KEY, QQBOT_ADAPTER_PLUGIN_ID, QqBotConfig,
+    qq_config_descriptor, qq_config_from_value, qq_config_value,
 };
 use mutsuki_plugin_bot_agent::{
     BOT_AGENT_BRIDGE_PLUGIN_ID, BotAgentConfig, bot_agent_config_schema,
 };
 use mutsuki_plugin_bot_bilibili::{
-    BILIBILI_COOKIE_FIELD, BILIBILI_COOKIE_KEY, BilibiliBackendConfig, BilibiliConfig,
-    PLUGIN_ID as BILIBILI_PLUGIN_ID, bilibili_config_descriptor, bilibili_config_value,
+    BILIBILI_COOKIE_FIELD, BILIBILI_COOKIE_KEY, BilibiliConfig, PLUGIN_ID as BILIBILI_PLUGIN_ID,
+    bilibili_config_descriptor, bilibili_config_from_value, bilibili_config_value,
 };
 use mutsuki_plugin_bot_bilibili_workshop::PLUGIN_ID as WORKSHOP_PLUGIN_ID;
 use mutsuki_plugin_bot_event_router::BOT_FLOW_ROUTER_PLUGIN_ID;
@@ -478,9 +477,8 @@ pub(crate) fn configured_plugin_selection_from_value(
     base: Option<&ConfiguredPluginSelection>,
 ) -> Result<ConfiguredPluginSelection, ConfigError> {
     let json = value.to_json();
-    let object = json.as_object().ok_or_else(|| ConfigError::ApplyRejected {
-        reason: "配置必须是对象".into(),
-    })?;
+    let object = document_object(&json)?;
+    let current = base.map(|selection| &selection.config);
     match provider_id {
         AGENT_CONNECTIONS_PLUGIN_ID => {
             let config: AgentConnectionsConfig =
@@ -499,29 +497,7 @@ pub(crate) fn configured_plugin_selection_from_value(
             })
         }
         QQBOT_ADAPTER_PLUGIN_ID => {
-            let mut config: QqBotConfig = owner_runtime_config(object, base)?;
-            config.account_id = if config.account_id.trim().is_empty() {
-                "local".into()
-            } else {
-                config.account_id
-            };
-            config.app_id = optional_string_field(object, "app_id");
-            config.client_secret_key = QQ_CLIENT_SECRET_KEY.into();
-            if let (Ok(index), Ok(count)) = (
-                unsigned_field(object, "shard_index"),
-                unsigned_field(object, "shard_count"),
-            ) {
-                config.shard = [index, count];
-            }
-            config.gateway_intents = qq_gateway_intents(object, config.gateway_intents)?;
-            let enabled = bool_field(object, "enabled")?;
-            if enabled {
-                config
-                    .validate()
-                    .map_err(|error| ConfigError::ApplyRejected {
-                        reason: error.to_string(),
-                    })?;
-            }
+            let (enabled, config) = qq_config_from_value(object, current)?;
             Ok(ConfiguredPluginSelection {
                 id: provider_id.into(),
                 enabled,
@@ -529,32 +505,7 @@ pub(crate) fn configured_plugin_selection_from_value(
             })
         }
         LOCAL_AGENT_CONFIG_PROVIDER_ID => {
-            let mut config: LocalAgentConfig = base_owner_config(base)?;
-            config.endpoint = string_field(object, "endpoint")?;
-            config.model = string_field(object, "model")?;
-            config.api_key_key = LOCAL_AGENT_API_KEY.into();
-            let fallback_prompt = object
-                .get("assistant_instruction")
-                .and_then(serde_json::Value::as_str);
-            if let Some(persona_value) = object.get("persona") {
-                config.persona = persona_from_config_json(persona_value, fallback_prompt)
-                    .map_err(|reason| ConfigError::ApplyRejected { reason })?;
-                config
-                    .assistant_instruction
-                    .clone_from(&config.persona.system_prompt);
-            } else {
-                config.assistant_instruction = string_field(object, "assistant_instruction")?;
-                config
-                    .persona
-                    .system_prompt
-                    .clone_from(&config.assistant_instruction);
-            }
-            let enabled = bool_field(object, "enabled")?;
-            if enabled {
-                config
-                    .validate()
-                    .map_err(|reason| ConfigError::ApplyRejected { reason })?;
-            }
+            let (enabled, config) = local_agent_config_from_value(object, current)?;
             Ok(ConfiguredPluginSelection {
                 id: provider_id.into(),
                 enabled,
@@ -579,40 +530,9 @@ pub(crate) fn configured_plugin_selection_from_value(
             })
         }
         BILIBILI_PLUGIN_ID => {
-            let enabled = bool_field(object, "enabled")?;
-            let mut config: BilibiliConfig = owner_runtime_config(object, base)?;
-            // The product assembly owns the media resource provider binding;
-            // owner documents no longer carry a provider id.
-            config.media_provider_id = MEDIA_RESOURCE_PROVIDER_ID.into();
-            config.backend = BilibiliBackendConfig::WebCookie {
-                cookie_secret_key: BILIBILI_COOKIE_KEY.into(),
-            };
-            config.management.enabled =
-                optional_bool_field(object, "management_enabled").unwrap_or_default();
-            if let Some(admin_user_ids) = object
-                .get("management_admin_user_ids")
-                .and_then(serde_json::Value::as_array)
-            {
-                config.management.admin_user_ids = admin_user_ids
-                    .iter()
-                    .filter_map(serde_json::Value::as_str)
-                    .map(str::to_owned)
-                    .collect();
-            }
-            // A present-but-not-a-string value keeps whatever the runtime
-            // config already carried, which is what the previous assign-a-clone
-            // -of-itself spelling did.
-            if let Some(binding) = object
-                .get("management_self_binding_outbound_binding")
-                .and_then(serde_json::Value::as_str)
-            {
-                binding.clone_into(&mut config.management.self_binding_outbound_binding);
-            }
-            if enabled {
-                config
-                    .validate()
-                    .map_err(|reason| ConfigError::ApplyRejected { reason })?;
-            }
+            // The product assembly owns the media resource provider binding.
+            let (enabled, config) =
+                bilibili_config_from_value(object, current, MEDIA_RESOURCE_PROVIDER_ID)?;
             Ok(ConfiguredPluginSelection {
                 id: provider_id.into(),
                 enabled,
@@ -633,120 +553,6 @@ pub(crate) fn configured_plugin_selection_from_value(
             reason: format!("未知产品配置 `{provider_id}`"),
         }),
     }
-}
-
-/// Owner config carried by a product document: an explicit `runtime_config`
-/// must parse, otherwise the currently applied selection is the base. Malformed
-/// input is rejected; it never silently falls back to the old or default config.
-fn owner_runtime_config<T>(
-    object: &serde_json::Map<String, serde_json::Value>,
-    base: Option<&ConfiguredPluginSelection>,
-) -> Result<T, ConfigError>
-where
-    T: serde::de::DeserializeOwned + Default,
-{
-    match object.get("runtime_config") {
-        Some(value) => {
-            serde_json::from_value(value.clone()).map_err(|error| ConfigError::ApplyRejected {
-                reason: format!("runtime_config 无效: {error}"),
-            })
-        }
-        None => base_owner_config(base),
-    }
-}
-
-/// The applied selection's config; an absent or `null` config is the owner
-/// default, but an unreadable stored config is an error rather than a reset.
-fn base_owner_config<T>(base: Option<&ConfiguredPluginSelection>) -> Result<T, ConfigError>
-where
-    T: serde::de::DeserializeOwned + Default,
-{
-    match base.map(|selection| &selection.config) {
-        None | Some(serde_json::Value::Null) => Ok(T::default()),
-        Some(config) => {
-            serde_json::from_value(config.clone()).map_err(|error| ConfigError::ApplyRejected {
-                reason: format!("当前插件配置无法读取: {error}"),
-            })
-        }
-    }
-}
-
-fn qq_gateway_intents(
-    object: &serde_json::Map<String, serde_json::Value>,
-    current: u64,
-) -> Result<u64, ConfigError> {
-    let private = optional_bool_field(object, QQ_RECEIVE_PRIVATE_AND_GROUP_FIELD);
-    let guild = optional_bool_field(object, QQ_RECEIVE_GUILD_FIELD);
-    if private.is_some() || guild.is_some() {
-        return Ok(apply_receive_intents(
-            current,
-            private.unwrap_or_else(|| receive_private_and_group(current)),
-            guild.unwrap_or_else(|| receive_guild(current)),
-        ));
-    }
-    if object.contains_key("gateway_intents") {
-        return unsigned_field(object, "gateway_intents");
-    }
-    Ok(current)
-}
-
-fn optional_bool_field(
-    object: &serde_json::Map<String, serde_json::Value>,
-    field: &str,
-) -> Option<bool> {
-    object.get(field).and_then(serde_json::Value::as_bool)
-}
-
-fn optional_string_field(
-    object: &serde_json::Map<String, serde_json::Value>,
-    field: &str,
-) -> String {
-    object
-        .get(field)
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default()
-        .to_owned()
-}
-
-fn bool_field(
-    object: &serde_json::Map<String, serde_json::Value>,
-    field: &str,
-) -> Result<bool, ConfigError> {
-    object
-        .get(field)
-        .and_then(serde_json::Value::as_bool)
-        .ok_or_else(|| ConfigError::ApplyRejected {
-            reason: format!("`{field}` 必须是布尔值"),
-        })
-}
-
-fn string_field(
-    object: &serde_json::Map<String, serde_json::Value>,
-    field: &str,
-) -> Result<String, ConfigError> {
-    object
-        .get(field)
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_owned)
-        .ok_or_else(|| ConfigError::ApplyRejected {
-            reason: format!("`{field}` 必须是字符串"),
-        })
-}
-
-fn unsigned_field<T>(
-    object: &serde_json::Map<String, serde_json::Value>,
-    field: &str,
-) -> Result<T, ConfigError>
-where
-    T: TryFrom<u64>,
-{
-    object
-        .get(field)
-        .and_then(serde_json::Value::as_u64)
-        .and_then(|value| T::try_from(value).ok())
-        .ok_or_else(|| ConfigError::ApplyRejected {
-            reason: format!("`{field}` 超出允许范围"),
-        })
 }
 
 fn persist_error(error: mutsuki_service_config::ConfigError) -> ConfigError {
@@ -770,9 +576,11 @@ fn register_error(error: ConfigError) -> ProductConfigError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mutsuki_plugin_bot_adapter_qqbot::QQ_RECEIVE_GUILD_FIELD;
     use mutsuki_plugin_bot_adapter_qqbot::{
         DEFAULT_QQBOT_INTENTS, QQ_INTENT_GROUP_AND_C2C, QQ_INTENT_PUBLIC_GUILD,
     };
+    use mutsuki_plugin_bot_bilibili::BilibiliBackendConfig;
 
     fn select(value: ConfigValue) -> ConfiguredPluginSelection {
         configured_plugin_selection_from_value(QQBOT_ADAPTER_PLUGIN_ID, &value, None).unwrap()

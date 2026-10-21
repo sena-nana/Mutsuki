@@ -237,9 +237,15 @@ impl Harness {
     }
 
     fn immediate_session(&self, task: Task) -> TaskOutcome {
-        let mut runner =
-            mutsuki_plugin_agent_session::runner(self.client.clone(), self.sessions.clone());
-        immediate_outcome(&mut runner, task, mutsuki_plugin_agent_session::RUNNER_ID)
+        let mut runner = mutsuki_plugin_agent_essentials::session::runner(
+            self.client.clone(),
+            self.sessions.clone(),
+        );
+        immediate_outcome(
+            &mut runner,
+            task,
+            mutsuki_plugin_agent_essentials::session::RUNNER_ID,
+        )
     }
 
     fn immediate_context(&self, task: Task) -> TaskOutcome {

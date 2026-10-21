@@ -15,7 +15,7 @@ use mutsuki_agent_contracts::{
     OPENAI_CREDENTIAL_PROVIDER_ID, ProviderInstanceDescriptor, official_credential_providers,
 };
 use mutsuki_agent_runtime::CredentialBrokerService;
-use mutsuki_plugin_agent_credential::AdapterCredentialBroker;
+use mutsuki_plugin_agent_essentials::credential::AdapterCredentialBroker;
 use serde_json::{Value, json};
 
 pub fn run_credential_login_conformance() {

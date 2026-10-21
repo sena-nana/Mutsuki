@@ -50,7 +50,8 @@ use crate::console_bridge::{
     BOT_STATE_DB_SERVICE_ID, QQ_MANAGEMENT_SERVICE_ID, bot_state_db_host_service,
 };
 use crate::delivery_recovery::BotTaskRecoveryEventSource;
-use crate::event_source::{QqGatewayControlHandle, QqGatewayEventSource, QqGatewayHealthHandle};
+use crate::event_source::QqGatewayEventSource;
+use crate::{QqGatewayControlHandle, QqGatewayHealthHandle};
 use mutsuki_bot_sandbox::{
     SandboxAwareDeliveryGateway, SandboxAwareOpenApiRunner, SandboxInterceptHandle,
 };

@@ -30,8 +30,8 @@ pub use api::*;
 pub use config::{
     DEFAULT_QQBOT_INTENTS, QQ_CLIENT_SECRET_FIELD, QQ_CLIENT_SECRET_KEY, QQ_INTENT_GROUP_AND_C2C,
     QQ_INTENT_PUBLIC_GUILD, QQ_RECEIVE_GUILD_FIELD, QQ_RECEIVE_PRIVATE_AND_GROUP_FIELD,
-    QqBotConfig, QqConfigError, apply_receive_intents, qq_config_descriptor, qq_config_value,
-    receive_guild, receive_private_and_group, validate_gateway_url,
+    QqBotConfig, QqConfigError, apply_receive_intents, qq_config_descriptor, qq_config_from_value,
+    qq_config_value, receive_guild, receive_private_and_group, validate_gateway_url,
 };
 pub use gateway::*;
 pub use inbound_media::*;

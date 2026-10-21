@@ -5,10 +5,13 @@
 //! while the visible fields expose only what a product operator needs to
 //! enable the plugin and bind credentials through the Host secret store.
 
+use mutsuki_config_service::document::{
+    DocumentObject, bool_field, optional_bool_field, runtime_config_or_current,
+};
 use mutsuki_config_service::{
-    ConfigConstraints, ConfigDescriptor, ConfigExpr, ConfigKey, ConfigMutability, ConfigNode,
-    ConfigPresentation, ConfigProviderId, ConfigScope, ConfigValue, ConfigValueType, LocalizedText,
-    RestartPolicy, SecretState,
+    ConfigConstraints, ConfigDescriptor, ConfigError, ConfigExpr, ConfigKey, ConfigMutability,
+    ConfigNode, ConfigPresentation, ConfigProviderId, ConfigScope, ConfigValue, ConfigValueType,
+    LocalizedText, RestartPolicy, SecretState,
 };
 
 use crate::{BilibiliBackendConfig, BilibiliConfig, LinkResolverConfig, PLUGIN_ID, RetryConfig};
@@ -100,6 +103,47 @@ pub fn bilibili_config_descriptor() -> ConfigDescriptor {
         },
         groups: Vec::new(),
     }
+}
+
+/// Inverse of [`bilibili_config_value`]: the runtime config a document asks for and whether it
+/// is enabled. The media resource provider is bound by the assembling product, so it is passed
+/// in rather than read from the document. An enabled config must validate.
+pub fn bilibili_config_from_value(
+    document: &DocumentObject,
+    current: Option<&serde_json::Value>,
+    media_provider_id: &str,
+) -> Result<(bool, BilibiliConfig), ConfigError> {
+    let enabled = bool_field(document, "enabled")?;
+    let mut config: BilibiliConfig = runtime_config_or_current(document, current)?;
+    config.media_provider_id = media_provider_id.into();
+    config.backend = BilibiliBackendConfig::WebCookie {
+        cookie_secret_key: BILIBILI_COOKIE_KEY.into(),
+    };
+    config.management.enabled =
+        optional_bool_field(document, "management_enabled").unwrap_or_default();
+    if let Some(admin_user_ids) = document
+        .get("management_admin_user_ids")
+        .and_then(serde_json::Value::as_array)
+    {
+        config.management.admin_user_ids = admin_user_ids
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .map(str::to_owned)
+            .collect();
+    }
+    // A present-but-not-a-string value keeps whatever the runtime config already carried.
+    if let Some(binding) = document
+        .get("management_self_binding_outbound_binding")
+        .and_then(serde_json::Value::as_str)
+    {
+        binding.clone_into(&mut config.management.self_binding_outbound_binding);
+    }
+    if enabled {
+        config
+            .validate()
+            .map_err(|reason| ConfigError::ApplyRejected { reason })?;
+    }
+    Ok((enabled, config))
 }
 
 /// Projects a full [`BilibiliConfig`] into the product-owned document shape.

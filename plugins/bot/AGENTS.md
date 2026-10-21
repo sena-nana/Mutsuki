@@ -29,6 +29,8 @@ Adapter/Gateway。它不拥有 Core 调度、Host 生命周期、Agent 能力或
 8. 仓内 Mutsuki 依赖必须继承根 Workspace 的 path；禁止内部 Git pin、仓库外 Cargo `path`
    和本地 `[patch]`。WebHost 与 Bot package 必须在同一 release revision 原子验证。
 9. 平台 Adapter crate 不依赖具体 Host；`HostEventSource`、health 和 builder 安装只能位于显式 integration crate。
+   连接与轮询逻辑本身属于 owner：QQ Gateway WebSocket 客户端是 adapter 的 `gateway::QqGatewayClient`，
+   Bilibili 轮询是 `run_bilibili_polling`；integration crate 只做密钥、descriptor、健康映射和生命周期包装。
 10. 媒体等可选后端必须显式提供并与 manifest capability 一致，不注册 unavailable 生产替代。
 11. QQBot 文档必须区分单元、fake E2E 和真实账号 smoke，且与当前 manifest、配置和实现同步。
 12. 有 `PluginBuilder` 的可加载面必须使用 `mutsuki-plugin-*` 名；库面 crate 只持有 trait/service。

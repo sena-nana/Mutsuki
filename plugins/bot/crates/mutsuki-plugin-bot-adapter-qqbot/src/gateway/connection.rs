@@ -61,7 +61,7 @@ impl QqGatewayPump {
 
     pub fn with_account(account_id: impl Into<String>, dedup_window: usize) -> Self {
         let account_id = account_id.into();
-        let task_account_id = safe_id(&account_id);
+        let task_account_id = safe_gateway_id(&account_id);
         let dedup_window = dedup_window.max(1);
         Self {
             task_id_prefix: build_task_id_prefix(&task_account_id, digest("unidentified")),
@@ -388,7 +388,9 @@ fn digest(value: &str) -> u64 {
     hasher.finish()
 }
 
-fn safe_id(value: &str) -> String {
+/// Account or source id reduced to `[A-Za-z0-9_-]`, at most 48 characters, for task and
+/// event-source ids.
+pub fn safe_gateway_id(value: &str) -> String {
     value
         .chars()
         .map(|character| {

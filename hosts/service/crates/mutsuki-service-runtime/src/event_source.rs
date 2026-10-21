@@ -153,6 +153,13 @@ impl HostShutdownToken {
             let _ = self.rx.changed().await;
         }
     }
+
+    /// The underlying shutdown flag, for Host-neutral components that take a plain
+    /// `watch::Receiver<bool>` instead of this ServiceHost type.
+    #[must_use]
+    pub fn receiver(&self) -> watch::Receiver<bool> {
+        self.rx.clone()
+    }
 }
 
 #[derive(Clone)]

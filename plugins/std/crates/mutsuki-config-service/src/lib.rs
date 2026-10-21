@@ -19,6 +19,7 @@
     clippy::unused_async
 )]
 
+pub mod document;
 mod lifecycle;
 mod memory;
 mod metrics;

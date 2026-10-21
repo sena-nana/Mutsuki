@@ -3455,10 +3455,9 @@ dependencies = [
  "mutsuki-distributed-contracts",
  "mutsuki-link-core",
  "mutsuki-plugin-agent-context",
+ "mutsuki-plugin-agent-essentials",
  "mutsuki-plugin-agent-loop",
- "mutsuki-plugin-agent-memory-router",
  "mutsuki-plugin-agent-model-gateway",
- "mutsuki-plugin-agent-session",
  "mutsuki-plugin-agent-tool-router",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-sdk",
@@ -3485,15 +3484,10 @@ dependencies = [
  "mutsuki-agent-sdk",
  "mutsuki-agent-testkit",
  "mutsuki-plugin-agent-context",
- "mutsuki-plugin-agent-credential",
- "mutsuki-plugin-agent-knowledge",
+ "mutsuki-plugin-agent-essentials",
  "mutsuki-plugin-agent-loop",
- "mutsuki-plugin-agent-memory-router",
  "mutsuki-plugin-agent-model-gateway",
  "mutsuki-plugin-agent-proactive",
- "mutsuki-plugin-agent-prompt",
- "mutsuki-plugin-agent-session",
- "mutsuki-plugin-agent-skills",
  "mutsuki-plugin-agent-tool-router",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-host",
@@ -3751,12 +3745,9 @@ dependencies = [
  "mutsuki-agent-contracts",
  "mutsuki-agent-plugin-code-completion",
  "mutsuki-agent-runtime",
- "mutsuki-plugin-agent-credential",
+ "mutsuki-plugin-agent-essentials",
  "mutsuki-plugin-agent-loop",
- "mutsuki-plugin-agent-memory-router",
  "mutsuki-plugin-agent-model-gateway",
- "mutsuki-plugin-agent-prompt",
- "mutsuki-plugin-agent-session",
  "mutsuki-plugin-agent-tool-router",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-sdk",
@@ -4013,7 +4004,6 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "fastrand",
- "futures",
  "futures-executor",
  "mutsuki-agent-client",
  "mutsuki-agent-contracts",
@@ -4055,7 +4045,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
- "tokio-tungstenite 0.30.0",
  "tracing",
 ]
 
@@ -4242,6 +4231,7 @@ dependencies = [
  "mutsuki-protocol-config",
  "rmp-serde",
  "serde",
+ "serde_json",
  "tokio",
 ]
 
@@ -4483,20 +4473,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "mutsuki-plugin-agent-credential"
+name = "mutsuki-plugin-agent-essentials"
 version = "0.1.0"
 dependencies = [
  "mutsuki-agent-adapter-api",
- "mutsuki-agent-contracts",
- "mutsuki-agent-runtime",
- "mutsuki-agent-sdk",
- "mutsuki-runtime-sdk",
-]
-
-[[package]]
-name = "mutsuki-plugin-agent-knowledge"
-version = "0.1.0"
-dependencies = [
  "mutsuki-agent-contracts",
  "mutsuki-agent-runtime",
  "mutsuki-agent-sdk",
@@ -4513,16 +4493,6 @@ dependencies = [
  "mutsuki-runtime-sdk",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "mutsuki-plugin-agent-memory-router"
-version = "0.1.0"
-dependencies = [
- "mutsuki-agent-contracts",
- "mutsuki-agent-runtime",
- "mutsuki-agent-sdk",
- "mutsuki-runtime-sdk",
 ]
 
 [[package]]
@@ -4547,36 +4517,6 @@ dependencies = [
  "mutsuki-runtime-sdk",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "mutsuki-plugin-agent-prompt"
-version = "0.1.0"
-dependencies = [
- "mutsuki-agent-contracts",
- "mutsuki-agent-runtime",
- "mutsuki-agent-sdk",
- "mutsuki-runtime-sdk",
-]
-
-[[package]]
-name = "mutsuki-plugin-agent-session"
-version = "0.1.0"
-dependencies = [
- "mutsuki-agent-contracts",
- "mutsuki-agent-runtime",
- "mutsuki-agent-sdk",
- "mutsuki-runtime-sdk",
-]
-
-[[package]]
-name = "mutsuki-plugin-agent-skills"
-version = "0.1.0"
-dependencies = [
- "mutsuki-agent-contracts",
- "mutsuki-agent-runtime",
- "mutsuki-agent-sdk",
- "mutsuki-runtime-sdk",
 ]
 
 [[package]]
@@ -4609,6 +4549,7 @@ dependencies = [
  "hex",
  "html-escape",
  "md5",
+ "mutsuki-bot-management",
  "mutsuki-bot-protocol",
  "mutsuki-config-service",
  "mutsuki-runtime-contracts",
@@ -4621,6 +4562,7 @@ dependencies = [
  "thiserror 2.0.20",
  "time",
  "tokio",
+ "tokio-tungstenite 0.30.0",
  "tracing",
  "url",
 ]
@@ -4654,6 +4596,7 @@ dependencies = [
  "mutsuki-bot-link-parser",
  "mutsuki-bot-management",
  "mutsuki-bot-protocol",
+ "mutsuki-bot-sdk",
  "mutsuki-bot-secure-fetch",
  "mutsuki-config-service",
  "mutsuki-protocol-browser",

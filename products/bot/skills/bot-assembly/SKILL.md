@@ -13,6 +13,7 @@ description: Assemble the first-party Mutsuki Bot product from external configur
 - 生产入口不得接受配置路径、profile、namespace 或 `MUTSUKI_BOOTSTRAP`；旧 bootstrap 和完整产品 TOML 不读取、不迁移。
 - Mutsuki Bot 产品显式选择 SQLite repository plugin、document namespace 和路径；Mutsuki 框架不得内置该选择。
 - 产品插件选择、WebExtension 选择和每个 owner 配置由 `ConfigService` 保存到独立 provider document。
+- owner 同时拥有文档投影 `*_config_value` 与逆映射 `*_config_from_value`（字段规则用 `mutsuki_config_service::document`）；产品只做按 provider 分发和产品级绑定（如媒体资源 provider），不在产品里重写 owner 字段。
 - Web Console 非扩展配置导航只列出产品实际注册的 ConfigProvider id；扩展组是 WebExtension 页面。
 - 工作区启用时同时选择 Agent Connections、Flow Router、Command、Interaction 和 Sandbox。
   这些 id 与 QQ/Local Agent/Bot Agent/B 站/工房/米画师一样禁止写入 `runtime_plugins`。

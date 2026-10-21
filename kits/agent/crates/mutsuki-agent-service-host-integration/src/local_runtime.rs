@@ -288,6 +288,44 @@ pub fn local_agent_config_descriptor() -> ConfigDescriptor {
     }
 }
 
+/// Inverse of [`local_agent_config_value`]: the runtime config a document asks for and whether
+/// it is enabled. `current` is the applied runtime config the document edits. A `persona`
+/// object wins over the legacy flat `assistant_instruction`. An enabled config must validate.
+pub fn local_agent_config_from_value(
+    document: &mutsuki_config_service::document::DocumentObject,
+    current: Option<&serde_json::Value>,
+) -> Result<(bool, LocalAgentConfig), ConfigError> {
+    use mutsuki_config_service::document::{bool_field, current_config, string_field};
+
+    let mut config: LocalAgentConfig = current_config(current)?;
+    config.endpoint = string_field(document, "endpoint")?;
+    config.model = string_field(document, "model")?;
+    config.api_key_key = LOCAL_AGENT_API_KEY.into();
+    let fallback_prompt = document
+        .get("assistant_instruction")
+        .and_then(serde_json::Value::as_str);
+    if let Some(persona_value) = document.get("persona") {
+        config.persona = persona_from_config_json(persona_value, fallback_prompt)
+            .map_err(|reason| ConfigError::ApplyRejected { reason })?;
+        config
+            .assistant_instruction
+            .clone_from(&config.persona.system_prompt);
+    } else {
+        config.assistant_instruction = string_field(document, "assistant_instruction")?;
+        config
+            .persona
+            .system_prompt
+            .clone_from(&config.assistant_instruction);
+    }
+    let enabled = bool_field(document, "enabled")?;
+    if enabled {
+        config
+            .validate()
+            .map_err(|reason| ConfigError::ApplyRejected { reason })?;
+    }
+    Ok((enabled, config))
+}
+
 #[must_use]
 pub fn local_agent_config_value(enabled: bool, config: &LocalAgentConfig) -> ConfigValue {
     migrate_legacy_local_agent_value(ConfigValue::Object(

@@ -38,12 +38,10 @@ mutsuki-plugin-bot-bilibili-workshop.workspace = true
 mutsuki-plugin-bot-mihuashi.workspace = true
 mutsuki-plugin-resource-sqlite.workspace = true
 fastrand.workspace = true
-futures.workspace = true
 futures-executor.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 tokio.workspace = true
-tokio-tungstenite.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

@@ -96,33 +96,42 @@ impl AgentPluginBundle {
             mutsuki_plugin_agent_context::plugin(client.clone(), self.context.clone())
                 .build()
                 .manifest,
-            mutsuki_plugin_agent_knowledge::plugin(client.clone(), self.knowledge.clone())
-                .build()
-                .manifest,
+            mutsuki_plugin_agent_essentials::knowledge::plugin(
+                client.clone(),
+                self.knowledge.clone(),
+            )
+            .build()
+            .manifest,
             mutsuki_plugin_agent_loop::plugin(client.clone(), self.agent_loop.clone())
                 .build()
                 .manifest,
-            mutsuki_plugin_agent_memory_router::plugin(client.clone(), self.memory.clone())
-                .build()
-                .manifest,
+            mutsuki_plugin_agent_essentials::memory_router::plugin(
+                client.clone(),
+                self.memory.clone(),
+            )
+            .build()
+            .manifest,
             mutsuki_plugin_agent_model_gateway::plugin(client.clone(), self.model.clone())
                 .build()
                 .manifest,
-            mutsuki_plugin_agent_prompt::plugin(client.clone(), self.prompts.clone())
+            mutsuki_plugin_agent_essentials::prompt::plugin(client.clone(), self.prompts.clone())
                 .build()
                 .manifest,
-            mutsuki_plugin_agent_session::plugin(client.clone(), self.sessions.clone())
+            mutsuki_plugin_agent_essentials::session::plugin(client.clone(), self.sessions.clone())
                 .build()
                 .manifest,
-            mutsuki_plugin_agent_skills::plugin(client.clone(), self.skills.clone())
+            mutsuki_plugin_agent_essentials::skills::plugin(client.clone(), self.skills.clone())
                 .build()
                 .manifest,
             mutsuki_plugin_agent_tool_router::plugin(client.clone(), self.tools.clone())
                 .build()
                 .manifest,
-            mutsuki_plugin_agent_credential::plugin(client.clone(), self.credential.clone())
-                .build()
-                .manifest,
+            mutsuki_plugin_agent_essentials::credential::plugin(
+                client.clone(),
+                self.credential.clone(),
+            )
+            .build()
+            .manifest,
             uninjected_context_collect_plugin(1)
                 .expect("uninjected context collect plugin")
                 .build()
@@ -151,38 +160,35 @@ impl AgentPluginBundle {
             AgentRuntimeRunner::ContextCollect => take_runner(
                 uninjected_context_collect_plugin(1).expect("uninjected context collect plugin"),
             ),
-            AgentRuntimeRunner::Knowledge => take_runner(mutsuki_plugin_agent_knowledge::plugin(
-                client,
-                self.knowledge.clone(),
-            )),
+            AgentRuntimeRunner::Knowledge => take_runner(
+                mutsuki_plugin_agent_essentials::knowledge::plugin(client, self.knowledge.clone()),
+            ),
             AgentRuntimeRunner::Loop => take_runner(mutsuki_plugin_agent_loop::plugin(
                 client,
                 self.agent_loop.clone(),
             )),
-            AgentRuntimeRunner::Memory => take_runner(mutsuki_plugin_agent_memory_router::plugin(
-                client,
-                self.memory.clone(),
-            )),
-            AgentRuntimeRunner::Prompt => take_runner(mutsuki_plugin_agent_prompt::plugin(
-                client,
-                self.prompts.clone(),
-            )),
-            AgentRuntimeRunner::Session => take_runner(mutsuki_plugin_agent_session::plugin(
-                client,
-                self.sessions.clone(),
-            )),
-            AgentRuntimeRunner::Skill => take_runner(mutsuki_plugin_agent_skills::plugin(
-                client,
-                self.skills.clone(),
-            )),
+            AgentRuntimeRunner::Memory => take_runner(
+                mutsuki_plugin_agent_essentials::memory_router::plugin(client, self.memory.clone()),
+            ),
+            AgentRuntimeRunner::Prompt => take_runner(
+                mutsuki_plugin_agent_essentials::prompt::plugin(client, self.prompts.clone()),
+            ),
+            AgentRuntimeRunner::Session => take_runner(
+                mutsuki_plugin_agent_essentials::session::plugin(client, self.sessions.clone()),
+            ),
+            AgentRuntimeRunner::Skill => take_runner(
+                mutsuki_plugin_agent_essentials::skills::plugin(client, self.skills.clone()),
+            ),
             AgentRuntimeRunner::Tool => take_runner(mutsuki_plugin_agent_tool_router::plugin(
                 client,
                 self.tools.clone(),
             )),
-            AgentRuntimeRunner::Credential => take_runner(mutsuki_plugin_agent_credential::plugin(
-                client,
-                self.credential.clone(),
-            )),
+            AgentRuntimeRunner::Credential => {
+                take_runner(mutsuki_plugin_agent_essentials::credential::plugin(
+                    client,
+                    self.credential.clone(),
+                ))
+            }
         }
     }
 
@@ -193,15 +199,15 @@ impl AgentPluginBundle {
     pub fn runner_ids() -> [&'static str; 10] {
         [
             mutsuki_plugin_agent_context::RUNNER_ID,
-            mutsuki_plugin_agent_knowledge::RUNNER_ID,
+            mutsuki_plugin_agent_essentials::knowledge::RUNNER_ID,
             mutsuki_plugin_agent_loop::RUNNER_ID,
-            mutsuki_plugin_agent_memory_router::RUNNER_ID,
+            mutsuki_plugin_agent_essentials::memory_router::RUNNER_ID,
             mutsuki_plugin_agent_model_gateway::RUNNER_ID,
-            mutsuki_plugin_agent_prompt::RUNNER_ID,
-            mutsuki_plugin_agent_session::RUNNER_ID,
-            mutsuki_plugin_agent_skills::RUNNER_ID,
+            mutsuki_plugin_agent_essentials::prompt::RUNNER_ID,
+            mutsuki_plugin_agent_essentials::session::RUNNER_ID,
+            mutsuki_plugin_agent_essentials::skills::RUNNER_ID,
             mutsuki_plugin_agent_tool_router::RUNNER_ID,
-            mutsuki_plugin_agent_credential::RUNNER_ID,
+            mutsuki_plugin_agent_essentials::credential::RUNNER_ID,
         ]
     }
 

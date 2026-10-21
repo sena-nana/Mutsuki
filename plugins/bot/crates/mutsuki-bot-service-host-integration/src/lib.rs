@@ -49,9 +49,9 @@ pub use delivery_recovery::{
     BOT_REPLY_DELIVERY_RECOVERY_SOURCE_ID, BotReplyDeliveryRecoveryEventSource,
     BotTaskRecoveryEventSource,
 };
-pub use event_source::{
-    QQBOT_GATEWAY_SOURCE_ID, QqGatewayControlHandle, QqGatewayEventSource, QqGatewayHealthHandle,
-    QqGatewayHealthSnapshot, QqInboundObserveHandle,
+pub use event_source::{QQBOT_GATEWAY_SOURCE_ID, QqGatewayEventSource};
+pub use mutsuki_plugin_bot_adapter_qqbot::gateway::{
+    QqGatewayControlHandle, QqGatewayHealthHandle, QqGatewayHealthSnapshot, QqInboundObserveHandle,
 };
 pub use mutsuki_plugin_bot_command::BOT_COMMAND_PLUGIN_ID;
 pub use mutsuki_plugin_bot_delivery::{

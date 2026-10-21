@@ -6,10 +6,14 @@ use mutsuki_bot_protocol::{
     BotConversationKind, BotMediaKind, QqBotCapabilityMatrix, QqMessageSegmentKind,
     QqPermissionRequirement, QqRateLimitPolicy, QqStreamingStrategy, QqUploadConstraints,
 };
+use mutsuki_config_service::document::{
+    DocumentObject, bool_field, optional_bool_field, optional_string_field, rejected,
+    runtime_config_or_current, unsigned_field,
+};
 use mutsuki_config_service::{
-    ConfigConstraints, ConfigDescriptor, ConfigExpr, ConfigKey, ConfigMutability, ConfigNode,
-    ConfigPresentation, ConfigProviderId, ConfigScope, ConfigValue, ConfigValueType, LocalizedText,
-    RestartPolicy, SecretState,
+    ConfigConstraints, ConfigDescriptor, ConfigError, ConfigExpr, ConfigKey, ConfigMutability,
+    ConfigNode, ConfigPresentation, ConfigProviderId, ConfigScope, ConfigValue, ConfigValueType,
+    LocalizedText, RestartPolicy, SecretState,
 };
 
 pub const QQ_INTENT_GUILDS: u64 = 1 << 0;
@@ -385,6 +389,54 @@ pub fn qq_config_value(enabled: bool, config: &QqBotConfig) -> ConfigValue {
         .into_iter()
         .collect(),
     )
+}
+
+/// Inverse of [`qq_config_value`]: the runtime config a QQ document asks for and whether it is
+/// enabled. `current` is the applied runtime config, the base when the document carries no
+/// explicit `runtime_config`. An enabled config must validate.
+pub fn qq_config_from_value(
+    document: &DocumentObject,
+    current: Option<&serde_json::Value>,
+) -> Result<(bool, QqBotConfig), ConfigError> {
+    let mut config: QqBotConfig = runtime_config_or_current(document, current)?;
+    config.account_id = if config.account_id.trim().is_empty() {
+        "local".into()
+    } else {
+        config.account_id
+    };
+    config.app_id = optional_string_field(document, "app_id");
+    config.client_secret_key = QQ_CLIENT_SECRET_KEY.into();
+    if let (Ok(index), Ok(count)) = (
+        unsigned_field(document, "shard_index"),
+        unsigned_field(document, "shard_count"),
+    ) {
+        config.shard = [index, count];
+    }
+    config.gateway_intents = qq_gateway_intents(document, config.gateway_intents)?;
+    let enabled = bool_field(document, "enabled")?;
+    if enabled {
+        config
+            .validate()
+            .map_err(|error| rejected(error.to_string()))?;
+    }
+    Ok((enabled, config))
+}
+
+/// The receive switches win over a raw `gateway_intents`; neither present keeps `current`.
+fn qq_gateway_intents(document: &DocumentObject, current: u64) -> Result<u64, ConfigError> {
+    let private = optional_bool_field(document, QQ_RECEIVE_PRIVATE_AND_GROUP_FIELD);
+    let guild = optional_bool_field(document, QQ_RECEIVE_GUILD_FIELD);
+    if private.is_some() || guild.is_some() {
+        return Ok(apply_receive_intents(
+            current,
+            private.unwrap_or_else(|| receive_private_and_group(current)),
+            guild.unwrap_or_else(|| receive_guild(current)),
+        ));
+    }
+    if document.contains_key("gateway_intents") {
+        return unsigned_field(document, "gateway_intents");
+    }
+    Ok(current)
 }
 
 #[must_use]

@@ -1,10 +1,11 @@
 [package]
-name = "mutsuki-plugin-agent-prompt"
+name = "mutsuki-plugin-agent-essentials"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
+mutsuki-agent-adapter-api.workspace = true
 mutsuki-agent-contracts.workspace = true
 mutsuki-agent-runtime.workspace = true
 mutsuki-agent-sdk.workspace = true

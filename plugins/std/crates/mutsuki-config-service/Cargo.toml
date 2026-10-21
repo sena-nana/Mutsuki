@@ -9,6 +9,7 @@ description = "Host-neutral transactional configuration service."
 mutsuki-config-derive = { workspace = true }
 mutsuki-protocol-config = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 async-trait = { workspace = true }
 
 [dev-dependencies]

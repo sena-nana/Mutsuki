@@ -77,12 +77,15 @@ use url::Url;
 
 mod config;
 mod management;
+mod poller;
 mod secure_media;
 
 pub use config::{
-    BILIBILI_COOKIE_FIELD, BILIBILI_COOKIE_KEY, bilibili_config_descriptor, bilibili_config_value,
+    BILIBILI_COOKIE_FIELD, BILIBILI_COOKIE_KEY, bilibili_config_descriptor,
+    bilibili_config_from_value, bilibili_config_value,
 };
 pub use management::{BilibiliManagementService, BilibiliQrRenderer, BilibiliSecretPresence};
+pub use poller::{BilibiliPollerHealth, run_bilibili_polling};
 
 pub const PLUGIN_ID: &str = "mutsuki.bot.bilibili";
 pub const RUNNER_ID: &str = "mutsuki.bot.bilibili.runner";

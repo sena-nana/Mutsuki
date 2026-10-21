@@ -8,7 +8,7 @@ description: Implement or change QQBot or other platform gateway connections, au
 - Translate platform events into generic Bot protocols and generic operations back into platform requests.
 - Keep platform-only fields under the platform namespace or adapter internals.
 - Obtain credentials from Host secret injection; redact tokens and platform-sensitive payloads.
-- Keep transport clients and sockets inside Gateway objects; wrap them as Host EventSources only in the integration crate. Use ResourceRef for large media.
+- Keep transport clients and sockets inside Gateway objects; wrap them as Host EventSources only in the integration crate. The QQ socket loop is `gateway::QqGatewayClient` (driven by `QqGatewayHost`: submitter, shutdown flag, log); change reconnect, heartbeat or close handling there, not in the wrapper. Use ResourceRef for large media.
 - Require explicit media/resource providers; never install an unavailable production fallback.
 - Report disconnect, auth, rate-limit and unsupported operation failures structurally.
 
