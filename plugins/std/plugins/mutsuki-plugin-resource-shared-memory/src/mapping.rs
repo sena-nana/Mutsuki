@@ -15,7 +15,7 @@ use mutsuki_runtime_contracts::{
     ERR_RESOURCE_NOT_FOUND, ERR_RESOURCE_UNSUPPORTED, ERR_RUNTIME_HOST_FAILED, ResourceAccess,
     ResourceRef,
 };
-use mutsuki_runtime_core::RuntimeResult;
+use mutsuki_runtime_sdk::RuntimeResult;
 
 use crate::constants::{ROUTE_CREATE, ROUTE_READ};
 use crate::error::detailed_failure;
@@ -217,7 +217,7 @@ fn access_range<'a>(
     }
 }
 
-fn range_failure(route: &str) -> mutsuki_runtime_core::RuntimeFailure {
+fn range_failure(route: &str) -> mutsuki_runtime_sdk::RuntimeFailure {
     detailed_failure(
         ERR_RESOURCE_UNSUPPORTED,
         route,
@@ -226,7 +226,7 @@ fn range_failure(route: &str) -> mutsuki_runtime_core::RuntimeFailure {
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
-fn unsupported_platform(route: &str) -> mutsuki_runtime_core::RuntimeFailure {
+fn unsupported_platform(route: &str) -> mutsuki_runtime_sdk::RuntimeFailure {
     detailed_failure(
         ERR_RESOURCE_UNSUPPORTED,
         route,

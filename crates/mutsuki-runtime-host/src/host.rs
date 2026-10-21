@@ -1563,7 +1563,7 @@ fn rollback_candidate_scopes(
     }
 }
 
-impl mutsuki_runtime_sdk::HostRuntime for HostRuntime {
+impl mutsuki_runtime_sdk::HostControl for HostRuntime {
     type PreparedReload = PreparedRuntimeReload;
 
     fn host_context(&self) -> &SdkHostContext {

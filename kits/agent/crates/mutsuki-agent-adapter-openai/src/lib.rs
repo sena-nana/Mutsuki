@@ -29,11 +29,11 @@ use mutsuki_agent_sdk::{AgentModelGenerateProtocol, orchestration_runner};
 use reqwest::{Client, StatusCode, Url};
 use serde_json::{Value, json};
 
-use mutsuki_runtime_core::{AsyncBatchHandler, AsyncCompletionFuture, RunnerContext};
 use mutsuki_runtime_sdk::contracts::{
     CompletionBatch, EntryCompletion, ExecutionClass, InvocationMode, RunnerBatchCapability,
     RunnerConcurrency, RunnerMode, RunnerResult, RunnerSideEffect, WorkBatch,
 };
+use mutsuki_runtime_sdk::{AsyncBatchHandler, AsyncCompletionFuture, RunnerContext};
 
 mod media;
 mod responses;

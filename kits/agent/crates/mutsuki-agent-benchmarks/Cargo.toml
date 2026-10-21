@@ -26,7 +26,6 @@ mutsuki-plugin-agent-model-gateway.workspace = true
 mutsuki-plugin-agent-session.workspace = true
 mutsuki-plugin-agent-tool-router.workspace = true
 mutsuki-runtime-contracts.workspace = true
-mutsuki-runtime-core.workspace = true
 mutsuki-runtime-sdk.workspace = true
 mutsuki-link-core.workspace = true
 mutsuki-distributed-contracts.workspace = true

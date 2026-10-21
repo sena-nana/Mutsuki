@@ -6,7 +6,6 @@ license.workspace = true
 
 [dependencies]
 mutsuki-runtime-contracts.workspace = true
-mutsuki-runtime-core.workspace = true
 mutsuki-runtime-sdk.workspace = true
 rusqlite.workspace = true
 serde.workspace = true

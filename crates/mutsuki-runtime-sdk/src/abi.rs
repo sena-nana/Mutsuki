@@ -13,14 +13,12 @@
 
 mod binary_guest;
 mod binary_host_client;
-mod dispatch;
 mod error;
 mod guest;
 mod types;
 
 pub use binary_guest::{BinaryPluginGuest, ConfiguredBinaryPluginGuest, FailedBinaryAbiGuest};
 pub use binary_host_client::AbiHostClient;
-pub use dispatch::{dispatch_binary_host_request, dispatch_host_request};
 pub use types::{
     ABI_V2_BRIDGE_ID, ABI_V2_CODEC_ID, ABI_V2_ENTRY_SYMBOL, ABI_V2_TRANSPORT_VERSION, AbiBuffer,
     AbiCallResult, AbiCloseFn, AbiEntryV2, AbiGuest, AbiHostV2, AbiPluginV2, AbiReleaseFn,

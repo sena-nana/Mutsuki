@@ -7,11 +7,11 @@ use mutsuki_runtime_contracts::{
     ArtifactType, CompletionBatch, PluginDeploymentKind, PluginId, PluginManifest, PluginProvides,
     ProtocolClass, ProtocolId, RunnerDescriptor, RunnerId, RuntimeError, ScalarValue, WorkBatch,
 };
-use mutsuki_runtime_core::{
-    AsyncBatchHandler, Runner, RunnerContext, RuntimeFailure, RuntimeResult,
-};
 use mutsuki_runtime_host::{
     ProcessRunnerSpec, RuntimeBootstrapper, SpawnedBinaryRunner, runner_manifest,
+};
+use mutsuki_runtime_sdk::{
+    AsyncBatchHandler, Runner, RunnerContext, RuntimeFailure, RuntimeResult,
 };
 use mutsuki_runtime_sdk::{LoadedPlugin, PluginBuilder, RuntimeClientRef};
 use mutsuki_tauri_bridge::{

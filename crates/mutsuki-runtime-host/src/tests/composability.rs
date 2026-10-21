@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use mutsuki_runtime_contracts::*;
-use mutsuki_runtime_sdk::HostRuntime as SdkHostRuntime;
+use mutsuki_runtime_sdk::HostControl;
 use serde_json::json;
 
 use crate::{HostRuntime, HostRuntimeCommand, NativeRunner, RuntimeBootstrapper, runner_manifest};
@@ -62,7 +62,7 @@ fn host_reload_applies_kernel_commits_and_retains_them() {
     let prepared = state_writing_host(1, json!({"owned": "data", "by": "v2"}))
         .prepare_reload(runtime_profile(), 2)
         .unwrap();
-    SdkHostRuntime::reload(&mut runtime, prepared, Duration::from_secs(1)).unwrap();
+    HostControl::reload(&mut runtime, prepared, Duration::from_secs(1)).unwrap();
     runtime
         .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
             "after-reload",

@@ -823,7 +823,7 @@ pub struct HostTaskSnapshot {
     pub failure: Option<HostTaskFailureSummary>,
 }
 
-pub trait HostRuntime {
+pub trait HostControl {
     type PreparedReload;
 
     fn host_context(&self) -> &HostContext;

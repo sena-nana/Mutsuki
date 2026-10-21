@@ -2,7 +2,7 @@ use mutsuki_runtime_contracts::{
     CompletionBatch, EntryCompletion, ExecutionClass, InvocationMode, RunnerConcurrency,
     RunnerDescriptor, RunnerPurity, RunnerResult, Task, WorkBatch,
 };
-use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
+use mutsuki_runtime_sdk::{Runner, RunnerContext, RuntimeResult};
 use serde_json::json;
 use std::collections::BTreeMap;
 

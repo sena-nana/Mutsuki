@@ -8,7 +8,6 @@ default-run = "mutsuki-service-benchmarks"
 
 [dependencies]
 mutsuki-runtime-contracts.workspace = true
-mutsuki-runtime-core.workspace = true
 mutsuki-runtime-sdk.workspace = true
 mutsuki-runtime-wire.workspace = true
 mutsuki-service-abi-fixture = { path = "../../fixtures/abi-plugin" }

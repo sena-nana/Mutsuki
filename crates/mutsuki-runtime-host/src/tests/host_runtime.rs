@@ -9,7 +9,7 @@ use mutsuki_runtime_core::{
     AsyncBatchHandler, AsyncCompletionFuture, Runner, RunnerContext, RuntimeFailure, RuntimeResult,
     RuntimeStopState, ScheduleDecision, TaskHistoryRetention,
 };
-use mutsuki_runtime_sdk::HostRuntime as SdkHostRuntime;
+use mutsuki_runtime_sdk::HostControl;
 use serde_json::json;
 
 use crate::{
@@ -816,7 +816,7 @@ fn task_snapshots_return_live_task_metadata_in_actor_order() {
         .dispatch(HostRuntimeCommand::SubmitTask(Box::new(ready_task)))
         .unwrap();
 
-    let snapshots = SdkHostRuntime::task_snapshots(&runtime).unwrap();
+    let snapshots = HostControl::task_snapshots(&runtime).unwrap();
     assert_eq!(snapshots.len(), 2);
     assert_eq!(snapshots[0].task_id, "snapshot-running");
     assert_eq!(snapshots[1].task_id, "snapshot-ready");
@@ -880,7 +880,7 @@ fn events_after_returns_incremental_runtime_events() {
         .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
         .unwrap();
 
-    let events = SdkHostRuntime::events_after(&runtime, 0, 128).unwrap();
+    let events = HostControl::events_after(&runtime, 0, 128).unwrap();
     assert!(
         events
             .items
@@ -907,7 +907,7 @@ fn events_after_returns_incremental_runtime_events() {
         ))))
         .unwrap();
 
-    let later_events = SdkHostRuntime::events_after(&runtime, last_sequence, 128).unwrap();
+    let later_events = HostControl::events_after(&runtime, last_sequence, 128).unwrap();
     assert!(!later_events.items.is_empty());
     assert!(
         later_events
@@ -997,7 +997,7 @@ fn trace_spans_after_returns_incremental_runtime_trace_spans() {
         .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
         .unwrap();
 
-    let spans = SdkHostRuntime::trace_spans_after(&runtime, 0, 128).unwrap();
+    let spans = HostControl::trace_spans_after(&runtime, 0, 128).unwrap();
     assert!(!spans.items.is_empty());
     assert!(
         spans
@@ -1006,7 +1006,7 @@ fn trace_spans_after_returns_incremental_runtime_trace_spans() {
             .any(|span| { span.name == "runner.run_batch" && span.trace_id == "trace-custom" })
     );
     let next_sequence = spans.next_sequence;
-    let empty = SdkHostRuntime::trace_spans_after(&runtime, next_sequence, 128).unwrap();
+    let empty = HostControl::trace_spans_after(&runtime, next_sequence, 128).unwrap();
     assert!(empty.items.is_empty());
 
     let mut next_task = Task::new("trace-task-next", "raw.input", json!({}));
@@ -1018,7 +1018,7 @@ fn trace_spans_after_returns_incremental_runtime_trace_spans() {
         .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
         .unwrap();
 
-    let later_spans = SdkHostRuntime::trace_spans_after(&runtime, next_sequence, 128).unwrap();
+    let later_spans = HostControl::trace_spans_after(&runtime, next_sequence, 128).unwrap();
     assert!(later_spans.next_sequence > next_sequence);
     assert!(
         later_spans
@@ -1053,11 +1053,11 @@ fn host_cursor_pages_report_evicted_trace_and_event_records() {
             .unwrap();
     }
 
-    let events = SdkHostRuntime::events_after(&runtime, 0, 16).unwrap();
+    let events = HostControl::events_after(&runtime, 0, 16).unwrap();
     assert!(events.cursor_lost());
     assert!(events.lost > 0);
     assert_eq!(events.items.len(), 2);
-    let traces = SdkHostRuntime::trace_spans_after(&runtime, 0, 16).unwrap();
+    let traces = HostControl::trace_spans_after(&runtime, 0, 16).unwrap();
     assert!(traces.cursor_lost());
     assert!(traces.lost > 0);
     assert_eq!(traces.items.len(), 1);
@@ -1085,7 +1085,7 @@ fn host_runtime_reload_increments_generation_and_adds_runner_surface() {
     )));
 
     let prepared = reload_host.prepare_reload(runtime_profile(), 2).unwrap();
-    let decision = SdkHostRuntime::reload(&mut runtime, prepared, Duration::from_secs(1)).unwrap();
+    let decision = HostControl::reload(&mut runtime, prepared, Duration::from_secs(1)).unwrap();
 
     assert_eq!(runtime.host_context().registry_generation(), 2);
     assert!(decision.changes.iter().any(|change| {
@@ -1165,7 +1165,7 @@ fn host_runtime_reload_applies_replaced_runner_limits() {
     let prepared = reload_host
         .prepare_reload_with_runner_limits(runtime_profile(), 2, replaced_limits)
         .unwrap();
-    SdkHostRuntime::reload(&mut runtime, prepared, Duration::from_secs(1)).unwrap();
+    HostControl::reload(&mut runtime, prepared, Duration::from_secs(1)).unwrap();
 
     runtime
         .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
@@ -1202,7 +1202,7 @@ fn completion_subscription_survives_reload_and_wakes_for_new_generation() {
     )));
 
     let prepared = reload_host.prepare_reload(runtime_profile(), 2).unwrap();
-    SdkHostRuntime::reload(&mut runtime, prepared, Duration::from_secs(1)).unwrap();
+    HostControl::reload(&mut runtime, prepared, Duration::from_secs(1)).unwrap();
     let handle = match runtime
         .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
             "post-reload-completion",
@@ -2648,7 +2648,7 @@ fn host_runtime_sdk_context_submits_tasks_and_requests_shutdown() {
     assert_eq!(runtime.host_context().registry_generation(), 1);
     assert!(runtime.host_context().services().is_frozen());
 
-    let handle = SdkHostRuntime::submit_task(
+    let handle = HostControl::submit_task(
         &runtime,
         Task::new("sdk-host-task", "raw.input", json!({"source": "sdk"})),
     )
@@ -2659,10 +2659,10 @@ fn host_runtime_sdk_context_submits_tasks_and_requests_shutdown() {
 
     assert_eq!(handle.task_id, "sdk-host-task");
     assert!(matches!(
-        SdkHostRuntime::task_outcome(&runtime, &handle).unwrap(),
+        HostControl::task_outcome(&runtime, &handle).unwrap(),
         Some(TaskOutcome::Completed { task_id, .. }) if task_id == "sdk-host-task"
     ));
-    SdkHostRuntime::request_shutdown(&runtime, "test.shutdown").unwrap();
+    HostControl::request_shutdown(&runtime, "test.shutdown").unwrap();
     assert!(runtime.host_context().shutdown().is_shutdown_requested());
 }
 

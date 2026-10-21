@@ -6,8 +6,8 @@ license.workspace = true
 publish = false
 
 [dependencies]
+mutsuki-runtime-sdk.workspace = true
 mutsuki-runtime-contracts.workspace = true
-mutsuki-runtime-core.workspace = true
 mutsuki-tauri-bridge.workspace = true
 mutsuki-tauri-host.workspace = true
 serde_json.workspace = true

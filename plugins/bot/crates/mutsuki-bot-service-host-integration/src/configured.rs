@@ -1041,45 +1041,49 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
             })
         });
 
-        Ok(builder
-            .register_fallible_runtime_services_runner(move |client, resources| {
-                let snapshot = runner_config.snapshot();
-                let transport: Box<dyn mutsuki_plugin_bot_bilibili::BilibiliTransport> =
-                    match &snapshot.backend {
-                        BilibiliBackendConfig::WebCookie { .. } => {
-                            Box::new(ReqwestBilibiliTransport::new(
-                                runner_web_credential.clone(),
-                                Duration::from_secs(15),
-                            ))
-                        }
-                    };
-                let mut runner = BilibiliRunner::new(
-                    transport,
-                    runner_repository.clone(),
-                    resources.clone(),
-                    snapshot.media_provider_id.clone(),
-                );
-                if snapshot.management.enabled {
-                    let management = management_service.clone().ok_or_else(|| {
-                        mutsuki_plugin_bot_bilibili::BilibiliError::ManagementUnavailable(
-                            "Bilibili management service is unavailable".into(),
-                        )
-                    })?;
-                    management.bind_qr_renderer(Arc::new(RuntimeBilibiliQrRenderer::new(
-                        client.clone(),
-                        resources,
-                    )));
-                    runner = runner.with_management(runner_config.clone(), management);
-                }
-                if let Some(registry) = runner_flow_registry.clone() {
-                    runner = runner.with_flow_registry(registry);
-                }
-                Ok::<
-                    Box<dyn mutsuki_runtime_core::Runner>,
-                    mutsuki_plugin_bot_bilibili::BilibiliError,
-                >(runner.into_runtime_runner(client, snapshot.risk_control.clone()))
-            })
-            .register_event_source(Box::new(source)))
+        Ok(
+            builder
+                .register_fallible_runtime_services_runner(move |client, resources| {
+                    let snapshot = runner_config.snapshot();
+                    let transport: Box<dyn mutsuki_plugin_bot_bilibili::BilibiliTransport> =
+                        match &snapshot.backend {
+                            BilibiliBackendConfig::WebCookie { .. } => {
+                                Box::new(ReqwestBilibiliTransport::new(
+                                    runner_web_credential.clone(),
+                                    Duration::from_secs(15),
+                                ))
+                            }
+                        };
+                    let mut runner = BilibiliRunner::new(
+                        transport,
+                        runner_repository.clone(),
+                        resources.clone(),
+                        snapshot.media_provider_id.clone(),
+                    );
+                    if snapshot.management.enabled {
+                        let management = management_service.clone().ok_or_else(|| {
+                            mutsuki_plugin_bot_bilibili::BilibiliError::ManagementUnavailable(
+                                "Bilibili management service is unavailable".into(),
+                            )
+                        })?;
+                        management.bind_qr_renderer(Arc::new(RuntimeBilibiliQrRenderer::new(
+                            client.clone(),
+                            resources,
+                        )));
+                        runner = runner.with_management(runner_config.clone(), management);
+                    }
+                    if let Some(registry) = runner_flow_registry.clone() {
+                        runner = runner.with_flow_registry(registry);
+                    }
+                    Ok::<
+                        Box<dyn mutsuki_runtime_sdk::Runner>,
+                        mutsuki_plugin_bot_bilibili::BilibiliError,
+                    >(
+                        runner.into_runtime_runner(client, snapshot.risk_control.clone())
+                    )
+                })
+                .register_event_source(Box::new(source)),
+        )
     }
 }
 
@@ -1113,7 +1117,7 @@ impl ConfiguredPluginFactory for WorkshopConfiguredPlugin {
             .register_builtin_plugin(manifest)
             .register_fallible_runtime_services_runner(move |_client, resources| {
                 let transport = ReqwestWorkshopTransport::new();
-                Ok::<Box<dyn mutsuki_runtime_core::Runner>, String>(Box::new(WorkshopRunner::new(
+                Ok::<Box<dyn mutsuki_runtime_sdk::Runner>, String>(Box::new(WorkshopRunner::new(
                     Box::new(transport),
                     resources,
                     media_provider_id.clone(),

@@ -1,5 +1,5 @@
 use mutsuki_runtime_contracts::{ERR_RESOURCE_UNSUPPORTED, RuntimeError, ScalarValue};
-use mutsuki_runtime_core::RuntimeFailure;
+use mutsuki_runtime_sdk::RuntimeFailure;
 
 use crate::constants::RUNTIME_TARGET;
 

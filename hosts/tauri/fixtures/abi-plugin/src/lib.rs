@@ -11,10 +11,10 @@
 use mutsuki_runtime_contracts::{
     ArtifactType, CompletionBatch, PluginArtifact, PluginManifest, RunnerDescriptor, WorkBatch,
 };
-use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
 use mutsuki_runtime_sdk::{
     AbiHostClient, PluginBuilder, RunnerDescriptorBuilder, map_work_batch_entries,
 };
+use mutsuki_runtime_sdk::{Runner, RunnerContext, RuntimeResult};
 use serde_json::{Value, json};
 
 pub const PLUGIN_ID: &str = "mutsuki.test.tauri-abi";
@@ -63,7 +63,7 @@ fn create_plugin(
     config: Value,
 ) -> RuntimeResult<mutsuki_runtime_sdk::LoadedPlugin> {
     if config.get("enabled").and_then(Value::as_bool) != Some(true) {
-        return Err(mutsuki_runtime_core::RuntimeFailure::new(
+        return Err(mutsuki_runtime_sdk::RuntimeFailure::new(
             mutsuki_runtime_contracts::RuntimeError::new(
                 mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
                 PLUGIN_ID,
@@ -86,7 +86,7 @@ fn create_plugin(
             .is_some_and(|path| std::path::Path::new(path).is_dir())
         && config.get("caller").and_then(Value::as_str) == Some("preserved");
     if !valid_metadata {
-        return Err(mutsuki_runtime_core::RuntimeFailure::new(
+        return Err(mutsuki_runtime_sdk::RuntimeFailure::new(
             mutsuki_runtime_contracts::RuntimeError::new(
                 mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
                 PLUGIN_ID,

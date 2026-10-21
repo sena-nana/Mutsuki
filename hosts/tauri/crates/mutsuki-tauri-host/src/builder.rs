@@ -9,8 +9,8 @@ use crate::plugin_runner::{
     register_permission_grants, scan_plugin_runners,
 };
 use mutsuki_runtime_contracts::{PluginId, RuntimeProfile, RuntimeProfileMode};
-use mutsuki_runtime_core::{AsyncBatchHandler, Runner};
 use mutsuki_runtime_host::{HostRuntimeConfig, RuntimeBootstrapper, TokioAsyncExecutor};
+use mutsuki_runtime_sdk::{AsyncBatchHandler, Runner};
 use mutsuki_runtime_sdk::{RuntimeClientRef, TaskSubmitterRuntimeClient};
 use mutsuki_tauri_bridge::EventHub;
 use mutsuki_tauri_resource::TauriResourceStore;

@@ -301,7 +301,7 @@ impl QqBotPluginBundle {
         let builder = if media_enabled {
             builder.register_fallible_runtime_services_async_handler(move |_runtime, resources| {
                 QqGatewayMediaHandler::new(gateway_config.clone(), resources).map(|handler| {
-                    Arc::new(handler) as Arc<dyn mutsuki_runtime_core::AsyncBatchHandler>
+                    Arc::new(handler) as Arc<dyn mutsuki_runtime_sdk::AsyncBatchHandler>
                 })
             })
         } else {
@@ -345,7 +345,7 @@ impl QqBotPluginBundle {
             .register_fallible_runtime_services_runner(move |_runtime, resources| {
                 let http = ReqwestQqHttpClient::new(&openapi_config)
                     .map_err(|error| error.redacted_message())?;
-                Ok::<Box<dyn mutsuki_runtime_core::Runner>, String>(Box::new(
+                Ok::<Box<dyn mutsuki_runtime_sdk::Runner>, String>(Box::new(
                     SandboxAwareOpenApiRunner::new(
                         Box::new(QqOpenApiRunner::new_with_auth(
                             1,
@@ -1100,7 +1100,7 @@ mod tests {
         fn submit_batch(
             &self,
             batch: TaskBatch,
-        ) -> mutsuki_runtime_core::RuntimeResult<Vec<TaskHandle>> {
+        ) -> mutsuki_runtime_sdk::RuntimeResult<Vec<TaskHandle>> {
             let handles = batch
                 .tasks
                 .iter()
@@ -1120,7 +1120,7 @@ mod tests {
         fn task_outcome(
             &self,
             handle: &TaskHandle,
-        ) -> mutsuki_runtime_core::RuntimeResult<Option<TaskOutcome>> {
+        ) -> mutsuki_runtime_sdk::RuntimeResult<Option<TaskOutcome>> {
             Ok(Some(TaskOutcome::Completed {
                 task_id: handle.task_id.clone(),
                 output: Some(json!({"id": "QQ_MESSAGE_ID"})),

@@ -17,11 +17,11 @@ use mutsuki_runtime_contracts::{
     RunnerResourceCapability, RunnerResult, RunnerSideEffect, RuntimeError, ScalarValue, Task,
     WorkBatch,
 };
-use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
 use mutsuki_runtime_sdk::{
     PluginBuilder, ProtocolDescriptorBuilder, map_work_batch_entries,
     map_work_batch_entries_grouped,
 };
+use mutsuki_runtime_sdk::{Runner, RunnerContext, RuntimeResult};
 use serde_json::{Value, json};
 
 use crate::adapter::{

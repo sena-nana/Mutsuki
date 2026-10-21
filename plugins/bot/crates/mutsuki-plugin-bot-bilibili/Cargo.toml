@@ -16,7 +16,6 @@ mutsuki-config-service.workspace = true
 mutsuki-protocol-browser.workspace = true
 mutsuki-protocol-image.workspace = true
 mutsuki-runtime-contracts.workspace = true
-mutsuki-runtime-core.workspace = true
 mutsuki-runtime-sdk.workspace = true
 reqwest.workspace = true
 rusqlite.workspace = true

@@ -240,7 +240,7 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
   - `HostRuntime` 暴露 SDK-facing `HostContext`，将 active capability graph、
     host-only service registry、config/event bridge、task submitter、resource backend
     和 shutdown controller 组合为 host 扩展基础设施；这些接口复用既有
-    `HostRuntimeCommand`、`TaskClient`、`ResourcePlanClient` 与 load-plan descriptor，
+    `HostRuntimeCommand`、`TaskSubmitter`、`ResourcePlanGateway` 与 load-plan descriptor，
     不新增 Core 运行时事实。
 - `kits/python-runner` 覆盖：
   - 新协议 dataclass mirror 与 JSON roundtrip。

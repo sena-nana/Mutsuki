@@ -19,10 +19,10 @@ use mutsuki_runtime_contracts::{
     ResourceSealState, ResourceSemantic, ResourceTypeDescriptor, RuntimeError, ScalarValue,
     SnapshotDescriptor, StreamPlan, WritePlan,
 };
-use mutsuki_runtime_core::{RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
     LoadedPlugin, Plugin, PluginBuilder, ResourcePlanGateway, ResourceProviderGateway,
 };
+use mutsuki_runtime_sdk::{RuntimeFailure, RuntimeResult};
 use serde_json::{Value, json};
 
 pub const PLUGIN_ID: &str = "mutsuki.std.resource.memory";

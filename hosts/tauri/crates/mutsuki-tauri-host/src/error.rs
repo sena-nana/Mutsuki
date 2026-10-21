@@ -4,7 +4,7 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum HostError {
     #[error(transparent)]
-    RuntimeFailure(mutsuki_runtime_core::RuntimeFailure),
+    RuntimeFailure(mutsuki_runtime_sdk::RuntimeFailure),
     #[error("runtime failure: {0}")]
     Runtime(String),
     #[error("resource failure: {0}")]
@@ -19,8 +19,8 @@ pub enum HostError {
 
 pub type HostResult<T> = Result<T, HostError>;
 
-impl From<mutsuki_runtime_core::RuntimeFailure> for HostError {
-    fn from(error: mutsuki_runtime_core::RuntimeFailure) -> Self {
+impl From<mutsuki_runtime_sdk::RuntimeFailure> for HostError {
+    fn from(error: mutsuki_runtime_sdk::RuntimeFailure) -> Self {
         Self::RuntimeFailure(error)
     }
 }

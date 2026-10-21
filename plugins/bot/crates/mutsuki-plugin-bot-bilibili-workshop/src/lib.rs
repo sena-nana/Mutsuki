@@ -23,11 +23,11 @@ use mutsuki_runtime_contracts::{
     CompletionBatch, ExecutionClass, ProtocolClass, RunnerContext, RunnerDescriptor, RunnerPurity,
     RunnerResult, RuntimeError, ScalarValue, Task, WorkBatch,
 };
-use mutsuki_runtime_core::{Runner, RuntimeResult};
 use mutsuki_runtime_sdk::{
     PluginBuilder, ProtocolDescriptorBuilder, ResourceRegistryGateway, RunnerDescriptorBuilder,
     map_work_batch_entries,
 };
+use mutsuki_runtime_sdk::{Runner, RuntimeResult};
 use reqwest::blocking::Client;
 use reqwest::redirect::Policy;
 use scraper::{Html, Selector};

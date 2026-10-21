@@ -54,7 +54,7 @@ use mutsuki_runtime_contracts::{
     RunnerControlCapability, RunnerMode, RunnerResult, RunnerSideEffect, Task, TaskOutcome,
     TimeoutGranularity,
 };
-use mutsuki_runtime_core::Runner;
+use mutsuki_runtime_sdk::Runner;
 use mutsuki_runtime_sdk::{
     AsyncRunnerContext, BoxedTaskAwaitRunner, PluginBuilder, ProtocolDescriptorBuilder,
     RunnerDescriptorBuilder, RuntimeClientRef, RuntimeFailure, RuntimeResult,

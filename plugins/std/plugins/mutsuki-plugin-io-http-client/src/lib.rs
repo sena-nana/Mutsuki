@@ -23,7 +23,7 @@ use mutsuki_runtime_contracts::{
     RunnerPurity, RunnerResult, RunnerSideEffect, RuntimeError, ScalarValue, Task, TaskOutcome,
     WorkBatch,
 };
-use mutsuki_runtime_core::{
+use mutsuki_runtime_sdk::{
     AsyncBatchHandler, AsyncCompletionFuture, RuntimeFailure, RuntimeResult,
 };
 use mutsuki_runtime_sdk::{
@@ -748,7 +748,7 @@ async fn execute_effect_task(
     Ok(result)
 }
 
-pub fn facade_runner(client: RuntimeClientRef) -> Box<dyn mutsuki_runtime_core::Runner> {
+pub fn facade_runner(client: RuntimeClientRef) -> Box<dyn mutsuki_runtime_sdk::Runner> {
     let factory = Box::new(
         move |ctx: mutsuki_runtime_sdk::AsyncRunnerContext, task: Task| {
             Box::pin(run_facade_task(ctx, task))

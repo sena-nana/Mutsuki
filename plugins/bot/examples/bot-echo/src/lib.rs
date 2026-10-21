@@ -21,8 +21,8 @@ use mutsuki_runtime_contracts::{
     RunnerOrderingCapability, RunnerPayloadCapability, RunnerPurity, RunnerResourceCapability,
     RunnerSideEffect, RuntimeError, ScalarValue, WorkBatch,
 };
-use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
 use mutsuki_runtime_sdk::{PluginBuilder, ProtocolDescriptorBuilder, map_work_batch_entries};
+use mutsuki_runtime_sdk::{Runner, RunnerContext, RuntimeResult};
 use serde_json::json;
 
 pub const ECHO_PLUGIN_ID: &str = "example.bot.echo";

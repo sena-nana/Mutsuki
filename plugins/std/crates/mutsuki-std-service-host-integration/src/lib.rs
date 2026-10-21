@@ -91,7 +91,7 @@ impl ConfiguredPluginFactory for ChromiumPluginFactory {
             .register_builtin_plugin(manifest)
             .register_fallible_runtime_services_runner(move |_client, resources| {
                 BrowserSnapshotRunner::launch(config.clone(), resources)
-                    .map(|runner| Box::new(runner) as Box<dyn mutsuki_runtime_core::Runner>)
+                    .map(|runner| Box::new(runner) as Box<dyn mutsuki_runtime_sdk::Runner>)
             }))
     }
 }
@@ -115,7 +115,7 @@ impl ConfiguredPluginFactory for ImageRenderPluginFactory {
             .register_builtin_plugin(manifest)
             .register_fallible_runtime_services_runner(move |_client, resources| {
                 ImageRenderRunner::launch(config.clone(), resources)
-                    .map(|runner| Box::new(runner) as Box<dyn mutsuki_runtime_core::Runner>)
+                    .map(|runner| Box::new(runner) as Box<dyn mutsuki_runtime_sdk::Runner>)
             }))
     }
 }
@@ -141,7 +141,7 @@ impl ConfiguredPluginFactory for HttpClientPluginFactory {
             .register_runtime_client_runner(mutsuki_plugin_io_http_client::facade_runner)
             .register_fallible_runtime_services_async_handler(move |_client, resources| {
                 let gateway = SecureHttpGateway::new(config.clone())?;
-                Ok::<std::sync::Arc<dyn mutsuki_runtime_core::AsyncBatchHandler>, String>(
+                Ok::<std::sync::Arc<dyn mutsuki_runtime_sdk::AsyncBatchHandler>, String>(
                     std::sync::Arc::new(HttpEffectHandler::new(
                         std::sync::Arc::new(gateway),
                         resources,

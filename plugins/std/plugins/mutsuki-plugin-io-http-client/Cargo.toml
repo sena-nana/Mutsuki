@@ -10,7 +10,6 @@ bytes.workspace = true
 futures.workspace = true
 mutsuki-protocol-http.workspace = true
 mutsuki-runtime-contracts.workspace = true
-mutsuki-runtime-core.workspace = true
 mutsuki-runtime-sdk.workspace = true
 reqwest.workspace = true
 serde.workspace = true

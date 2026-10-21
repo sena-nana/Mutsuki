@@ -39,7 +39,7 @@ use mutsuki_runtime_contracts::{
     RunnerResult, RunnerStatus, RuntimeError, Task, TaskBatch, TaskHandle, TaskId, TaskOutcome,
     TaskPayload, WorkBatch, WorkResourcePlan,
 };
-use mutsuki_runtime_core::Runner;
+use mutsuki_runtime_sdk::Runner;
 use mutsuki_runtime_sdk::{
     RunnerDescriptorBuilder, RuntimeClient, RuntimeResult, TaskAwaitRunnerAdapter,
 };

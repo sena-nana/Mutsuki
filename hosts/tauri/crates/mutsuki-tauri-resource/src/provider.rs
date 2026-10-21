@@ -5,8 +5,8 @@ use mutsuki_runtime_contracts::{
     ReadPlan, RefId, ResourceAccess, ResourceId, ResourceLifetime, ResourceRef, ResourceSealState,
     ResourceSemantic, RuntimeError, SnapshotDescriptor, StreamPlan, WritePlan,
 };
-use mutsuki_runtime_core::{RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{ResourcePlanGateway, ResourceProviderGateway};
+use mutsuki_runtime_sdk::{RuntimeFailure, RuntimeResult};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;

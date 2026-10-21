@@ -16,7 +16,7 @@ use mutsuki_runtime_contracts::{
     BatchPayload, CompletionBatch, EntryCompletion, RunnerContext, RunnerDescriptor, RunnerResult,
     Task, WorkBatch,
 };
-use mutsuki_runtime_core::{Runner, RuntimeResult};
+use mutsuki_runtime_sdk::{Runner, RuntimeResult};
 use serde_json::{Value, json};
 
 #[derive(Clone, Default)]

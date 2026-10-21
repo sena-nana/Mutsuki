@@ -12,44 +12,15 @@ pub const ABI_V2_ENTRY_SYMBOL: &[u8] = mutsuki_plugin_api::ABI_V2_ENTRY_SYMBOL;
 pub const ABI_V2_CODEC_ID: &str = mutsuki_plugin_api::ABI_V2_CODEC_ID;
 pub const ABI_V2_BRIDGE_ID: &str = mutsuki_plugin_api::ABI_V2_BRIDGE_ID;
 
+/// The plugin API owns the ABI result contract; the SDK only lifts its error into a
+/// `RuntimeFailure`.
 pub(crate) fn consume_call_result(
     result: AbiCallResult,
     release: Option<AbiReleaseFn>,
     route: &'static str,
 ) -> RuntimeResult<(bool, Vec<u8>)> {
-    let valid_buffer = (result.payload.len == 0 && result.payload.ptr.is_null())
-        || (result.payload.len > 0 && !result.payload.ptr.is_null());
-    if !valid_buffer {
-        return Err(abi_contract_failure(
-            route,
-            "invalid payload pointer/length pair",
-        ));
-    }
-    if result.payload.len > 0 && release.is_none() {
-        return Err(abi_contract_failure(
-            route,
-            "non-empty payload is missing its release callback",
-        ));
-    }
-    // SAFETY: the ABI callback owns the payload until the paired release callback below.
-    let bytes = unsafe { result.payload.as_slice() }.to_vec();
-    if let Some(release) = release.filter(|_| result.payload.len > 0) {
-        // SAFETY: the plugin returned a validated non-empty payload and a release callback.
-        unsafe { release(result.payload) };
-    }
-    match result.status {
-        0 => Ok((true, bytes)),
-        1 => Ok((false, bytes)),
-        _ => Err(abi_contract_failure(route, "invalid ABI callback status")),
-    }
-}
-
-fn abi_contract_failure(route: &'static str, detail: &'static str) -> RuntimeFailure {
-    RuntimeFailure::new(mutsuki_runtime_contracts::RuntimeError::new(
-        mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
-        detail,
-        route,
-    ))
+    mutsuki_plugin_api::consume_call_result(result, release, route)
+        .map_err(|error| RuntimeFailure::new(error.error))
 }
 
 // Only tests release plugin-allocated buffers directly; production frees

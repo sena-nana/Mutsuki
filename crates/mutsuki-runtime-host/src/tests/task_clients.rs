@@ -7,8 +7,9 @@ use mutsuki_runtime_wire::{
 };
 use serde_json::json;
 
-use crate::{AbiTaskClient, TaskClient};
+use crate::AbiTaskClient;
 use mutsuki_runtime_sdk::TaskBatchBuilder;
+use mutsuki_runtime_sdk::TaskSubmitter;
 
 use super::helpers::{host_with_echo_runner, runtime_profile};
 

@@ -17,6 +17,7 @@ Wrap published contracts and runtime operations; do not create a second schedule
 - Grouped batch lanes isolate handler panics: the panicking lane fails its remaining entries, while
   entries already completed on any lane keep their results.
 - Leave process supervision, configuration, secrets, and product lifecycle to the owning Host.
+- The SDK is the only plugin-facing path to kernel types: it re-exports `Runner`, `RunnerContext`, `AsyncBatchHandler`, `AsyncCompletionFuture` and the runtime result/statistics types. Plugins, Kits, Hosts and products must not depend on `mutsuki-runtime-core` (`package-boundaries.toml` enforces it); scheduler-policy types come from `mutsuki-runtime-host`.
 
 Test SDK ergonomics against real runtime surfaces and run Link/ABI conformance for codec or adapter changes.
 

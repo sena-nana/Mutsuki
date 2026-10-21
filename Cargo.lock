@@ -554,7 +554,6 @@ dependencies = [
  "mutsuki-bot-protocol",
  "mutsuki-bot-sdk",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "serde_json",
 ]
@@ -3429,7 +3428,6 @@ dependencies = [
  "mutsuki-agent-adapter-api",
  "mutsuki-agent-contracts",
  "mutsuki-agent-sdk",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "reqwest",
  "serde_json",
@@ -3463,7 +3461,6 @@ dependencies = [
  "mutsuki-plugin-agent-session",
  "mutsuki-plugin-agent-tool-router",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "serde",
  "serde_json",
@@ -3499,7 +3496,6 @@ dependencies = [
  "mutsuki-plugin-agent-skills",
  "mutsuki-plugin-agent-tool-router",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-host",
  "mutsuki-runtime-sdk",
  "serde",
@@ -3543,7 +3539,7 @@ dependencies = [
  "mutsuki-plugin-db-sqlite",
  "mutsuki-protocol-db",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
+ "mutsuki-runtime-sdk",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -3565,7 +3561,6 @@ version = "0.1.0"
 dependencies = [
  "mutsuki-agent-contracts",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "serde_json",
 ]
@@ -3617,7 +3612,6 @@ dependencies = [
  "mutsuki-agent-contracts",
  "mutsuki-agent-plugin-api",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-host",
  "mutsuki-runtime-sdk",
  "serde_json",
@@ -3735,7 +3729,6 @@ dependencies = [
  "mutsuki-link-core",
  "mutsuki-link-local",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-host",
  "mutsuki-runtime-sdk",
  "mutsuki-service-config",
@@ -3815,7 +3808,6 @@ dependencies = [
  "mutsuki-plugin-resource-sqlite",
  "mutsuki-protocol-browser",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "mutsuki-service-config",
  "mutsuki-service-control",
@@ -3864,7 +3856,6 @@ dependencies = [
  "mutsuki-plugin-bot-event-router",
  "mutsuki-plugin-resource-sqlite",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "mutsuki-service-config",
  "mutsuki-service-runtime",
@@ -3899,7 +3890,6 @@ dependencies = [
  "mutsuki-agent-contracts",
  "mutsuki-bot-protocol",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "serde",
  "serde_json",
@@ -3986,7 +3976,6 @@ dependencies = [
  "mutsuki-bot-delivery",
  "mutsuki-bot-protocol",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "serde",
  "serde_json",
@@ -4058,7 +4047,6 @@ dependencies = [
  "mutsuki-plugin-bot-reply",
  "mutsuki-plugin-resource-sqlite",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "mutsuki-service-config",
  "mutsuki-service-runtime",
@@ -4544,7 +4532,6 @@ dependencies = [
  "mutsuki-agent-adapter-api",
  "mutsuki-agent-contracts",
  "mutsuki-agent-sdk",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "reqwest",
  "serde_json",
@@ -4625,7 +4612,6 @@ dependencies = [
  "mutsuki-bot-protocol",
  "mutsuki-config-service",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "reqwest",
  "rustls",
@@ -4651,7 +4637,6 @@ dependencies = [
  "mutsuki-bot-protocol",
  "mutsuki-config-service",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "serde",
  "serde_json",
@@ -4674,7 +4659,6 @@ dependencies = [
  "mutsuki-protocol-browser",
  "mutsuki-protocol-image",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "reqwest",
  "rusqlite",
@@ -4694,7 +4678,6 @@ dependencies = [
  "mutsuki-bot-protocol",
  "mutsuki-bot-secure-fetch",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "reqwest",
  "rustls",
@@ -4710,7 +4693,6 @@ version = "0.1.0"
 dependencies = [
  "mutsuki-bot-protocol",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "serde",
  "serde_json",
@@ -4725,7 +4707,6 @@ dependencies = [
  "mutsuki-bot-protocol",
  "mutsuki-bot-testkit",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "serde",
  "serde_json",
@@ -4738,7 +4719,6 @@ dependencies = [
  "mutsuki-bot-delivery",
  "mutsuki-bot-protocol",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "serde_json",
 ]
@@ -4751,7 +4731,6 @@ dependencies = [
  "mutsuki-bot-link-parser",
  "mutsuki-bot-protocol",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "serde",
  "serde_json",
@@ -4768,7 +4747,6 @@ dependencies = [
  "mutsuki-bot-protocol",
  "mutsuki-config-service",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "serde",
  "serde_json",
@@ -4782,7 +4760,6 @@ dependencies = [
  "mutsuki-bot-interaction",
  "mutsuki-bot-protocol",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "serde_json",
 ]
@@ -4794,7 +4771,6 @@ dependencies = [
  "mutsuki-agent-contracts",
  "mutsuki-bot-protocol",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "serde",
  "serde_json",
@@ -4816,7 +4792,6 @@ dependencies = [
  "mutsuki-protocol-http",
  "mutsuki-protocol-image",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "mutsuki-service-config",
  "mutsuki-service-control",
@@ -4837,7 +4812,6 @@ dependencies = [
  "mutsuki-bot-protocol",
  "mutsuki-bot-testkit",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "serde_json",
 ]
@@ -4848,7 +4822,6 @@ version = "0.1.0"
 dependencies = [
  "mutsuki-bot-protocol",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "regex",
  "serde",
@@ -4860,7 +4833,6 @@ name = "mutsuki-plugin-config-permission"
 version = "0.1.0"
 dependencies = [
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "serde_json",
 ]
@@ -4871,7 +4843,6 @@ version = "0.1.0"
 dependencies = [
  "mutsuki-protocol-db",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "mutsuki-std-effect",
  "rusqlite",
@@ -4885,7 +4856,6 @@ version = "0.1.0"
 dependencies = [
  "mutsuki-protocol-dev",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "serde_json",
 ]
@@ -4910,7 +4880,6 @@ dependencies = [
  "mutsuki-plugin-resource-memory",
  "mutsuki-protocol-image",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "parley",
  "qrcode",
@@ -4929,7 +4898,6 @@ dependencies = [
  "headless_chrome",
  "mutsuki-protocol-browser",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "serde",
  "serde_json",
@@ -4942,7 +4910,6 @@ version = "0.1.0"
 dependencies = [
  "mutsuki-protocol-fs",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "mutsuki-std-effect",
  "serde_json",
@@ -4958,7 +4925,6 @@ dependencies = [
  "futures",
  "mutsuki-protocol-http",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "reqwest",
  "serde",
@@ -4973,7 +4939,6 @@ version = "0.1.0"
 dependencies = [
  "mutsuki-protocol-observe",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "serde_json",
 ]
@@ -4983,7 +4948,6 @@ name = "mutsuki-plugin-resource-memory"
 version = "0.1.0"
 dependencies = [
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "serde_json",
 ]
@@ -4993,7 +4957,6 @@ name = "mutsuki-plugin-resource-shared-memory"
 version = "0.1.0"
 dependencies = [
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "serde_json",
  "shared_memory",
@@ -5005,7 +4968,6 @@ version = "0.1.0"
 dependencies = [
  "futures",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-host",
  "mutsuki-runtime-sdk",
  "rusqlite",
@@ -5020,7 +4982,6 @@ version = "0.1.0"
 dependencies = [
  "mutsuki-protocol-workflow",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "serde_json",
 ]
@@ -5031,7 +4992,6 @@ version = "0.1.0"
 dependencies = [
  "mutsuki-protocol-workflow",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "serde_json",
 ]
@@ -5174,7 +5134,6 @@ name = "mutsuki-runtime-host-abi-v2-fixture"
 version = "0.1.0"
 dependencies = [
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "serde_json",
 ]
@@ -5217,7 +5176,6 @@ name = "mutsuki-service-abi-fixture"
 version = "0.1.0"
 dependencies = [
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "serde_json",
 ]
@@ -5229,7 +5187,6 @@ dependencies = [
  "hex",
  "libc",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "mutsuki-runtime-wire",
  "mutsuki-service-abi-fixture",
@@ -5370,7 +5327,6 @@ dependencies = [
  "hex",
  "libc",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-host",
  "mutsuki-runtime-sdk",
  "mutsuki-runtime-wire",
@@ -5412,7 +5368,6 @@ dependencies = [
  "mutsuki-plugin-workflow-linear",
  "mutsuki-protocol-http",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "mutsuki-std-effect",
  "serde",
@@ -5451,7 +5406,7 @@ dependencies = [
  "mutsuki-plugin-io-http-client",
  "mutsuki-plugin-resource-memory",
  "mutsuki-plugin-resource-sqlite",
- "mutsuki-runtime-core",
+ "mutsuki-runtime-sdk",
  "mutsuki-service-runtime",
  "mutsuki-std-plugins",
  "serde_json",
@@ -5481,7 +5436,6 @@ name = "mutsuki-tauri-abi-fixture"
 version = "0.1.0"
 dependencies = [
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "serde_json",
 ]
@@ -5492,7 +5446,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
+ "mutsuki-runtime-sdk",
  "mutsuki-tauri-bridge",
  "mutsuki-tauri-host",
  "serde_json",
@@ -5536,7 +5490,6 @@ dependencies = [
  "mutsuki-link-local",
  "mutsuki-plugin-agent-model-gateway",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-host",
  "mutsuki-runtime-sdk",
  "mutsuki-tauri-abi-fixture",
@@ -5559,7 +5512,6 @@ version = "0.1.0"
 dependencies = [
  "mime_guess",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "mutsuki-tauri-bridge",
  "serde",

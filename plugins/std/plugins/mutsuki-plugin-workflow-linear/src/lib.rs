@@ -12,11 +12,11 @@ use mutsuki_runtime_contracts::{
     RunnerBatchCapability, RunnerContext, RunnerDescriptor, RunnerMode, RunnerPurity, RunnerResult,
     RunnerSideEffect, RuntimeError, ScalarValue, Task, WorkBatch,
 };
-use mutsuki_runtime_core::{Runner, RuntimeResult};
 use mutsuki_runtime_sdk::{
     LoadedPlugin, Plugin, PluginBuilder, ProtocolDescriptorBuilder, RunnerDescriptorBuilder,
     map_work_batch_entries,
 };
+use mutsuki_runtime_sdk::{Runner, RuntimeResult};
 use serde_json::{Value, json};
 
 pub const PLUGIN_ID: &str = "mutsuki.std.workflow.linear";

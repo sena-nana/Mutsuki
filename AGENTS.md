@@ -37,6 +37,7 @@ scoped `AGENTS.md` 和技能；不得把文档同步拆到后续提交。
 - 根 `Cargo.toml`/`Cargo.lock` 是唯一 workspace 基线；内部依赖使用 root path，禁止内部 Git pin、嵌套 workspace、仓库外 `path` 和本地 `[patch]`。
 - Core 保持领域中立；不得依赖具体 Host、Link transport、Agent、Bot、标准插件或产品。Host 负责装配和外部生命周期，插件不得复制 Core 或 Host。
 - TaskPool、batch-first `run_batch`、`TaskHandle`、`ResourceRef`、LoadPlan、registry freeze、generation、structured failure 和 actor ownership 不得被直调绕过。
+- 只有 `mutsuki-runtime-host`、`mutsuki-runtime-sdk` 与内核基准直接依赖 `mutsuki-runtime-core`；其余 package 经 SDK（插件侧类型）或 runtime-host（调度策略类型）访问内核。
 - 跨边界只传公开契约和 descriptor；Python/TypeScript/template 镜像公开 wire，不复制第二套 Core、生产 fallback 或 shim。
 - Secret、账号、本地配置和真实凭据不得进入 manifest、fixture、日志、模板或版本控制。
 - 资源 provider 的结果和 invalidation 由 Host actor 应用；offloaded/native async 工作在 admission 后执行，reload 和 shutdown 必须保留执行中的调用直到 actor 应用结果。

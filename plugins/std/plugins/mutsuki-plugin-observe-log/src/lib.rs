@@ -8,11 +8,11 @@ use mutsuki_runtime_contracts::{
     RunnerDescriptor, RunnerMode, RunnerPurity, RunnerResult, RunnerSideEffect, RuntimeError,
     ScalarValue, WorkBatch,
 };
-use mutsuki_runtime_core::{Runner, RuntimeResult};
 use mutsuki_runtime_sdk::{
     LoadedPlugin, Plugin, PluginBuilder, ProtocolDescriptorBuilder, RunnerDescriptorBuilder,
     map_work_batch_entries,
 };
+use mutsuki_runtime_sdk::{Runner, RuntimeResult};
 use serde_json::json;
 
 pub const PLUGIN_ID: &str = "mutsuki.std.observe.log";

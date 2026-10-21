@@ -29,7 +29,7 @@ pub use mutsuki_plugin_agent_model_gateway::{
 };
 use mutsuki_plugin_agent_proactive::ProactiveScheduleService;
 use mutsuki_runtime_contracts::{PluginManifest, TaskBatch, TaskHandle, TaskOutcome};
-use mutsuki_runtime_core::{AsyncBatchHandler, Runner};
+use mutsuki_runtime_sdk::{AsyncBatchHandler, Runner};
 use mutsuki_runtime_sdk::{RuntimeClient, RuntimeClientRef, RuntimeResult};
 pub use native_coding::{
     LSP_PLUGIN_ID, NATIVE_CODING_BUNDLE_ID, NATIVE_CODING_TOOL_PLUGIN_ID,
@@ -262,7 +262,7 @@ mod tests {
     };
     use mutsuki_runtime_host::{HostRuntimeConfig, RuntimeBootstrapper, TokioAsyncExecutor};
     use mutsuki_runtime_sdk::{
-        HostRuntime as _, PluginBuilder, ProtocolSpec, RuntimeClientRef, RuntimeFailure,
+        HostControl as _, PluginBuilder, ProtocolSpec, RuntimeClientRef, RuntimeFailure,
         SdkProtocol, TaskAwaitRunnerAdapter, TaskSubmitterRuntimeClient,
     };
     use std::collections::{BTreeMap, BTreeSet};

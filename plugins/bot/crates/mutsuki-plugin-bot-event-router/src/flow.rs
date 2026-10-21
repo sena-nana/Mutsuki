@@ -13,7 +13,7 @@ use mutsuki_runtime_contracts::{
     RunnerControlCapability, RunnerMode, RunnerResult, RunnerSideEffect, RuntimeError, ScalarValue,
     Task, TaskOutcome, TimeoutGranularity,
 };
-use mutsuki_runtime_core::Runner;
+use mutsuki_runtime_sdk::Runner;
 use mutsuki_runtime_sdk::{
     AsyncRunnerContext, BoxedTaskAwaitRunner, PluginBuilder, ProtocolDescriptorBuilder,
     RunnerDescriptorBuilder, RuntimeClientRef, RuntimeFailure, RuntimeResult,
@@ -329,7 +329,7 @@ impl Runner for BotFlowIngressRunner {
 
     fn run_batch(
         &mut self,
-        ctx: mutsuki_runtime_core::RunnerContext,
+        ctx: mutsuki_runtime_sdk::RunnerContext,
         batch: mutsuki_runtime_contracts::WorkBatch,
     ) -> RuntimeResult<mutsuki_runtime_contracts::CompletionBatch> {
         let snapshot = self.registry.active();

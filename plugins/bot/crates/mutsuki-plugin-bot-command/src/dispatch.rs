@@ -18,10 +18,10 @@ use mutsuki_runtime_contracts::{
     RunnerPayloadCapability, RunnerPurity, RunnerResourceCapability, RunnerResult,
     RunnerSideEffect, RuntimeError, ScalarValue, WorkBatch,
 };
-use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
     AbiHostClient, LoadedPlugin, PluginBuilder, ProtocolDescriptorBuilder, map_work_batch_entries,
 };
+use mutsuki_runtime_sdk::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 

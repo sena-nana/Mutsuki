@@ -84,7 +84,7 @@ use mutsuki_runtime_contracts::{
     OrderingRequirement, PatchDescriptor, PlanReceipt, ReadPlan, ResourceRef, RunnerContext,
     SnapshotDescriptor, StreamPlan, Task, WorkBatch, WorkResourcePlan, WritePlan,
 };
-use mutsuki_runtime_core::{AsyncBatchHandler, Runner, RuntimeFailure};
+use mutsuki_runtime_sdk::{AsyncBatchHandler, Runner, RuntimeFailure};
 use mutsuki_runtime_sdk::{ResourcePlanGateway, ResourceRegistryGateway};
 use serde::Serialize;
 use serde_json::{Value, json};

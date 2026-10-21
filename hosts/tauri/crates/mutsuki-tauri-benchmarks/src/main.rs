@@ -18,7 +18,7 @@ use mutsuki_runtime_contracts::{
     CompletionBatch, EntryCompletion, ExecutionClass, InvocationMode, RunnerConcurrency,
     RunnerDescriptor, RunnerPurity, RunnerResult, Task, TaskBatch, WorkBatch,
 };
-use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
+use mutsuki_runtime_sdk::{Runner, RunnerContext, RuntimeResult};
 use mutsuki_tauri_bridge::{FrontendTaskRequest, FrontendTaskResult, TaskResultRequest};
 use mutsuki_tauri_host::{MutsukiTauriConfig, MutsukiTauriHost, PathsConfig};
 use serde_json::{Value, json};

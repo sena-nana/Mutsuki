@@ -18,10 +18,10 @@ pub use mutsuki_agent_contracts::{
 use mutsuki_runtime_contracts::{
     CompletionBatch, PluginId, RunnerContext, RunnerDescriptor, WorkBatch,
 };
-use mutsuki_runtime_core::{Runner, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
     PluginBuilder, ProtocolDescriptorBuilder, RunnerDescriptorBuilder, map_work_batch_entries,
 };
+use mutsuki_runtime_sdk::{Runner, RuntimeFailure, RuntimeResult};
 use serde_json::Value;
 
 pub trait ToolProvider: Send + Sync {

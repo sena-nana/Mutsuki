@@ -2,7 +2,7 @@ use mutsuki_runtime_contracts::{
     HostExtensionDescriptor, PluginBackendDescriptor, PluginDeploymentKind,
 };
 
-use crate::clients::{ResourcePlanClient, TaskClient};
+use mutsuki_runtime_sdk::{ResourcePlanGateway, TaskSubmitter};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostExtension {
@@ -32,8 +32,8 @@ pub struct PluginBackend<T, R> {
 
 impl<T, R> PluginBackend<T, R>
 where
-    T: TaskClient,
-    R: ResourcePlanClient,
+    T: TaskSubmitter,
+    R: ResourcePlanGateway,
 {
     pub fn new(descriptor: PluginBackendDescriptor, task_client: T, resource_client: R) -> Self {
         Self {

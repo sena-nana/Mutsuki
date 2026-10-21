@@ -17,8 +17,9 @@ execution adapter, so it must not advertise a lifecycle that does not exist.
 ## 2. Give a long-lived object one owner
 
 ```rust
-use mutsuki_runtime_core::RuntimeResult;
-use mutsuki_runtime_sdk::{HostEffect, HostEffectFuture, HostEffectKind, PluginBuilder};
+use mutsuki_runtime_sdk::{
+    HostEffect, HostEffectFuture, HostEffectKind, PluginBuilder, RuntimeResult,
+};
 
 struct RepositoryBackend {
     // process, subscription or native session handles

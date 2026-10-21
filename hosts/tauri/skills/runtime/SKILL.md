@@ -9,7 +9,7 @@ Use this for `crates/mutsuki-tauri-host`.
 
 ## Boundary
 
-- Start Mutsuki Core through `mutsuki-runtime-host` / `mutsuki-runtime-core` public APIs.
+- Start Mutsuki Core through `mutsuki-runtime-host` public APIs; kernel types such as `Runner` come from `mutsuki-runtime-sdk`, never a direct `mutsuki-runtime-core` dependency.
 - Bind app profile, data/cache/log/resource paths and desktop HostServices.
 - Own application/window lifecycle, shutdown and drain coordination.
 - Do not implement Core scheduling, TaskPool, RunnerRegistry, AgentLoop, Bot routing or model providers.

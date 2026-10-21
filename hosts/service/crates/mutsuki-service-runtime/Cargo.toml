@@ -7,7 +7,6 @@ license.workspace = true
 [dependencies]
 futures.workspace = true
 mutsuki-runtime-contracts.workspace = true
-mutsuki-runtime-core.workspace = true
 mutsuki-runtime-host.workspace = true
 mutsuki-runtime-wire.workspace = true
 mutsuki-runtime-sdk.workspace = true

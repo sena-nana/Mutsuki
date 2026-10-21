@@ -72,10 +72,7 @@ pub use backend::{HostExtension, PluginBackend};
 pub use binary::{BinaryRunner, BinaryTransport};
 pub use bootstrapper::{PreparedHostRuntime, PreparedRuntimeReload, RuntimeBootstrapper};
 pub use capabilities::HostCapabilityRegistry;
-pub use clients::{
-    AbiResourceClient, AbiTaskClient, LocalResourceClient, ResourcePlanClient,
-    ResourcePlanProvider, TaskClient,
-};
+pub use clients::{AbiResourceClient, AbiTaskClient, LocalResourceClient};
 pub use commands::{HostRuntimeCommand, HostRuntimeReply, HostTaskState};
 pub use group::{
     ExplicitRuntimeDomainRouter, RuntimeDomainRouter, RuntimeDomainSnapshot, RuntimeGroupHost,
@@ -92,6 +89,8 @@ pub use native_runner::{CancellationProbe, NativeRunner};
 pub use process::{ProcessRunnerSpec, SpawnedBinaryRunner};
 pub use resolver::resolve_load_plan;
 pub use scheduler::{DefaultScheduler, HostCapacity, RunnerLimits, ScheduleInput, SchedulerPolicy};
+// `SchedulerPolicy` implementers read and return these Core types.
+pub use mutsuki_runtime_core::{DispatchBudget, LaneBudget, RunnerLoad, ScheduleDecision};
 pub use scope::{
     AsyncEffect, DisposeReport, EffectFuture, EffectId, EffectKind, EffectSnapshot, PluginLifetime,
     PluginScopeManager, ResolvedService, ScopeEvent, ScopeEventKind, ScopeId, ScopeSnapshot,

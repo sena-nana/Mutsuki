@@ -7,7 +7,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures::FutureExt;
 use mutsuki_runtime_contracts::{TaskBatch, TaskHandle, TaskOutcome};
-use mutsuki_runtime_core::RuntimeResult;
+use mutsuki_runtime_sdk::RuntimeResult;
 use mutsuki_runtime_sdk::TaskSubmitter;
 use mutsuki_service_config::{SecretStore, ServiceConfig};
 use mutsuki_service_control::EventSourceStatus;

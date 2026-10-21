@@ -23,11 +23,11 @@ use mutsuki_runtime_contracts::{
     CompletionBatch, ExecutionClass, PluginManifest, RunnerDescriptor, RunnerResult, Task,
     WorkBatch,
 };
-use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
     PluginBuilder, ProtocolDescriptorBuilder, RunnerDescriptorBuilder, RuntimeClientRef,
     TaskAwaitRunnerAdapter, map_work_batch_entries,
 };
+use mutsuki_runtime_sdk::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
 
 pub const BOT_INTERACTION_PLUGIN_ID: &str = "mutsuki.plugin.bot.interaction";
 pub const BOT_INTERACTION_RUNNER_ID: &str = "mutsuki.bot.interaction.runner";

@@ -19,8 +19,8 @@ use mutsuki_bot_protocol::{
     DeliveryPolicy, DeliveryStatus, MessageSegment, QqConversationRef,
 };
 use mutsuki_runtime_contracts::{ScalarValue, TaskOutcome};
-use mutsuki_runtime_core::RuntimeFailure;
 use mutsuki_runtime_sdk::AsyncRunnerContext;
+use mutsuki_runtime_sdk::RuntimeFailure;
 use std::borrow::Cow;
 use std::sync::Arc;
 use thiserror::Error;

@@ -59,7 +59,7 @@ use mutsuki_runtime_contracts::{
     ResourceRef, ResourceSealState, ResourceSemantic, RunnerConcurrency, RunnerResult,
     RunnerStatus, ScalarValue, Task, TaskHandle, TaskOutcome, TaskStatus, WorkBatch,
 };
-use mutsuki_runtime_core::{
+use mutsuki_runtime_sdk::{
     AsyncBatchHandler, AsyncCompletionFuture, Runner, RunnerContext, RuntimeResult,
 };
 use mutsuki_runtime_sdk::{

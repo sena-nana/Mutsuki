@@ -63,7 +63,6 @@ mutsuki-bot-protocol.workspace = true
 mutsuki-plugin-bot-event-router.workspace = true
 mutsuki-bot-testkit.workspace = true
 mutsuki-protocol-browser.workspace = true
-mutsuki-runtime-core.workspace = true
 mutsuki-service-plugin-loader.workspace = true
 reqwest.workspace = true
 hex.workspace = true

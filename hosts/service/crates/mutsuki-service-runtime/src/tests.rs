@@ -305,7 +305,7 @@ impl AsyncBatchHandler for DelayedAsyncHandler {
         &self,
         _ctx: mutsuki_runtime_contracts::RunnerContext,
         batch: WorkBatch,
-    ) -> mutsuki_runtime_core::AsyncCompletionFuture {
+    ) -> mutsuki_runtime_sdk::AsyncCompletionFuture {
         Box::pin(async move {
             tokio::time::sleep(Duration::from_millis(5)).await;
             map_work_batch_entries(&batch, |task| {

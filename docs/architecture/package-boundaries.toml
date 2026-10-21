@@ -45,6 +45,23 @@ forbidden_target_roots = [
 ]
 
 [[rules]]
+# Plugins, Kits, Hosts and products reach kernel types (`Runner`, `RuntimeResult`, ...) through
+# `mutsuki-runtime-sdk`, and scheduler-policy types through `mutsuki-runtime-host`. Only those two
+# link the scheduler crate directly, so `TaskPool`, registries and `CoreRuntime` stay unreachable.
+name = "only-runtime-host-and-sdk-depend-on-runtime-core"
+source_roots = [
+  "crates/link",
+  "crates/mutsuki-module-catalog",
+  "crates/mutsuki-plugin-api",
+  "crates/mutsuki-plugin-host",
+  "hosts",
+  "kits",
+  "plugins",
+  "products",
+]
+forbidden_target_roots = ["crates/mutsuki-runtime-core"]
+
+[[rules]]
 name = "link-does-not-own-host-or-business-behavior"
 source_roots = ["crates/link"]
 forbidden_target_roots = ["hosts", "kits/agent", "plugins/bot", "products"]

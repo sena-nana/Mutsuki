@@ -3,7 +3,7 @@ use mutsuki_runtime_contracts::{
     ResourceProviderCompatibility, ResourceProviderReloadPolicy, ResourceRef, ResourceSealState,
     ResourceSemantic, ResourceTypeDescriptor,
 };
-use mutsuki_runtime_core::RuntimeResult;
+use mutsuki_runtime_sdk::RuntimeResult;
 
 use crate::constants::PROVIDER_ID;
 use crate::error::{runtime_failure, unsupported};

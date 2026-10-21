@@ -14,12 +14,12 @@ use mutsuki_runtime_contracts::{
     RuntimeEvent, RuntimeEventKind, RuntimeProfile, RuntimeProfileMode, ScalarValue, Task,
     TaskBatch, TaskHandle, TaskId, TaskStatus, TraceSpan,
 };
-use mutsuki_runtime_core::{ReloadDecision, RuntimeFailure};
 use mutsuki_runtime_host::{
     HostRuntime, HostRuntimeCommand, HostRuntimeReply, HostTaskSnapshot, HostTaskState,
     RuntimeBootstrapper, TaskCompletionSubscription,
 };
 use mutsuki_runtime_sdk::RuntimeClientRef;
+use mutsuki_runtime_sdk::{ReloadDecision, RuntimeFailure};
 use mutsuki_tauri_bridge::{
     ApprovalAttribution, ApprovalRequest, ApprovalResponse, FrontendContext, FrontendLogRecord,
     FrontendTaskRequest, FrontendTaskResult, FrontendTaskRun, HealthComponent, HostStatus,

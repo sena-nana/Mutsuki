@@ -12,11 +12,11 @@ use mutsuki_runtime_contracts::{
     ResourceAccess, ResourceId, ResourceLifetime, ResourceRef, ResourceSealState, ResourceSemantic,
     RunnerDescriptor, SnapshotDescriptor, StreamPlan, Task, WorkBatch, WritePlan,
 };
-use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
     AbiHostClient, PluginBuilder, ResourcePlanGateway, ResourceProviderGateway,
     RunnerDescriptorBuilder, TaskSubmitter, map_work_batch_entries,
 };
+use mutsuki_runtime_sdk::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
 use serde_json::{Value, json};
 
 const PLUGIN_ID: &str = "mutsuki.test.runtime-host-abi-v2";

@@ -9,7 +9,7 @@ use mutsuki_runtime_contracts::{
     ERR_RUNTIME_HOST_FAILED, ExportPlan, PlanReceipt, ReadPlan, RefId, ResourceRef,
     ResourceSemantic, SnapshotDescriptor, StreamPlan, WritePlan,
 };
-use mutsuki_runtime_core::RuntimeResult;
+use mutsuki_runtime_sdk::RuntimeResult;
 use mutsuki_runtime_sdk::{ResourcePlanGateway, ResourceProviderGateway};
 use serde_json::{Value, json};
 

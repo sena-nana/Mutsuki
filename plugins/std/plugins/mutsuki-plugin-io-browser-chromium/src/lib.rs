@@ -20,11 +20,11 @@ use mutsuki_runtime_contracts::{
     RunnerContext, RunnerDescriptor, RunnerMode, RunnerPurity, RunnerResult, RunnerSideEffect,
     RuntimeError, ScalarValue, Task, WorkBatch, WritePlan,
 };
-use mutsuki_runtime_core::{Runner, RuntimeResult};
 use mutsuki_runtime_sdk::{
     PluginBuilder, ProtocolDescriptorBuilder, ResourceRegistryGateway, RunnerDescriptorBuilder,
     map_work_batch_entries,
 };
+use mutsuki_runtime_sdk::{Runner, RuntimeResult};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use url::Url;
@@ -235,7 +235,7 @@ impl Runner for BrowserSnapshotRunner {
 
     fn cancel(&mut self, invocation_id: &str) -> RuntimeResult<()> {
         self.backend.cancel(invocation_id).map_err(|detail| {
-            mutsuki_runtime_core::RuntimeFailure::new(RuntimeError::new(
+            mutsuki_runtime_sdk::RuntimeFailure::new(RuntimeError::new(
                 "task.cancelled",
                 "mutsuki.std.browser.chromium",
                 format!("browser.cancel.{detail}"),
@@ -245,7 +245,7 @@ impl Runner for BrowserSnapshotRunner {
 
     fn dispose(&mut self) -> RuntimeResult<()> {
         self.backend.dispose().map_err(|detail| {
-            mutsuki_runtime_core::RuntimeFailure::new(RuntimeError::new(
+            mutsuki_runtime_sdk::RuntimeFailure::new(RuntimeError::new(
                 mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
                 "mutsuki.std.browser.chromium",
                 format!("browser.dispose.{detail}"),

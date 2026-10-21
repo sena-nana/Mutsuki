@@ -21,11 +21,11 @@ use mutsuki_runtime_contracts::{
     RunnerDescriptor, RunnerMode, RunnerPurity, RunnerResult, RunnerSideEffect, RuntimeError,
     ScalarValue, Task, WorkBatch,
 };
-use mutsuki_runtime_core::{Runner, RuntimeResult};
 use mutsuki_runtime_sdk::{
     PluginBuilder, ProtocolDescriptorBuilder, ResourceRegistryGateway, RunnerDescriptorBuilder,
     map_work_batch_entries,
 };
+use mutsuki_runtime_sdk::{Runner, RuntimeResult};
 use qrcode::QrCode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -495,8 +495,8 @@ mod tests {
         CommandPlan, ExportPlan, PlanReceipt, RefId, ResourceRef, SnapshotDescriptor, StreamPlan,
         WritePlan,
     };
-    use mutsuki_runtime_core::RuntimeFailure;
     use mutsuki_runtime_sdk::ResourcePlanGateway;
+    use mutsuki_runtime_sdk::RuntimeFailure;
 
     use super::*;
 

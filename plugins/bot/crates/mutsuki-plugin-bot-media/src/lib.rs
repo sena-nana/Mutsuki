@@ -20,7 +20,7 @@ use mutsuki_bot_protocol::{
 use mutsuki_runtime_contracts::{
     ExecutionClass, PluginManifest, RunnerResult, Task, TaskOutcome, TaskPayload,
 };
-use mutsuki_runtime_core::Runner;
+use mutsuki_runtime_sdk::Runner;
 use mutsuki_runtime_sdk::{
     AsyncRunnerContext, BoxedTaskAwaitRunner, PluginBuilder, ProtocolDescriptorBuilder,
     RunnerDescriptorBuilder, RuntimeClientRef, RuntimeFailure, RuntimeResult,
@@ -365,7 +365,7 @@ mod tests {
         ResourceLifetime, ResourceRef, ResourceSealState, ResourceSemantic, TaskBatch, TaskHandle,
         WorkBatch, WorkResourcePlan,
     };
-    use mutsuki_runtime_core::RunnerContext;
+    use mutsuki_runtime_sdk::RunnerContext;
     use mutsuki_runtime_sdk::RuntimeClient;
 
     use super::*;

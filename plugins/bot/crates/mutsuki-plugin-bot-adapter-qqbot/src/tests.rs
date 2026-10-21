@@ -17,7 +17,7 @@ use mutsuki_runtime_contracts::{
     BatchEntry, BatchKey, BatchPayload, CompletionBatch, DispatchLane, OrderingRequirement,
     RunnerResult, RunnerSideEffect, RuntimeError, Task, WorkBatch, WorkResourcePlan,
 };
-use mutsuki_runtime_core::{Runner, RunnerContext};
+use mutsuki_runtime_sdk::{Runner, RunnerContext};
 use serde_json::{Value, json};
 
 use crate::adapter::qq_self_user;

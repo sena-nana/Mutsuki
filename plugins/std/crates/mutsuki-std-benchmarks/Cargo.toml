@@ -9,7 +9,6 @@ publish = false
 async-trait.workspace = true
 mutsuki-protocol-http.workspace = true
 mutsuki-runtime-contracts.workspace = true
-mutsuki-runtime-core.workspace = true
 mutsuki-runtime-sdk.workspace = true
 mutsuki-plugin-config-permission.workspace = true
 mutsuki-plugin-db-sqlite.workspace = true

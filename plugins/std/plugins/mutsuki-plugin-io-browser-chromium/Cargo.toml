@@ -8,7 +8,6 @@ license.workspace = true
 headless_chrome.workspace = true
 mutsuki-protocol-browser.workspace = true
 mutsuki-runtime-contracts.workspace = true
-mutsuki-runtime-core.workspace = true
 mutsuki-runtime-sdk.workspace = true
 serde.workspace = true
 serde_json.workspace = true

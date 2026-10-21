@@ -3,11 +3,11 @@ use mutsuki_agent_sdk::{
     AgentModelGenerateProtocol, AgentModelPollProtocol, AgentModelStreamProtocol,
     orchestration_runner, result_event, runtime_failure, task_payload, unsupported_protocol,
 };
-use mutsuki_runtime_core::{AsyncBatchHandler, AsyncCompletionFuture, RunnerContext};
 use mutsuki_runtime_sdk::contracts::{
     CompletionBatch, EntryCompletion, ExecutionClass, InvocationMode, RunnerBatchCapability,
     RunnerConcurrency, RunnerMode, RunnerResult, RunnerSideEffect, Task, WorkBatch,
 };
+use mutsuki_runtime_sdk::{AsyncBatchHandler, AsyncCompletionFuture, RunnerContext};
 use mutsuki_runtime_sdk::{PluginBuilder, RuntimeClientRef, RuntimeResult};
 use std::sync::Arc;
 

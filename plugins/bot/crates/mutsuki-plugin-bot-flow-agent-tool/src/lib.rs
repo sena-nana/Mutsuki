@@ -27,12 +27,12 @@ use mutsuki_config_service::{
     ValidationSeverity, capability,
 };
 use mutsuki_runtime_contracts::{PluginManifest, RunnerDescriptor};
-use mutsuki_runtime_core::{Runner, RuntimeResult};
 use mutsuki_runtime_sdk::{
     BoxedTaskAwaitRunner, PluginBuilder, ProtocolSpec, RuntimeClientRef, SdkProtocol,
     TaskAwaitRunnerAdapter,
     contracts::{RunnerResult, Task},
 };
+use mutsuki_runtime_sdk::{Runner, RuntimeResult};
 use serde_json::{Value, json};
 
 pub const PLUGIN_ID: &str = "mutsuki.plugin.bot.flow.tool";

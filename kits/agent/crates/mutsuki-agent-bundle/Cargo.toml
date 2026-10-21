@@ -15,7 +15,6 @@ mutsuki-agent-plugin-lsp.workspace = true
 mutsuki-agent-plugin-mcp.workspace = true
 mutsuki-agent-runtime.workspace = true
 mutsuki-agent-sdk.workspace = true
-mutsuki-runtime-core.workspace = true
 mutsuki-runtime-sdk.workspace = true
 mutsuki-plugin-agent-context.workspace = true
 mutsuki-plugin-agent-credential.workspace = true

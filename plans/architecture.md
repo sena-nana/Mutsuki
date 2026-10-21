@@ -261,7 +261,7 @@ SDK 同时提供 Host / Plugin 扩展基础抽象，但这些抽象只服务于 
   `AsyncResourcePlanGateway` 和 `ShutdownController`。
 - `TaskSubmitter` 和同步/异步 ResourcePlan gateway 只执行现有 `Task`、`TaskHandle`、
   `TaskOutcome` 与 resource plan 协议；builtin/ABI 等部署差异仍停留在 host backend。
-- `HostRuntime` trait 是 SDK-facing host control-plane facade，可暴露 reload、
+- `HostControl` trait（由 runtime-host 的 `HostRuntime` 实现）是 SDK-facing host control-plane facade，可暴露 reload、
   task snapshot、event、trace、Drain/Abort 和统计查询；reload 的 prepared transaction 由具体 host
   通过关联类型承载，SDK 不反向依赖 host crate，也不新增 contracts wire shape。
 
@@ -420,7 +420,7 @@ contribution。未知 optional contribution 只是不被当前 Profile 投影，
 
 RuntimeProfile 同时声明每个 enabled plugin 的部署形态。Builtin、ABI、WASM、
 process 和 Python 都是 Host 执行面后端：同一插件能力 surface 必须通过统一
-TaskClient / ResourceClient / runner 协议暴露，插件业务代码不根据部署形态分叉。Host
+TaskSubmitter / ResourceClient / runner 协议暴露，插件业务代码不根据部署形态分叉。Host
 可以为 builtin 注册本地 runner，也可以为 ABI/WASM/process/Python 注册 bridge runner，
 但这些差异不能进入 Core 调度语义或公共插件 API。
 
@@ -474,7 +474,7 @@ host-side bridge 可以作为 Host backend 替换；guest-side shim 随插件 ar
 不由 Host 单独热替换。
 
 Host backend / plugin backend 通过 `HostExtensionDescriptor`、`PluginBackendDescriptor`
-和统一 `TaskClient` / `ResourcePlanClient` 边界表达。Builtin 快速路径和 ABI/binary 路径
+和统一 `TaskSubmitter` / `ResourcePlanGateway` 边界表达。Builtin 快速路径和 ABI/binary 路径
 只能是不同 backend 实现，不能把 `Arc<T>`、`&mut T`、SDK client 或 native handle 暴露给
 插件业务代码。
 
@@ -490,7 +490,7 @@ ABI 动态库不定义第二套 runner/resource 方法面。Core SDK 只为动�
 bytes transport：固定入口建立 connection，Host 与 guest 互相发送 typed MessagePack request /
 response。首个请求必须是 `plugin.initialize({ config })`，配置来自与 builtin 相同的
 owner-defined product config；初始化返回 manifest、codec、bridge 与 provider surface。
-`runner.run_batch`、management cancel/dispose、TaskClient 与 ResourcePlanClient 继续使用同一
+`runner.run_batch`、management cancel/dispose、TaskSubmitter 与 ResourcePlanGateway 继续使用同一
 wire shape；平台动态库发现、校验、装载、drain 和卸载仍由具体 Host 负责。
 
 同一业务插件的不同 deployment 通过 `PluginManifest::business_surface` 比较。该 surface

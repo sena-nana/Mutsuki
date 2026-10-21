@@ -21,10 +21,10 @@ use mutsuki_runtime_contracts::{
     CompletionBatch, ExecutionClass, PluginManifest, RunnerDescriptor, RunnerResult, Task,
     WorkBatch,
 };
-use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
 use mutsuki_runtime_sdk::{
     PluginBuilder, ProtocolDescriptorBuilder, RunnerDescriptorBuilder, map_work_batch_entries,
 };
+use mutsuki_runtime_sdk::{Runner, RunnerContext, RuntimeResult};
 use serde_json::json;
 
 use mutsuki_bot_conversation::PersonaStore;

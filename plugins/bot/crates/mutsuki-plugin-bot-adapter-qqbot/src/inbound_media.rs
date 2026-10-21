@@ -7,7 +7,7 @@ use mutsuki_runtime_contracts::{
     CompletionBatch, EntryCompletion, ExecutionClass, InvocationMode, RunnerBatchCapability,
     RunnerConcurrency, RunnerMode, RunnerResult, RunnerSideEffect, RuntimeError, Task, WorkBatch,
 };
-use mutsuki_runtime_core::{AsyncBatchHandler, AsyncCompletionFuture, RunnerContext};
+use mutsuki_runtime_sdk::{AsyncBatchHandler, AsyncCompletionFuture, RunnerContext};
 use mutsuki_runtime_sdk::{ResourceRegistryGateway, RunnerDescriptorBuilder};
 use reqwest::{Client, Url};
 use serde_json::{Value, json};
@@ -490,7 +490,7 @@ mod tests {
         ResourceSealState, ResourceSemantic, SnapshotDescriptor, StreamPlan, WorkResourcePlan,
         resource::experimental::{CommandBatch, SagaPlan},
     };
-    use mutsuki_runtime_core::RuntimeFailure;
+    use mutsuki_runtime_sdk::RuntimeFailure;
     use sha2::{Digest, Sha256};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;

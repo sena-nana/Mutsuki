@@ -17,10 +17,10 @@ hex.workspace = true
 sha2.workspace = true
 
 [dev-dependencies]
+mutsuki-runtime-sdk.workspace = true
 futures.workspace = true
 mutsuki-distributed-host-adapter.workspace = true
 mutsuki-plugin-db-sqlite.workspace = true
-mutsuki-runtime-core.workspace = true
 tempfile.workspace = true
 
 [lints]

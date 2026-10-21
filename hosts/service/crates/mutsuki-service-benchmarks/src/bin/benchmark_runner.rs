@@ -26,11 +26,8 @@ fn main() {
             AnyWireRequest::RunBatch(request) => {
                 let mut runner =
                     mutsuki_service_benchmarks::FixtureRunner::new(fixture_descriptor());
-                let result = mutsuki_runtime_core::Runner::run_batch(
-                    &mut runner,
-                    request.ctx,
-                    request.batch,
-                );
+                let result =
+                    mutsuki_runtime_sdk::Runner::run_batch(&mut runner, request.ctx, request.batch);
                 match result {
                     Ok(batch) => encode_binary_response(
                         decoded.request_id,

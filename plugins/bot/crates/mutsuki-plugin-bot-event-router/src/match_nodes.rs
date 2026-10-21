@@ -10,7 +10,7 @@ use mutsuki_bot_protocol::{
 use mutsuki_runtime_contracts::{
     CompletionBatch, ExecutionClass, RunnerDescriptor, RunnerResult, Task, WorkBatch,
 };
-use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
+use mutsuki_runtime_sdk::{Runner, RunnerContext, RuntimeResult};
 use mutsuki_runtime_sdk::{RunnerDescriptorBuilder, map_work_batch_entries};
 use serde::Deserialize;
 use serde_json::{Value, json};

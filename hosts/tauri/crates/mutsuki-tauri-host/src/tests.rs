@@ -17,12 +17,12 @@ use mutsuki_runtime_contracts::{
     RunnerMode, RunnerPurity, RunnerResult, RunnerSideEffect, RunnerStatus, RuntimeEventKind, Task,
     TaskAwait, TaskBatch, TaskHandle, TaskOutcome, TaskStatus, TaskStepContinuation, WorkBatch,
 };
-use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
 use mutsuki_runtime_host::{
     DefaultScheduler, ExecutionDomainConfig, HostRuntimeConfig, RunnerLimits, ScheduleInput,
     SchedulerPolicy,
 };
 use mutsuki_runtime_sdk::{ProtocolSpec, SdkProtocol, TaskAwaitRunnerAdapter};
+use mutsuki_runtime_sdk::{Runner, RunnerContext, RuntimeResult};
 use mutsuki_tauri_bridge::{
     ApprovalAttribution, ApprovalDecision, ApprovalResponse, FrontendContext, FrontendTaskRequest,
     MutsukiFrontendEvent,
@@ -694,7 +694,7 @@ impl SchedulerPolicy for CountingScheduler {
     fn decide(
         &self,
         input: &ScheduleInput<'_>,
-    ) -> RuntimeResult<mutsuki_runtime_core::ScheduleDecision> {
+    ) -> RuntimeResult<mutsuki_runtime_host::ScheduleDecision> {
         self.0.fetch_add(1, Ordering::SeqCst);
         DefaultScheduler.decide(input)
     }

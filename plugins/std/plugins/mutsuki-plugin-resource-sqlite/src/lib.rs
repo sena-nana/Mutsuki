@@ -22,10 +22,10 @@ use mutsuki_runtime_contracts::{
     ResourceProviderReloadPolicy, ResourceRef, ResourceSealState, ResourceSemantic,
     ResourceTypeDescriptor, RuntimeError, ScalarValue, SnapshotDescriptor, StreamPlan, WritePlan,
 };
-use mutsuki_runtime_core::{RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
     LoadedPlugin, PluginBuilder, ResourceProviderExecution, ResourceProviderGateway,
 };
+use mutsuki_runtime_sdk::{RuntimeFailure, RuntimeResult};
 use rusqlite::{Connection, TransactionBehavior};
 use serde::Deserialize;
 use serde_json::{Value, json};

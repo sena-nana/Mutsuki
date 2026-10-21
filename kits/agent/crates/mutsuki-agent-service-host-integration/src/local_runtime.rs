@@ -42,14 +42,14 @@ use mutsuki_runtime_contracts::{
     PluginDeploymentKind, PluginManifest, RuntimeError, RuntimeProfile, RuntimeProfileMode, Task,
     TaskBatch, TaskHandle, TaskOutcome,
 };
-use mutsuki_runtime_core::{Runner, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_host::{
     HostRuntime, HostRuntimeConfig, RuntimeBootstrapper, TokioAsyncExecutor,
 };
 use mutsuki_runtime_sdk::{
-    HostRuntime as _, LoadedPlugin, PluginBuilder, RuntimeBootstrapperService, RuntimeClient,
+    HostControl as _, LoadedPlugin, PluginBuilder, RuntimeBootstrapperService, RuntimeClient,
     RuntimeClientRef, TaskSubmitterRuntimeClient,
 };
+use mutsuki_runtime_sdk::{Runner, RuntimeFailure, RuntimeResult};
 use mutsuki_service_config::HostSecretStore;
 use mutsuki_service_runtime::{
     ConfiguredPluginFactory, LoadPlanLifecycleHook, ServiceRuntimeBuilder,

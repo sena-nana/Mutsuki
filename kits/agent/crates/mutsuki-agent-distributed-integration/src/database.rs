@@ -457,7 +457,7 @@ mod tests {
         ResourceId, ResourceLifetime, ResourceSealState, ResourceSemantic, RunnerContext,
         TaskLeaseId, WorkBatch, WorkResourcePlan,
     };
-    use mutsuki_runtime_core::Runner;
+    use mutsuki_runtime_sdk::Runner;
     use tempfile::tempdir;
 
     use super::*;
@@ -515,7 +515,7 @@ mod tests {
         Ok(entry.result.as_ref())
     }
 
-    fn runtime_error(error: mutsuki_runtime_core::RuntimeFailure) -> AgentError {
+    fn runtime_error(error: mutsuki_runtime_sdk::RuntimeFailure) -> AgentError {
         AgentError::new(error.error().code.clone(), error.to_string())
     }
 

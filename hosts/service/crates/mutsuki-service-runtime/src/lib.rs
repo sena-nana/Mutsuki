@@ -39,9 +39,6 @@ use mutsuki_runtime_contracts::{
     RuntimeLoadPlan, RuntimeProfile, RuntimeProfileMode, SnapshotDescriptor, StreamPlan,
     SurfaceCompatibility, Task, TaskBatch, TaskHandle, TaskId, TaskOutcome, TaskStatus, WritePlan,
 };
-use mutsuki_runtime_core::{
-    AsyncBatchHandler, Runner, RuntimeFailure, RuntimeResult, RuntimeStopState,
-};
 #[cfg(test)]
 use mutsuki_runtime_host::BinaryRunner;
 use mutsuki_runtime_host::{
@@ -51,6 +48,9 @@ use mutsuki_runtime_host::{
 };
 #[cfg(test)]
 use mutsuki_runtime_sdk::RuntimeBootstrapperService;
+use mutsuki_runtime_sdk::{
+    AsyncBatchHandler, Runner, RuntimeFailure, RuntimeResult, RuntimeStopState,
+};
 use mutsuki_runtime_sdk::{
     HostEffect, HostEffectFuture, HostEffectKind, HostService, LoadedPlugin, ResourcePlanGateway,
     ResourceRegistryGateway, RuntimeClient, RuntimeClientRef, TaskSubmitter,

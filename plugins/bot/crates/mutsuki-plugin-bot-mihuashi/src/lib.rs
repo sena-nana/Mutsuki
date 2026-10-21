@@ -31,11 +31,11 @@ use mutsuki_runtime_contracts::{
     ExecutionClass, ProtocolClass, ReadPlan, ResourceRef, RunnerDescriptor, RunnerPurity,
     RunnerResult, RuntimeError, ScalarValue, Task, TaskOutcome,
 };
-use mutsuki_runtime_core::{Runner, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
     AsyncRunnerContext, PluginBuilder, ProtocolDescriptorBuilder, ResourceRegistryGateway,
     RunnerDescriptorBuilder, RuntimeClientRef, TaskAwaitRunnerAdapter,
 };
+use mutsuki_runtime_sdk::{Runner, RuntimeFailure, RuntimeResult};
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -1059,7 +1059,7 @@ mod tests {
             .register_builtin_plugin(http_manifest)
             .register_runtime_client_runner(mutsuki_plugin_io_http_client::facade_runner)
             .register_fallible_runtime_services_async_handler(move |_client, resources| {
-                Ok::<Arc<dyn mutsuki_runtime_core::AsyncBatchHandler>, String>(Arc::new(
+                Ok::<Arc<dyn mutsuki_runtime_sdk::AsyncBatchHandler>, String>(Arc::new(
                     HttpEffectHandler::new(
                         http_gateway.clone(),
                         resources,

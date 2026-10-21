@@ -11,11 +11,11 @@ use mutsuki_runtime_contracts::{
     RunnerDescriptor, RunnerMode, RunnerPurity, RunnerResult, RunnerSideEffect, RuntimeError,
     ScalarValue, Task, WorkBatch,
 };
-use mutsuki_runtime_core::{Runner, RuntimeResult};
 use mutsuki_runtime_sdk::{
     LoadedPlugin, Plugin, PluginBuilder, ProtocolDescriptorBuilder, RunnerDescriptorBuilder,
     map_work_batch_entries,
 };
+use mutsuki_runtime_sdk::{Runner, RuntimeResult};
 use mutsuki_std_effect::{
     EffectObservation, ProtocolPair, ProtocolPairTable, derive_effect_from_pair,
 };
@@ -445,7 +445,7 @@ mod tests {
         BatchEntry, BatchPayload, DispatchLane, OrderingRequirement, RunnerContext,
         WorkResourcePlan,
     };
-    use mutsuki_runtime_core::Runner;
+    use mutsuki_runtime_sdk::Runner;
     use tempfile::TempDir;
 
     fn work_batch(runner_id: &str, task: Task) -> WorkBatch {

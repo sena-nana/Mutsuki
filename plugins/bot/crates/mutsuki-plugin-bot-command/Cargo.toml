@@ -9,7 +9,6 @@ crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 mutsuki-runtime-contracts.workspace = true
-mutsuki-runtime-core.workspace = true
 mutsuki-runtime-sdk.workspace = true
 mutsuki-bot-protocol.workspace = true
 serde.workspace = true

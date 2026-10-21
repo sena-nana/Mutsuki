@@ -19,8 +19,8 @@ use std::collections::BTreeMap;
 use mutsuki_runtime_contracts::{
     CompletionBatch, EntryCompletion, RunnerDescriptor, RunnerResult, Task, WorkBatch,
 };
-use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::PluginBuilder;
+use mutsuki_runtime_sdk::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
 use serde_json::{Value, json};
 
 pub const PLUGIN_ID: &str = "mutsuki.test.abi-fixture";

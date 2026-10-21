@@ -63,11 +63,11 @@ use mutsuki_runtime_contracts::{
     RunnerContext, RunnerDescriptor, RunnerMode, RunnerPurity, RunnerResult, RunnerSideEffect,
     RuntimeError, ScalarValue, Task, TaskBatch, TaskOutcome, WorkBatch,
 };
-use mutsuki_runtime_core::{Runner, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
     AsyncRunnerContext, PluginBuilder, ProtocolDescriptorBuilder, ResourceRegistryGateway,
     RunnerDescriptorBuilder, RuntimeClientRef, TaskAwaitRunnerAdapter, TaskHandleFuture,
 };
+use mutsuki_runtime_sdk::{Runner, RuntimeFailure, RuntimeResult};
 use reqwest::blocking::Client;
 use rusqlite::{Connection, OptionalExtension, params};
 use scraper::{ElementRef, Html, Selector};

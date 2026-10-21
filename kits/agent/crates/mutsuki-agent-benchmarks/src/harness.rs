@@ -37,7 +37,7 @@ use mutsuki_runtime_contracts::{
     RunnerContext, RunnerResult, RunnerStatus, RuntimeError, Task, TaskBatch, TaskHandle, TaskId,
     TaskLeaseId, TaskOutcome, WorkBatch, WorkResourcePlan,
 };
-use mutsuki_runtime_core::Runner;
+use mutsuki_runtime_sdk::Runner;
 use mutsuki_runtime_sdk::{RuntimeClient, RuntimeResult};
 use serde_json::{Value, json};
 

@@ -9,7 +9,6 @@ mutsuki-bot-conversation.workspace = true
 mutsuki-bot-interaction.workspace = true
 mutsuki-bot-protocol.workspace = true
 mutsuki-runtime-contracts.workspace = true
-mutsuki-runtime-core.workspace = true
 mutsuki-runtime-sdk.workspace = true
 serde_json.workspace = true
 

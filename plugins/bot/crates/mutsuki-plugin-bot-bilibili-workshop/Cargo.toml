@@ -9,7 +9,6 @@ mutsuki-bot-secure-fetch.workspace = true
 mutsuki-bot-link-parser.workspace = true
 mutsuki-bot-protocol.workspace = true
 mutsuki-runtime-contracts.workspace = true
-mutsuki-runtime-core.workspace = true
 mutsuki-runtime-sdk.workspace = true
 reqwest.workspace = true
 rustls.workspace = true

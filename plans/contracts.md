@@ -706,7 +706,7 @@ Host 执行面必须把部署形态限制在后端实现中：
   codec、trace sink、resource backend、permission policy 或 scheduler policy；Host shell
   本身不是插件。
 - `PluginBackendDescriptor` 把 builtin / ABI / WASM / process / Python 部署形态映射到统一
-  `TaskClient` / `ResourcePlanClient` 协议；插件业务代码不能根据部署形态获得 native-only 引用。
+  `TaskSubmitter` / `ResourcePlanGateway` 协议；插件业务代码不能根据部署形态获得 native-only 引用。
 - `CodecDescriptor.connection_scoped = true` 表示 codec 在连接握手时确定，连接生命周期内不能切换。
 - `BridgeDescriptor.drain_policy` 必须表达旧连接 drain / cancel / restart 需求；活跃 ABI call /
   IPC call 中途不得切换 bridge 或 codec。

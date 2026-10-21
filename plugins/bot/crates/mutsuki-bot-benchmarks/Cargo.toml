@@ -25,7 +25,6 @@ mutsuki-plugin-bot-command.workspace = true
 mutsuki-plugin-bot-event-router.workspace = true
 mutsuki-plugin-resource-sqlite.workspace = true
 mutsuki-runtime-contracts.workspace = true
-mutsuki-runtime-core.workspace = true
 mutsuki-runtime-sdk.workspace = true
 mutsuki-service-config.workspace = true
 mutsuki-service-runtime.workspace = true

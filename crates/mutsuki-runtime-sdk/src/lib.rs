@@ -34,7 +34,6 @@ use mutsuki_runtime_contracts::{
     RunnerDescriptor, RunnerId, RunnerResult, RunnerStatus, RuntimeError, Task, TaskAwait,
     TaskBatch, TaskHandle, TaskId, TaskOutcome, TaskStepContinuation, WorkBatch,
 };
-use mutsuki_runtime_core::{Runner, RunnerContext};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -52,7 +51,7 @@ mod typed_task;
 pub use abi::{
     ABI_V2_BRIDGE_ID, ABI_V2_CODEC_ID, ABI_V2_ENTRY_SYMBOL, ABI_V2_TRANSPORT_VERSION, AbiBuffer,
     AbiCallResult, AbiGuest, AbiHostClient, AbiHostV2, AbiPluginV2, BinaryPluginGuest,
-    ConfiguredBinaryPluginGuest, dispatch_binary_host_request, dispatch_host_request,
+    ConfiguredBinaryPluginGuest,
 };
 pub use backend::{
     AsyncResourcePlanGateway, AsyncResourceProviderGateway, AsyncResourceRegistryGateway,
@@ -66,14 +65,19 @@ pub use descriptor::{
     ResourceTypeDescriptorBuilder, RunnerDescriptorBuilder,
 };
 pub use host::{
-    CapabilityBroker, ConfigProvider, EventBridge, HostContext, HostRuntime, HostScopeResolver,
+    CapabilityBroker, ConfigProvider, EventBridge, HostContext, HostControl, HostScopeResolver,
     HostService, HostServiceRegistry, HostServiceValue, HostTaskFailureSummary, HostTaskSnapshot,
     ManualShutdownController, NoopEventBridge, PluginScopeContext, PluginScopeHandle,
     RecordingEventBridge, ScopedHostService, ShutdownController, StaticCapabilityBroker,
     StaticConfigProvider, TaskSubmitter, TaskSubmitterRuntimeClient,
 };
 pub use lease::{ExclusiveWriteGuard, ResourceLeaseGuard};
-pub use mutsuki_runtime_core::{ReloadDecision, RuntimeFailure, RuntimeResult};
+// The plugin-facing kernel types. Plugins and embedders reach them through the SDK so that
+// only `mutsuki-runtime-host` links against the scheduler crate directly.
+pub use mutsuki_runtime_core::{
+    AsyncBatchHandler, AsyncCompletionFuture, ReloadDecision, Runner, RunnerContext,
+    RuntimeFailure, RuntimeResult, RuntimeStatistics, RuntimeStopState,
+};
 pub use mutsuki_runtime_sdk_macros::{ResourceKind, SdkProtocol, mutsuki_runner};
 pub use plugin::{
     BuiltinPluginLoader, HostEffect, HostEffectFuture, HostEffectKind, LoadedPlugin, Plugin,

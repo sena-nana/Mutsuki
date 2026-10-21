@@ -34,10 +34,10 @@ use mutsuki_plugin_bot_event_router::{
 use mutsuki_runtime_contracts::{
     CompletionBatch, ExecutionClass, RunnerDescriptor, RunnerResult, WorkBatch,
 };
-use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
 use mutsuki_runtime_sdk::{
     PluginBuilder, ProtocolDescriptorBuilder, RunnerDescriptorBuilder, map_work_batch_entries,
 };
+use mutsuki_runtime_sdk::{Runner, RunnerContext, RuntimeResult};
 use mutsuki_service_config::{ConfigOverrides, ServiceConfig};
 use mutsuki_service_runtime::ServiceRuntimeBuilder;
 use serde_json::{Value, json};

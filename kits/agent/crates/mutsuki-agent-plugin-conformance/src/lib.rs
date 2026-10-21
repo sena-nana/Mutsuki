@@ -24,7 +24,7 @@ use mutsuki_runtime_contracts::{
     ArtifactType, CompletionBatch, PluginArtifact, RunnerContext, RunnerDescriptor, ScalarValue,
     WorkBatch,
 };
-use mutsuki_runtime_core::Runner;
+use mutsuki_runtime_sdk::Runner;
 use mutsuki_runtime_sdk::{
     AbiHostClient, PluginBuilder, RunnerDescriptorBuilder, RuntimeResult, map_work_batch_entries,
 };
@@ -283,7 +283,7 @@ fn create_abi_plugin(
     plugin_builder(generation, ArtifactType::Abi)
         .map(PluginBuilder::build)
         .map_err(|error| {
-            mutsuki_runtime_core::RuntimeFailure::new(mutsuki_runtime_contracts::RuntimeError::new(
+            mutsuki_runtime_sdk::RuntimeFailure::new(mutsuki_runtime_contracts::RuntimeError::new(
                 "agent.plugin.invalid_config",
                 PLUGIN_ID,
                 error.to_string(),
