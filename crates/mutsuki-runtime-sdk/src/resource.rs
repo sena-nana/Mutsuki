@@ -1,7 +1,6 @@
 use std::fmt;
 use std::marker::PhantomData;
 
-use mutsuki_runtime_contracts::resource::experimental::{CommandBatch, SagaPlan, TransactionPlan};
 use mutsuki_runtime_contracts::{
     CommandPlan, ExportPlan, ReadPlan, ResourceRef, ResourceSemantic, RuntimeError, StreamPlan,
     WritePlan,
@@ -169,54 +168,6 @@ impl ResourceClient {
             args,
             idempotency_key,
         })
-    }
-
-    #[deprecated(
-        note = "experimental descriptor helper; CoreRuntime does not execute transaction semantics"
-    )]
-    pub fn transaction_plan(
-        &self,
-        plan_id: impl Into<String>,
-        operations: Vec<WritePlan>,
-        strict: bool,
-    ) -> TransactionPlan {
-        TransactionPlan {
-            plan_id: plan_id.into(),
-            operations,
-            strict,
-        }
-    }
-
-    #[deprecated(
-        note = "experimental descriptor helper; CoreRuntime does not execute batch semantics"
-    )]
-    pub fn command_batch(
-        &self,
-        batch_id: impl Into<String>,
-        commands: Vec<CommandPlan>,
-        rollback_guarantee: bool,
-    ) -> CommandBatch {
-        CommandBatch {
-            batch_id: batch_id.into(),
-            commands,
-            rollback_guarantee,
-        }
-    }
-
-    #[deprecated(
-        note = "experimental descriptor helper; CoreRuntime does not execute saga semantics"
-    )]
-    pub fn saga_plan(
-        &self,
-        saga_id: impl Into<String>,
-        steps: Vec<CommandPlan>,
-        compensations: Vec<CommandPlan>,
-    ) -> SagaPlan {
-        SagaPlan {
-            saga_id: saga_id.into(),
-            steps,
-            compensations,
-        }
     }
 }
 

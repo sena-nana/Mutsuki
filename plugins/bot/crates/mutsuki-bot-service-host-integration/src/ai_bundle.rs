@@ -23,8 +23,7 @@ use mutsuki_plugin_bot_conversation_context::{
 };
 use mutsuki_plugin_bot_delivery::{
     BOT_REPLY_DELIVERY_PLUGIN_ID, bot_delivery_manifest, bot_reply_delivery_manifest,
-    bot_scheduled_delivery_manifest, delivery_runner, reply_delivery_runner,
-    scheduled_delivery_runner,
+    delivery_runner, reply_delivery_runner,
 };
 use mutsuki_plugin_bot_interaction::{
     InteractionCreateRunner, InteractionMatchRunner, bot_interaction_manifest, interaction_runner,

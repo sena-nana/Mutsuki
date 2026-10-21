@@ -49,6 +49,7 @@ pub(crate) struct ActorSender {
     wake: mpsc::Sender<()>,
     depth: Arc<AtomicUsize>,
     enqueued_at: Arc<Mutex<VecDeque<Instant>>>,
+    spill: Arc<Mutex<VecDeque<CoreActorMsg>>>,
 }
 
 /// Single actor-owned consumer. Every receive path must pass through its methods
@@ -57,6 +58,7 @@ pub(crate) struct ActorReceiver {
     rx: mpsc::Receiver<CoreActorMsg>,
     depth: Arc<AtomicUsize>,
     enqueued_at: Arc<Mutex<VecDeque<Instant>>>,
+    spill: Arc<Mutex<VecDeque<CoreActorMsg>>>,
 }
 
 pub(crate) fn actor_channel(
@@ -66,17 +68,20 @@ pub(crate) fn actor_channel(
     let (tx, rx) = mpsc::sync_channel(capacity);
     let depth = Arc::new(AtomicUsize::new(0));
     let enqueued_at = Arc::new(Mutex::new(VecDeque::new()));
+    let spill = Arc::new(Mutex::new(VecDeque::new()));
     (
         ActorSender {
             tx,
             wake,
             depth: depth.clone(),
             enqueued_at: enqueued_at.clone(),
+            spill: spill.clone(),
         },
         ActorReceiver {
             rx,
             depth,
             enqueued_at,
+            spill,
         },
     )
 }
@@ -116,6 +121,50 @@ impl ActorSender {
         Ok(())
     }
 
+    /// Never parks the caller and never drops the message. Used for completion
+    /// facts produced on async runtime workers: a full bounded mailbox spills
+    /// into an ordered side queue that the actor drains after the channel.
+    /// Spill growth is bounded by executor admission (each admitted invocation
+    /// emits a fixed number of events), so this does not unbound the mailbox.
+    /// Once anything is spilled, later messages from this path spill too, which
+    /// keeps per-invocation event order intact.
+    pub(crate) fn send_nonblocking(&self, message: CoreActorMsg) -> Result<(), ()> {
+        let mut spill = self.spill.lock().unwrap_or_else(|p| p.into_inner());
+        let message = if spill.is_empty() {
+            let mut queued = self.enqueued_at.lock().unwrap_or_else(|p| p.into_inner());
+            self.depth.fetch_add(1, AtomicOrdering::AcqRel);
+            queued.push_back(Instant::now());
+            match self.tx.try_send(message) {
+                Ok(()) => {
+                    drop(queued);
+                    drop(spill);
+                    let _ = self.wake.send(());
+                    return Ok(());
+                }
+                Err(mpsc::TrySendError::Full(message)) => {
+                    self.depth.fetch_sub(1, AtomicOrdering::AcqRel);
+                    queued.pop_back();
+                    message
+                }
+                Err(mpsc::TrySendError::Disconnected(_)) => {
+                    self.depth.fetch_sub(1, AtomicOrdering::AcqRel);
+                    queued.pop_back();
+                    return Err(());
+                }
+            }
+        } else {
+            message
+        };
+        self.depth.fetch_add(1, AtomicOrdering::AcqRel);
+        self.enqueued_at
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push_back(Instant::now());
+        spill.push_back(message);
+        drop(spill);
+        self.wake.send(()).map_err(|_| ())
+    }
+
     pub(crate) fn depth(&self) -> usize {
         self.depth.load(AtomicOrdering::Acquire)
     }
@@ -141,13 +190,32 @@ impl ActorReceiver {
     }
 
     fn try_recv(&self) -> Result<CoreActorMsg, mpsc::TryRecvError> {
-        self.rx.try_recv().map(|message| self.received(message))
+        match self.rx.try_recv() {
+            Ok(message) => Ok(self.received(message)),
+            Err(error) => {
+                // Spilled messages are newer than anything already in the
+                // channel from the same producer path, so drain them last.
+                let spilled = self
+                    .spill
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .pop_front();
+                spilled.map(|message| self.received(message)).ok_or(error)
+            }
+        }
     }
 
     pub(super) fn recv_timeout(
         &self,
         timeout: Duration,
     ) -> Result<CoreActorMsg, mpsc::RecvTimeoutError> {
+        match self.try_recv() {
+            Ok(message) => return Ok(message),
+            Err(mpsc::TryRecvError::Disconnected) => {
+                return Err(mpsc::RecvTimeoutError::Disconnected);
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+        }
         self.rx
             .recv_timeout(timeout)
             .map(|message| self.received(message))
@@ -248,5 +316,31 @@ mod async_admission_tests {
             Err(mpsc::TrySendError::Disconnected(_))
         ));
         assert_eq!(sender.depth(), 1);
+    }
+
+    #[test]
+    fn nonblocking_send_spills_in_order_when_mailbox_is_full() {
+        let (wake, _wake_rx) = mpsc::channel();
+        let (sender, receiver) = actor_channel(1, wake);
+        let failed = |invocation_id: &str| CoreActorMsg::ManagementFailed {
+            runner_id: "runner".into(),
+            invocation_id: invocation_id.into(),
+        };
+        sender.send_nonblocking(failed("first")).unwrap();
+        sender.send_nonblocking(failed("second")).unwrap();
+        sender.send_nonblocking(failed("third")).unwrap();
+        assert_eq!(sender.depth(), 3);
+        let order = (0..3)
+            .map(|_| match receiver.try_recv() {
+                Ok(CoreActorMsg::ManagementFailed { invocation_id, .. }) => invocation_id,
+                _ => panic!("expected spilled message"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(order, ["first", "second", "third"]);
+        assert_eq!(sender.depth(), 0);
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
     }
 }

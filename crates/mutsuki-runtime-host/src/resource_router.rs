@@ -150,6 +150,20 @@ pub(crate) fn apply_resource_outcome(
         _ => {}
     }
     sync_resource_reply(core, &value)?;
+    // Legacy receipt removals are lifecycle facts too: apply them with the
+    // same provider/generation fence as outcome invalidations, never as raw
+    // hub removals that could drop another provider's descriptor.
+    match &value {
+        HostRuntimeReply::PlanReceipt(receipt) => {
+            core.invalidate_legacy_receipt_removals(provider_id, &receipt.descriptor_removals)?;
+        }
+        HostRuntimeReply::PlanReceipts(receipts) => {
+            for receipt in receipts {
+                core.invalidate_legacy_receipt_removals(provider_id, &receipt.descriptor_removals)?;
+            }
+        }
+        _ => {}
+    }
     Ok(value)
 }
 

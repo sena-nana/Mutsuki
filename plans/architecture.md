@@ -565,6 +565,8 @@ Provider `execute` returns `ResourceProviderOutcome`: committed invalidations ar
 
 `PlanReceipt.descriptor_removals` remains a deserializable compatibility field for older providers;
 new providers publish retention and explicit-delete removals only through outcome invalidations.
+The Host applies legacy receipt removals on the actor with the same provider/generation fence as
+invalidations: a receipt can never remove another provider's descriptor.
 
 Invalidating providers declare Ordered. Their provider-id lane survives staged reload, retains the executing provider until actor application, and remains occupied after caller timeout/disconnect until actual completion. Queue count/bytes use Host limits; panic with unknown effects poisons the lane until restart. No permanent tombstone history or I/O in open. SQLite keeps create-before-insert retention and capability exemption.
 

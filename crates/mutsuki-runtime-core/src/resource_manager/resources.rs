@@ -143,10 +143,33 @@ impl ResourceManager {
             .into_iter()
             .map(|descriptor| self.sync_resource_descriptor(descriptor))
             .collect::<RuntimeResult<Vec<_>>>()?;
-        for ref_id in &receipt.descriptor_removals {
-            self.unregister_resource(ref_id)?;
-        }
         Ok(synced)
+    }
+
+    /// Apply legacy `PlanReceipt.descriptor_removals` with the same owner and
+    /// generation fencing as outcome invalidations. A receipt may only remove
+    /// descriptors registered by the provider that produced it; absent refs
+    /// stay idempotent.
+    pub fn invalidate_legacy_receipt_removals(
+        &mut self,
+        provider_id: &str,
+        ref_ids: &[String],
+    ) -> RuntimeResult<()> {
+        if ref_ids.is_empty() {
+            return Ok(());
+        }
+        let invalidations = ref_ids
+            .iter()
+            .filter_map(|ref_id| self.hub.get(ref_id))
+            .map(
+                |entry| mutsuki_runtime_contracts::ResourceDescriptorInvalidation {
+                    provider_id: entry.descriptor.provider_id.clone(),
+                    ref_id: entry.descriptor.ref_id.clone(),
+                    generation: entry.descriptor.generation,
+                },
+            )
+            .collect::<Vec<_>>();
+        self.invalidate_resource_descriptors(provider_id, &invalidations)
     }
 
     pub fn create_stream_resource(

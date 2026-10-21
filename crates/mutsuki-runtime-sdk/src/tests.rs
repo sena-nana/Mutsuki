@@ -1509,4 +1509,46 @@ mod grouped_batches {
         assert_eq!(completion.results.len(), 2);
         assert_eq!(*seen.lock().unwrap(), vec!["one".to_string(), "two".into()]);
     }
+
+    /// A panic poisons only its own lane: the other lane's committed result is
+    /// kept, and the panicking group's later entries fail instead of running.
+    #[test]
+    fn a_panicking_lane_fails_only_its_own_entries() {
+        let tasks = vec![task("boom"), task("after-boom"), task("steady")];
+        let mut plan = WorkResourcePlan::empty();
+        plan.serial_groups = vec![
+            vec!["entry-0".into(), "entry-1".into()],
+            vec!["entry-2".into()],
+        ];
+        plan.parallelism_limit = 2;
+        let ran = Arc::new(Mutex::new(Vec::new()));
+
+        let completion = map_work_batch_entries_grouped(&batch(&tasks, plan), 8, |task| {
+            ran.lock().unwrap().push(task.task_id.to_string());
+            assert_ne!(task.task_id.as_str(), "boom", "handler panic under test");
+            Ok(RunnerResult::completed(task.task_id.clone()))
+        })
+        .unwrap();
+
+        let by_task = completion
+            .results
+            .iter()
+            .map(|result| {
+                (
+                    result.task_id.to_string(),
+                    result.error.as_ref().map(|e| e.code.clone()),
+                )
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(by_task["steady"], None);
+        assert_eq!(
+            by_task["boom"].as_deref(),
+            Some(mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED)
+        );
+        assert_eq!(
+            by_task["after-boom"].as_deref(),
+            Some(mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED)
+        );
+        assert!(!ran.lock().unwrap().contains(&"after-boom".to_string()));
+    }
 }

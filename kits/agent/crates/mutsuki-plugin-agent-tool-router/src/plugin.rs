@@ -1,5 +1,5 @@
-use crate::ToolRegistry;
 use mutsuki_agent_contracts::*;
+use mutsuki_agent_runtime::ToolRegistry;
 use mutsuki_agent_sdk::{
     AgentToolExecuteProtocol, AgentToolListProtocol, orchestration_runner, result_event,
     runtime_failure, service_result_event, task_payload, unsupported_protocol,

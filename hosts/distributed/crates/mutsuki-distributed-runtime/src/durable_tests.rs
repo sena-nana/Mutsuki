@@ -44,13 +44,22 @@ impl MetadataReplica for ScriptedReplica {
             .lock()
             .unwrap()
             .push((transaction.transaction_id.clone(), transaction.log_index));
-        if self
-            .failures_remaining
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
-                remaining.checked_sub(1)
-            })
-            .is_ok()
-        {
+        let mut remaining = self.failures_remaining.load(Ordering::Acquire);
+        let inject = loop {
+            let Some(next) = remaining.checked_sub(1) else {
+                break false;
+            };
+            match self.failures_remaining.compare_exchange_weak(
+                remaining,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => break true,
+                Err(observed) => remaining = observed,
+            }
+        };
+        if inject {
             return Err(DistributedError::new(
                 DistributedErrorKind::Storage,
                 "injected replica failure",

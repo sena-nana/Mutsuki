@@ -533,7 +533,8 @@ handle，`version` 用于 snapshot、冲突检测和回放。`ResourceRef.genera
   command 创建的 capability/snapshot/transaction ref。删除或 retention 回收的 `ref_id` 必须
   通过 `ResourceProviderOutcome.invalidations` 回写，Core 在 actor 线程上从 hub 注销这些
   descriptor，使随后的 `open_resource` 返回 `resource.not_found`。旧 provider receipt 中的
-  `descriptor_removals` 仍可反序列化并由 Host 兼容处理，但新 provider 不得把它作为生命周期
+  `descriptor_removals` 仍可反序列化，Host 在 actor 上按与 invalidation 相同的 provider/generation
+  栅栏兼容处理（不得移除其他 provider 的 descriptor），但新 provider 不得把它作为生命周期
   事实源。Host 只把这些 descriptor 回写或移除 ResourceManager，bytes 数据面不得回流 Core。
 - 创建路径没有 `PlanReceipt`：provider 在 create 时若回收旧行，必须在成功 outcome 中按新资源
   id 分键发布被回收 `ref_id` 的 invalidations，避免并发 offloaded create 串单。Host 先在
@@ -681,7 +682,7 @@ registry generation。
 
 Host 执行面必须把部署形态限制在后端实现中：
 
-- builtin / static 插件通过 `LocalTaskClient` 和 provider-backed
+- builtin / static 插件通过 Host actor 的 `TaskSubmitter`（`HostContext::task_submitter_ref`）和 provider-backed
   `LocalResourceClient` 使用本地快速路径；resource 创建和 plan 数据面必须经
   `ResourceProviderGateway`，不能回退到 core-managed descriptor/store。
 - builtin / static 插件若在 load plan 中声明 active resource provider，必须随
@@ -790,6 +791,11 @@ binding 自动重新 fan-out；补跑必须显式生成 migration/backfill task�
 | `plugin.reload_blocked` | hot reload 被 breaking/occupancy 阻断 |
 | `capability.exhausted` | lease/capability 容量耗尽 |
 | `runtime.host_failed` | host/runner 无法归类的失败 |
+| `runner.failed` | runner 结果为失败但未给出更具体的结构化错误 |
+| `state.delta_decode_failed` | Committer 收到无法解码为 `StateDelta` 的 kernel task |
+| `event.decode_failed` | EventLog 收到无法解码的事件 payload |
+| `resource.encode_failed` | value/resource 打包时序列化失败 |
+| `sdk.decode_failed` | SDK typed task 无法把 payload 解码为声明的类型 |
 
 ## 10. Runtime Domain
 

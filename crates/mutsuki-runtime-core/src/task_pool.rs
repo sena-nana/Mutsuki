@@ -151,7 +151,7 @@ impl TaskPool {
                 format!("task.enqueue.{task_id}"),
             ));
         }
-        let payload_wire_bytes = compact_json_len(task.payload.as_value()).map_err(|error| {
+        let payload_wire_bytes = task.payload.try_wire_len().map_err(|error| {
             crate::runtime_failure(
                 mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
                 "runtime.task_pool",
@@ -724,24 +724,4 @@ impl TaskPool {
         self.insert_record_indexes(task_id);
         result
     }
-}
-
-fn compact_json_len(value: &serde_json::Value) -> Result<usize, serde_json::Error> {
-    #[derive(Default)]
-    struct CountingWriter(usize);
-
-    impl std::io::Write for CountingWriter {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0 = self.0.saturating_add(bytes.len());
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    let mut writer = CountingWriter::default();
-    serde_json::to_writer(&mut writer, value)?;
-    Ok(writer.0)
 }

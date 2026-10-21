@@ -163,7 +163,11 @@ pub(crate) fn protocol_mismatch(handle: &TaskHandle, expected: &str) -> RuntimeF
 }
 
 fn decode_failed(route: impl Into<String>) -> RuntimeFailure {
-    RuntimeFailure::new(RuntimeError::new("sdk.decode_failed", "runtime.sdk", route))
+    RuntimeFailure::new(RuntimeError::new(
+        mutsuki_runtime_contracts::ERR_SDK_DECODE_FAILED,
+        "runtime.sdk",
+        route,
+    ))
 }
 
 fn decode_error(error: serde_json::Error) -> RuntimeFailure {

@@ -796,3 +796,33 @@ fn task_pool_test_continuation(ref_id: &str) -> TaskStepContinuation {
         reason: Some("await child".into()),
     }
 }
+
+#[test]
+fn task_pool_rejects_unserializable_local_payload_without_panicking() {
+    struct Unserializable;
+
+    impl serde::Serialize for Unserializable {
+        fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
+            Err(serde::ser::Error::custom("payload refuses wire form"))
+        }
+    }
+
+    let mut pool = TaskPool::default();
+    let error = pool
+        .enqueue(Task::new(
+            "local-unserializable",
+            "sim.work",
+            TaskPayload::from_local(Unserializable),
+        ))
+        .unwrap_err();
+    assert_eq!(error.error().code, ERR_RUNTIME_HOST_FAILED);
+    assert!(!pool.contains_task_id("local-unserializable"));
+}
+
+#[test]
+fn local_payload_wire_len_matches_materialized_json() {
+    let payload = TaskPayload::from_local(json!({"message": "hello", "n": [1, 2, 3]}));
+    let typed_len = payload.try_wire_len().unwrap();
+    let encoded = serde_json::to_vec(payload.as_value()).unwrap();
+    assert_eq!(typed_len, encoded.len());
+}

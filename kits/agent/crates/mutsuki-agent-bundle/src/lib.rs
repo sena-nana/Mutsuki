@@ -17,20 +17,17 @@ use std::sync::Arc;
 mod native_coding;
 
 use mutsuki_agent_plugin_api::uninjected_context_collect_plugin;
-pub use mutsuki_agent_runtime::{CredentialBrokerService, KnowledgeService, SkillRegistry};
+pub use mutsuki_agent_runtime::{
+    AgentLoop, ContextBuilder, CredentialBrokerService, KnowledgeService, MemoryRouter,
+    PromptRegistry, SessionStore, SkillRegistry, ToolRegistry,
+};
 pub use mutsuki_agent_runtime::{
     EchoChildExecutor, RequiredChildExecutor, RuntimeClientChildExecutor,
 };
-pub use mutsuki_plugin_agent_context::ContextBuilder;
-pub use mutsuki_plugin_agent_loop::AgentLoop;
-pub use mutsuki_plugin_agent_memory_router::MemoryRouter;
 pub use mutsuki_plugin_agent_model_gateway::{
     AdapterBackedModelProvider, HttpModelProvider, HttpModelProviderOptions, ModelGateway,
 };
 use mutsuki_plugin_agent_proactive::ProactiveScheduleService;
-pub use mutsuki_plugin_agent_prompt::PromptRegistry;
-pub use mutsuki_plugin_agent_session::SessionStore;
-pub use mutsuki_plugin_agent_tool_router::ToolRegistry;
 use mutsuki_runtime_contracts::{PluginManifest, TaskBatch, TaskHandle, TaskOutcome};
 use mutsuki_runtime_core::{AsyncBatchHandler, Runner};
 use mutsuki_runtime_sdk::{RuntimeClient, RuntimeClientRef, RuntimeResult};

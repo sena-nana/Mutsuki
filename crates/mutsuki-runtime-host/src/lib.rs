@@ -73,7 +73,7 @@ pub use binary::{BinaryRunner, BinaryTransport};
 pub use bootstrapper::{PreparedHostRuntime, PreparedRuntimeReload, RuntimeBootstrapper};
 pub use capabilities::HostCapabilityRegistry;
 pub use clients::{
-    AbiResourceClient, AbiTaskClient, LocalResourceClient, LocalTaskClient, ResourcePlanClient,
+    AbiResourceClient, AbiTaskClient, LocalResourceClient, ResourcePlanClient,
     ResourcePlanProvider, TaskClient,
 };
 pub use commands::{HostRuntimeCommand, HostRuntimeReply, HostTaskState};

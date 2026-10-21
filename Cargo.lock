@@ -5132,6 +5132,7 @@ name = "mutsuki-runtime-core"
 version = "0.1.0"
 dependencies = [
  "mutsuki-runtime-contracts",
+ "serde",
  "serde_json",
  "thiserror 2.0.20",
 ]

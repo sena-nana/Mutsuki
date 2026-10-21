@@ -1,1 +1,1 @@
-pub use mutsuki_plugin_agent_session::SessionStore;
+pub use mutsuki_agent_runtime::SessionStore;

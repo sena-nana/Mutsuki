@@ -246,7 +246,7 @@ impl CoreRuntime {
             }
             RunnerStatus::Failed => {
                 let failure = crate::runtime_error(
-                    "runner.failed",
+                    mutsuki_runtime_contracts::ERR_RUNNER_FAILED,
                     "runtime.result_router",
                     format!("runner.{}", runner.runner_id),
                 );

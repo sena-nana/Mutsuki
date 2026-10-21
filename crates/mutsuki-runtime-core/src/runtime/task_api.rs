@@ -216,7 +216,7 @@ impl CoreRuntime {
                 task_id: record.task.task_id.clone(),
                 error: record.failure.clone().unwrap_or_else(|| {
                     crate::runtime_error(
-                        "runner.failed",
+                        mutsuki_runtime_contracts::ERR_RUNNER_FAILED,
                         "runtime.task",
                         format!("task.outcome.{task_id}"),
                     )

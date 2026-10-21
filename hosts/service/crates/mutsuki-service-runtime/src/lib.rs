@@ -2230,7 +2230,7 @@ impl ServiceRuntimeInner {
             .task_submitter_ref();
         let (dirty_event_source_plugins, mut lifecycle_errors) =
             self.retire_event_source_effects(runtime_affected.iter().map(String::as_str), graceful);
-        lifecycle_errors.extend(host_lifecycle_errors);
+        lifecycle_errors.extend(host_lifecycle_errors.iter().map(runtime_error_summary));
         lifecycle_errors.extend(
             self.retire_load_plan_hook_effects(affected.iter().map(String::as_str), graceful),
         );
@@ -2742,7 +2742,7 @@ impl ServiceRuntimeInner {
             .collect::<Vec<_>>();
         let mut lifecycle_errors = self
             .retire_load_plan_hook_effects(old_hook_owners.iter().map(String::as_str), graceful);
-        lifecycle_errors.extend(host_lifecycle_errors);
+        lifecycle_errors.extend(host_lifecycle_errors.iter().map(runtime_error_summary));
         for (component_id, hook) in owned_load_plan_hooks {
             match self.attach_load_plan_hook_effect(&component_id, hook.clone()) {
                 Ok(()) => hook.activate(&runtime_lock),
@@ -4032,6 +4032,16 @@ fn drain_blocking_stderr(runner_id: String, stderr: std::process::ChildStderr) {
     let reader = BufReader::new(stderr);
     for line in reader.lines().map_while(Result::ok) {
         tracing::warn!(runner_id, stream = "stderr", line);
+    }
+}
+
+/// One-line operator summary of a structured Host lifecycle diagnostic.
+fn runtime_error_summary(error: &mutsuki_runtime_contracts::RuntimeError) -> String {
+    match error.evidence.get("detail") {
+        Some(mutsuki_runtime_contracts::ScalarValue::String(detail)) => {
+            format!("{}: {detail}", error.route)
+        }
+        _ => format!("{} ({})", error.route, error.code),
     }
 }
 

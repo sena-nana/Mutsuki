@@ -54,26 +54,18 @@ impl HandlerBindingRegistry {
 
     pub fn query_protocol(&self, protocol_id: impl AsRef<str>) -> Vec<&HandlerBinding> {
         let protocol_id = protocol_id.as_ref();
-        self.bindings
+        // Bindings are sorted by protocol id first, so the matches are one run.
+        let start = self
+            .bindings
+            .partition_point(|binding| binding.protocol_id.as_str() < protocol_id);
+        self.bindings[start..]
             .iter()
-            .filter(|binding| binding.protocol_id == protocol_id)
+            .take_while(|binding| binding.protocol_id == protocol_id)
             .collect()
     }
 
     pub fn all(&self) -> &[HandlerBinding] {
         &self.bindings
-    }
-
-    pub fn register_authorized(&mut self, binding: HandlerBinding) {
-        if self
-            .bindings
-            .iter()
-            .any(|existing| existing.binding_id == binding.binding_id)
-        {
-            return;
-        }
-        self.bindings.push(binding);
-        Self::sort_bindings(&mut self.bindings);
     }
 
     fn sort_bindings(bindings: &mut [HandlerBinding]) {

@@ -25,12 +25,23 @@ pub struct ConnectionCounter(Arc<AtomicUsize>);
 
 impl ConnectionCounter {
     pub fn try_acquire(&self, limit: usize) -> Option<ConnectionPermit> {
-        self.0
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
-                (current < limit).then_some(current + 1)
-            })
-            .ok()
-            .map(|_| ConnectionPermit(Arc::clone(&self.0)))
+        // CAS loop rather than the deprecated `fetch_update` (its replacement
+        // is newer than the workspace MSRV).
+        let mut current = self.0.load(Ordering::Acquire);
+        loop {
+            if current >= limit {
+                return None;
+            }
+            match self.0.compare_exchange_weak(
+                current,
+                current + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Some(ConnectionPermit(Arc::clone(&self.0))),
+                Err(observed) => current = observed,
+            }
+        }
     }
 
     pub fn active(&self) -> usize {

@@ -12,7 +12,8 @@ use mutsuki_runtime_sdk::{
 };
 use std::collections::BTreeMap;
 
-use crate::{AgentContextBuildPreparation, AgentContextModelSummary, ContextBuilder};
+use crate::{AgentContextBuildPreparation, AgentContextModelSummary};
+use mutsuki_agent_runtime::ContextBuilder;
 
 pub const PLUGIN_ID: &str = "mutsuki.plugin.agent.context";
 pub const RUNNER_ID: &str = "mutsuki.agent.context.runner";

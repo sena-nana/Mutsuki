@@ -829,7 +829,7 @@ fn post_switch_cleanup_failure_retains_dirty_old_scope() {
         runtime
             .take_reload_lifecycle_errors()
             .iter()
-            .any(|error| { error.starts_with("host.reload.post_switch_scope_cleanup_failed:") })
+            .any(|error| { error.route == "host.reload.post_switch_scope_cleanup_failed" })
     );
     assert_eq!(runtime.host_context().registry_generation(), 2);
     assert_eq!(runtime.retained_dirty_scope_sets(), 1);

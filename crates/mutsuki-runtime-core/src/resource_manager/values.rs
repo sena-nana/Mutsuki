@@ -12,7 +12,7 @@ impl ResourceManager {
     pub fn pack_value(&mut self, schema: &str, value: Value) -> RuntimeResult<PackedValue> {
         let bytes = serde_json::to_vec(&value).map_err(|err| {
             crate::runtime_failure(
-                "resource.encode_failed",
+                mutsuki_runtime_contracts::ERR_RESOURCE_ENCODE_FAILED,
                 "runtime.resource_manager",
                 err.to_string(),
             )

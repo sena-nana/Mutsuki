@@ -18,6 +18,11 @@ use mutsuki_agent_plugin_next_edit::{NextEditServiceConfig, SharedNextEditServic
 use mutsuki_agent_plugin_web_search::{
     FakeHttpTransport, HttpJsonSearchService, HttpPageFetchService, SharedWebSearchService,
 };
+use mutsuki_agent_runtime::AgentLoop;
+use mutsuki_agent_runtime::ContextBuilder;
+use mutsuki_agent_runtime::MemoryRouter;
+use mutsuki_agent_runtime::SessionStore;
+use mutsuki_agent_runtime::ToolRegistry;
 use mutsuki_agent_runtime::{CredentialBrokerService, KnowledgeService, SkillRegistry, SkillRoots};
 use mutsuki_agent_testkit::{
     BENCHMARK_FIXED_SEED, BENCHMARK_MODEL_ID, BENCHMARK_TOOL_NAME, BENCHMARK_TOOL_PROTOCOL,
@@ -25,12 +30,7 @@ use mutsuki_agent_testkit::{
 };
 use mutsuki_distributed_contracts::{CapabilityBits, NodeId};
 use mutsuki_link_core::{EndpointId, MemoryTransportConfig, memory_transport_pair};
-use mutsuki_plugin_agent_context::ContextBuilder;
-use mutsuki_plugin_agent_loop::AgentLoop;
-use mutsuki_plugin_agent_memory_router::MemoryRouter;
 use mutsuki_plugin_agent_model_gateway::ModelGateway;
-use mutsuki_plugin_agent_session::SessionStore;
-use mutsuki_plugin_agent_tool_router::ToolRegistry;
 use mutsuki_runtime_contracts::{
     BatchEntry, BatchPayload, CompletionBatch, DispatchLane, EntryId, OrderingRequirement,
     ResourceAccess, ResourceId, ResourceLifetime, ResourceSealState, ResourceSemantic,

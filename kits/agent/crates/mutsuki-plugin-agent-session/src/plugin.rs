@@ -7,7 +7,7 @@ use mutsuki_agent_sdk::{
 use mutsuki_runtime_sdk::contracts::{RunnerResult, Task};
 use mutsuki_runtime_sdk::{PluginBuilder, RuntimeClientRef, RuntimeResult, TaskAwaitRunnerAdapter};
 
-use crate::SessionStore;
+use mutsuki_agent_runtime::SessionStore;
 
 pub const PLUGIN_ID: &str = "mutsuki.plugin.agent.session";
 pub const RUNNER_ID: &str = "mutsuki.agent.session.runner";

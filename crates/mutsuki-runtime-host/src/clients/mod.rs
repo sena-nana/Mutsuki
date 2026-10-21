@@ -4,7 +4,7 @@ mod local;
 use mutsuki_runtime_sdk::{ResourcePlanGateway, ResourceProviderGateway, TaskSubmitter};
 
 pub use abi::{AbiResourceClient, AbiTaskClient};
-pub use local::{LocalResourceClient, LocalTaskClient};
+pub use local::LocalResourceClient;
 
 pub trait ResourcePlanProvider: ResourceProviderGateway + Send + Sync {}
 

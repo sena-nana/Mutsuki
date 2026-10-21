@@ -6,8 +6,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use mutsuki_runtime_contracts::{
-    ObservabilityPage, ObservabilityProfile, ResourceAccess, ResourceRef, RuntimeEvent, TaskStatus,
-    TraceSpan,
+    ObservabilityPage, ObservabilityProfile, ResourceAccess, ResourceRef, RuntimeError,
+    RuntimeEvent, TaskStatus, TraceSpan,
 };
 use mutsuki_runtime_core::{
     CoreRuntime, ReloadDecision, RuntimeFailure, RuntimeResult, RuntimeStatistics,
@@ -311,6 +311,9 @@ pub struct HostRuntimeMetricsSnapshot {
     pub scheduler_max_ns: u64,
     pub lane_starvation_events: u64,
     pub reserved_capacity_uses: u64,
+    /// Scheduler passes that returned a structured failure. The actor keeps
+    /// serving after a failed pass; this counter makes the failure observable.
+    pub scheduler_failures: u64,
 }
 
 #[derive(Debug, Default)]
@@ -333,6 +336,7 @@ pub struct HostRuntimeMetrics {
     scheduler_max_ns: AtomicU64,
     lane_starvation_events: AtomicU64,
     reserved_capacity_uses: AtomicU64,
+    scheduler_failures: AtomicU64,
 }
 
 impl HostRuntimeMetrics {
@@ -380,6 +384,10 @@ impl HostRuntimeMetrics {
     pub(crate) fn record_reserved_capacity_use(&self, count: usize) {
         self.reserved_capacity_uses
             .fetch_add(count as u64, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_scheduler_failure(&self) {
+        self.scheduler_failures.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -552,7 +560,7 @@ pub struct HostRuntime {
     scopes: Vec<PluginScopeSet>,
     application_effects: PluginScopeManager,
     application_effect_root: ScopeId,
-    reload_lifecycle_errors: Vec<String>,
+    reload_lifecycle_errors: Vec<RuntimeError>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -612,7 +620,8 @@ impl HostRuntime {
         let actor_tx = data_tx.clone();
         let async_event_tx = data_tx.clone();
         config.async_event_sink = Some(Arc::new(move |event| {
-            let _ = async_event_tx.send(CoreActorMsg::AsyncEvent(event));
+            // Called on async runtime workers: never park them on a full mailbox.
+            let _ = async_event_tx.send_nonblocking(CoreActorMsg::AsyncEvent(event));
         }));
         let pools = match worker_pools(&config, actor_tx) {
             Ok(pools) => pools,
@@ -698,7 +707,10 @@ impl HostRuntime {
             .count()
     }
 
-    pub fn take_reload_lifecycle_errors(&mut self) -> Vec<String> {
+    /// Post-switch scope activation/cleanup failures from the last reload. The
+    /// generation switch already succeeded; these are structured diagnostics
+    /// (route `host.reload.post_switch_scope_*`) for the owning Host to surface.
+    pub fn take_reload_lifecycle_errors(&mut self) -> Vec<RuntimeError> {
         std::mem::take(&mut self.reload_lifecycle_errors)
     }
 
@@ -962,15 +974,18 @@ impl HostRuntime {
                     registry_generation,
                 );
                 if let Some(error) = activation_error {
-                    self.reload_lifecycle_errors.push(format!(
-                        "host.reload.post_switch_scope_activation_failed: {error}"
-                    ));
+                    self.reload_lifecycle_errors.push(
+                        *host_failure(
+                            "host.reload.post_switch_scope_activation_failed",
+                            error.to_string(),
+                        )
+                        .0,
+                    );
                 }
-                self.reload_lifecycle_errors.extend(
-                    retirement_errors.into_iter().map(|error| {
-                        format!("host.reload.post_switch_scope_cleanup_failed: {error}")
-                    }),
-                );
+                self.reload_lifecycle_errors
+                    .extend(retirement_errors.into_iter().map(|error| {
+                        *host_failure("host.reload.post_switch_scope_cleanup_failed", error).0
+                    }));
                 Ok(decision)
             }
             reply => Err(host_failure(
@@ -980,19 +995,29 @@ impl HostRuntime {
         }
     }
 
+    /// Convenience view that folds "actor closed" into `None`. Callers that must
+    /// distinguish an unknown task from an unavailable runtime use
+    /// [`Self::try_task_status`].
     pub fn task_status(&self, task_id: impl AsRef<str>) -> Option<TaskStatus> {
+        self.try_task_status(task_id).ok().flatten()
+    }
+
+    /// `Ok(None)` means the actor has no such task; an error means the actor is
+    /// no longer serving (shut down or crashed).
+    pub fn try_task_status(&self, task_id: impl AsRef<str>) -> RuntimeResult<Option<TaskStatus>> {
         self.metrics.actor_commands.fetch_add(1, Ordering::Relaxed);
         self.metrics
             .task_status_queries
             .fetch_add(1, Ordering::Relaxed);
         let (reply_tx, reply_rx) = mpsc::channel();
+        let closed = || host_failure("host.task_status", "runtime actor is not serving");
         self.tx
             .send(CoreActorMsg::TaskStatus(
                 task_id.as_ref().to_string(),
                 reply_tx,
             ))
-            .ok()?;
-        reply_rx.recv().ok().flatten()
+            .map_err(|()| closed())?;
+        reply_rx.recv().map_err(|_| closed())
     }
 
     pub fn task_snapshots(&self) -> RuntimeResult<Vec<HostTaskSnapshot>> {
@@ -1108,6 +1133,7 @@ impl HostRuntime {
             scheduler_total_ns: self.metrics.scheduler_total_ns.load(Ordering::Relaxed),
             scheduler_max_ns: self.metrics.scheduler_max_ns.load(Ordering::Relaxed),
             lane_starvation_events: self.metrics.lane_starvation_events.load(Ordering::Relaxed),
+            scheduler_failures: self.metrics.scheduler_failures.load(Ordering::Relaxed),
             reserved_capacity_uses: self.metrics.reserved_capacity_uses.load(Ordering::Relaxed),
         }
     }

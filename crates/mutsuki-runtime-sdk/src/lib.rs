@@ -34,7 +34,7 @@ use mutsuki_runtime_contracts::{
     RunnerDescriptor, RunnerId, RunnerResult, RunnerStatus, RuntimeError, Task, TaskAwait,
     TaskBatch, TaskHandle, TaskId, TaskOutcome, TaskStepContinuation, WorkBatch,
 };
-use mutsuki_runtime_core::{CoreRuntime, Runner, RunnerContext};
+use mutsuki_runtime_core::{Runner, RunnerContext};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -116,6 +116,19 @@ pub trait RuntimeClient: Send + Sync {
     fn register_waker(&self, _handle: &TaskHandle, _waker: &Waker) {}
 }
 
+fn lane_failure(entry: &mutsuki_runtime_contracts::BatchEntry, detail: &str) -> EntryCompletion {
+    EntryCompletion {
+        entry_id: entry.entry_id.clone(),
+        task_id: entry.task_id.clone(),
+        result: None,
+        error: Some(mutsuki_runtime_contracts::RuntimeError::new(
+            mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
+            "runtime.sdk",
+            format!("{detail}.{}", entry.entry_id),
+        )),
+    }
+}
+
 /// Completes one entry, resolving its payload the way the batch contract requires.
 fn complete_work_batch_entry(
     batch: &WorkBatch,
@@ -177,11 +190,11 @@ fn complete_work_batch_entry(
 ///
 /// Each entry runs exactly once even if the plan names it in several groups.
 ///
-/// # Panics
-///
-/// Propagates a panicking handler, but unlike [`map_work_batch_entries`] the
-/// entries already running on other lanes finish first: a panic stops that lane,
-/// not the batch.
+/// A panicking handler fails only its own lane: the panicking entry and the
+/// entries still queued behind it on that lane complete with a structured
+/// `runtime.host_failed` error (route `runtime.sdk`), while entries that already
+/// finished -- on any lane -- keep their results. Reporting committed entries as
+/// failed would invite duplicate side effects on retry.
 ///
 /// # Errors
 ///
@@ -243,20 +256,35 @@ pub fn map_work_batch_entries_grouped(
             let lane_units: Vec<&Vec<usize>> = units.iter().skip(lane).step_by(lanes).collect();
             joins.push(scope.spawn(move || {
                 let mut out = Vec::new();
+                let mut poisoned = false;
                 for unit in lane_units {
                     for index in unit {
-                        out.push((
-                            *index,
-                            complete_work_batch_entry(batch, &batch.entries[*index], handler),
-                        ));
+                        let entry = &batch.entries[*index];
+                        let completion = if poisoned {
+                            lane_failure(entry, "batch.lane.poisoned")
+                        } else {
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                complete_work_batch_entry(batch, entry, handler)
+                            }))
+                            .unwrap_or_else(|_| {
+                                poisoned = true;
+                                lane_failure(entry, "batch.lane.panicked")
+                            })
+                        };
+                        out.push((*index, completion));
                     }
                 }
                 out
             }));
         }
+        // Lane bodies catch handler panics themselves, so a join error can only
+        // come from the lane bookkeeping above; propagate it unchanged.
         joins
             .into_iter()
-            .map(|join| join.join().expect("batch lane panicked"))
+            .map(|join| {
+                join.join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            })
             .collect()
     });
     // The units partition every entry index, so restoring submit order is a sort
@@ -321,20 +349,6 @@ pub fn map_work_batch_entries(
 }
 
 pub type RuntimeClientRef = Arc<dyn RuntimeClient>;
-
-impl RuntimeClient for Arc<Mutex<CoreRuntime>> {
-    fn submit_batch(&self, batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
-        self.lock()
-            .expect("runtime mutex poisoned")
-            .submit_batch(batch)
-    }
-
-    fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
-        self.lock()
-            .expect("runtime mutex poisoned")
-            .task_handle_outcome(handle)
-    }
-}
 
 pub struct TaskHandleFuture {
     client: RuntimeClientRef,

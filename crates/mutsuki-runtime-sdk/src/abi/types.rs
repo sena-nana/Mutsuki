@@ -1,7 +1,5 @@
 //! ABI v2 exports backed by the independent plugin API crate.
 
-use std::ptr;
-
 use mutsuki_runtime_core::{RuntimeFailure, RuntimeResult};
 
 pub use mutsuki_plugin_api::{
@@ -54,12 +52,14 @@ fn abi_contract_failure(route: &'static str, detail: &'static str) -> RuntimeFai
     ))
 }
 
-#[allow(dead_code)]
+// Only tests release plugin-allocated buffers directly; production frees
+// through the plugin API allocator vtable.
+#[cfg(test)]
 pub(crate) unsafe extern "C" fn release_buffer(buffer: AbiBuffer) {
     if buffer.ptr.is_null() || buffer.len == 0 {
         return;
     }
-    let slice = ptr::slice_from_raw_parts_mut(buffer.ptr, buffer.len);
+    let slice = std::ptr::slice_from_raw_parts_mut(buffer.ptr, buffer.len);
     // SAFETY: buffers passed here were allocated by the independent plugin API allocator.
     unsafe { drop(Box::from_raw(slice)) };
 }

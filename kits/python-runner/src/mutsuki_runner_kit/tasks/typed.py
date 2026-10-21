@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from mutsuki_runner_kit.contracts.codec import JsonValue
-from mutsuki_runner_kit.contracts.errors import RuntimeError
+from mutsuki_runner_kit.contracts.errors import ERR_SDK_DECODE_FAILED, RuntimeError
 from mutsuki_runner_kit.contracts.task import TaskHandle, TaskOutcome, TaskStatus
 from mutsuki_runner_kit.runners.protocol import RunnerInvokeError
 
@@ -47,7 +47,7 @@ class TypedTaskOutcome:
         if self._outcome.status != TaskStatus.COMPLETED or self._outcome.output is None:
             raise RunnerInvokeError(
                 RuntimeError(
-                    code="sdk.decode_failed",
+                    code=ERR_SDK_DECODE_FAILED,
                     source=_SDK_SOURCE,
                     route=f"task.outcome.{self._outcome.task_id}.{self._outcome.status.value}",
                 )

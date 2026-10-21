@@ -289,15 +289,32 @@ pub trait HostScopeResolver: Send + Sync {
 
 #[derive(Default)]
 pub struct HostServiceRegistry {
-    services: Mutex<BTreeMap<String, HostServiceValue>>,
-    owners: Mutex<BTreeMap<String, String>>,
-    rebindable: Mutex<BTreeSet<String>>,
-    frozen: AtomicBool,
+    inner: Mutex<HostServiceRegistryState>,
+}
+
+/// One lock owns every registry fact so `freeze` and registration are atomic:
+/// a registration that observed "not frozen" cannot land after `freeze`.
+#[derive(Default)]
+struct HostServiceRegistryState {
+    services: BTreeMap<String, HostServiceEntry>,
+    frozen: bool,
+}
+
+struct HostServiceEntry {
+    owner_plugin_id: String,
+    value: HostServiceValue,
+    rebindable: bool,
 }
 
 impl HostServiceRegistry {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    fn state(&self) -> std::sync::MutexGuard<'_, HostServiceRegistryState> {
+        self.inner
+            .lock()
+            .expect("host service registry mutex poisoned")
     }
 
     pub fn register<T>(&self, service_id: impl Into<String>, service: Arc<T>) -> RuntimeResult<()>
@@ -334,33 +351,27 @@ impl HostServiceRegistry {
         rebindable: bool,
     ) -> RuntimeResult<()> {
         let service_id = service_id.into();
-        if self.frozen.load(Ordering::SeqCst) {
+        let mut state = self.state();
+        if state.frozen {
             return Err(sdk_error(
                 mutsuki_runtime_contracts::ERR_REGISTRY_FROZEN,
                 format!("host_service.{service_id}"),
             ));
         }
-        let mut services = self
-            .services
-            .lock()
-            .expect("host service registry mutex poisoned");
-        if services.contains_key(&service_id) {
+        if state.services.contains_key(&service_id) {
             return Err(sdk_error(
                 mutsuki_runtime_contracts::ERR_REGISTRY_UNAUTHORIZED,
                 format!("host_service.duplicate.{service_id}"),
             ));
         }
-        services.insert(service_id.clone(), value);
-        self.owners
-            .lock()
-            .expect("host service owner registry mutex poisoned")
-            .insert(service_id.clone(), owner_plugin_id.into());
-        if rebindable {
-            self.rebindable
-                .lock()
-                .expect("host service binding registry mutex poisoned")
-                .insert(service_id);
-        }
+        state.services.insert(
+            service_id,
+            HostServiceEntry {
+                owner_plugin_id: owner_plugin_id.into(),
+                value,
+                rebindable,
+            },
+        );
         Ok(())
     }
 
@@ -396,26 +407,15 @@ impl HostServiceRegistry {
 
     #[doc(hidden)]
     pub fn owned_entries(&self) -> Vec<(String, String, HostServiceValue, bool)> {
-        let services = self
+        self.state()
             .services
-            .lock()
-            .expect("host service registry mutex poisoned");
-        let owners = self
-            .owners
-            .lock()
-            .expect("host service owner registry mutex poisoned");
-        let rebindable = self
-            .rebindable
-            .lock()
-            .expect("host service binding registry mutex poisoned");
-        services
             .iter()
-            .map(|(service_id, service)| {
+            .map(|(service_id, entry)| {
                 (
                     service_id.clone(),
-                    owners.get(service_id).cloned().unwrap_or_default(),
-                    service.clone(),
-                    rebindable.contains(service_id),
+                    entry.owner_plugin_id.clone(),
+                    entry.value.clone(),
+                    entry.rebindable,
                 )
             })
             .collect()
@@ -425,17 +425,14 @@ impl HostServiceRegistry {
     where
         T: HostService,
     {
-        let services = self
-            .services
-            .lock()
-            .expect("host service registry mutex poisoned");
-        let Some(service) = services.get(service_id) else {
+        let state = self.state();
+        let Some(entry) = state.services.get(service_id) else {
             return Err(sdk_error(
                 mutsuki_runtime_contracts::ERR_REGISTRY_UNAUTHORIZED,
                 format!("host_service.missing.{service_id}"),
             ));
         };
-        service.resolve::<T>().map_err(|_| {
+        entry.value.resolve::<T>().map_err(|_| {
             sdk_error(
                 mutsuki_runtime_contracts::ERR_REGISTRY_UNAUTHORIZED,
                 format!("host_service.type_mismatch.{service_id}"),
@@ -444,11 +441,11 @@ impl HostServiceRegistry {
     }
 
     pub fn freeze(&self) {
-        self.frozen.store(true, Ordering::SeqCst);
+        self.state().frozen = true;
     }
 
     pub fn is_frozen(&self) -> bool {
-        self.frozen.load(Ordering::SeqCst)
+        self.state().frozen
     }
 }
 

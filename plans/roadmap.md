@@ -196,7 +196,7 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
     deployment 与 manifest `requires` 生成 `RuntimeCapabilityGraph`，并在 Level 1
     裁剪未激活的 host backend、plugin backend、codec、bridge、scheduler policy
     和 workflow surface。
-  - Host 提供 `LocalTaskClient` / `AbiTaskClient` 与
+  - Host 提供 actor-backed `TaskSubmitter` / `AbiTaskClient` 与
     `LocalResourceClient` / `AbiResourceClient` 两组后端；它们接收同一套
     `Task`、`TaskHandle`、`TaskOutcome`、`ReadPlan`、`WritePlan`、`ExportPlan`、
     `CommandPlan` 等协议对象。builtin 资源路径现在通过可注入的

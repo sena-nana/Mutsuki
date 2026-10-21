@@ -1,5 +1,4 @@
 use std::io::Cursor;
-use std::sync::{Arc, Mutex};
 
 use mutsuki_runtime_contracts::*;
 use mutsuki_runtime_wire::{
@@ -8,19 +7,19 @@ use mutsuki_runtime_wire::{
 };
 use serde_json::json;
 
-use crate::{AbiTaskClient, LocalTaskClient, TaskClient};
+use crate::{AbiTaskClient, TaskClient};
 use mutsuki_runtime_sdk::TaskBatchBuilder;
 
 use super::helpers::{host_with_echo_runner, runtime_profile};
 
 #[test]
 fn host_task_clients_share_task_contract_across_local_and_abi_backends() {
-    let runtime = Arc::new(Mutex::new(
-        host_with_echo_runner()
-            .into_runtime(runtime_profile())
-            .unwrap(),
-    ));
-    let local = LocalTaskClient::new(runtime);
+    // The in-process client is the Host actor's submitter: there is no
+    // direct `CoreRuntime` client that could bypass the actor.
+    let host = host_with_echo_runner()
+        .into_host_runtime(runtime_profile())
+        .unwrap();
+    let local = host.host_context().task_submitter_ref();
     let mut local_task = Task::new("local-client-task", "raw.input", json!({"source": "local"}));
     local_task.trace_id = Some("trace-local".into());
     local_task.correlation_id = Some("corr-local".into());
@@ -119,22 +118,22 @@ fn host_task_clients_share_task_contract_across_local_and_abi_backends() {
 
 #[test]
 fn task_clients_implement_sdk_task_submitter_boundary() {
-    let runtime = Arc::new(Mutex::new(
-        host_with_echo_runner()
-            .into_runtime(runtime_profile())
-            .unwrap(),
-    ));
-    let local = LocalTaskClient::new(runtime);
+    // The in-process client is the Host actor's submitter: there is no
+    // direct `CoreRuntime` client that could bypass the actor.
+    let host = host_with_echo_runner()
+        .into_host_runtime(runtime_profile())
+        .unwrap();
+    let local = host.host_context().task_submitter_ref();
     let local_handle = mutsuki_runtime_sdk::TaskSubmitter::submit_task(
-        &local,
+        local.as_ref(),
         Task::new("sdk-local-task", "raw.input", json!({})),
     )
     .unwrap();
-    mutsuki_runtime_sdk::TaskSubmitter::cancel_task(&local, &local_handle).unwrap();
+    mutsuki_runtime_sdk::TaskSubmitter::cancel_task(local.as_ref(), &local_handle).unwrap();
 
     assert_eq!(local_handle.task_id, "sdk-local-task");
     assert!(matches!(
-        mutsuki_runtime_sdk::TaskSubmitter::task_outcome(&local, &local_handle).unwrap(),
+        mutsuki_runtime_sdk::TaskSubmitter::task_outcome(local.as_ref(), &local_handle).unwrap(),
         Some(TaskOutcome::Cancelled { task_id, .. }) if task_id == "sdk-local-task"
     ));
 
@@ -169,12 +168,12 @@ fn task_clients_implement_sdk_task_submitter_boundary() {
 
 #[test]
 fn task_clients_submit_batch_across_local_and_abi_backends() {
-    let runtime = Arc::new(Mutex::new(
-        host_with_echo_runner()
-            .into_runtime(runtime_profile())
-            .unwrap(),
-    ));
-    let local = LocalTaskClient::new(runtime);
+    // The in-process client is the Host actor's submitter: there is no
+    // direct `CoreRuntime` client that could bypass the actor.
+    let host = host_with_echo_runner()
+        .into_host_runtime(runtime_profile())
+        .unwrap();
+    let local = host.host_context().task_submitter_ref();
     let local_batch = TaskBatchBuilder::new("local-batch")
         .task(Task::new("local-batch-1", "raw.input", json!({})))
         .task(Task::new("local-batch-2", "raw.input", json!({})))

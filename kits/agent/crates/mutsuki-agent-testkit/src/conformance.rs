@@ -6,13 +6,11 @@ use mutsuki_agent_contracts::{
     AgentSessionAppendRequest, AgentSessionCreateRequest, AgentToolExecuteRequest,
     AgentToolListRequest,
 };
+use mutsuki_agent_runtime::{AgentLoop, MemoryRouter, PromptRegistry, SessionStore};
 use mutsuki_plugin_agent_loop::{
-    AgentLoop, PLUGIN_ID as LOOP_PLUGIN_ID, RUNNER_ID as LOOP_RUNNER_ID, plugin as loop_plugin,
+    PLUGIN_ID as LOOP_PLUGIN_ID, RUNNER_ID as LOOP_RUNNER_ID, plugin as loop_plugin,
 };
-use mutsuki_plugin_agent_memory_router::MemoryRouter;
 use mutsuki_plugin_agent_model_gateway::ModelGateway;
-use mutsuki_plugin_agent_prompt::PromptRegistry;
-use mutsuki_plugin_agent_session::SessionStore;
 use mutsuki_runtime_sdk::contracts::{RunnerMode, TaskBatch, TaskHandle, TaskOutcome};
 use mutsuki_runtime_sdk::{RuntimeClient, RuntimeResult};
 
@@ -92,7 +90,7 @@ pub fn session_round_trip() {
 }
 
 pub fn tool_round_trip() {
-    let registry = mutsuki_plugin_agent_tool_router::ToolRegistry::default();
+    let registry = mutsuki_agent_runtime::ToolRegistry::default();
     registry
         .register(echo_tool_descriptor())
         .expect("test tool can register");

@@ -243,6 +243,22 @@ fn resource_manager_unregisters_descriptors_and_receipt_removals() {
         output: json!({"deleted_ref_id": dropped.ref_id}),
     };
     resources.sync_plan_receipt(&receipt).unwrap();
+    // Receipt sync only applies descriptor updates; removals are fenced.
+    assert_eq!(resources.open_resource(&dropped.ref_id).unwrap(), dropped);
+    let foreign = resources
+        .invalidate_legacy_receipt_removals(
+            "mutsuki.std.resource.other",
+            &receipt.descriptor_removals,
+        )
+        .unwrap_err();
+    assert_eq!(foreign.error().code, ERR_RESOURCE_GENERATION_MISMATCH);
+    assert_eq!(resources.open_resource(&dropped.ref_id).unwrap(), dropped);
+    resources
+        .invalidate_legacy_receipt_removals(
+            "mutsuki.std.resource.memory",
+            &receipt.descriptor_removals,
+        )
+        .unwrap();
     assert_eq!(resources.open_resource(&kept.ref_id).unwrap(), kept);
     assert_eq!(
         resources

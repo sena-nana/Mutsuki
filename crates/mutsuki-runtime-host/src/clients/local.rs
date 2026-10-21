@@ -1,53 +1,18 @@
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use mutsuki_runtime_contracts::resource::experimental::{CommandBatch, SagaPlan};
 use mutsuki_runtime_contracts::{
-    CommandPlan, ExportPlan, PlanReceipt, ReadPlan, SnapshotDescriptor, StreamPlan, TaskBatch,
-    TaskHandle, TaskOutcome, WritePlan,
+    CommandPlan, ExportPlan, PlanReceipt, ReadPlan, SnapshotDescriptor, StreamPlan, WritePlan,
 };
-use mutsuki_runtime_core::{CoreRuntime, RuntimeResult};
+use mutsuki_runtime_core::RuntimeResult;
 use mutsuki_runtime_sdk::{
     ResourcePlanGateway, ResourceProviderGateway, ResourceProviderReply as Reply,
-    ResourceProviderRequest as Request, TaskSubmitter,
+    ResourceProviderRequest as Request,
 };
 
 use crate::error::{resource_provider_missing, resource_provider_unsupported};
 use crate::resource_router::single_command_provider;
-
-#[derive(Clone)]
-pub struct LocalTaskClient {
-    runtime: Arc<Mutex<CoreRuntime>>,
-}
-
-impl LocalTaskClient {
-    pub fn new(runtime: Arc<Mutex<CoreRuntime>>) -> Self {
-        Self { runtime }
-    }
-}
-
-impl TaskSubmitter for LocalTaskClient {
-    fn submit_batch(&self, batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
-        self.runtime
-            .lock()
-            .expect("runtime mutex poisoned")
-            .submit_batch(batch)
-    }
-
-    fn cancel_task(&self, handle: &TaskHandle) -> RuntimeResult<()> {
-        self.runtime
-            .lock()
-            .expect("runtime mutex poisoned")
-            .cancel_task_handle(handle)
-    }
-
-    fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
-        self.runtime
-            .lock()
-            .expect("runtime mutex poisoned")
-            .task_handle_outcome(handle)
-    }
-}
 
 #[derive(Clone)]
 pub struct LocalResourceClient {

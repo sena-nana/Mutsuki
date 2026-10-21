@@ -18,6 +18,17 @@ impl CoreRuntime {
             .invalidate_resource_descriptors(provider_id, invalidations)
     }
 
+    /// Owner-fenced application of legacy receipt removals; see
+    /// [`crate::ResourceManager::invalidate_legacy_receipt_removals`].
+    pub fn invalidate_legacy_receipt_removals(
+        &mut self,
+        provider_id: &str,
+        ref_ids: &[String],
+    ) -> RuntimeResult<()> {
+        self.resources
+            .invalidate_legacy_receipt_removals(provider_id, ref_ids)
+    }
+
     pub fn open_stream(
         &mut self,
         stream_id: &str,
@@ -200,10 +211,6 @@ impl CoreRuntime {
 
     pub fn resources(&self) -> &ResourceManager {
         &self.resources
-    }
-
-    pub fn resources_mut(&mut self) -> &mut ResourceManager {
-        &mut self.resources
     }
 
     fn ensure_resource_descriptor_not_deprecated(

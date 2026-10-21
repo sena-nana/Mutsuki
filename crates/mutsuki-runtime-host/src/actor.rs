@@ -170,6 +170,9 @@ impl CoreActor {
     #[inline(always)]
     fn handle_timeout(&mut self) -> bool {
         self.driver.timed_wakeups = self.driver.timed_wakeups.saturating_add(1);
+        // A failed scheduler pass is a structured, per-pass failure (for
+        // example an undeclared execution class). It must not end the actor:
+        // queued tasks, completions and shutdown still need their owner.
         if let Some((target_step, deadline)) = self.driver.scheduled_tick
             && deadline <= Instant::now()
             && schedule_ready_at(
@@ -181,7 +184,7 @@ impl CoreActor {
             )
             .is_err()
         {
-            return true;
+            self.config.actor_metrics.record_scheduler_failure();
         }
         self.supervise();
         self.publish_terminal_changes();
@@ -272,12 +275,16 @@ impl CoreActor {
                     &mut self.draining_invocations,
                 );
                 self.publish_terminal_changes();
-                let _ = schedule_ready(
+                if schedule_ready(
                     &mut self.core,
                     &self.config,
                     &mut self.pools,
                     &mut self.running_batches_by_task,
-                );
+                )
+                .is_err()
+                {
+                    self.config.actor_metrics.record_scheduler_failure();
+                }
                 self.config
                     .actor_metrics
                     .record_completion_route(route_started.elapsed());
@@ -286,12 +293,16 @@ impl CoreActor {
             CoreActorMsg::AsyncEvent(event) => {
                 let _ = self.apply_async_event(event);
                 self.publish_terminal_changes();
-                let _ = schedule_ready(
+                if schedule_ready(
                     &mut self.core,
                     &self.config,
                     &mut self.pools,
                     &mut self.running_batches_by_task,
-                );
+                )
+                .is_err()
+                {
+                    self.config.actor_metrics.record_scheduler_failure();
+                }
                 false
             }
             CoreActorMsg::WorkerExited(exited) => {

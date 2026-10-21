@@ -17,7 +17,8 @@ and the owner commands in `docs/core-performance-model-v1.md`; preserve the fixe
 Provider `execute` returns `ResourceProviderOutcome`: committed invalidations are independent of operation success, including partial batch/saga failure. Host applies provider/ref/resource-generation removals on the actor before replying. Absent refs are idempotent; conflicting owners/generations fail. Invalidation dominates same-outcome updates and removes writer/derived occupancy facts. Receipt status and business JSON are not lifecycle signals.
 
 The older `PlanReceipt.descriptor_removals` field remains readable for compatibility but is not the
-lifecycle source for new providers.
+lifecycle source for new providers. The Host fences it like an invalidation: only descriptors owned by
+the producing provider at their current generation are removed.
 
 Invalidating providers declare Ordered. Their provider-id lane survives staged reload, retains the executing provider until actor application, and remains occupied after caller timeout/disconnect until actual completion. Queue count/bytes use Host limits; panic with unknown effects poisons the lane until restart. No permanent tombstone history or I/O in open. SQLite keeps create-before-insert retention and capability exemption.
 

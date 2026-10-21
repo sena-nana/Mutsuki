@@ -1,1 +1,1 @@
-pub use mutsuki_plugin_agent_memory_router::MemoryRouter;
+pub use mutsuki_agent_runtime::MemoryRouter;

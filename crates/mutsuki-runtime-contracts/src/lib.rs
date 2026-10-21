@@ -65,6 +65,10 @@ pub use error::{
     ERR_TASK_DEAD_LETTER, ERR_TASK_DUPLICATE, ERR_TASK_EXPIRED, ERR_TASK_NOT_FOUND,
     ERR_TASK_SELF_CALL_BLOCKED, ERR_TASK_UNSUPPORTED, RuntimeError,
 };
+pub use error::{
+    ERR_EVENT_DECODE_FAILED, ERR_RESOURCE_ENCODE_FAILED, ERR_RUNNER_FAILED, ERR_SDK_DECODE_FAILED,
+    ERR_STATE_DELTA_DECODE_FAILED,
+};
 pub use event::{RuntimeEvent, RuntimeEventKind};
 pub use execution_policy::{
     CachePolicy, CapabilitySet, Criticality, DeadlinePolicy, EXECUTION_PROFILE_HISTOGRAM_BUCKETS,
@@ -115,7 +119,7 @@ pub use runner::{
 pub use task::{
     CancelPolicy, ConflictPolicy, StateDelta, StateRef, StateRollback, Task, TaskAwait, TaskHandle,
     TaskLease, TaskOutcome, TaskPayload, TaskStatus, TaskStepContinuation, VersionExpectation,
-    WakeCondition,
+    WakeCondition, compact_json_len,
 };
 pub use trace::{SpanStatus, TraceSpan};
 

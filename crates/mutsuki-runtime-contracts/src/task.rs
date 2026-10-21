@@ -14,6 +14,7 @@ use crate::{
 use crate::{TaskLeaseId, TraceId};
 
 type LocalJsonFn = fn(&(dyn Any + Send + Sync)) -> Result<Value, serde_json::Error>;
+type LocalWireLenFn = fn(&(dyn Any + Send + Sync)) -> Result<usize, serde_json::Error>;
 
 /// In-process task payload.
 ///
@@ -36,18 +37,29 @@ struct LocalPayload {
     type_id: TypeId,
     type_name: &'static str,
     to_json: LocalJsonFn,
+    wire_len: LocalWireLenFn,
     json: OnceLock<Arc<Value>>,
 }
 
 impl LocalPayload {
+    fn try_materialize_json(&self) -> Result<&Arc<Value>, serde_json::Error> {
+        if let Some(json) = self.json.get() {
+            return Ok(json);
+        }
+        let value = Arc::new((self.to_json)(self.body.as_ref())?);
+        // A concurrent initializer may win; both produced the same wire form.
+        let _ = self.json.set(value);
+        Ok(self.json.get().expect("local payload json initialized"))
+    }
+
     fn materialize_json(&self) -> &Arc<Value> {
-        self.json.get_or_init(|| {
-            Arc::new((self.to_json)(self.body.as_ref()).unwrap_or_else(|error| {
-                panic!(
-                    "local task payload `{}` must serialize for wire form: {error}",
-                    self.type_name
-                )
-            }))
+        // TaskPool admission validates serialization through `try_wire_len`, so
+        // only a payload whose `Serialize` impl is non-deterministic reaches this.
+        self.try_materialize_json().unwrap_or_else(|error| {
+            panic!(
+                "local task payload `{}` must serialize for wire form: {error}",
+                self.type_name
+            )
         })
     }
 
@@ -141,6 +153,7 @@ impl TaskPayload {
             type_id: TypeId::of::<T>(),
             type_name: std::any::type_name::<T>(),
             to_json: local_to_json::<T>,
+            wire_len: local_wire_len::<T>,
             json: OnceLock::new(),
         };
         Self {
@@ -191,6 +204,27 @@ impl TaskPayload {
             return Ok(local);
         }
         Ok(Arc::new(T::deserialize(self.as_value())?))
+    }
+
+    /// Fallible JSON view. Prefer this on admission paths that must turn a
+    /// failing local `Serialize` impl into a structured error instead of a panic.
+    pub fn try_as_value(&self) -> Result<&Value, serde_json::Error> {
+        match &self.kind {
+            TaskPayloadKind::Json(value) => Ok(value),
+            TaskPayloadKind::Local(local) => local.try_materialize_json().map(AsRef::as_ref),
+        }
+    }
+
+    /// Compact wire JSON length. Local payloads are measured from the typed body
+    /// without materializing a `serde_json::Value`.
+    pub fn try_wire_len(&self) -> Result<usize, serde_json::Error> {
+        match &self.kind {
+            TaskPayloadKind::Json(value) => compact_json_len(value.as_ref()),
+            TaskPayloadKind::Local(local) => match local.json.get() {
+                Some(json) => compact_json_len(json.as_ref()),
+                None => (local.wire_len)(local.body.as_ref()),
+            },
+        }
     }
 
     pub fn as_value(&self) -> &Value {
@@ -247,6 +281,36 @@ where
         .downcast_ref::<T>()
         .expect("local payload type id mismatch");
     serde_json::to_value(value)
+}
+
+fn local_wire_len<T>(any: &(dyn Any + Send + Sync)) -> Result<usize, serde_json::Error>
+where
+    T: Any + Serialize + 'static,
+{
+    let value = any
+        .downcast_ref::<T>()
+        .expect("local payload type id mismatch");
+    compact_json_len(value)
+}
+
+/// Length of the compact JSON encoding without allocating the encoded bytes.
+pub fn compact_json_len<T: Serialize + ?Sized>(value: &T) -> Result<usize, serde_json::Error> {
+    struct CountingWriter(usize);
+
+    impl std::io::Write for CountingWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 = self.0.saturating_add(bytes.len());
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut writer = CountingWriter(0);
+    serde_json::to_writer(&mut writer, value)?;
+    Ok(writer.0)
 }
 
 impl Deref for TaskPayload {

@@ -48,7 +48,7 @@ impl CoreRuntime {
     fn commit_state_delta(&mut self, task: &Task) -> RuntimeResult<()> {
         let delta: StateDelta = serde_json::from_value(task.payload.to_value()).map_err(|err| {
             crate::runtime_failure(
-                "state.delta_decode_failed",
+                mutsuki_runtime_contracts::ERR_STATE_DELTA_DECODE_FAILED,
                 "runtime.committer",
                 err.to_string(),
             )
@@ -78,7 +78,11 @@ impl CoreRuntime {
     fn append_domain_event(&mut self, task: &Task) -> RuntimeResult<()> {
         let event: DomainEvent =
             serde_json::from_value(task.payload.to_value()).map_err(|err| {
-                crate::runtime_failure("event.decode_failed", "runtime.event_log", err.to_string())
+                crate::runtime_failure(
+                    mutsuki_runtime_contracts::ERR_EVENT_DECODE_FAILED,
+                    "runtime.event_log",
+                    err.to_string(),
+                )
             })?;
         let mut attributes = BTreeMap::new();
         attributes.insert(

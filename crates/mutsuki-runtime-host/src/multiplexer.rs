@@ -74,13 +74,23 @@ where
     }
 
     pub(crate) fn next_request_id(&self) -> RuntimeResult<u64> {
-        let previous = self
-            .next_request
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-                current.checked_add(1)
-            })
-            .map_err(|_| transport_failure("request id space is exhausted"))?;
-        Ok(previous + 1)
+        // Explicit CAS loop: `fetch_update` is deprecated on current toolchains
+        // and its replacement is newer than the workspace MSRV.
+        let mut current = self.next_request.load(Ordering::Relaxed);
+        loop {
+            let next = current
+                .checked_add(1)
+                .ok_or_else(|| transport_failure("request id space is exhausted"))?;
+            match self.next_request.compare_exchange_weak(
+                current,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return Ok(next),
+                Err(observed) => current = observed,
+            }
+        }
     }
 
     pub(crate) fn request(
