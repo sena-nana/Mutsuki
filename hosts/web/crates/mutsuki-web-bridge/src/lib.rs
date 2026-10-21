@@ -257,7 +257,7 @@ impl WebBridge {
             .ok_or(ProtocolError::Unauthenticated)
     }
 
-    fn dispatch_rpc(&self, session: &BridgeSession, request: RpcRequest) -> RpcResponse {
+    fn dispatch_rpc(&self, session: &BridgeSession, mut request: RpcRequest) -> RpcResponse {
         self.inner.metrics.inc_rpc_inflight();
         let started = std::time::Instant::now();
         let response = if request.namespace == "host" {
@@ -273,7 +273,8 @@ impl WebBridge {
             match rpc.and_then(|rpc| {
                 rpc.call_with_context(
                     &request.method,
-                    request.params.clone(),
+                    // The request is owned and its params are not read again.
+                    std::mem::take(&mut request.params),
                     mutsuki_web_extension::RpcCallContext::authenticated(
                         &session.principal_id,
                         &session.capabilities,
@@ -298,7 +299,7 @@ impl WebBridge {
     async fn dispatch_rpc_async(
         &self,
         session: &BridgeSession,
-        request: RpcRequest,
+        mut request: RpcRequest,
     ) -> RpcResponse {
         if request.namespace == "host" || request.namespace == "recovery" {
             return self.dispatch_rpc(session, request);
@@ -314,7 +315,7 @@ impl WebBridge {
             Ok(rpc) => rpc
                 .call_async_with_context(
                     &request.method,
-                    request.params.clone(),
+                    std::mem::take(&mut request.params),
                     mutsuki_web_extension::RpcCallContext::authenticated(
                         &session.principal_id,
                         &session.capabilities,

@@ -324,16 +324,18 @@ impl WorkerPool {
             });
         }
         let entry_count = dispatch.batch.entries.len();
-        let payload_bytes = match serde_json::to_vec(&dispatch.batch.payload) {
-            Ok(payload) => payload.len(),
-            Err(error) => {
-                return Err(WorkerDispatchError {
-                    failure: host_failure("host.worker.payload", error.to_string()),
-                    dispatch: Box::new(dispatch),
-                    retryable: false,
-                });
-            }
-        };
+        // Count wire bytes without allocating the encoded payload.
+        let payload_bytes =
+            match mutsuki_runtime_contracts::compact_json_len(&dispatch.batch.payload) {
+                Ok(payload_bytes) => payload_bytes,
+                Err(error) => {
+                    return Err(WorkerDispatchError {
+                        failure: host_failure("host.worker.payload", error.to_string()),
+                        dispatch: Box::new(dispatch),
+                        retryable: false,
+                    });
+                }
+            };
         if payload_bytes > self.max_inflight_bytes {
             return Err(WorkerDispatchError {
                 failure: host_failure(

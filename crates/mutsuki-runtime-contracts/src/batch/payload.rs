@@ -146,8 +146,7 @@ impl BatchPayload {
             .iter()
             .enumerate()
             .map(|(index, value)| {
-                serde_json::from_value(value.clone())
-                    .map_err(|_| payload_error(format!("payload.row.{index}")))
+                Task::deserialize(value).map_err(|_| payload_error(format!("payload.row.{index}")))
             })
             .collect()
     }
@@ -165,7 +164,8 @@ impl BatchPayload {
                 .get(index)
                 .ok_or_else(|| payload_error(format!("payload.row.{index}.missing")))
                 .and_then(|value| {
-                    serde_json::from_value(value.clone())
+                    // Deserialize from the borrowed tree; no Value clone first.
+                    Task::deserialize(value)
                         .map(Cow::Owned)
                         .map_err(|_| payload_error(format!("payload.row.{index}")))
                 }),

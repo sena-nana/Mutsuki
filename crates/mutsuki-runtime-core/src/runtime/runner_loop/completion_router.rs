@@ -46,9 +46,9 @@ pub(super) fn complete_runner_dispatch(
                 "runtime.runner_loop",
                 format!("batch.{}.runner", completion.batch_id),
             )
-        })?
-        .clone();
-    let descriptor = &descriptor;
+        })?;
+    // `descriptors` is an owned `Arc` snapshot, so borrowing from it needs no
+    // per-completion clone of the descriptor.
     let result = completion.result;
     if let Some(runner) = completion.runner
         && let Some(mut rejected) = runtime

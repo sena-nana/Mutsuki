@@ -390,56 +390,35 @@ async fn send_json<T: serde::Serialize>(
     let bytes = serde_json::to_vec(value).map_err(|error| AppDeliveryError::DeliveryFailed {
         message: error.to_string(),
     })?;
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        match connection.try_send(&bytes) {
-            Ok(()) => return Ok(()),
-            Err(error) if error.kind == TransportErrorKind::WouldBlock => {
-                if tokio::time::Instant::now() >= deadline {
-                    return Err(AppDeliveryError::DeliveryFailed {
-                        message: "send timed out".into(),
-                    });
-                }
-                tokio::task::yield_now().await;
-            }
-            Err(error) => {
-                return Err(AppDeliveryError::DeliveryFailed {
-                    message: error.to_string(),
-                });
-            }
-        }
+    // Awaits queue capacity instead of spinning on `yield_now`.
+    match tokio::time::timeout(Duration::from_secs(5), connection.send(bytes)).await {
+        Err(_) => Err(AppDeliveryError::DeliveryFailed {
+            message: "send timed out".into(),
+        }),
+        Ok(result) => result.map_err(|error| AppDeliveryError::DeliveryFailed {
+            message: error.to_string(),
+        }),
     }
 }
 
 async fn recv_json<T: serde::de::DeserializeOwned>(
     connection: &mut LocalConnection,
 ) -> Result<T, AppDeliveryError> {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        match connection.try_receive() {
-            Ok(Some(bytes)) => {
-                return serde_json::from_slice(&bytes).map_err(|error| {
-                    AppDeliveryError::DeliveryFailed {
-                        message: error.to_string(),
-                    }
-                });
-            }
-            Ok(None) => {
-                return Err(AppDeliveryError::DeliveryFailed {
-                    message: "connection closed before receipt".into(),
-                });
-            }
-            Err(error) if error.kind == TransportErrorKind::WouldBlock => {
-                if tokio::time::Instant::now() >= deadline {
-                    return Err(AppDeliveryError::ReceiptTimeout);
-                }
-                tokio::task::yield_now().await;
-            }
-            Err(error) => {
-                return Err(AppDeliveryError::DeliveryFailed {
-                    message: error.to_string(),
-                });
-            }
+    // Awaits the next frame instead of spinning on `yield_now`.
+    match tokio::time::timeout(Duration::from_secs(5), connection.receive()).await {
+        Err(_) => Err(AppDeliveryError::ReceiptTimeout),
+        Ok(Ok(bytes)) => {
+            serde_json::from_slice(&bytes).map_err(|error| AppDeliveryError::DeliveryFailed {
+                message: error.to_string(),
+            })
         }
+        Ok(Err(error)) if error.kind == TransportErrorKind::Closed => {
+            Err(AppDeliveryError::DeliveryFailed {
+                message: "connection closed before receipt".into(),
+            })
+        }
+        Ok(Err(error)) => Err(AppDeliveryError::DeliveryFailed {
+            message: error.to_string(),
+        }),
     }
 }

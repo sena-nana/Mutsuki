@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use mutsuki_link_core::{Connection, EndpointId, TransportBudget};
+use mutsuki_link_core::{EndpointId, TransportBudget};
 use mutsuki_link_local::{
     AppId, EndpointLease, LocalConnection, LocalListener, SessionIdentity, endpoint_id_for_app,
     local_address_for_app, reclaim_stale_lease,
@@ -13,7 +13,7 @@ use tokio::task::JoinHandle;
 use crate::protocol::{
     LinkControlClientFrame, LinkControlRejectCode, LinkControlServerFrame, SERVICE_LINK_APP_ID,
 };
-use crate::transport::{recv_json, send_json};
+use crate::transport::{finish, recv_json, send_json};
 
 #[derive(Debug, thiserror::Error)]
 pub enum LinkControlServerError {
@@ -59,8 +59,13 @@ impl LinkControlServer {
                     tokio::time::sleep(Duration::from_millis(10)).await;
                     continue;
                 };
-                serve_connection(&handler, &mut connection).await;
-                let _ = connection.close_write();
+                // One task per connection: a slow request (task wait, reload)
+                // must not block other clients' control calls.
+                let handler = handler.clone();
+                tokio::spawn(async move {
+                    serve_connection(&handler, &mut connection).await;
+                    finish(&mut connection).await;
+                });
             }
         });
         Ok(Self {
@@ -101,7 +106,6 @@ async fn serve_connection(handler: &Arc<dyn ControlHandler>, connection: &mut Lo
         &LinkControlServerFrame::ControlResponse(Box::new(response)),
     )
     .await;
-    tokio::time::sleep(Duration::from_millis(1)).await;
 }
 
 #[cfg(test)]

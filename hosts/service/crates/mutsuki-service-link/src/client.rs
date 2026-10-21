@@ -86,8 +86,6 @@ async fn relay_request(app_id: &str, request: ControlRequest) -> Result<ControlR
     )
     .await
     .map_err(|error| format!("{STANDALONE_LINK_PROTOCOL_ERROR}: {error}"))?;
-    // Give the server accept loop a tick before tearing down on drop.
-    tokio::time::sleep(Duration::from_millis(5)).await;
     match recv_json::<LinkControlServerFrame>(&mut connection)
         .await
         .map_err(|error| format!("{STANDALONE_LINK_PROTOCOL_ERROR}: {error}"))?

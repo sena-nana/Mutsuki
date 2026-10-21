@@ -46,7 +46,7 @@ impl CoreRuntime {
     }
 
     fn commit_state_delta(&mut self, task: &Task) -> RuntimeResult<()> {
-        let delta: StateDelta = serde_json::from_value(task.payload.to_value()).map_err(|err| {
+        let delta: StateDelta = task.payload.decode().map_err(|err| {
             crate::runtime_failure(
                 mutsuki_runtime_contracts::ERR_STATE_DELTA_DECODE_FAILED,
                 "runtime.committer",
@@ -76,14 +76,13 @@ impl CoreRuntime {
     }
 
     fn append_domain_event(&mut self, task: &Task) -> RuntimeResult<()> {
-        let event: DomainEvent =
-            serde_json::from_value(task.payload.to_value()).map_err(|err| {
-                crate::runtime_failure(
-                    mutsuki_runtime_contracts::ERR_EVENT_DECODE_FAILED,
-                    "runtime.event_log",
-                    err.to_string(),
-                )
-            })?;
+        let event: DomainEvent = task.payload.decode().map_err(|err| {
+            crate::runtime_failure(
+                mutsuki_runtime_contracts::ERR_EVENT_DECODE_FAILED,
+                "runtime.event_log",
+                err.to_string(),
+            )
+        })?;
         let mut attributes = BTreeMap::new();
         attributes.insert(
             "domain_event_id".into(),
@@ -104,14 +103,13 @@ impl CoreRuntime {
     }
 
     fn rollback_state(&mut self, task: &Task) -> RuntimeResult<()> {
-        let request: StateRollback =
-            serde_json::from_value(task.payload.to_value()).map_err(|err| {
-                crate::runtime_failure(
-                    "state.rollback_decode_failed",
-                    "runtime.committer",
-                    err.to_string(),
-                )
-            })?;
+        let request: StateRollback = task.payload.decode().map_err(|err| {
+            crate::runtime_failure(
+                "state.rollback_decode_failed",
+                "runtime.committer",
+                err.to_string(),
+            )
+        })?;
         let version = self.states.rollback(&request, self.current_step)?;
         self.events.record(
             RuntimeEventKind::State,

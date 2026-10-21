@@ -195,18 +195,10 @@ async fn send_message(
     bytes: &[u8],
     timeout: Duration,
 ) -> Result<(), DistributedError> {
-    let deadline = Instant::now() + timeout;
-    loop {
-        match connection.try_send_control(bytes) {
-            Ok(()) => return Ok(()),
-            Err(error) if error.kind == TransportErrorKind::WouldBlock => {
-                if Instant::now() >= deadline {
-                    return Err(transport_timeout());
-                }
-                tokio::time::sleep(Duration::from_millis(1)).await;
-            }
-            Err(error) => return Err(map_transport(&error)),
-        }
+    // Awaits control-queue capacity instead of a 1 ms sleep loop.
+    match tokio::time::timeout(timeout, connection.send_control(bytes.to_vec())).await {
+        Err(_) => Err(transport_timeout()),
+        Ok(result) => result.map_err(|error| map_transport(&error)),
     }
 }
 
@@ -214,18 +206,11 @@ async fn receive_message(
     connection: &mut LocalConnection,
     timeout: Duration,
 ) -> Result<Vec<u8>, DistributedError> {
-    let deadline = Instant::now() + timeout;
-    loop {
-        match connection.try_receive() {
-            Ok(Some(bytes)) => return Ok(bytes),
-            Ok(None) => {}
-            Err(error) if error.kind == TransportErrorKind::WouldBlock => {}
-            Err(error) => return Err(map_transport(&error)),
-        }
-        if Instant::now() >= deadline {
-            return Err(transport_timeout());
-        }
-        tokio::time::sleep(Duration::from_millis(1)).await;
+    // Awaits the next frame; a closed connection fails immediately instead of
+    // polling until the deadline.
+    match tokio::time::timeout(timeout, connection.receive()).await {
+        Err(_) => Err(transport_timeout()),
+        Ok(result) => result.map_err(|error| map_transport(&error)),
     }
 }
 

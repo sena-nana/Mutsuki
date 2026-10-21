@@ -5311,11 +5311,7 @@ version = "0.1.0"
 dependencies = [
  "mutsuki-link-core",
  "mutsuki-link-local",
- "mutsuki-link-quic",
  "mutsuki-service-control",
- "quinn",
- "rcgen",
- "rustls",
  "serde",
  "serde_json",
  "tempfile",

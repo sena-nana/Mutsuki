@@ -419,10 +419,9 @@ impl WorkerProcess {
             })?;
             send_message(connection, &reply, true, self.timeout).await?;
             if stopping {
-                // The Link transport owns the socket writer task; allow the
-                // queued terminal control reply to reach the peer before the
-                // process drops the connection.
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                // Flush the queued terminal reply before the process drops the
+                // connection (dropping would abort the transport writer).
+                let _ = tokio::time::timeout(self.timeout, connection.close_and_flush()).await;
                 return Ok(true);
             }
         }
@@ -717,7 +716,8 @@ impl ControllerProcess {
             })?;
             send_message(connection, &reply, true, timeout).await?;
             if shutdown {
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                // Flush the terminal reply instead of sleeping and hoping.
+                let _ = tokio::time::timeout(timeout, connection.close_and_flush()).await;
                 return Ok(());
             }
         }
@@ -1017,23 +1017,18 @@ pub(crate) async fn send_message(
     control: bool,
     timeout: Duration,
 ) -> Result<(), DistributedError> {
-    let deadline = Instant::now() + timeout;
-    loop {
-        let result = if control {
-            connection.try_send_control(bytes)
+    // Awaits queue capacity instead of a 1 ms sleep loop.
+    let message = bytes.to_vec();
+    let send = async {
+        if control {
+            connection.send_control(message).await
         } else {
-            connection.try_send(bytes)
-        };
-        match result {
-            Ok(()) => return Ok(()),
-            Err(error) if error.kind == TransportErrorKind::WouldBlock => {
-                if Instant::now() >= deadline {
-                    return Err(transport_timeout());
-                }
-                tokio::time::sleep(Duration::from_millis(1)).await;
-            }
-            Err(error) => return Err(map_transport(error)),
+            connection.send(message).await
         }
+    };
+    match tokio::time::timeout(timeout, send).await {
+        Err(_) => Err(transport_timeout()),
+        Ok(result) => result.map_err(map_transport),
     }
 }
 
@@ -1041,18 +1036,11 @@ pub(crate) async fn receive_message(
     connection: &mut LocalConnection,
     timeout: Duration,
 ) -> Result<Vec<u8>, DistributedError> {
-    let deadline = Instant::now() + timeout;
-    loop {
-        match connection.try_receive() {
-            Ok(Some(bytes)) => return Ok(bytes),
-            Ok(None) => {}
-            Err(error) if error.kind == TransportErrorKind::WouldBlock => {}
-            Err(error) => return Err(map_transport(error)),
-        }
-        if Instant::now() >= deadline {
-            return Err(transport_timeout());
-        }
-        tokio::time::sleep(Duration::from_millis(1)).await;
+    // Awaits the next frame; a closed connection fails immediately instead of
+    // polling until the deadline.
+    match tokio::time::timeout(timeout, connection.receive()).await {
+        Err(_) => Err(transport_timeout()),
+        Ok(result) => result.map_err(map_transport),
     }
 }
 

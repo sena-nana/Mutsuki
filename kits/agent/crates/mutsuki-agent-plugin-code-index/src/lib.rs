@@ -1060,56 +1060,66 @@ fn hash_index_snapshot(snapshot: &CheckpointSnapshot) -> String {
     format!("sha256:{}", hex::encode(hasher.finalize()))
 }
 
+/// Compiled once: symbol extraction runs for every indexed file.
+static SYMBOL_PATTERNS: std::sync::LazyLock<[(Regex, CodeSymbolKind); 9]> =
+    std::sync::LazyLock::new(|| {
+        [
+            (
+                Regex::new(
+                    r"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)",
+                )
+                .unwrap(),
+                CodeSymbolKind::Function,
+            ),
+            (
+                Regex::new(r"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?struct\s+([A-Za-z_][A-Za-z0-9_]*)")
+                    .unwrap(),
+                CodeSymbolKind::Struct,
+            ),
+            (
+                Regex::new(r"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?enum\s+([A-Za-z_][A-Za-z0-9_]*)")
+                    .unwrap(),
+                CodeSymbolKind::Enum,
+            ),
+            (
+                Regex::new(r"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?trait\s+([A-Za-z_][A-Za-z0-9_]*)")
+                    .unwrap(),
+                CodeSymbolKind::Trait,
+            ),
+            (
+                Regex::new(
+                    r"(?m)^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)",
+                )
+                .unwrap(),
+                CodeSymbolKind::Function,
+            ),
+            (
+                Regex::new(
+                    r"(?m)^\s*(?:export\s+)?(?:abstract\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)",
+                )
+                .unwrap(),
+                CodeSymbolKind::Class,
+            ),
+            (
+                Regex::new(r"(?m)^\s*(?:export\s+)?interface\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap(),
+                CodeSymbolKind::Interface,
+            ),
+            (
+                Regex::new(r"(?m)^\s*(?:export\s+)?type\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap(),
+                CodeSymbolKind::Type,
+            ),
+            (
+                Regex::new(r"(?m)^\s*(?:export\s+)?const\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap(),
+                CodeSymbolKind::Const,
+            ),
+        ]
+    });
+
 fn parse_symbols(path: &str, content: &str, provenance: &CodeIndexProvenance) -> Vec<CodeSymbol> {
-    let patterns = [
-        (
-            Regex::new(
-                r"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)",
-            )
-            .unwrap(),
-            CodeSymbolKind::Function,
-        ),
-        (
-            Regex::new(r"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?struct\s+([A-Za-z_][A-Za-z0-9_]*)")
-                .unwrap(),
-            CodeSymbolKind::Struct,
-        ),
-        (
-            Regex::new(r"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?enum\s+([A-Za-z_][A-Za-z0-9_]*)")
-                .unwrap(),
-            CodeSymbolKind::Enum,
-        ),
-        (
-            Regex::new(r"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?trait\s+([A-Za-z_][A-Za-z0-9_]*)")
-                .unwrap(),
-            CodeSymbolKind::Trait,
-        ),
-        (
-            Regex::new(r"(?m)^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)")
-                .unwrap(),
-            CodeSymbolKind::Function,
-        ),
-        (
-            Regex::new(r"(?m)^\s*(?:export\s+)?(?:abstract\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)")
-                .unwrap(),
-            CodeSymbolKind::Class,
-        ),
-        (
-            Regex::new(r"(?m)^\s*(?:export\s+)?interface\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap(),
-            CodeSymbolKind::Interface,
-        ),
-        (
-            Regex::new(r"(?m)^\s*(?:export\s+)?type\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap(),
-            CodeSymbolKind::Type,
-        ),
-        (
-            Regex::new(r"(?m)^\s*(?:export\s+)?const\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap(),
-            CodeSymbolKind::Const,
-        ),
-    ];
+    let patterns = &*SYMBOL_PATTERNS;
     let mut symbols = Vec::new();
     for (line_idx, line) in content.lines().enumerate() {
-        for (pattern, kind) in &patterns {
+        for (pattern, kind) in patterns {
             if let Some(captures) = pattern.captures(line)
                 && let Some(name) = captures.get(1)
             {
@@ -1178,18 +1188,22 @@ fn parse_reference_relations(
     relations
 }
 
+/// Compiled once: dependency extraction runs for every indexed file.
+static DEPENDENCY_PATTERNS: std::sync::LazyLock<[Regex; 3]> = std::sync::LazyLock::new(|| {
+    [
+        Regex::new(r#"(?m)^\s*use\s+([A-Za-z0-9_:'{} ,]+);"#).unwrap(),
+        Regex::new(r#"(?m)^\s*import\s+.+?\s+from\s+['\"]([^'\"]+)['\"]"#).unwrap(),
+        Regex::new(r#"(?m)^\s*import\s+['\"]([^'\"]+)['\"]"#).unwrap(),
+    ]
+});
+
 fn parse_dependencies(
     path: &str,
     content: &str,
     provenance: &CodeIndexProvenance,
 ) -> Vec<ModuleDependency> {
-    let patterns = [
-        Regex::new(r#"(?m)^\s*use\s+([A-Za-z0-9_:'{} ,]+);"#).unwrap(),
-        Regex::new(r#"(?m)^\s*import\s+.+?\s+from\s+['\"]([^'\"]+)['\"]"#).unwrap(),
-        Regex::new(r#"(?m)^\s*import\s+['\"]([^'\"]+)['\"]"#).unwrap(),
-    ];
     let mut deps = Vec::new();
-    for pattern in patterns {
+    for pattern in &*DEPENDENCY_PATTERNS {
         for captures in pattern.captures_iter(content) {
             if let Some(module) = captures.get(1) {
                 let to_module = module.as_str().trim().to_string();
@@ -1348,6 +1362,14 @@ fn overlay_search(
     index: &WorkspaceIndex,
     query: &CodeSearchQuery,
 ) -> Result<Vec<CodeSearchHit>, AgentError> {
+    // Compile the user's pattern once per search, not once per scanned line.
+    let regex = match query.mode {
+        CodeSearchMode::Regex => Some(
+            Regex::new(&query.query)
+                .map_err(|error| AgentError::invalid_input(format!("invalid regex: {error}")))?,
+        ),
+        _ => None,
+    };
     let mut hits = Vec::new();
     for (path, buffer) in &index.overlays {
         if let Some(prefix) = &query.path_prefix
@@ -1357,9 +1379,7 @@ fn overlay_search(
         }
         for (line_idx, line) in buffer.content.lines().enumerate() {
             let matched = match query.mode {
-                CodeSearchMode::Regex => Regex::new(&query.query)
-                    .map_err(|error| AgentError::invalid_input(format!("invalid regex: {error}")))?
-                    .is_match(line),
+                CodeSearchMode::Regex => regex.as_ref().is_some_and(|regex| regex.is_match(line)),
                 CodeSearchMode::Text | CodeSearchMode::Semantic => line.contains(&query.query),
                 CodeSearchMode::Symbol => line.contains(&query.query),
             };

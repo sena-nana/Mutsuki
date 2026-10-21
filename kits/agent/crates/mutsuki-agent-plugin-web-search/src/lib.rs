@@ -445,8 +445,26 @@ impl WebHttpGateway for FakeHttpTransport {
     }
 }
 
+/// Shares one pooled blocking client across requests (connection reuse, one
+/// TLS setup); the per-call timeout is applied on each request instead.
 #[derive(Default)]
-pub struct ReqwestHttpTransport;
+pub struct ReqwestHttpTransport {
+    client: std::sync::OnceLock<reqwest::blocking::Client>,
+}
+
+impl ReqwestHttpTransport {
+    fn client(&self) -> Result<&reqwest::blocking::Client, AgentError> {
+        if let Some(client) = self.client.get() {
+            return Ok(client);
+        }
+        mutsuki_agent_sdk::ensure_http_crypto_provider();
+        let client = reqwest::blocking::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|error| AgentError::provider_unavailable(error.to_string()))?;
+        Ok(self.client.get_or_init(|| client))
+    }
+}
 
 impl WebHttpGateway for ReqwestHttpTransport {
     fn post_json(
@@ -456,14 +474,7 @@ impl WebHttpGateway for ReqwestHttpTransport {
         body: &Value,
         timeout: Duration,
     ) -> Result<(u16, Value), AgentError> {
-        mutsuki_agent_sdk::ensure_http_crypto_provider();
-        let mut request = reqwest::blocking::Client::builder()
-            .timeout(timeout)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|error| AgentError::provider_unavailable(error.to_string()))?
-            .post(endpoint)
-            .json(body);
+        let mut request = self.client()?.post(endpoint).timeout(timeout).json(body);
         for (key, value) in headers {
             request = request.header(key, value);
         }
@@ -484,13 +495,7 @@ impl WebHttpGateway for ReqwestHttpTransport {
         timeout: Duration,
         max_bytes: u64,
     ) -> Result<(u16, String, Vec<u8>, Option<String>), AgentError> {
-        mutsuki_agent_sdk::ensure_http_crypto_provider();
-        let mut request = reqwest::blocking::Client::builder()
-            .timeout(timeout)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|error| AgentError::provider_unavailable(error.to_string()))?
-            .get(url);
+        let mut request = self.client()?.get(url).timeout(timeout);
         for (key, value) in headers {
             request = request.header(key, value);
         }

@@ -188,28 +188,38 @@ impl SessionStore {
             .sessions
             .lock()
             .expect("session store mutex poisoned");
-        let session = sessions.get(&request.session_id).ok_or_else(|| {
+        let session = sessions.get_mut(&request.session_id).ok_or_else(|| {
             AgentError::not_found(format!("session `{}` not found", request.session_id))
         })?;
-        let mut updated = session.clone();
-        updated.messages.extend(request.messages);
-        for event in request.events {
-            if event.session_id != updated.session_id
-                || event.sequence != updated.next_event_sequence.saturating_add(1)
-            {
+        // Validate before mutating so a rejected append leaves the session as is.
+        let mut expected = session.next_event_sequence;
+        for event in &request.events {
+            expected = expected.saturating_add(1);
+            if event.session_id != session.session_id || event.sequence != expected {
                 return Err(AgentError::new(
                     "agent.session.event_sequence",
                     "session events must be contiguous and bind the target session",
                 ));
             }
-            updated.next_event_sequence = event.sequence;
-            updated.events.push(event);
         }
+        // Append in place instead of cloning the whole transcript; undo the
+        // tail if persistence fails so memory never runs ahead of storage.
+        let (message_len, event_len) = (session.messages.len(), session.events.len());
+        let (next_event_sequence, turn_count) = (session.next_event_sequence, session.turn_count);
+        session.messages.extend(request.messages);
+        session.events.extend(request.events);
+        session.next_event_sequence = expected;
         if request.advance_turn {
-            updated.turn_count += 1;
+            session.turn_count += 1;
         }
-        self.persist(&updated)?;
-        sessions.insert(request.session_id, updated.clone());
+        if let Err(error) = self.persist(session) {
+            session.messages.truncate(message_len);
+            session.events.truncate(event_len);
+            session.next_event_sequence = next_event_sequence;
+            session.turn_count = turn_count;
+            return Err(error);
+        }
+        let updated = session.clone();
         drop(sessions);
         self.publish_events(&session_id, &appended_events);
         Ok(updated)

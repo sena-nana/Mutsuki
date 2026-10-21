@@ -170,6 +170,94 @@ impl FramedConnection {
             })
     }
 
+    /// Awaits queue capacity and enqueues an owned data frame: no copy and no
+    /// retry loop under backpressure, unlike repeated `try_send` calls.
+    pub async fn send(&mut self, message: Vec<u8>) -> Result<(), TransportError> {
+        let sender = self.writable_sender(false)?;
+        Self::send_owned(sender, message, self.budget.max_frame_bytes).await
+    }
+
+    /// Control-queue twin of [`Self::send`].
+    pub async fn send_control(&mut self, message: Vec<u8>) -> Result<(), TransportError> {
+        let sender = self.writable_sender(true)?;
+        Self::send_owned(sender, message, self.budget.max_frame_bytes).await
+    }
+
+    /// Awaits the next data frame. A finished reader yields its terminal error
+    /// (or `Closed`), exactly like `try_receive` after the queue drains.
+    pub async fn receive(&mut self) -> Result<Vec<u8>, TransportError> {
+        self.ensure_readable()?;
+        match self.receive_rx.recv().await {
+            Some(message) => Ok(message),
+            None => Err(self.terminal_or(read_closed())),
+        }
+    }
+
+    /// Control-queue twin of [`Self::receive`].
+    pub async fn receive_control(&mut self) -> Result<Vec<u8>, TransportError> {
+        self.ensure_readable()?;
+        match self.control_receive_rx.recv().await {
+            Some(message) => Ok(message),
+            None => Err(self.terminal_or(read_closed())),
+        }
+    }
+
+    /// Half-closes the write side and waits until every queued frame has been
+    /// written and the transport shut down. Use before dropping a connection
+    /// whose last reply must reach the peer (dropping aborts the writer).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the terminal-error lock is poisoned.
+    pub async fn close_and_flush(&mut self) -> Result<(), TransportError> {
+        self.close_write()?;
+        if !self.writer.is_finished() {
+            let _ = (&mut self.writer).await;
+        }
+        match self
+            .terminal_error
+            .lock()
+            .expect("transport terminal lock")
+            .clone()
+        {
+            Some(error) if error.kind != TransportErrorKind::Closed => Err(error),
+            _ => Ok(()),
+        }
+    }
+
+    fn writable_sender(&self, control: bool) -> Result<mpsc::Sender<Vec<u8>>, TransportError> {
+        if self.write_closed {
+            return Err(write_closed());
+        }
+        let sender = if control {
+            self.control_tx.as_ref()
+        } else {
+            self.data_tx.as_ref()
+        };
+        sender.cloned().ok_or_else(write_closed)
+    }
+
+    fn ensure_readable(&self) -> Result<(), TransportError> {
+        if self.read_closed {
+            return Err(read_closed());
+        }
+        Ok(())
+    }
+
+    async fn send_owned(
+        sender: mpsc::Sender<Vec<u8>>,
+        message: Vec<u8>,
+        max_frame_bytes: usize,
+    ) -> Result<(), TransportError> {
+        if message.len() > max_frame_bytes {
+            return Err(TransportError::new(
+                TransportErrorKind::MessageTooLarge,
+                "message exceeds transport frame limit",
+            ));
+        }
+        sender.send(message).await.map_err(|_| write_closed())
+    }
+
     fn terminal_or(&self, fallback: TransportError) -> TransportError {
         self.terminal_error
             .lock()
@@ -296,7 +384,7 @@ impl Drop for FramedConnection {
 }
 
 async fn write_loop<W>(
-    mut writer: W,
+    writer: W,
     mut control_rx: mpsc::Receiver<Vec<u8>>,
     mut data_rx: mpsc::Receiver<Vec<u8>>,
     budget: TransportBudget,
@@ -304,6 +392,9 @@ async fn write_loop<W>(
 ) where
     W: AsyncWrite + Unpin,
 {
+    // Coalesce small frames into fewer syscalls: frames are buffered and the
+    // buffer is flushed once both queues are drained (or on shutdown).
+    let mut writer = tokio::io::BufWriter::with_capacity(WRITE_BUFFER_BYTES, writer);
     let mut control_open = true;
     let mut data_open = true;
     loop {
@@ -338,12 +429,29 @@ async fn write_loop<W>(
         } else {
             budget.data_bytes_per_second
         };
+        // Never hold buffered frames across a bandwidth throttle sleep.
+        if rate.is_some()
+            && let Err(error) = writer.flush().await
+        {
+            set_terminal_error(&terminal_error, io_error(error));
+            return;
+        }
         if let Err(error) = write_frame(&mut writer, &message, rate).await {
+            set_terminal_error(&terminal_error, io_error(error));
+            return;
+        }
+        // Control frames are latency-sensitive and go out at once; data frames
+        // coalesce until both queues are drained.
+        if (control || (control_rx.is_empty() && data_rx.is_empty()))
+            && let Err(error) = writer.flush().await
+        {
             set_terminal_error(&terminal_error, io_error(error));
             return;
         }
     }
 }
+
+const WRITE_BUFFER_BYTES: usize = 64 * 1024;
 
 async fn write_frame<W>(writer: &mut W, message: &[u8], rate: Option<u64>) -> io::Result<()>
 where
@@ -353,8 +461,7 @@ where
     let length = u32::try_from(message.len())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "frame too large"))?;
     writer.write_u32(length).await?;
-    writer.write_all(message).await?;
-    writer.flush().await
+    writer.write_all(message).await
 }
 
 async fn read_loop<R>(
@@ -441,6 +548,10 @@ fn io_error(error: io::Error) -> TransportError {
 
 fn write_closed() -> TransportError {
     TransportError::new(TransportErrorKind::Closed, "transport write side is closed")
+}
+
+fn read_closed() -> TransportError {
+    TransportError::new(TransportErrorKind::Closed, "transport read side is closed")
 }
 
 fn set_terminal_error(target: &Mutex<Option<TransportError>>, error: TransportError) {

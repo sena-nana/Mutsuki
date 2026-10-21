@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use mutsuki_runtime_contracts::{
     DomainEvent, ERR_RUNNER_PURITY_VIOLATION, ERR_TASK_DUPLICATE, ERR_TASK_NOT_FOUND,
     EffectRequest, ResourceRef, RunnerDescriptor, RunnerPurity, RunnerResult, RunnerStatus,
-    RuntimeEventKind, ScalarValue, StateDelta, Task, TaskAwait, TaskLease, TaskStatus, ValueRef,
-    VersionExpectation,
+    RuntimeEventKind, ScalarValue, StateDelta, Task, TaskAwait, TaskLease, TaskPayload, TaskStatus,
+    ValueRef, VersionExpectation,
 };
 
 use crate::RuntimeResult;
@@ -383,7 +383,9 @@ fn commit_task(source_task_id: &str, index: usize, delta: StateDelta, generation
     let mut task = Task::new(
         format!("{source_task_id}:commit:{index}"),
         "core.commit",
-        serde_json::to_value(delta).expect("StateDelta serializes"),
+        // Kernel tasks stay in-process: keep the typed delta (JSON is only
+        // materialized if a control-plane view asks for it).
+        TaskPayload::from_local(delta),
     );
     task.registry_generation = generation;
     task
@@ -393,7 +395,7 @@ fn event_task(source_task_id: &str, event: DomainEvent, generation: u64) -> Task
     let mut task = Task::new(
         format!("{source_task_id}:event:{}", event.event_id),
         "core.event.append",
-        serde_json::to_value(event).expect("DomainEvent serializes"),
+        TaskPayload::from_local(event),
     );
     task.correlation_id = Some(source_task_id.to_string());
     task.registry_generation = generation;

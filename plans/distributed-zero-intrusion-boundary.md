@@ -26,7 +26,10 @@ CoreRuntime <- ordinary HostRuntime
 - Core 只依赖 contracts，并拥有 TaskPool、TaskLease、RunnerRegistry、ResultRouter、资源描述符、状态与事件事实。
 - 普通 Host 依赖 Core/contracts，提供本机 Runtime、插件装配、执行器监督和本地控制面。
 - Distributed Host 位于普通 Host 之外，只能作为普通 Host Runtime 的客户端或适配器；Core、contracts、插件 SDK 和普通 Host 不反向依赖它。
-- 节点连接、发现、认证会话和 transport 可由 `MutsukiLink` 提供，但 Core、插件 SDK、ServiceHost 和业务插件不直接依赖或感知 Link。
+- 节点连接、发现、认证会话和 transport 可由 `MutsukiLink` 提供，但 Core、插件 SDK、ServiceHost
+  运行时本体和业务插件不直接依赖或感知 Link。ServiceHost 本地控制面的 Link 入口只经显式
+  集成包 `mutsuki-service-link`（仅 `mutsuki-link-local`），不携带 QUIC/远程 transport、
+  集群类型或认证信任面。
 
 ## Distributed Host 可使用的普通 Host 表面
 

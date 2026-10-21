@@ -48,6 +48,31 @@ impl LocalConnection {
     pub fn peer_credentials(&self) -> Option<&LocalPeerCredentials> {
         self.peer_credentials.as_ref()
     }
+
+    /// Awaits send capacity; see [`FramedConnection::send`].
+    pub async fn send(&mut self, message: Vec<u8>) -> Result<(), TransportError> {
+        self.inner.send(message).await
+    }
+
+    /// Awaits control send capacity; see [`FramedConnection::send_control`].
+    pub async fn send_control(&mut self, message: Vec<u8>) -> Result<(), TransportError> {
+        self.inner.send_control(message).await
+    }
+
+    /// Awaits the next data frame; see [`FramedConnection::receive`].
+    pub async fn receive(&mut self) -> Result<Vec<u8>, TransportError> {
+        self.inner.receive().await
+    }
+
+    /// Flushes queued frames and half-closes; see [`FramedConnection::close_and_flush`].
+    pub async fn close_and_flush(&mut self) -> Result<(), TransportError> {
+        self.inner.close_and_flush().await
+    }
+
+    /// Awaits the next control frame; see [`FramedConnection::receive_control`].
+    pub async fn receive_control(&mut self) -> Result<Vec<u8>, TransportError> {
+        self.inner.receive_control().await
+    }
 }
 
 impl Connection for LocalConnection {

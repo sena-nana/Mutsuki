@@ -120,16 +120,23 @@ fn task_handle(task: &mutsuki_runtime_contracts::Task) -> TaskHandle {
     }
 }
 
-fn running_batch_count_for_runner(
+/// Distinct running batches per runner, computed once per scheduling pass so
+/// the per-runner decision does not rescan every running task.
+fn running_batch_counts(
     running_batches_by_task: &BTreeMap<TaskId, RunningBatch>,
-    runner_id: &RunnerId,
-) -> usize {
-    running_batches_by_task
-        .values()
-        .filter(|task| &task.runner_id == runner_id)
-        .map(|task| task.batch_id.clone())
-        .collect::<BTreeSet<_>>()
-        .len()
+) -> std::collections::HashMap<RunnerId, usize> {
+    let mut batches: std::collections::HashMap<&RunnerId, BTreeSet<&str>> =
+        std::collections::HashMap::new();
+    for task in running_batches_by_task.values() {
+        batches
+            .entry(&task.runner_id)
+            .or_default()
+            .insert(task.batch_id.as_str());
+    }
+    batches
+        .into_iter()
+        .map(|(runner_id, batch_ids)| (runner_id.clone(), batch_ids.len()))
+        .collect()
 }
 
 pub(super) fn schedule_ready(
@@ -171,6 +178,7 @@ pub(super) fn schedule_ready_at(
             *demand.entry(lane).or_default() += count;
         }
     });
+    let running_batches_by_runner = running_batch_counts(running_batches_by_task);
     let mut domain_reservations: BTreeMap<String, usize> = BTreeMap::new();
     let mut async_reservations = 0usize;
     let (report, dispatches) = core.claim_ready_dispatches_at_step(
@@ -248,8 +256,10 @@ pub(super) fn schedule_ready_at(
             let pool_slots = pool_slots.saturating_sub(*reservations);
             pool_capacity.queued_batches =
                 pool_capacity.queued_batches.saturating_add(*reservations);
-            let running_batches =
-                running_batch_count_for_runner(running_batches_by_task, &descriptor.runner_id);
+            let running_batches = running_batches_by_runner
+                .get(&descriptor.runner_id)
+                .copied()
+                .unwrap_or(0);
             let mut decision = decide_schedule(
                 descriptor,
                 load,
@@ -324,9 +334,17 @@ pub(super) fn schedule_ready_at(
         let wall_clock_deadline_at = limits
             .wall_clock_deadline
             .map(|deadline| Instant::now() + deadline);
-        let tasks = dispatch
-            .batch
-            .row_payload_tasks()
+        // Only handle fields are needed here: borrow local rows instead of
+        // cloning every Task (and its payload) on the scheduling hot path.
+        let handles = (0..dispatch.batch.payload.row_count())
+            .map(|index| {
+                dispatch
+                    .batch
+                    .payload
+                    .task_at(index)
+                    .map(|task| task_handle(&task))
+            })
+            .collect::<Result<Vec<_>, _>>()
             .map_err(mutsuki_runtime_core::RuntimeFailure::new)?;
         if dispatch.target.is_async() {
             let Some(executor) = config.async_executor.as_ref() else {
@@ -353,9 +371,11 @@ pub(super) fn schedule_ready_at(
                     "async executor event sink is not configured",
                 ));
             };
-            let payload_bytes = serde_json::to_vec(&dispatch.batch.payload)
-                .map_err(|error| host_failure("host.async_executor.payload", error.to_string()))?
-                .len();
+            // Count wire bytes without allocating the encoded payload.
+            let payload_bytes = mutsuki_runtime_contracts::compact_json_len(
+                &dispatch.batch.payload,
+            )
+            .map_err(|error| host_failure("host.async_executor.payload", error.to_string()))?;
             let invocation = AsyncInvocation {
                 invocation_id: invocation_id.clone(),
                 batch_id: batch_id.clone(),
@@ -406,10 +426,9 @@ pub(super) fn schedule_ready_at(
                     continue;
                 }
             };
-            for task in tasks {
-                let handle = task_handle(&task);
+            for handle in handles {
                 running_batches_by_task.insert(
-                    task.task_id.clone(),
+                    handle.task_id.clone(),
                     RunningBatch {
                         runner_id: runner_id.clone(),
                         invocation_id: invocation_id.clone(),
@@ -464,10 +483,9 @@ pub(super) fn schedule_ready_at(
             }
             continue;
         }
-        for task in tasks {
-            let handle = task_handle(&task);
+        for handle in handles {
             running_batches_by_task.insert(
-                task.task_id.clone(),
+                handle.task_id.clone(),
                 RunningBatch {
                     runner_id: runner_id.clone(),
                     invocation_id: invocation_id.clone(),
@@ -546,12 +564,8 @@ mod tests {
             running_batch("other.runner", "batch-3", "task-d"),
         );
 
-        assert_eq!(
-            running_batch_count_for_runner(
-                &running_batches_by_task,
-                &RunnerId::from("batch.runner")
-            ),
-            2
-        );
+        let counts = running_batch_counts(&running_batches_by_task);
+        assert_eq!(counts.get(&RunnerId::from("batch.runner")), Some(&2));
+        assert_eq!(counts.get(&RunnerId::from("other.runner")), Some(&1));
     }
 }
