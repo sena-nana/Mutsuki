@@ -16,9 +16,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use mutsuki_service_control::{
-    ControlCommand, ControlErrorBody, ControlErrorCode, ControlHandler, ControlRequest,
-    ControlResponse, ControlResult, CoreDrainResponse, EventSourceStatus, HealthReport,
-    HostMetrics, IdParam, LogTailParams, LogTailResponse, PluginDeploymentClearParam,
+    ControlCommand, ControlErrorBody, ControlErrorCode, ControlHandler, ControlMethod,
+    ControlRequest, ControlResponse, ControlResult, CoreDrainResponse, EventSourceStatus,
+    HealthReport, HostMetrics, IdParam, LogTailParams, LogTailResponse, PluginDeploymentClearParam,
     PluginDeploymentParam, PluginListResponse, PluginReloadResponse, RunnerStatus,
     RuntimeStatisticsView, ServiceStatus, TaskEventPage, TaskEventsAfterParam, TaskSnapshot,
     TaskSubmitBatchParam, TaskSubmitBatchResponse,
@@ -28,8 +28,7 @@ use mutsuki_web_extension_api::{
     WebExtensionDescriptor, materialize_bundled_assets,
 };
 use mutsuki_web_protocol::{AssetEntry, ExtensionManifest, WebFrontendAssets};
-use serde::Serialize;
-use serde::de::DeserializeOwned;
+use serde::Deserialize;
 use serde_json::Value;
 
 pub const PLUGIN_ID: &str = "control";
@@ -92,21 +91,6 @@ macro_rules! unit_control_result {
             ControlResult::$variant => Ok(()),
             other => Err(unexpected_control_result(stringify!($variant), &other)),
         }
-    };
-}
-
-macro_rules! register_control_rpc {
-    ($ctx:expr, $caller:expr, $method:literal, $cap:expr, $params:ident, |$rpc:ident| $body:expr) => {
-        $ctx.register_async_contextual($method, {
-            let caller = $caller.clone();
-            move |context, $params| {
-                let $rpc = caller.clone();
-                async move {
-                    context.require($cap)?;
-                    $body
-                }
-            }
-        });
     };
 }
 
@@ -309,212 +293,32 @@ impl WebExtension for ControlWebExtension {
     }
 
     fn register_rpc(&self, ctx: &mut RpcRegistry) -> Result<(), ExtensionError> {
-        let caller = self.caller.clone();
-        register_control_rpc!(
-            ctx,
-            caller,
-            "health",
-            CAPABILITY_RUNTIME_READ,
-            _params,
-            |caller| encode_web(caller.health().await?)
-        );
-        register_control_rpc!(
-            ctx,
-            caller,
-            "service_status",
-            CAPABILITY_RUNTIME_READ,
-            _params,
-            |caller| encode_web(caller.service_status().await?)
-        );
-        register_control_rpc!(
-            ctx,
-            caller,
-            "plugin_list",
-            CAPABILITY_RUNTIME_READ,
-            _params,
-            |caller| encode_web(caller.plugin_list().await?)
-        );
-        register_control_rpc!(
-            ctx,
-            caller,
-            "runner_list",
-            CAPABILITY_RUNTIME_READ,
-            _params,
-            |caller| encode_web(caller.runner_list().await?)
-        );
-        register_control_rpc!(
-            ctx,
-            caller,
-            "event_source_list",
-            CAPABILITY_RUNTIME_READ,
-            _params,
-            |caller| encode_web(caller.event_source_list().await?)
-        );
-        register_control_rpc!(
-            ctx,
-            caller,
-            "runtime_statistics",
-            CAPABILITY_RUNTIME_READ,
-            _params,
-            |caller| encode_web(caller.runtime_statistics().await?)
-        );
-        register_control_rpc!(
-            ctx,
-            caller,
-            "host_metrics",
-            CAPABILITY_RUNTIME_READ,
-            _params,
-            |caller| encode_web(caller.host_metrics().await?)
-        );
-        register_control_rpc!(
-            ctx,
-            caller,
-            "log_tail",
-            CAPABILITY_RUNTIME_READ,
-            params,
-            |caller| encode_web(
-                caller
-                    .log_tail(decode_control_params::<LogTailParams>(&params)?)
-                    .await?
-            )
-        );
-        register_control_rpc!(
-            ctx,
-            caller,
-            "task_list",
-            CAPABILITY_RUNTIME_READ,
-            _params,
-            |caller| encode_web(caller.task_list().await?)
-        );
-        register_control_rpc!(
-            ctx,
-            caller,
-            "task_events_after",
-            CAPABILITY_RUNTIME_READ,
-            params,
-            |caller| encode_web(
-                caller
-                    .task_events_after(decode_control_params::<TaskEventsAfterParam>(&params)?)
-                    .await?
-            )
-        );
-        register_control_rpc!(
-            ctx,
-            caller,
-            "plugin_reload",
-            CAPABILITY_RUNTIME_WRITE,
-            _params,
-            |caller| encode_web(caller.plugin_reload().await?)
-        );
-        register_control_rpc!(
-            ctx,
-            caller,
-            "plugin_deployment_set",
-            CAPABILITY_RUNTIME_WRITE,
-            params,
-            |caller| encode_web(
-                caller
-                    .plugin_deployment_set(decode_control_params::<PluginDeploymentParam>(&params)?)
-                    .await?
-            )
-        );
-        register_control_rpc!(
-            ctx,
-            caller,
-            "plugin_deployment_clear",
-            CAPABILITY_RUNTIME_WRITE,
-            params,
-            |caller| encode_web(
-                caller
-                    .plugin_deployment_clear(decode_control_params::<PluginDeploymentClearParam>(
-                        &params,
-                    )?)
-                    .await?
-            )
-        );
-        register_control_rpc!(
-            ctx,
-            caller,
-            "runner_restart",
-            CAPABILITY_RUNTIME_WRITE,
-            params,
-            |caller| {
-                caller
-                    .runner_restart(decode_control_params::<IdParam>(&params)?)
-                    .await?;
-                Ok(Value::Null)
-            }
-        );
-        register_control_rpc!(
-            ctx,
-            caller,
-            "runner_stop",
-            CAPABILITY_RUNTIME_WRITE,
-            params,
-            |caller| {
-                caller
-                    .runner_stop(decode_control_params::<IdParam>(&params)?)
-                    .await?;
-                Ok(Value::Null)
-            }
-        );
-        register_control_rpc!(
-            ctx,
-            caller,
-            "event_source_restart",
-            CAPABILITY_RUNTIME_WRITE,
-            params,
-            |caller| {
-                caller
-                    .event_source_restart(decode_control_params::<IdParam>(&params)?)
-                    .await?;
-                Ok(Value::Null)
-            }
-        );
-        register_control_rpc!(
-            ctx,
-            caller,
-            "task_submit_batch",
-            CAPABILITY_RUNTIME_WRITE,
-            params,
-            |caller| encode_web(
-                caller
-                    .task_submit_batch(decode_control_params::<TaskSubmitBatchParam>(&params)?)
-                    .await?
-            )
-        );
-        register_control_rpc!(
-            ctx,
-            caller,
-            "task_cancel",
-            CAPABILITY_RUNTIME_WRITE,
-            params,
-            |caller| {
-                caller
-                    .task_cancel(decode_control_params::<IdParam>(&params)?)
-                    .await?;
-                Ok(Value::Null)
-            }
-        );
-        register_control_rpc!(
-            ctx,
-            caller,
-            "core_begin_drain",
-            CAPABILITY_RUNTIME_WRITE,
-            _params,
-            |caller| encode_web(caller.core_begin_drain().await?)
-        );
-        register_control_rpc!(
-            ctx,
-            caller,
-            "service_shutdown",
-            CAPABILITY_RUNTIME_WRITE,
-            _params,
-            |caller| {
-                caller.service_shutdown().await?;
-                Ok(Value::Null)
-            }
-        );
+        // Every control command is exposed under its wire name; reads need `runtime.read` and
+        // mutating commands `runtime.write`, exactly as `ControlMethod::is_mutating` classifies
+        // them. `health` stays as the console's historical alias of `health_check`.
+        let methods = ControlMethod::ALL
+            .into_iter()
+            .map(|method| (method_name(method), method))
+            .chain(std::iter::once((
+                "health".to_owned(),
+                ControlMethod::HealthCheck,
+            )));
+        for (name, method) in methods {
+            let caller = self.caller.clone();
+            let capability = if method.is_mutating() {
+                CAPABILITY_RUNTIME_WRITE
+            } else {
+                CAPABILITY_RUNTIME_READ
+            };
+            ctx.register_async_contextual(&name, move |context, params| {
+                let caller = caller.clone();
+                async move {
+                    context.require(capability)?;
+                    let command = decode_control_command(method, &params)?;
+                    encode_control_result(caller.invoke(command).await?)
+                }
+            });
+        }
         Ok(())
     }
 
@@ -527,15 +331,36 @@ impl WebExtension for ControlWebExtension {
     }
 }
 
-fn decode_control_params<T: DeserializeOwned>(params: &Value) -> Result<T, ExtensionError> {
-    // Deserialize from the borrowed tree; no deep clone of the request params.
-    T::deserialize(params)
-        .map_err(|error| ExtensionError::Registration(format!("invalid control request: {error}")))
+fn method_name(method: ControlMethod) -> String {
+    match serde_json::to_value(method) {
+        Ok(Value::String(name)) => name,
+        _ => unreachable!("ControlMethod serializes as its snake_case name"),
+    }
 }
 
-fn encode_web<T: Serialize>(value: T) -> Result<Value, ExtensionError> {
-    serde_json::to_value(value)
-        .map_err(|error| ExtensionError::Registration(format!("encode control response: {error}")))
+/// Builds the typed command for `method` from RPC params. Commands without parameters ignore
+/// whatever the console sends, matching their unit variants.
+fn decode_control_command(
+    method: ControlMethod,
+    params: &Value,
+) -> Result<ControlCommand, ExtensionError> {
+    let operation = Value::String(method_name(method));
+    let with_params = serde_json::json!({ "operation": operation, "request": params });
+    match ControlCommand::deserialize(&with_params) {
+        Ok(command) => Ok(command),
+        Err(error) => ControlCommand::deserialize(&serde_json::json!({ "operation": operation }))
+            .map_err(|_| ExtensionError::Registration(format!("invalid control request: {error}"))),
+    }
+}
+
+/// The console receives the result body itself; unit results become `null`.
+fn encode_control_result(result: ControlResult) -> Result<Value, ExtensionError> {
+    let mut envelope = serde_json::to_value(result).map_err(|error| {
+        ExtensionError::Registration(format!("encode control response: {error}"))
+    })?;
+    Ok(envelope
+        .get_mut("response")
+        .map_or(Value::Null, Value::take))
 }
 
 fn manifest(assets: Vec<AssetEntry>) -> ExtensionManifest {

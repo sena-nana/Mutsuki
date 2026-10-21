@@ -119,6 +119,35 @@ pub enum ControlMethod {
 }
 
 impl ControlMethod {
+    /// Every method, in opcode order. Transports that expose the whole control surface (the Web
+    /// console) iterate this instead of keeping their own list.
+    pub const ALL: [Self; 24] = [
+        Self::ServiceStatus,
+        Self::ServiceShutdown,
+        Self::CoreStatus,
+        Self::PluginList,
+        Self::PluginReload,
+        Self::PluginDeploymentSet,
+        Self::PluginDeploymentClear,
+        Self::RunnerList,
+        Self::RunnerRestart,
+        Self::RunnerStop,
+        Self::EventSourceList,
+        Self::EventSourceRestart,
+        Self::CoreBeginDrain,
+        Self::TaskSubmitBatch,
+        Self::TaskList,
+        Self::TaskCancel,
+        Self::TaskOutcome,
+        Self::TaskEventsAfter,
+        Self::HealthCheck,
+        Self::LogTail,
+        Self::TaskOutcomesBatch,
+        Self::TaskWait,
+        Self::RuntimeStatistics,
+        Self::HostMetrics,
+    ];
+
     pub const fn opcode(self) -> u16 {
         self as u16
     }
@@ -761,6 +790,20 @@ pub struct LogTailResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn all_lists_every_method_that_has_an_opcode() {
+        let listed = ControlMethod::ALL
+            .iter()
+            .map(|method| method.opcode())
+            .collect::<std::collections::BTreeSet<_>>();
+        let known = (0..=u16::MAX)
+            .filter_map(ControlMethod::from_opcode)
+            .map(ControlMethod::opcode)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(listed.len(), ControlMethod::ALL.len(), "ALL has duplicates");
+        assert_eq!(listed, known);
+    }
 
     #[test]
     fn host_metrics_rss_remains_optional_across_serialization() {

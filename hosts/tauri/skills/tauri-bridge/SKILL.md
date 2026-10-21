@@ -10,6 +10,7 @@ Use this for `crates/tauri-plugin-mutsuki` and `crates/mutsuki-tauri-bridge`.
 ## Boundary
 
 - Frontend calls protocols, not plugin internals.
+- A DTO change is not done until `tests/ts_contract.rs` covers it and `@mutsuki/tauri-client` typechecks against the regenerated fixtures (see the frontend-sdk skill).
 - Commands convert frontend requests into Core tasks, resource operations, approvals or plugin control operations.
 - Events carry task/log/trace/plugin/runner/resource/approval messages to WebView.
 - Do not put business UI, React/Vue components or product-specific route logic here.

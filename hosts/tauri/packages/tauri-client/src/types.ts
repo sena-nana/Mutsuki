@@ -29,8 +29,10 @@ export interface FrontendTaskRequest<TPayload = JsonValue> {
 
 export interface FrontendTaskResult {
   task_id: string;
-  status?: string;
-  outcome?: JsonValue;
+  /** `null` until the task has been admitted. */
+  status: string | null;
+  /** `null` until the task reaches a terminal state. */
+  outcome: JsonValue | null;
   events: RuntimeEvent[];
   events_dropped: number;
   events_truncated: boolean;
@@ -56,6 +58,7 @@ export interface RuntimeEvent {
 export type SpanStatus = "ok" | "error";
 
 export interface TraceSpan {
+  sequence: number;
   trace_id: string;
   span_id: string;
   parent_span_id?: string | null;

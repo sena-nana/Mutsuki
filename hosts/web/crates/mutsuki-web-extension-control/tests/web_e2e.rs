@@ -318,3 +318,33 @@ async fn control_task_debug_and_lifecycle_methods() {
 
     host.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn every_control_command_is_exposed_with_its_mutation_capability() {
+    // An anonymous session is read-only: mutating commands are refused before the handler runs.
+    let handler = Arc::new(FixtureControlHandler::default());
+    let mut read_only = start_with_local_admin(handler.clone(), false).await;
+    let addr = read_only.listen_addr().unwrap().to_string();
+    let denied = ws_rpc_with_token(
+        &addr,
+        "task_cancel",
+        json!({"id": "demo.task"}),
+        &["runtime.read"],
+        None,
+    )
+    .await
+    .unwrap_err();
+    assert!(denied.contains("capability denied"), "{denied}");
+    assert!(handler.mutations.lock().unwrap().is_empty());
+    read_only.stop().await.unwrap();
+
+    // `core_status` used to be missing from the console surface. It now reaches the handler,
+    // which here is a fixture that does not implement it.
+    let mut host = start(Arc::new(FixtureControlHandler::default())).await;
+    let addr = host.listen_addr().unwrap().to_string();
+    let reached = ws_rpc(&addr, "core_status", read_params(), &["runtime.read"])
+        .await
+        .unwrap_err();
+    assert!(reached.contains("unsupported"), "{reached}");
+    host.stop().await.unwrap();
+}

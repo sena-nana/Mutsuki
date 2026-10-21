@@ -6,6 +6,9 @@ description: Change ServiceHost local control requests, responses, IPC transport
 # Control API
 
 - Keep the control plane local by default and token-authenticated; debug TCP requires explicit enablement.
+- `mutsuki-service-control` (`ControlCommand` / `ControlResult` / `ControlMethod`) is the contract; there is no
+  separate hand-written schema. Add a method there once: the Web console exposes every
+  `ControlMethod::ALL` entry automatically and derives `runtime.read`/`runtime.write` from `is_mutating`.
 - Expose service/core/plugin/runner/task/log/health control only, not a parallel business runtime.
 - Use the public `ControlClient` with endpoint, transport and token; never require consumers to load `ServiceConfig`.
   Server-side code that already owns a `ServiceConfig` builds client settings with
