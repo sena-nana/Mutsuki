@@ -89,3 +89,15 @@ order the changes land on `main`.
 - The re-exports of `QqGatewayControlHandle`/`QqGatewayHealthHandle`/`QqGatewayHealthSnapshot`/
   `QqInboundObserveHandle` from the core integration crate are removed; import them from
   `mutsuki_plugin_bot_adapter_qqbot::gateway`.
+
+## Product owner registry and reload bindings
+
+- `products/bot` derives every owner-specific list from `owners.rs::product_owners()`. Adding a
+  platform owner no longer needs edits in five places.
+- Fixed: a hot reload of the `mutsuki.product` document no longer disables
+  `mutsuki.std.resource.sqlite` and no longer reloads `mutsuki.std.image.render` without its fonts;
+  bootstrap and reload both compile selections through `compile_instance_bindings`.
+- The image-render fonts are embedded in the binary and written to `<instance>/fonts` (including
+  `OFL.txt`); a moved binary or an external product built from a git dependency works without
+  the source tree.
+- `TargetedPluginReloadLifecycle::new` takes the instance root as its second argument.

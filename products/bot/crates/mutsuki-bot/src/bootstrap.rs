@@ -162,8 +162,7 @@ where
         .map_err(|error| error.to_string())?;
     service.plugins.configured = configured_product_selections(&product, owner_selections)
         .map_err(|error| error.to_string())?;
-    apply_lilia_image_render_fonts(&mut service, root)?;
-    ensure_sqlite_resource_plugin(&mut service, root)?;
+    compile_instance_bindings(&mut service.plugins.configured, root)?;
     let agent_connections = AgentConnectionRegistry::new();
     Ok(SingleInstanceProduct {
         service,
@@ -202,10 +201,22 @@ fn service_seed(root: &Path) -> ServiceConfig {
 }
 
 const IMAGE_RENDER_PLUGIN_ID: &str = "mutsuki.std.image.render";
-const LILIA_FONT_FILES: &[&str] = &[
-    "noto-sans-sc-chinese-simplified-400-normal.woff2",
-    "noto-sans-sc-chinese-simplified-500-normal.woff2",
-    "noto-sans-sc-chinese-simplified-600-normal.woff2",
+/// Image-render fonts compiled into the binary, so a moved binary or an external product built
+/// from a git checkout never depends on the source tree.
+const LILIA_FONT_FILES: &[(&str, &[u8])] = &[
+    (
+        "noto-sans-sc-chinese-simplified-400-normal.woff2",
+        include_bytes!("../../../assets/fonts/noto-sans-sc-chinese-simplified-400-normal.woff2"),
+    ),
+    (
+        "noto-sans-sc-chinese-simplified-500-normal.woff2",
+        include_bytes!("../../../assets/fonts/noto-sans-sc-chinese-simplified-500-normal.woff2"),
+    ),
+    (
+        "noto-sans-sc-chinese-simplified-600-normal.woff2",
+        include_bytes!("../../../assets/fonts/noto-sans-sc-chinese-simplified-600-normal.woff2"),
+    ),
+    ("OFL.txt", include_bytes!("../../../assets/fonts/OFL.txt")),
 ];
 
 /// Media resources this product stores are one-shot payloads: a link-card cover
@@ -221,7 +232,21 @@ const MEDIA_RESOURCE_MAX_TOTAL_BYTES: u64 = 512 * 1024 * 1024;
 /// Disabling the selection is the owner's call: the media plugins declare the
 /// provider surface as a hard requirement, so the LoadPlan then fails with a
 /// missing capability instead of silently running without media.
-fn ensure_sqlite_resource_plugin(service: &mut ServiceConfig, root: &Path) -> Result<(), String> {
+/// Applies the instance-bound selection settings the product owns (the media resource database
+/// and the image-render fonts). Bootstrap and hot reload both compile selections through here,
+/// so a reload diffs like against like and never drops a product binding.
+pub(crate) fn compile_instance_bindings(
+    selections: &mut Vec<ConfiguredPluginSelection>,
+    root: &Path,
+) -> Result<(), String> {
+    apply_lilia_image_render_fonts(selections, root)?;
+    ensure_sqlite_resource_plugin(selections, root)
+}
+
+fn ensure_sqlite_resource_plugin(
+    selections: &mut Vec<ConfiguredPluginSelection>,
+    root: &Path,
+) -> Result<(), String> {
     let database_path = root.join("data").join("resources.sqlite");
     let database_path = database_path.to_str().ok_or_else(|| {
         format!(
@@ -236,9 +261,7 @@ fn ensure_sqlite_resource_plugin(service: &mut ServiceConfig, root: &Path) -> Re
             "max_total_bytes": MEDIA_RESOURCE_MAX_TOTAL_BYTES,
         },
     });
-    if let Some(plugin) = service
-        .plugins
-        .configured
+    if let Some(plugin) = selections
         .iter_mut()
         .find(|plugin| plugin.id == mutsuki_plugin_resource_sqlite::PLUGIN_ID)
     {
@@ -285,7 +308,7 @@ fn ensure_sqlite_resource_plugin(service: &mut ServiceConfig, root: &Path) -> Re
         }
         return Ok(());
     }
-    service.plugins.configured.push(ConfiguredPluginSelection {
+    selections.push(ConfiguredPluginSelection {
         id: mutsuki_plugin_resource_sqlite::PLUGIN_ID.into(),
         enabled: true,
         config,
@@ -293,10 +316,11 @@ fn ensure_sqlite_resource_plugin(service: &mut ServiceConfig, root: &Path) -> Re
     Ok(())
 }
 
-fn apply_lilia_image_render_fonts(service: &mut ServiceConfig, root: &Path) -> Result<(), String> {
-    let Some(plugin) = service
-        .plugins
-        .configured
+fn apply_lilia_image_render_fonts(
+    selections: &mut [ConfiguredPluginSelection],
+    root: &Path,
+) -> Result<(), String> {
+    let Some(plugin) = selections
         .iter_mut()
         .find(|plugin| plugin.id == IMAGE_RENDER_PLUGIN_ID)
     else {
@@ -328,10 +352,6 @@ fn apply_lilia_image_render_fonts(service: &mut ServiceConfig, root: &Path) -> R
     Ok(())
 }
 
-fn bundled_lilia_font_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/fonts")
-}
-
 fn install_lilia_fonts(root: &Path) -> Result<Vec<PathBuf>, String> {
     let dest = root.join("fonts");
     std::fs::create_dir_all(&dest).map_err(|error| {
@@ -340,27 +360,23 @@ fn install_lilia_fonts(root: &Path) -> Result<Vec<PathBuf>, String> {
             dest.display()
         )
     })?;
-    let source = bundled_lilia_font_dir();
     let mut files = Vec::with_capacity(LILIA_FONT_FILES.len());
-    for name in LILIA_FONT_FILES {
+    for (name, bytes) in LILIA_FONT_FILES {
         let target = dest.join(name);
-        if !target.is_file() {
-            let from = source.join(name);
-            if !from.is_file() {
-                return Err(format!(
-                    "single_instance.lilia_font_missing: {}",
-                    from.display()
-                ));
-            }
-            std::fs::copy(&from, &target).map_err(|error| {
+        let current = std::fs::metadata(&target)
+            .ok()
+            .map(|metadata| metadata.len());
+        if current != Some(bytes.len() as u64) {
+            std::fs::write(&target, bytes).map_err(|error| {
                 format!(
-                    "single_instance.lilia_font_copy_failed: {} -> {}: {error}",
-                    from.display(),
+                    "single_instance.lilia_font_write_failed: {}: {error}",
                     target.display()
                 )
             })?;
         }
-        files.push(target);
+        if name.ends_with(".woff2") {
+            files.push(target);
+        }
     }
     Ok(files)
 }
@@ -609,7 +625,7 @@ mod tests {
     fn seeded_media_resource_provider_carries_retention_bounds() {
         let root = tempfile::tempdir().unwrap();
         let mut service = ServiceConfig::default();
-        ensure_sqlite_resource_plugin(&mut service, root.path()).unwrap();
+        ensure_sqlite_resource_plugin(&mut service.plugins.configured, root.path()).unwrap();
         let seeded = service
             .plugins
             .configured
@@ -646,7 +662,7 @@ mod tests {
                     "retention": { "max_total_bytes": 1024 }
                 }),
             });
-        ensure_sqlite_resource_plugin(&mut service, root.path()).unwrap();
+        ensure_sqlite_resource_plugin(&mut service.plugins.configured, root.path()).unwrap();
         let selection = &service.plugins.configured[0];
         assert!(
             !selection.enabled,
@@ -678,7 +694,7 @@ mod tests {
                     "font_files": []
                 }),
             });
-        apply_lilia_image_render_fonts(&mut service, root.path()).unwrap();
+        apply_lilia_image_render_fonts(&mut service.plugins.configured, root.path()).unwrap();
         let files = service.plugins.configured[0].config["font_files"]
             .as_array()
             .unwrap();
@@ -850,6 +866,7 @@ mod tests {
             .config
             .set_lifecycle(Arc::new(TargetedPluginReloadLifecycle::new(
                 runtime.handle(),
+                product.root.clone(),
             )));
         let flow_before = runtime
             .host_service::<BotFlowRegistry>(BOT_FLOW_REGISTRY_SERVICE_ID)
@@ -953,6 +970,7 @@ mod tests {
             .config
             .set_lifecycle(Arc::new(TargetedPluginReloadLifecycle::new(
                 runtime.handle(),
+                product.root.clone(),
             )));
         let flow_before = runtime
             .host_service::<BotFlowRegistry>(BOT_FLOW_REGISTRY_SERVICE_ID)

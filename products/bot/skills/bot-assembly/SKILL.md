@@ -21,9 +21,14 @@ description: Assemble the first-party Mutsuki Bot product from external configur
   启动时注册带 `enabled` 开关的字段级 schema（B 站凭据经 Host secret key 引用注入），默认禁用，
   从控制台插件页配置并热加载；`runtime_plugins` 拒绝这些 owner id。
 - 产品始终选择 std HTTP client（`mutsuki.std.io.http_client`，同样禁止写入 `runtime_plugins`）：
-  `response_provider_id` 为媒体 provider，allowlist 是各平台 owner 导出域名（Bilibili `HTTP_DOMAINS`、
-  `WORKSHOP_DOMAINS`、`MIHUASHI_DOMAIN`）的并集，并只把 `BILIBILI_COOKIE` 以 `capture` 授权给
-  `bilibili.com`。新增联网平台插件时同步扩展 allowlist 与 secret grant。
+  `response_provider_id` 为媒体 provider，allowlist 是 `owners.rs` 中各 owner `http_domains` 的并集，
+  secret grant 同样来自 owner（目前只把 `BILIBILI_COOKIE` 以 `capture` 授权给 `bilibili.com`）。
+- `src/owners.rs::product_owners()` 是产品 owner 的唯一清单：provider 注册与恢复、owner selection、
+  `runtime_plugins` 拒绝列表、HTTP allowlist/secret grant、联动重载（`reload_with`）与控制台导航都由它派生。
+  新增平台 owner 只加一条 `ProductOwner` 并在 `lib.rs` 合并其 catalog；禁止再写平行的 id 列表。
+- 实例绑定（媒体资源库 `data/resources.sqlite` 的 retention、image render 字体）只经
+  `compile_instance_bindings` 注入；启动与热重载都编译同一份 selection，热重载不得丢失这些绑定。
+  image render 字体编译进二进制并在首次使用时写到 `<实例>/fonts`，不依赖源码目录。
 - `data/bot/state.sqlite3` 由 owner catalog 共享一个 actor；产品不得再次打开同一文件。单实例备份与 SQLite 耐久性见 `../../docs/instance-backup.md`：停进程后复制（含 `-wal`/`-shm`）；该库为 WAL + `synchronous=NORMAL`，禁止第二进程打开。
 - 主配置只保存 secret key；实际值由 Host 从显式引用且被忽略的专用 secret 文件或环境变量注入。
 - 零插件配置允许启动为空闲 Runtime；未知字段和显式选择后缺失的 capability、plugin、deployment 或 secret 必须结构化失败。

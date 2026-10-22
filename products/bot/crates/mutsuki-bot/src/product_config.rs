@@ -4,40 +4,27 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use mutsuki_agent_service_host_integration::{
-    AGENT_CONNECTIONS_PLUGIN_ID, AgentConnectionsConfig, LOCAL_AGENT_API_KEY,
-    LOCAL_AGENT_API_KEY_FIELD, LOCAL_AGENT_CONFIG_PROVIDER_ID, LOCAL_AGENT_PLUGIN_ID,
-    LocalAgentConfig, LocalAgentConfigProvider, local_agent_config_descriptor,
-    local_agent_config_from_value, local_agent_config_value,
+    AGENT_CONNECTIONS_PLUGIN_ID, AgentConnectionsConfig, LOCAL_AGENT_CONFIG_PROVIDER_ID,
+    LOCAL_AGENT_PLUGIN_ID, local_agent_config_from_value,
 };
 use mutsuki_bot_service_host_integration::{
     BOT_COMMAND_PLUGIN_ID, BOT_INTERACTION_PLUGIN_ID, SANDBOX_SERVICE_ID,
-    link_card_config_descriptor, link_card_config_value,
 };
 use mutsuki_config_service::document::{bool_field, document_object};
 use mutsuki_config_service::{
-    ConfigApplyMode, ConfigConstraints, ConfigContext, ConfigDescriptor, ConfigError, ConfigExpr,
-    ConfigLifecycle, ConfigMutability, ConfigNode, ConfigPersistSink, ConfigPersistTransaction,
-    ConfigPresentation, ConfigProviderId, ConfigProviderRegistry, ConfigRepository, ConfigScope,
-    ConfigSecretMutation, ConfigService, ConfigValue, ConfigValueType, LocalizedText,
-    MapKeyStrategy, MemoryConfigProvider, RestartPolicy, capability,
+    ConfigApplyMode, ConfigConstraints, ConfigDescriptor, ConfigError, ConfigExpr, ConfigLifecycle,
+    ConfigMutability, ConfigNode, ConfigPersistSink, ConfigPersistTransaction, ConfigPresentation,
+    ConfigProviderId, ConfigProviderRegistry, ConfigRepository, ConfigScope, ConfigSecretMutation,
+    ConfigService, ConfigValue, ConfigValueType, LocalizedText, MapKeyStrategy,
+    MemoryConfigProvider, RestartPolicy, capability,
 };
-use mutsuki_plugin_bot_adapter_qqbot::{
-    QQ_CLIENT_SECRET_FIELD, QQ_CLIENT_SECRET_KEY, QQBOT_ADAPTER_PLUGIN_ID, QqBotConfig,
-    qq_config_descriptor, qq_config_from_value, qq_config_value,
-};
-use mutsuki_plugin_bot_agent::{
-    BOT_AGENT_BRIDGE_PLUGIN_ID, BotAgentConfig, bot_agent_config_schema,
-};
-use mutsuki_plugin_bot_bilibili::{
-    BILIBILI_COOKIE_FIELD, BILIBILI_COOKIE_KEY, BilibiliConfig, PLUGIN_ID as BILIBILI_PLUGIN_ID,
-    bilibili_config_descriptor, bilibili_config_from_value, bilibili_config_value,
-};
-use mutsuki_plugin_bot_bilibili_workshop::{PLUGIN_ID as WORKSHOP_PLUGIN_ID, WORKSHOP_DOMAINS};
+use mutsuki_plugin_bot_adapter_qqbot::{QQBOT_ADAPTER_PLUGIN_ID, qq_config_from_value};
+use mutsuki_plugin_bot_agent::{BOT_AGENT_BRIDGE_PLUGIN_ID, BotAgentConfig};
+use mutsuki_plugin_bot_bilibili::{PLUGIN_ID as BILIBILI_PLUGIN_ID, bilibili_config_from_value};
+use mutsuki_plugin_bot_bilibili_workshop::PLUGIN_ID as WORKSHOP_PLUGIN_ID;
 use mutsuki_plugin_bot_event_router::BOT_FLOW_ROUTER_PLUGIN_ID;
-use mutsuki_plugin_bot_mihuashi::{MIHUASHI_DOMAIN, PLUGIN_ID as MIHUASHI_PLUGIN_ID};
-use mutsuki_plugin_io_http_client::{
-    HttpClientConfig, HttpSecretGrant, PLUGIN_ID as HTTP_CLIENT_PLUGIN_ID,
-};
+use mutsuki_plugin_bot_mihuashi::PLUGIN_ID as MIHUASHI_PLUGIN_ID;
+use mutsuki_plugin_io_http_client::{HttpClientConfig, PLUGIN_ID as HTTP_CLIENT_PLUGIN_ID};
 use mutsuki_service_config::{
     ConfiguredPluginSelection, HostSecretStore, PreparedHostSecretTransaction,
 };
@@ -246,7 +233,7 @@ pub fn product_seed_defaults() -> ConfigValue {
 
 /// Builds an owner provider whose secret fields resolve through the Host
 /// secret store under the given `(document field, store key)` pairs.
-fn secret_backed_provider(
+pub(crate) fn secret_backed_provider(
     descriptor: ConfigDescriptor,
     value: ConfigValue,
     secrets: &HostSecretStore,
@@ -273,76 +260,16 @@ pub(crate) async fn register_configured_product_providers(
     service: &Arc<ConfigService>,
     secrets: HostSecretStore,
 ) -> Result<(), ProductConfigError> {
-    let qq_config = QqBotConfig::default();
-    let qq_provider = secret_backed_provider(
-        qq_config_descriptor(QQBOT_ADAPTER_PLUGIN_ID),
-        qq_config_value(false, &qq_config),
-        &secrets,
-        &[(QQ_CLIENT_SECRET_FIELD, QQ_CLIENT_SECRET_KEY)],
-    );
-    service
-        .registry()
-        .register(Arc::new(qq_provider))
-        .map_err(register_error)?;
-
-    let local_config = LocalAgentConfig::default();
-    let local_provider = LocalAgentConfigProvider::new(secret_backed_provider(
-        local_agent_config_descriptor(),
-        local_agent_config_value(false, &local_config),
-        &secrets,
-        &[(LOCAL_AGENT_API_KEY_FIELD, LOCAL_AGENT_API_KEY)],
-    ));
-    service
-        .registry()
-        .register(Arc::new(local_provider))
-        .map_err(register_error)?;
-
-    let bridge_config = BotAgentConfig::default();
-    service
-        .registry()
-        .register(Arc::new(MemoryConfigProvider::new(
-            bot_agent_config_schema(),
-            ConfigValue::from_json(
-                &serde_json::to_value(bridge_config).expect("Bot Agent config serializes"),
-            ),
-            ConfigApplyMode::HotReload,
-        )))
-        .map_err(register_error)?;
-
-    let bilibili_provider = secret_backed_provider(
-        bilibili_config_descriptor(),
-        bilibili_config_value(false, &BilibiliConfig::default()),
-        &secrets,
-        &[(BILIBILI_COOKIE_FIELD, BILIBILI_COOKIE_KEY)],
-    );
-    service
-        .registry()
-        .register(Arc::new(bilibili_provider))
-        .map_err(register_error)?;
-    for (plugin_id, title) in [
-        (WORKSHOP_PLUGIN_ID, "B 站工房"),
-        (MIHUASHI_PLUGIN_ID, "米画师"),
-    ] {
+    let owners = crate::owners::product_owners();
+    for owner in &owners {
         service
             .registry()
-            .register(Arc::new(MemoryConfigProvider::new(
-                link_card_config_descriptor(plugin_id, title),
-                link_card_config_value(false),
-                ConfigApplyMode::HotReload,
-            )))
+            .register((owner.provider)(&secrets))
             .map_err(register_error)?;
     }
-
-    for provider_id in [
-        QQBOT_ADAPTER_PLUGIN_ID,
-        LOCAL_AGENT_CONFIG_PROVIDER_ID,
-        BOT_AGENT_BRIDGE_PLUGIN_ID,
-        BILIBILI_PLUGIN_ID,
-        WORKSHOP_PLUGIN_ID,
-        MIHUASHI_PLUGIN_ID,
-    ] {
+    for owner in &owners {
         service
-            .restore(provider_id, provider_context(provider_id))
+            .restore(owner.provider_id, (owner.context)())
             .await
             .map_err(register_error)?;
     }
@@ -354,18 +281,12 @@ pub(crate) async fn configured_product_owner_selections(
     service: &Arc<ConfigService>,
 ) -> Result<Vec<ConfiguredPluginSelection>, ProductConfigError> {
     let mut selections = Vec::new();
-    for provider_id in [
-        QQBOT_ADAPTER_PLUGIN_ID,
-        LOCAL_AGENT_CONFIG_PROVIDER_ID,
-        BOT_AGENT_BRIDGE_PLUGIN_ID,
-        BILIBILI_PLUGIN_ID,
-        WORKSHOP_PLUGIN_ID,
-        MIHUASHI_PLUGIN_ID,
-    ] {
+    for owner in crate::owners::product_owners() {
+        let provider_id = owner.provider_id;
         let snapshot = service
             .read(
                 provider_id,
-                provider_context(provider_id),
+                (owner.context)(),
                 &[capability::VALUE_READ.into()],
             )
             .await
@@ -434,10 +355,10 @@ pub(crate) fn configured_product_selections(
 /// is the union of the platform hosts, and only Bilibili may send and capture its login
 /// cookie secret.
 fn http_client_selection() -> ConfiguredPluginSelection {
-    let mut domain_allowlist = mutsuki_plugin_bot_bilibili::HTTP_DOMAINS
+    let owners = crate::owners::product_owners();
+    let mut domain_allowlist = owners
         .iter()
-        .chain(WORKSHOP_DOMAINS.iter())
-        .chain([MIHUASHI_DOMAIN].iter())
+        .flat_map(|owner| owner.http_domains.iter())
         .map(|&domain| domain.to_owned())
         .collect::<Vec<_>>();
     domain_allowlist.sort();
@@ -445,11 +366,10 @@ fn http_client_selection() -> ConfiguredPluginSelection {
     let config = HttpClientConfig {
         response_provider_id: MEDIA_RESOURCE_PROVIDER_ID.into(),
         domain_allowlist,
-        secret_grants: vec![HttpSecretGrant {
-            secret_key: mutsuki_plugin_bot_bilibili::BILIBILI_COOKIE_KEY.into(),
-            domains: vec![mutsuki_plugin_bot_bilibili::COOKIE_DOMAIN.into()],
-            capture: true,
-        }],
+        secret_grants: owners
+            .iter()
+            .flat_map(|owner| (owner.http_secret_grants)())
+            .collect(),
         ..HttpClientConfig::default()
     };
     ConfiguredPluginSelection {
@@ -488,23 +408,7 @@ pub(crate) fn runtime_plugin_selections(
         .collect()
 }
 
-pub(crate) fn is_product_owner_plugin(id: &str) -> bool {
-    matches!(
-        id,
-        AGENT_CONNECTIONS_PLUGIN_ID
-            | BOT_FLOW_ROUTER_PLUGIN_ID
-            | SANDBOX_SERVICE_ID
-            | BOT_COMMAND_PLUGIN_ID
-            | BOT_INTERACTION_PLUGIN_ID
-            | QQBOT_ADAPTER_PLUGIN_ID
-            | LOCAL_AGENT_PLUGIN_ID
-            | BOT_AGENT_BRIDGE_PLUGIN_ID
-            | BILIBILI_PLUGIN_ID
-            | WORKSHOP_PLUGIN_ID
-            | MIHUASHI_PLUGIN_ID
-            | HTTP_CLIENT_PLUGIN_ID
-    )
-}
+pub(crate) use crate::owners::is_product_owner_plugin;
 
 pub(crate) fn configured_plugin_selection_from_value(
     provider_id: &str,
@@ -596,14 +500,6 @@ fn persist_error(error: mutsuki_service_config::ConfigError) -> ConfigError {
     }
 }
 
-fn provider_context(provider_id: &str) -> ConfigContext {
-    if provider_id == BOT_AGENT_BRIDGE_PLUGIN_ID {
-        ConfigContext::plugin_instance("default")
-    } else {
-        ConfigContext::global()
-    }
-}
-
 fn register_error(error: ConfigError) -> ProductConfigError {
     ProductConfigError::Register(error.to_string())
 }
@@ -611,11 +507,15 @@ fn register_error(error: ConfigError) -> ProductConfigError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mutsuki_bot_service_host_integration::link_card_config_value;
     use mutsuki_plugin_bot_adapter_qqbot::QQ_RECEIVE_GUILD_FIELD;
     use mutsuki_plugin_bot_adapter_qqbot::{
         DEFAULT_QQBOT_INTENTS, QQ_INTENT_GROUP_AND_C2C, QQ_INTENT_PUBLIC_GUILD,
     };
+    use mutsuki_plugin_bot_adapter_qqbot::{QqBotConfig, qq_config_value};
     use mutsuki_plugin_bot_bilibili::BilibiliBackendConfig;
+    use mutsuki_plugin_bot_bilibili::{BILIBILI_COOKIE_KEY, BilibiliConfig, bilibili_config_value};
+    use mutsuki_plugin_io_http_client::HttpSecretGrant;
 
     fn select(value: ConfigValue) -> ConfiguredPluginSelection {
         configured_plugin_selection_from_value(QQBOT_ADAPTER_PLUGIN_ID, &value, None).unwrap()

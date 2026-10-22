@@ -19,6 +19,8 @@ use mutsuki_bot_web_host_integration::{
     build_console_host_with_agent,
 };
 use mutsuki_plugin_bot_adapter_qqbot::QQBOT_ADAPTER_PLUGIN_ID;
+
+use crate::owners::{ConsoleSection, console_items};
 use mutsuki_plugin_bot_agent::BOT_AGENT_BRIDGE_PLUGIN_ID;
 use mutsuki_plugin_bot_bilibili::PLUGIN_ID as BILIBILI_PLUGIN_ID;
 use mutsuki_plugin_bot_bilibili_workshop::PLUGIN_ID as WORKSHOP_PLUGIN_ID;
@@ -210,6 +212,12 @@ fn config_navigation_groups() -> Vec<ConfigNavigationGroup> {
         provider_id: provider_id.into(),
         label: Some(label.into()),
     };
+    let owner_items = |section| {
+        console_items(section)
+            .into_iter()
+            .map(|(provider_id, label)| item(provider_id, label))
+            .collect::<Vec<_>>()
+    };
     vec![
         ConfigNavigationGroup {
             label: None,
@@ -217,21 +225,17 @@ fn config_navigation_groups() -> Vec<ConfigNavigationGroup> {
         },
         ConfigNavigationGroup {
             label: Some("接入".into()),
-            items: vec![
-                item(QQBOT_ADAPTER_PLUGIN_ID, "QQ 登录"),
-                item(MIHUASHI_PLUGIN_ID, "米画师"),
-                item(BILIBILI_PLUGIN_ID, "B 站"),
-                item(WORKSHOP_PLUGIN_ID, "B 站工房"),
-            ],
+            items: owner_items(ConsoleSection::Access),
         },
         ConfigNavigationGroup {
             label: Some("助手".into()),
-            items: vec![
-                item(LOCAL_AGENT_CONFIG_PROVIDER_ID, "模型"),
-                item(AGENT_CONNECTIONS_PLUGIN_ID, "助手连接"),
-                item(BOT_AGENT_BRIDGE_PLUGIN_ID, "回复"),
-                item(BOT_FLOW_CONFIG_PROVIDER_ID, "流程编排"),
-            ],
+            items: owner_items(ConsoleSection::Assistant)
+                .into_iter()
+                .chain([
+                    item(AGENT_CONNECTIONS_PLUGIN_ID, "助手连接"),
+                    item(BOT_FLOW_CONFIG_PROVIDER_ID, "流程编排"),
+                ])
+                .collect(),
         },
         ConfigNavigationGroup {
             label: Some("服务".into()),

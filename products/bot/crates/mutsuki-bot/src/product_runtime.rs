@@ -64,6 +64,7 @@ pub async fn run_single_instance_product(
             .await?;
     config.set_lifecycle(Arc::new(TargetedPluginReloadLifecycle::new(
         runtime.handle(),
+        root.clone(),
     )));
     let console = match WebConsoleGuard::start(console, &root, &service, &runtime, config).await {
         Ok(console) => console,

@@ -38,6 +38,7 @@ use mutsuki_std_service_host_integration::configured_std_plugin_catalog;
 mod bootstrap;
 mod distribution;
 mod lifecycle;
+mod owners;
 mod product_config;
 #[cfg(feature = "web-console")]
 mod product_runtime;

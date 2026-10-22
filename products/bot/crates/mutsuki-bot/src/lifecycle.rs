@@ -1,12 +1,11 @@
 //! ServiceHost control-backed config lifecycle (real plugin_reload).
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use mutsuki_agent_service_host_integration::LOCAL_AGENT_PLUGIN_ID;
 use mutsuki_config_service::{
     ConfigAction, ConfigError, ConfigLifecycle, ConfigValue, RestartPolicy,
 };
-use mutsuki_plugin_bot_agent::BOT_AGENT_BRIDGE_PLUGIN_ID;
 use mutsuki_service_control::{
     ControlCommand, ControlHandler, ControlRequest, ControlResponse, ControlResult,
 };
@@ -19,11 +18,13 @@ pub struct ControlPluginReloadLifecycle {
 
 pub struct TargetedPluginReloadLifecycle {
     runtime: ServiceRuntimeHandle,
+    root: PathBuf,
 }
 
 impl TargetedPluginReloadLifecycle {
-    pub fn new(runtime: ServiceRuntimeHandle) -> Self {
-        Self { runtime }
+    /// `root` is the instance directory whose bindings bootstrap compiled into the selections.
+    pub fn new(runtime: ServiceRuntimeHandle, root: PathBuf) -> Self {
+        Self { runtime, root }
     }
 
     fn reconfigure(&self, provider_id: &str, value: &ConfigValue) -> Result<(), ConfigError> {
@@ -32,6 +33,7 @@ impl TargetedPluginReloadLifecycle {
             product_reconfigure_candidates(
                 runtime.configured_plugin_selections(),
                 &value.to_json(),
+                &self.root,
             )?
         } else {
             let base = runtime.configured_plugin_selection(provider_id);
@@ -40,13 +42,14 @@ impl TargetedPluginReloadLifecycle {
                 value,
                 base.as_ref(),
             )?];
-            if provider_id == LOCAL_AGENT_PLUGIN_ID {
-                if let Some(bridge) =
-                    runtime.configured_plugin_selection(BOT_AGENT_BRIDGE_PLUGIN_ID)
-                {
-                    selections.push(bridge);
-                }
-            }
+            let co_reloaded = crate::owners::product_owner(provider_id)
+                .map(|owner| owner.reload_with)
+                .unwrap_or_default();
+            selections.extend(
+                co_reloaded
+                    .iter()
+                    .filter_map(|id| runtime.configured_plugin_selection(id)),
+            );
             selections
         };
         if selections.is_empty() {
@@ -63,8 +66,11 @@ impl TargetedPluginReloadLifecycle {
 fn product_reconfigure_candidates(
     current: Vec<mutsuki_service_config::ConfiguredPluginSelection>,
     product: &serde_json::Value,
+    root: &Path,
 ) -> Result<Vec<mutsuki_service_config::ConfiguredPluginSelection>, ConfigError> {
-    let desired = crate::runtime_plugin_selections(product)?;
+    let mut desired = crate::runtime_plugin_selections(product)?;
+    crate::bootstrap::compile_instance_bindings(&mut desired, root)
+        .map_err(|reason| ConfigError::ReloadFailed { reason })?;
     let desired = desired
         .into_iter()
         .map(|selection| (selection.id.clone(), selection))
@@ -108,13 +114,46 @@ mod tests {
             enabled: true,
             config: serde_json::json!({"value": 1}),
         }];
-        let candidates =
-            product_reconfigure_candidates(current, &serde_json::json!({"runtime_plugins": {}}))
-                .unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let candidates = product_reconfigure_candidates(
+            current,
+            &serde_json::json!({"runtime_plugins": {}}),
+            root.path(),
+        )
+        .unwrap()
+        .into_iter()
+        .filter(|candidate| candidate.id == "example.generic")
+        .collect::<Vec<_>>();
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].id, "example.generic");
         assert!(!candidates[0].enabled);
         assert_eq!(candidates[0].config, serde_json::json!({"value": 1}));
+    }
+
+    /// A product hot reload compiles the same instance bindings bootstrap applied, so it neither
+    /// disables the media resource database nor reloads image render without its fonts.
+    #[test]
+    fn product_reload_keeps_instance_bindings_unchanged() {
+        let root = tempfile::tempdir().unwrap();
+        let product = serde_json::json!({"runtime_plugins": {
+            "mutsuki.std.image.render": {"enabled": true, "config": {"output_provider_id": "media"}}
+        }});
+        let mut booted = crate::runtime_plugin_selections(&product).unwrap();
+        crate::bootstrap::compile_instance_bindings(&mut booted, root.path()).unwrap();
+        assert!(
+            booted
+                .iter()
+                .any(|selection| selection.id == mutsuki_plugin_resource_sqlite::PLUGIN_ID)
+        );
+        let fonts = booted
+            .iter()
+            .find(|selection| selection.id == "mutsuki.std.image.render")
+            .and_then(|selection| selection.config["font_files"].as_array().cloned())
+            .unwrap();
+        assert!(!fonts.is_empty());
+
+        let candidates = product_reconfigure_candidates(booted, &product, root.path()).unwrap();
+        assert!(candidates.is_empty(), "{candidates:?}");
     }
 }
 
