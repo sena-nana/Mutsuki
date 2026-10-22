@@ -1,4 +1,5 @@
-//! Headless QQ conversation sandbox used by the Bot Web Console.
+//! Headless conversation sandbox used by the Bot Web Console: simulated conversations on the
+//! sandbox platform and a live projection of every real adapter.
 // Pedantic lints below are inherited from the workspace and still fire in this
 // package. They are listed explicitly so the remaining debt stays auditable and
 // every other pedantic lint keeps failing the build.
@@ -16,7 +17,6 @@
 )]
 
 mod content;
-mod intercept;
 mod service;
 mod types;
 
@@ -24,13 +24,10 @@ pub use content::{
     SandboxContentRef, SandboxRefKind, hash_bytes, normalize_segments, parse_face_id,
     remap_sandbox_media_ids,
 };
-pub use intercept::{
-    SandboxAwareDeliveryGateway, SandboxAwareOpenApiRunner, SandboxInterceptHandle,
-};
 pub use service::{
-    PROACTIVE_SEND_DENIED, REPLY_TARGET_NOT_FOUND, REPLY_TARGET_NOT_USER, REPLY_WINDOW_EXPIRED,
-    SandboxApi, SandboxChangeSubscription, SandboxHistoryStore, SandboxRuntime, SandboxService,
-    UNSUPPORTED_SEGMENT,
+    LIVE_UNAVAILABLE, PROACTIVE_SEND_DENIED, REPLY_TARGET_NOT_FOUND, REPLY_TARGET_NOT_USER,
+    REPLY_WINDOW_EXPIRED, SandboxApi, SandboxChangeSubscription, SandboxHistoryStore,
+    SandboxRuntime, SandboxService, UNSUPPORTED_SEGMENT,
 };
 pub use types::*;
 
@@ -227,7 +224,8 @@ mod tests {
             let ingested = runtime.ingest.lock().expect("ingest");
             assert_eq!(ingested.len(), 1);
             assert_eq!(ingested[0].kind, BotEventKind::MessageCreated);
-            assert_eq!(ingested[0].platform, BotPlatform::QqBot);
+            assert_eq!(ingested[0].platform, BotPlatform::Sandbox);
+            assert_eq!(ingested[0].bot.platform, BotPlatform::Sandbox);
             assert_eq!(ingested[0].message.as_ref().unwrap().plain_text(), "/ping");
             assert_eq!(
                 ingested[0].ext.get("sandbox"),
@@ -332,7 +330,9 @@ mod tests {
         let ingested = runtime.ingest.lock().expect("ingest");
         assert_eq!(ingested.len(), 1);
         assert_eq!(
-            ingested[0].ext.get("qqbot.mentioned_bot"),
+            ingested[0]
+                .ext
+                .get(mutsuki_bot_protocol::BOT_EXT_MENTIONED_BOT),
             Some(&serde_json::Value::Bool(true))
         );
     }
@@ -599,6 +599,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn live_group_title_resolved_before_the_group_is_observed_is_kept() {
+        let service = SandboxService::with_account(DEFAULT_SANDBOX_ACCOUNT_ID);
+        service.set_runtime(runtime());
+        service.apply_live_title("group-1", "读书分享会");
+        service.observe_event(live_group_event("qq-msg-1", "在吗", now_ms()));
+        switch_live(&service).await;
+        assert_eq!(
+            service.snapshot("").await.unwrap().conversations[0].title,
+            "读书分享会"
+        );
+    }
+
+    #[tokio::test]
     async fn live_group_openid_history_title_projects_as_group_chat() {
         let store = Arc::new(MemoryHistoryStore::default());
         let seed = SandboxService::with_history("qq-main", store.clone()).unwrap();
@@ -629,6 +642,91 @@ mod tests {
             restored.snapshot("").await.unwrap().conversations[0].title,
             "读书分享会"
         );
+    }
+
+    #[tokio::test]
+    async fn stored_qq_simulate_history_moves_to_the_sandbox_platform() {
+        let store = Arc::new(MemoryHistoryStore::default());
+        let legacy = SandboxService::with_history("local", store.clone()).unwrap();
+        drop(legacy);
+        {
+            // Rewind the seeded history to the pre-adapter shape: QQ conversations, `local` account.
+            let mut snapshot = store.load().unwrap();
+            for item in &mut snapshot.simulate {
+                item.view.conversation.platform = BotPlatform::QqBot;
+                item.view.conversation.account_id = "local".into();
+                item.view.conversation_id = item.view.conversation.origin_key();
+                for message in &mut item.messages {
+                    message.conversation_id = item.view.conversation_id.clone();
+                }
+            }
+            assert!(
+                snapshot
+                    .simulate
+                    .iter()
+                    .all(|item| item.view.conversation_id.starts_with("qq:"))
+            );
+            store.save(&snapshot).unwrap();
+        }
+
+        let migrated =
+            SandboxService::with_history(DEFAULT_SANDBOX_ACCOUNT_ID, store.clone()).unwrap();
+        let snapshot = migrated.snapshot("").await.unwrap();
+        let group = group(&snapshot);
+        assert_eq!(group.conversation.platform, BotPlatform::Sandbox);
+        assert_eq!(group.account_id, DEFAULT_SANDBOX_ACCOUNT_ID);
+        assert_eq!(group.conversation_id, group.conversation.origin_key());
+        assert!(
+            migrated
+                .messages(&group.conversation_id)
+                .await
+                .unwrap()
+                .iter()
+                .all(|message| message.conversation_id == group.conversation_id)
+        );
+        // The migration is persisted, so the next start reads sandbox conversations directly.
+        assert!(
+            store
+                .load()
+                .unwrap()
+                .simulate
+                .iter()
+                .all(|item| item.view.conversation.platform == BotPlatform::Sandbox)
+        );
+    }
+
+    #[tokio::test]
+    async fn live_projection_ignores_the_sandbox_platform_and_marks_bot_echoes() {
+        let service = SandboxService::with_account(DEFAULT_SANDBOX_ACCOUNT_ID);
+        service.set_runtime(runtime());
+        let mut simulated = live_group_event("sandbox-msg", "模拟", now_ms());
+        simulated.platform = BotPlatform::Sandbox;
+        simulated.bot.platform = BotPlatform::Sandbox;
+        service.observe_event(simulated);
+        let mut echo = live_group_event("qq-echo", "机器人说", now_ms());
+        echo.actor = Some(BotUser {
+            user_id: "qq-main".into(),
+            display_name: Some("mutsuki".into()),
+            avatar_url: None,
+        });
+        service.observe_event(echo);
+        switch_live(&service).await;
+        let live = service.snapshot("").await.unwrap();
+        assert_eq!(
+            live.conversations.len(),
+            1,
+            "only the QQ conversation is live"
+        );
+        assert_eq!(
+            live.conversations[0].conversation.platform,
+            BotPlatform::QqBot
+        );
+        let messages = service
+            .messages(&live.conversations[0].conversation_id)
+            .await
+            .unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, SandboxSpeakerRole::Bot);
     }
 
     #[tokio::test]
@@ -970,14 +1068,18 @@ mod tests {
     }
 
     #[test]
-    fn sandbox_identity_uses_reserved_prefix() {
+    fn sandbox_identity_uses_reserved_prefix_on_the_sandbox_platform() {
         assert!(is_sandbox_id(&sandbox_user_id("Alice")));
-        assert!(is_sandbox_target(&BotTarget::Group {
-            group_id: SANDBOX_GROUP_ID.into(),
-        }));
-        assert!(!is_sandbox_target(&BotTarget::Group {
-            group_id: "group-1".into(),
-        }));
+        let conversation = sandbox_conversation_from_target(
+            DEFAULT_SANDBOX_ACCOUNT_ID,
+            &BotTarget::Group {
+                group_id: SANDBOX_GROUP_ID.into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(conversation.platform, BotPlatform::Sandbox);
+        assert!(is_sandbox_conversation(&conversation));
+        assert!(conversation.origin_key().starts_with("sandbox:"));
     }
 
     #[tokio::test]

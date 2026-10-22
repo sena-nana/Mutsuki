@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
 
 use mutsuki_bot_protocol::{
-    BOT_EXT_LINK_URL, BOT_FLOW_BOT_EVENT_TYPE, BOT_FLOW_EMPTY_MENTION_PROTOCOL_ID,
-    BOT_FLOW_LINK_PROTOCOL_ID, BOT_FLOW_PROBABILITY_PROTOCOL_ID, BotEvent, BotEventKind,
-    BotFlowTypeRef, BotNodeBinding, BotNodeCatalogFragment, BotNodeDescriptor, BotNodeInvocation,
-    BotNodeOutput, BotNodePortDescriptor, BotNodePortDirection, BotNodeResult, BotNodeRole,
-    BotTarget, MessageSegment,
+    BOT_EXT_LINK_URL, BOT_EXT_MENTIONED_BOT, BOT_FLOW_BOT_EVENT_TYPE,
+    BOT_FLOW_EMPTY_MENTION_PROTOCOL_ID, BOT_FLOW_LINK_PROTOCOL_ID,
+    BOT_FLOW_PROBABILITY_PROTOCOL_ID, BotEvent, BotEventKind, BotFlowTypeRef, BotNodeBinding,
+    BotNodeCatalogFragment, BotNodeDescriptor, BotNodeInvocation, BotNodeOutput,
+    BotNodePortDescriptor, BotNodePortDirection, BotNodeResult, BotNodeRole, BotTarget,
+    MessageSegment,
 };
 use mutsuki_runtime_contracts::{
     CompletionBatch, ExecutionClass, RunnerDescriptor, RunnerResult, Task, WorkBatch,
@@ -326,25 +327,6 @@ impl BotFlowMatchRunner {
     }
 }
 
-/// Every arm is a literal, so this borrows rather than allocating. The sibling
-/// `conversation_kind` below already returned `&'static str`; this one built a fresh
-/// `String` and was called from inside a matching closure, once per candidate type
-/// per event.
-fn event_kind_id(event: &BotEvent) -> &'static str {
-    match &event.kind {
-        BotEventKind::MessageCreated => "message_created",
-        BotEventKind::MessageUpdated => "message_updated",
-        BotEventKind::MessageDeleted => "message_deleted",
-        BotEventKind::MemberJoined => "member_joined",
-        BotEventKind::MemberLeft => "member_left",
-        BotEventKind::ReactionAdded => "reaction_added",
-        BotEventKind::ReactionRemoved => "reaction_removed",
-        BotEventKind::BotConnected => "bot_connected",
-        BotEventKind::BotDisconnected => "bot_disconnected",
-        BotEventKind::PlatformSpecific(_) => "platform_specific",
-    }
-}
-
 fn conversation_kind(target: &BotTarget) -> &'static str {
     match target {
         BotTarget::User { .. } => "private",
@@ -376,11 +358,9 @@ fn actor_role(event: &BotEvent) -> Option<&str> {
 }
 
 fn mentioned_bot(event: &BotEvent) -> bool {
-    if event
-        .ext
-        .get("qqbot.mentioned_bot")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
+    if [BOT_EXT_MENTIONED_BOT, "qqbot.mentioned_bot"]
+        .into_iter()
+        .any(|key| event.ext.get(key).and_then(Value::as_bool).unwrap_or(false))
     {
         return true;
     }
@@ -522,30 +502,6 @@ fn attach_matched_urls(
     event.ext.insert(BOT_EXT_LINK_URL.into(), json!(first));
     envelope.payload.value = serde_json::to_value(&event).map_err(|error| error.to_string())?;
     Ok(())
-}
-
-pub fn source_kinds_for_node(node_type_id: &str) -> &'static [&'static str] {
-    match node_type_id {
-        "mutsuki.bot.qq.message.created" => &["message_created"],
-        "mutsuki.bot.qq.message.updated" => &["message_updated"],
-        "mutsuki.bot.qq.message.deleted" => &["message_deleted"],
-        "mutsuki.bot.qq.reaction.added" => &["reaction_added"],
-        "mutsuki.bot.qq.reaction.removed" => &["reaction_removed"],
-        "mutsuki.bot.qq.member.joined" => &["member_joined"],
-        "mutsuki.bot.qq.member.left" => &["member_left"],
-        "mutsuki.bot.qq.bot.connected" => &["bot_connected"],
-        "mutsuki.bot.qq.bot.disconnected" => &["bot_disconnected"],
-        "mutsuki.bot.qq.platform" => &["platform_specific"],
-        _ => &[],
-    }
-}
-
-pub fn event_matches_source_types(event: &BotEvent, types: &[&str]) -> bool {
-    if types.is_empty() {
-        return true;
-    }
-    let kind = event_kind_id(event);
-    types.contains(&kind)
 }
 
 fn enum_items(values: &[(&str, &str)]) -> Value {
@@ -958,6 +914,11 @@ mod tests {
             .insert("qqbot.mentioned_bot".into(), json!(true));
         assert!(mentioned_bot(&flagged));
         assert!(!mentioned_bot(&event("hello")));
+        let mut neutral = event("hello");
+        neutral
+            .ext
+            .insert(BOT_EXT_MENTIONED_BOT.into(), json!(true));
+        assert!(mentioned_bot(&neutral));
     }
 
     fn event_with_segments(segments: Vec<MessageSegment>) -> BotEvent {
@@ -1093,18 +1054,6 @@ mod tests {
         assert!(
             BotFlowTypeRef::new(BOT_FLOW_MESSAGE_EVENT_TYPE, 1)
                 .assigns_to(&BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1))
-        );
-    }
-
-    #[test]
-    fn source_event_types_filter_received_kinds() {
-        let event = event("hi");
-        assert!(event_matches_source_types(&event, &[]));
-        assert!(event_matches_source_types(&event, &["message_created"]));
-        assert!(!event_matches_source_types(&event, &["member_joined"]));
-        assert_eq!(
-            source_kinds_for_node("mutsuki.bot.qq.message.created"),
-            &["message_created"]
         );
     }
 

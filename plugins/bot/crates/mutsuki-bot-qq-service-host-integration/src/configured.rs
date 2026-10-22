@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use mutsuki_bot_service_host_integration::{BOT_SANDBOX_PLUGIN_ID, bot_sandbox, bot_state_db};
 use mutsuki_plugin_bot_adapter_qqbot::{QQBOT_ADAPTER_PLUGIN_ID, QqBotConfig};
 use mutsuki_service_runtime::{
@@ -45,11 +47,14 @@ impl ConfiguredPluginFactory for QqBotConfiguredPlugin {
             .configured_plugin_selection(BOT_SANDBOX_PLUGIN_ID)
             .is_some()
         {
-            // Whichever of the sandbox plugin and this adapter prepares first creates the
-            // simulator; selection order does not matter.
+            // The sandbox's live view observes every adapter at Flow ingress; QQ only adds the
+            // group titles its Gateway resolves after the event. Whichever of the sandbox adapter
+            // and this one prepares first creates the simulator; selection order does not matter.
             let (with_sandbox, sandbox) = bot_sandbox(builder)?;
             builder = with_sandbox;
-            bundle = bundle.with_workspace_sandbox(sandbox);
+            bundle = bundle.with_group_title_sink(Arc::new(move |group_id, title| {
+                sandbox.apply_live_title(&group_id, &title);
+            }));
         }
         bundle
             .install(builder)

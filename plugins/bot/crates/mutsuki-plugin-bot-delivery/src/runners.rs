@@ -5,9 +5,9 @@ use mutsuki_bot_delivery::{
     ScheduledAgentDeliveryBridge, ScheduledDeliveryRequest,
 };
 use mutsuki_bot_protocol::{
-    BOT_ACTIVE_DELIVERY_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID, BOT_REPLY_DELIVERY_PROTOCOL_ID,
-    BotActiveDeliveryCommand, BotNodeInvocation, BotNodeResult, BotReplyDeliveryCommand,
-    BotReplyDeliveryRequest,
+    BOT_ACTIVE_DELIVERY_PROTOCOL_ID, BOT_MESSAGE_SEND_V2_PROTOCOL_ID,
+    BOT_REPLY_DELIVERY_PROTOCOL_ID, BotActiveDeliveryCommand, BotNodeInvocation, BotNodeResult,
+    BotReplyDeliveryCommand, BotReplyDeliveryRequest,
 };
 use mutsuki_runtime_contracts::{
     ExecutionClass, InvocationMode, RunnerBatchCapability, RunnerConcurrency,
@@ -168,7 +168,7 @@ pub fn reply_delivery_descriptor(
 ) -> mutsuki_runtime_contracts::RunnerDescriptor {
     RunnerDescriptorBuilder::new(runner_id, plugin_id)
         .accepted_protocol(BOT_REPLY_DELIVERY_PROTOCOL_ID)
-        .requires_protocol(BOT_MESSAGE_SEND_PROTOCOL_ID)
+        .requires_protocol(BOT_MESSAGE_SEND_V2_PROTOCOL_ID)
         .execution_class(ExecutionClass::Orchestration)
         .invocation_mode(InvocationMode::AsyncReentrant)
         .concurrency(RunnerConcurrency::Reentrant {

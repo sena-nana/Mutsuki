@@ -18,7 +18,7 @@ absent from the router kind table because the payload is not a `BotEvent`).
 
 This makes Flow the only initiation surface for business behavior. Business plugins and business
 EventSources submit through the SDK `BotSubmissionGate`, which fails loud on direct submissions of
-`mutsuki.bot.message/send@1`, `mutsuki.bot.message/recall@1`, `mutsuki.bot.delivery/*` and
+`mutsuki.bot.message/send@1|@2`, `mutsuki.bot.message/recall@1|@2`, `mutsuki.bot.delivery/*` and
 `mutsuki.bot.agent/*`; their manifests are validated with
 `BotSubmissionGate::ensure_manifest_business_surface` before registration. Only the adapter (via
 graph send nodes) and the durable delivery service write past the send boundary, and only
@@ -57,9 +57,11 @@ Standard Bot runner protocols:
 - `mutsuki.bot.reply/quote@1`
 - `mutsuki.bot.reply/mention@1`
 - `mutsuki.bot.reply/segment@1`
-- `mutsuki.bot.message/send@1`
+- `mutsuki.bot.message/send@1` (QQ sink node `mutsuki.bot.qq.send` and QQ management only)
 - `mutsuki.bot.message/recall@1`
 - `mutsuki.bot.media/upload@1`
+- `mutsuki.bot.message/send@2`, `mutsuki.bot.message/recall@2`, `mutsuki.bot.media/upload@2`
+  (account-routed; served by the Flow outbound router)
 - `mutsuki.bot.media/transcribe@1`
 - `mutsuki.bot.media/synthesize@1`
 - `mutsuki.bot.command/parse@1`
@@ -80,7 +82,19 @@ Interaction create/match are sync nodes; waiter state lives in
 `mutsuki.bot.qq.reply/forward-fold@1` is owned by the QQ Adapter: catalog node,
 HandlerBinding, and OpenAPI runner. It is not a domain-neutral reply protocol.
 
-`mutsuki.bot.message/send@1` carries a `BotMessage` whose `segments` are the plugin-composed
+Account-routed outbound: `mutsuki.bot.message/send@2`, `mutsuki.bot.message/recall@2` and
+`mutsuki.bot.media/upload@2` carry `BotAccountRequest { account: BotAccountRef, request }` where
+`request` is a `BotMessage`, `BotMessageRecallRequest` or `BotMediaUploadRequest`. Exactly one
+runner accepts them, `mutsuki.bot.router.flow.outbound`; it resolves
+`BotAdapterDirectory::route(BotOutboundOperation, account)` and calls the adapter endpoint the
+adapter's `BotAdapterDescriptor.operations` names (`{protocol_id, runner_id}`) by `runner_hint`.
+An endpoint receives the same `BotAccountRequest` and refuses an account it does not serve
+(`bot.adapter.account_mismatch`). An account no adapter serves fails with
+`bot.adapter.account_unknown`, one served twice with `bot.adapter.account_ambiguous`, and an
+operation the adapter does not declare with `bot.adapter.operation_unsupported`. A sink node's
+account is its Flow context bot (falling back to the triggering `BotEvent.bot`).
+
+`mutsuki.bot.message/send@1` and `@2` carry a `BotMessage` whose `segments` are the plugin-composed
 outbound types. Plugins do not declare sendable kinds through `PluginProvides`; the Adapter
 capability matrix is the account-scoped source of truth. First-class `MessageSegment::Markdown`
 is custom markdown content. QQ keyboard and template markdown stay `PlatformSpecific` under
@@ -100,14 +114,15 @@ offers `node_wiring` / `source_wired` queries so push pipelines can check they a
 submitting.
 
 `mutsuki.bot.delivery/submit@1` owns active (non-Agent) durable send: persist request, CAS-claim
-due receipts, retry, and `mutsuki.bot.message/send@1` at the side-effect boundary.
+due receipts, retry, and `mutsuki.bot.message/send@1` at the side-effect boundary (QQ management
+delivery, which only addresses QQ).
 
 `mutsuki.bot.delivery/reply@1` owns durable Bot reply delivery. `Reserve` persists one stable reply
 id plus its ordered message parts without sending. Agent Flow occupancy sets `occupancy_only` so
 `ResumeDue` will not send those drafts. `Submit` clears occupancy, replaces unsent parts, and
 sends; `Inspect`, `RetryPart` and `CancelPart` operate on persisted receipts, while `ResumeDue`
 claims due sendable parts for restart recovery. Each part is an ordinary
-`mutsuki.bot.message/send@1` task at the side-effect boundary. Agent turn/session completion is
+`mutsuki.bot.message/send@2` task on the reply conversation's account at the side-effect boundary. Agent turn/session completion is
 source provenance, not evidence that every part was delivered.
 
 QQBot-specific protocols:

@@ -5,7 +5,7 @@
     "nodes": [
       {
         "node_id": "source",
-        "node_type_id": "mutsuki.bot.qq.message.created",
+        "node_type_id": "mutsuki.bot.message.created",
         "node_type_version": 1,
         "config": {},
         "source": {
@@ -37,8 +37,8 @@
         "position": { "x": 560, "y": 40 }
       },
       {
-        "node_id": "qq-send",
-        "node_type_id": "mutsuki.bot.qq.send",
+        "node_id": "send",
+        "node_type_id": "mutsuki.bot.send",
         "node_type_version": 1,
         "config": {},
         "position": { "x": 840, "y": 40 }
@@ -167,7 +167,7 @@
       { "edge_id": "source-persona-cmd", "from_node_id": "source", "from_port_id": "event", "to_node_id": "persona-command", "to_port_id": "event", "kind": "event" },
       { "edge_id": "source-listen", "from_node_id": "source", "from_port_id": "event", "to_node_id": "record-icl-listen", "to_port_id": "input", "kind": "event" },
       { "edge_id": "persona-cmd-handler", "from_node_id": "persona-command", "from_port_id": "matched", "to_node_id": "persona", "to_port_id": "command", "kind": "event" },
-      { "edge_id": "persona-message-send", "from_node_id": "persona", "from_port_id": "message", "to_node_id": "qq-send", "to_port_id": "input", "kind": "event" },
+      { "edge_id": "persona-message-send", "from_node_id": "persona", "from_port_id": "message", "to_node_id": "send", "to_port_id": "input", "kind": "event" },
       { "edge_id": "cmd-unmatched-empty", "from_node_id": "persona-command", "from_port_id": "unmatched", "to_node_id": "empty-mention", "to_port_id": "event", "kind": "event" },
       { "edge_id": "empty-matched-create", "from_node_id": "empty-mention", "from_port_id": "matched", "to_node_id": "interaction-create", "to_port_id": "event", "kind": "event" },
       { "edge_id": "empty-unmatched-interaction", "from_node_id": "empty-mention", "from_port_id": "unmatched", "to_node_id": "interaction", "to_port_id": "event", "kind": "event" },
@@ -190,7 +190,7 @@
       { "edge_id": "segment-fail", "from_node_id": "segment", "from_port_id": "error", "to_node_id": "present-fail", "to_port_id": "error", "kind": "error" },
       { "edge_id": "fold-fail", "from_node_id": "forward-fold", "from_port_id": "error", "to_node_id": "present-fail", "to_port_id": "error", "kind": "error" },
       { "edge_id": "delivery-fail", "from_node_id": "delivery", "from_port_id": "error", "to_node_id": "present-fail", "to_port_id": "error", "kind": "error" },
-      { "edge_id": "present-fail-send", "from_node_id": "present-fail", "from_port_id": "message", "to_node_id": "qq-send", "to_port_id": "input", "kind": "event" }
+      { "edge_id": "present-fail-send", "from_node_id": "present-fail", "from_port_id": "message", "to_node_id": "send", "to_port_id": "input", "kind": "event" }
     ]
   }
 }

@@ -49,6 +49,12 @@ pub const BOT_EVENT_INGEST_PROTOCOL_ID: &str = "mutsuki.bot.event/ingest@1";
 pub const BOT_MESSAGE_SEND_PROTOCOL_ID: &str = "mutsuki.bot.message/send@1";
 pub const BOT_MESSAGE_RECALL_PROTOCOL_ID: &str = "mutsuki.bot.message/recall@1";
 pub const BOT_MEDIA_UPLOAD_PROTOCOL_ID: &str = "mutsuki.bot.media/upload@1";
+/// Account-routed outbound protocols. The payload is [`BotAccountRequest`]; exactly one runner
+/// (the Flow outbound router) serves them and forwards to the adapter endpoint that
+/// [`BotAdapterDirectory::route`] names for the account.
+pub const BOT_MESSAGE_SEND_V2_PROTOCOL_ID: &str = "mutsuki.bot.message/send@2";
+pub const BOT_MESSAGE_RECALL_V2_PROTOCOL_ID: &str = "mutsuki.bot.message/recall@2";
+pub const BOT_MEDIA_UPLOAD_V2_PROTOCOL_ID: &str = "mutsuki.bot.media/upload@2";
 pub const BOT_MEDIA_TRANSCRIBE_PROTOCOL_ID: &str = "mutsuki.bot.media/transcribe@1";
 pub const BOT_MEDIA_SYNTHESIZE_PROTOCOL_ID: &str = "mutsuki.bot.media/synthesize@1";
 pub const BOT_COMMAND_PARSE_PROTOCOL_ID: &str = "mutsuki.bot.command/parse@1";
@@ -98,5 +104,7 @@ pub const BOT_EXT_CONVERSATION_IDENTIFIERS: &str = "bot.conversation.identifiers
 pub const BOT_EXT_REPLY_SOURCE_MESSAGE_ID: &str = "bot.reply.source_message_id";
 pub const BOT_EXT_REPLY_SOURCE_USER_ID: &str = "bot.reply.source_user_id";
 pub const BOT_EXT_LINK_URL: &str = "bot.link.url";
+/// Set by an adapter when an inbound message mentions the bot under an id other than the account.
+pub const BOT_EXT_MENTIONED_BOT: &str = "bot.mentioned_bot";
 
 pub type BotExtMap = std::collections::BTreeMap<String, serde_json::Value>;

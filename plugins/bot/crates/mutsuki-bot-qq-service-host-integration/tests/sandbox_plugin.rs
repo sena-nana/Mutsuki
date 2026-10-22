@@ -2,19 +2,27 @@ mod support;
 
 use std::time::{Duration, Instant};
 
-use mutsuki_bot_protocol::BotConversationKind;
+use mutsuki_bot_flow::{BOT_FLOW_CONFIG_PROVIDER_ID, BotFlowConfigProvider};
+use mutsuki_bot_protocol::{
+    BOT_EVENT_INGEST_PROTOCOL_ID, BOT_FLOW_BOT_EVENT_TYPE, BotConversationKind, BotFlowDocument,
+    BotFlowEdge, BotFlowEdgeKind, BotFlowNode, BotFlowNodePosition, BotFlowSourceSelector,
+    BotFlowTypeRef, BotPlatform,
+};
 use mutsuki_bot_sandbox::{
-    SANDBOX_SERVICE_ID, SandboxAction, SandboxApi, SandboxMode, SandboxService, SandboxWriteRequest,
+    SANDBOX_SERVICE_ID, SandboxAction, SandboxApi, SandboxMode, SandboxService, SandboxSpeakerRole,
+    SandboxWriteRequest, sandbox_user_id,
 };
 use mutsuki_bot_service_host_integration::BOT_SANDBOX_PLUGIN_ID;
 use mutsuki_bot_testkit::{FakeQqGatewayScript, FakeQqServer};
+use mutsuki_config_service::{ConfigApplyRequest, ConfigContext, ConfigRevision, capability};
 use mutsuki_plugin_bot_adapter_qqbot::QQBOT_ADAPTER_PLUGIN_ID;
+use mutsuki_plugin_bot_event_router::{BOT_FLOW_ROUTER_PLUGIN_ID, BOT_SEND_NODE_TYPE};
 use mutsuki_service_config::{ConfigOverrides, ServiceConfig};
 use mutsuki_service_runtime::ServiceRuntimeBuilder;
 use serde_json::json;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn qq_only_catalog_still_self_registers_sandbox() {
+async fn qq_alone_publishes_no_sandbox() {
     let fake = FakeQqServer::start_with_gateway_script(FakeQqGatewayScript {
         close_delay: Duration::from_secs(2),
         ..FakeQqGatewayScript::default()
@@ -24,26 +32,27 @@ async fn qq_only_catalog_still_self_registers_sandbox() {
     let runtime = {
         let mut catalog =
             mutsuki_std_service_host_integration::configured_std_plugin_catalog().unwrap();
-        catalog.merge(support::bot_catalog_with_qq()).unwrap();
+        catalog
+            .merge(support::bot_catalog_with_qq_and_flow().0)
+            .unwrap();
         ServiceRuntimeBuilder::new(config)
             .with_configured_plugin_catalog(catalog)
             .start()
             .await
             .unwrap()
     };
-    let snapshot = runtime
-        .host_service::<SandboxService>(SANDBOX_SERVICE_ID)
-        .expect("QQ-only catalog must still register sandbox")
-        .snapshot("")
-        .await
-        .unwrap();
-    assert!(!snapshot.conversations.is_empty());
+    // The sandbox is its own adapter; QQ neither wraps nor publishes it.
+    assert!(
+        runtime
+            .host_service::<SandboxService>(SANDBOX_SERVICE_ID)
+            .is_err()
+    );
     runtime.shutdown().await;
     fake.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn workspace_sandbox_and_qq_share_one_host_service() {
+async fn sandbox_live_mode_observes_qq_through_flow_ingress() {
     let fake = FakeQqServer::start_with_gateway_script(FakeQqGatewayScript {
         initial_events: vec![json!({
             "op": 0,
@@ -68,12 +77,14 @@ async fn workspace_sandbox_and_qq_share_one_host_service() {
     let runtime = {
         let mut catalog =
             mutsuki_std_service_host_integration::configured_std_plugin_catalog().unwrap();
-        catalog.merge(support::bot_catalog_with_qq()).unwrap();
+        catalog
+            .merge(support::bot_catalog_with_qq_and_flow().0)
+            .unwrap();
         ServiceRuntimeBuilder::new(config)
             .with_configured_plugin_catalog(catalog)
             .start()
             .await
-            .expect("workspace sandbox plus QQ must not register a duplicate host service")
+            .expect("sandbox adapter plus QQ must boot")
     };
     let sandbox = runtime
         .host_service::<SandboxService>(SANDBOX_SERVICE_ID)
@@ -144,6 +155,10 @@ fn qq_service_config_ordered(
     let sandbox_block = if select_workspace_sandbox {
         format!(
             r#"
+[[plugins.configured]]
+id = "{BOT_FLOW_ROUTER_PLUGIN_ID}"
+enabled = true
+
 [[plugins.configured]]
 id = "{BOT_SANDBOX_PLUGIN_ID}"
 enabled = true
@@ -244,7 +259,9 @@ async fn sandbox_selected_after_qq_shares_the_simulator_and_reconfigures_repeate
     let runtime = {
         let mut catalog =
             mutsuki_std_service_host_integration::configured_std_plugin_catalog().unwrap();
-        catalog.merge(support::bot_catalog_with_qq()).unwrap();
+        catalog
+            .merge(support::bot_catalog_with_qq_and_flow().0)
+            .unwrap();
         ServiceRuntimeBuilder::new(config)
             .with_configured_plugin_catalog(catalog)
             .start()
@@ -271,4 +288,149 @@ async fn sandbox_selected_after_qq_shares_the_simulator_and_reconfigures_repeate
     assert!(std::sync::Arc::ptr_eq(&before, &after));
     runtime.shutdown().await;
     fake.shutdown().await;
+}
+
+/// One neutral graph (any platform's message -> `mutsuki.bot.send`) serves QQ and the sandbox at
+/// once: both adapters load side by side, and each reply leaves through the account its message
+/// arrived on -- QQ's through the QQ endpoint, the sandbox's as a simulated bot bubble.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn qq_and_sandbox_replies_route_by_account() {
+    let fake = FakeQqServer::start_with_gateway_script(FakeQqGatewayScript {
+        initial_events: Vec::new(),
+        // Delivered after the Gateway resumes, by which time the graph below is live.
+        resumed_events: vec![json!({
+            "op": 0,
+            "s": 4,
+            "t": "GROUP_AT_MESSAGE_CREATE",
+            "id": "qq-ping",
+            "d": {
+                "id": "QQ_MESSAGE_PING",
+                "group_openid": "GROUP_1",
+                "content": "<@BOT_OPENID> ping",
+                "mentions": [{"id": "BOT_OPENID", "is_you": true, "bot": true}],
+                "timestamp": "2026-07-12T10:00:00+08:00",
+                "author": {"member_openid": "USER_1", "username": "tester"}
+            }
+        })],
+        close_delay: Duration::from_secs(2),
+        ..FakeQqGatewayScript::default()
+    })
+    .await;
+    let (config, _root) = qq_service_config(&fake, true);
+    let (catalog, flow_config) = support::bot_catalog_with_qq_and_flow();
+    let runtime = {
+        let mut merged =
+            mutsuki_std_service_host_integration::configured_std_plugin_catalog().unwrap();
+        merged.merge(catalog).unwrap();
+        ServiceRuntimeBuilder::new(config)
+            .with_configured_plugin_catalog(merged)
+            .start()
+            .await
+            .expect("QQ and the sandbox adapter load together")
+    };
+    flow_config
+        .apply(
+            BOT_FLOW_CONFIG_PROVIDER_ID,
+            ConfigApplyRequest {
+                candidate: BotFlowConfigProvider::encode(&reply_flow()).unwrap(),
+                expected_revision: ConfigRevision(0),
+                dry_run: false,
+            },
+            ConfigContext::global(),
+            &[capability::VALUE_WRITE.into(), capability::APPLY.into()],
+        )
+        .await
+        .expect("neutral reply graph applies");
+
+    let sandbox = runtime
+        .host_service::<SandboxService>(SANDBOX_SERVICE_ID)
+        .unwrap();
+    let snapshot = sandbox.snapshot("").await.unwrap();
+    assert!(snapshot.flow_available);
+    let group = snapshot
+        .conversations
+        .iter()
+        .find(|item| item.kind == BotConversationKind::Group)
+        .expect("seeded sandbox group")
+        .clone();
+    assert_eq!(group.conversation.platform, BotPlatform::Sandbox);
+    sandbox
+        .write(
+            "tester",
+            SandboxWriteRequest {
+                operation_id: "sandbox-ping".into(),
+                expected_revision: snapshot.revision,
+                action: SandboxAction::IngestAsUser {
+                    conversation_id: group.conversation_id.clone(),
+                    user_id: sandbox_user_id("Alice"),
+                    text: "ping".into(),
+                    segments: Vec::new(),
+                    reply_to: None,
+                },
+            },
+        )
+        .await
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut bubble = None;
+    while Instant::now() < deadline && bubble.is_none() {
+        bubble = sandbox
+            .messages(&group.conversation_id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|item| item.role == SandboxSpeakerRole::Bot && item.text == "pong");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(bubble.is_some(), "sandbox reply recorded as a bot bubble");
+
+    let sends = fake.wait_for_sends(1, Duration::from_secs(10)).await;
+    assert_eq!(
+        sends.len(),
+        1,
+        "only the QQ message is answered on QQ: {sends:?}"
+    );
+    assert_eq!(sends[0]["content"], "pong", "{sends:?}");
+    assert_eq!(
+        sends[0]["msg_id"], "QQ_MESSAGE_PING",
+        "a passive reply to the QQ message"
+    );
+    runtime.shutdown().await;
+    fake.shutdown().await;
+}
+
+fn reply_flow() -> BotFlowDocument {
+    BotFlowDocument {
+        flow_id: "neutral.reply".into(),
+        name: "neutral reply".into(),
+        nodes: vec![
+            BotFlowNode {
+                node_id: "source".into(),
+                node_type_id: "mutsuki.bot.message.created".into(),
+                node_type_version: 1,
+                config: json!({}),
+                source: Some(BotFlowSourceSelector {
+                    protocol_id: BOT_EVENT_INGEST_PROTOCOL_ID.into(),
+                    event_type: Some(BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1)),
+                }),
+                position: BotFlowNodePosition::default(),
+            },
+            BotFlowNode {
+                node_id: "send".into(),
+                node_type_id: BOT_SEND_NODE_TYPE.into(),
+                node_type_version: 1,
+                config: json!({"text": "pong", "reply": true}),
+                source: None,
+                position: BotFlowNodePosition::default(),
+            },
+        ],
+        edges: vec![BotFlowEdge {
+            edge_id: "source-send".into(),
+            from_node_id: "source".into(),
+            from_port_id: "event".into(),
+            to_node_id: "send".into(),
+            to_port_id: "event".into(),
+            kind: BotFlowEdgeKind::Event,
+        }],
+    }
 }

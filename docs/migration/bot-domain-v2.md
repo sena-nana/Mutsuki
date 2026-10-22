@@ -54,8 +54,8 @@ order the changes land on `main`.
   `matrix.capabilities.outbound_segments` instead of `matrix.outbound_segments`.
 - Adapters declare `BotAdapterDescriptor` as the `mutsuki.bot.adapter@1` manifest extension;
   `qqbot_adapter_manifest_for_accounts` declares the configured QQ account.
-- Still pending: `message/send@1` carries no account. Account routing via
-  `BotAdapterDirectory` and `runner_hint` arrives with the simulated sandbox adapter.
+- `message/send@1` carries no account; account routing arrived with the sandbox adapter (see
+  "Account-routed outbound and the sandbox adapter").
 
 ## Host-owned Bot state
 
@@ -112,7 +112,7 @@ order the changes land on `main`.
 | `mutsuki.bot.bilibili` | `mutsuki.plugin.bot.bilibili` |
 | `mutsuki.bot.bilibili.workshop` | `mutsuki.plugin.bot.bilibili-workshop` |
 | `mutsuki.bot.mihuashi` | `mutsuki.plugin.bot.mihuashi` |
-| `mutsuki.bot.sandbox` (plugin) | `mutsuki.plugin.bot.sandbox` (`mutsuki.bot.sandbox` stays the host service id) |
+| `mutsuki.bot.sandbox` (plugin) | `mutsuki.plugin.bot.sandbox` (`mutsuki.bot.sandbox` stays the host service id); renamed again to `mutsuki.plugin.bot.adapter-sandbox` when the sandbox became an adapter |
 | `mutsuki.plugin.bot.conversation.context` | `mutsuki.plugin.bot.conversation-context` |
 | `mutsuki.plugin.bot.flow.tool` | `mutsuki.plugin.bot.flow-agent-tool` |
 
@@ -153,3 +153,63 @@ order the changes land on `main`.
 - `attach_management_changed_bridges` takes a `BilibiliResolver` and re-subscribes every owner
   stream after it ends, so `qq.changed`, `bilibili.changed` and `sandbox.changed` keep firing
   across owner reloads; QQ and Bilibili changes also publish `platforms.changed`.
+
+## Account-routed outbound and the sandbox adapter
+
+The sandbox is now a simulated platform adapter instead of an interceptor wrapped around the QQ
+runners, and outbound operations route by the bot account they act for.
+
+| Before | After |
+| --- | --- |
+| `mutsuki.plugin.bot.sandbox` | `mutsuki.plugin.bot.adapter-sandbox` (crate `mutsuki-plugin-bot-adapter-sandbox`; `mutsuki.bot.sandbox` stays the console host service id) |
+| Simulated conversations on `BotPlatform::QqBot` with `sandbox:` ids | `BotPlatform::Sandbox`, account `sandbox` |
+| `SandboxAwareOpenApiRunner`, `SandboxAwareDeliveryGateway`, `SandboxInterceptHandle`, `is_sandbox_target`, `qq_conversation_from_target` | removed; `sandbox_conversation_from_target` builds sandbox-platform refs |
+| `BotAdapterOperations { send_runner_id, recall_runner_id, upload_runner_id }` | `BotAdapterOperations { send, recall, upload }` of `BotAdapterEndpoint { protocol_id, runner_id }` |
+| `mutsuki_bot_conversation::qq_conversation_from_event` (always `qqbot`) | `conversation_from_event` (the event's account platform) |
+| reply delivery sends `mutsuki.bot.message/send@1` | sends `mutsuki.bot.message/send@2` on `request.conversation.account()` |
+| sandbox error `qq.owner_unavailable` for live send | `sandbox.live_unavailable` |
+| mention flag `qqbot.mentioned_bot` from the sandbox | neutral `bot.mentioned_bot` (`BOT_EXT_MENTIONED_BOT`); the mention match accepts both |
+
+- New protocols `mutsuki.bot.message/send@2`, `mutsuki.bot.message/recall@2` and
+  `mutsuki.bot.media/upload@2` carry `BotAccountRequest { account, request }`. The Host admits one
+  runner per protocol, so exactly one runner serves them: the Flow outbound router
+  `mutsuki.bot.router.flow.outbound` in `mutsuki.plugin.bot.flow`. It resolves
+  `BotAdapterDirectory::route` (published by the Flow LoadPlan observer on
+  `BotFlowRegistry::adapters()`) and calls the adapter endpoint by `runner_hint`. QQ endpoints are
+  `mutsuki.bot.qqbot.message/send@1`, `mutsuki.bot.qqbot.message/recall@1` and
+  `mutsuki.bot.qqbot.media/upload@1`; the sandbox endpoint is
+  `mutsuki.bot.sandbox.message/send@1`. A third-party adapter declares its own endpoint protocols
+  in its `BotAdapterDescriptor` and must not accept the `@2` ids itself.
+- Reply delivery now needs the Flow Router in the plan (it routes through it). Assemblies that
+  hand-build Flow must also register `flow_outbound_runner(client, registry)` and publish the
+  directory by activating the plan on the registry (`BotFlowRegistry::activate_load_plan`).
+- `mutsuki.bot.message/send@1` stays for the persisted QQ sink node `mutsuki.bot.qq.send` and QQ
+  management delivery; both only address QQ. It goes away once no stored graph references
+  `mutsuki.bot.qq.send`.
+- New platform-neutral Flow nodes: sources `mutsuki.bot.message.created|updated|deleted`,
+  `mutsuki.bot.reaction.added|removed`, `mutsuki.bot.member.joined|left`,
+  `mutsuki.bot.account.connected|disconnected`, `mutsuki.bot.platform.event` (optional
+  `platform`/`account` filters) and sinks `mutsuki.bot.send`, `mutsuki.bot.recall`,
+  `mutsuki.bot.upload`. The QQ source and sink ids are unchanged, so stored graphs keep
+  validating; the QQ sources now accept only `qqbot` events. To run a stored graph in the sandbox,
+  swap its message source for `mutsuki.bot.message.created` and its `mutsuki.bot.qq.send` sinks for
+  `mutsuki.bot.send` in the Flow editor. The seeded `qq_full_business_flow` (and the committed
+  `configs/flow-*.example.json`) already use them for the AI and link chains; the Bilibili push
+  chain keeps `mutsuki.bot.qq.send` because notifications carry no account. The seed only applies
+  to stores without a flow record, so existing graphs are untouched.
+- Sandbox history migrates on load: simulated conversations stored on `qqbot` (any account) move
+  to the `sandbox` platform and account, and their conversation and message ids are rewritten to
+  the new origin keys. ICL, persona or interaction records keyed by the old `qq:` simulated origin
+  keys are not carried over. Live history is unchanged.
+- Live mode observes every adapter at Flow ingress (`BotFlowRegistry::set_ingress_observer`)
+  instead of the QQ Gateway hook, so it needs the Flow Router; a live send goes through
+  `message/send@2` on the real conversation's account and is no longer recorded as a QQ
+  management delivery. The QQ adapter no longer publishes `mutsuki.bot.sandbox` itself: the
+  sandbox page needs the sandbox adapter selected (the product selects it with the workspace).
+- Workspace selections in the single-instance product are derived at startup, so no stored
+  config changes. Hand-written `[[plugins.configured]]` entries must rename
+  `mutsuki.plugin.bot.sandbox` to `mutsuki.plugin.bot.adapter-sandbox`.
+- Fixed: the Flow node runner fixed its callable bindings from the node catalog at construction,
+  which ServiceHost does before the LoadPlan observer activates the catalog, so on a fresh start
+  every node call failed `undeclared_task_protocol` until a later reload. The node runner and the
+  outbound router now build their task-await adapter against `BotFlowRegistry::plan_generation()`.

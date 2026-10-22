@@ -10,6 +10,11 @@ pub const QQBOT_RAW_CALL_PROTOCOL_ID: &str = "mutsuki.bot.qqbot.raw/call@1";
 pub const QQBOT_ACCOUNT_GET_PROTOCOL_ID: &str = "mutsuki.bot.qqbot.account/get@1";
 pub const QQBOT_GATEWAY_STATUS_PROTOCOL_ID: &str = "mutsuki.bot.qqbot.gateway/status@1";
 pub const QQBOT_CAPABILITY_GET_PROTOCOL_ID: &str = "mutsuki.bot.qqbot.capability/get@1";
+/// Adapter endpoints behind the account-routed `message/send@2`, `message/recall@2` and
+/// `media/upload@2`; the payload is `BotAccountRequest`. Only the Flow outbound router calls them.
+pub const QQBOT_MESSAGE_SEND_PROTOCOL_ID: &str = "mutsuki.bot.qqbot.message/send@1";
+pub const QQBOT_MESSAGE_RECALL_PROTOCOL_ID: &str = "mutsuki.bot.qqbot.message/recall@1";
+pub const QQBOT_MEDIA_UPLOAD_PROTOCOL_ID: &str = "mutsuki.bot.qqbot.media/upload@1";
 /// Folds a long reply into a QQ forward card; owned by the QQ adapter's `OpenAPI` runner.
 pub const QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID: &str = "mutsuki.bot.qq.reply/forward-fold@1";
 

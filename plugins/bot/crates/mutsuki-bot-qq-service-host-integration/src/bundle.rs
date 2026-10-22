@@ -11,19 +11,15 @@ use mutsuki_bot_interaction::{
     InteractionError, InteractionService, UnavailableInteractionMatcher,
 };
 use mutsuki_bot_protocol::{
-    BOT_FLOW_INGRESS_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID, BotActiveDeliveryRequest,
-    BotConversationRef, BotDeliveryContent, BotDeliveryPartReceipt, BotEvent, BotFlowEventEnvelope,
-    BotMessage, BotTarget, DeliveryPartStatus, DeliveryPolicy, DeliveryStatus, MessageSegment,
-};
-use mutsuki_bot_sandbox::{
-    SANDBOX_SERVICE_ID, SandboxApi, SandboxError, SandboxRuntime, SandboxService,
+    BOT_MESSAGE_SEND_PROTOCOL_ID, BotActiveDeliveryRequest, BotConversationRef, BotDeliveryContent,
+    BotDeliveryPartReceipt, BotMessage, BotTarget, DeliveryPartStatus, DeliveryPolicy,
+    MessageSegment,
 };
 use mutsuki_bot_state_db::{
     BotManagementAuditRecord, BotManagementOperationReservation, BotStateDbRepository,
 };
 use mutsuki_runtime_contracts::{
-    ContractSurfaceKind, OrderingRequirement, PluginManifest, SurfaceRequirement, Task,
-    TaskOutcome, TaskPayload,
+    ContractSurfaceKind, OrderingRequirement, PluginManifest, SurfaceRequirement, Task, TaskOutcome,
 };
 use mutsuki_runtime_sdk::ResourceRegistryGateway;
 use mutsuki_runtime_sdk::RuntimeClientRef;
@@ -46,9 +42,6 @@ use mutsuki_runtime_sdk::{LoadedPlugin, RuntimeBootstrapperService};
 use serde_json::Value;
 
 use crate::event_source::QqGatewayEventSource;
-use mutsuki_bot_sandbox::{
-    SandboxAwareDeliveryGateway, SandboxAwareOpenApiRunner, SandboxInterceptHandle,
-};
 use mutsuki_bot_service_host_integration::BotTaskRecoveryEventSource;
 use mutsuki_bot_service_host_integration::{
     BOT_STATE_DB_SERVICE_ID, QQ_MANAGEMENT_SERVICE_ID, bot_state_db_host_service,
@@ -61,6 +54,8 @@ type MediaFactory = Arc<
         + Sync,
 >;
 type IdFactory = Arc<dyn Fn() -> Box<dyn QqIdSource> + Send + Sync>;
+/// Receives group titles the Gateway resolves after the event that introduced the group.
+pub(crate) type GroupTitleSink = Arc<dyn Fn(String, String) + Send + Sync>;
 
 /// Complete product bundle for the `hosts/service` assembly.
 ///
@@ -76,7 +71,7 @@ pub struct QqBotPluginBundle {
     media_factory: Option<MediaFactory>,
     media_provider_id: Option<String>,
     id_factory: IdFactory,
-    workspace_sandbox: Option<Arc<SandboxService>>,
+    group_title_sink: Option<GroupTitleSink>,
     state_repository: Option<Arc<BotStateDbRepository>>,
 }
 
@@ -100,7 +95,7 @@ impl QqBotPluginBundle {
             media_factory: None,
             media_provider_id: None,
             id_factory: Arc::new(|| Box::new(SystemQqIdSource::new())),
-            workspace_sandbox: None,
+            group_title_sink: None,
             state_repository: None,
         })
     }
@@ -133,8 +128,9 @@ impl QqBotPluginBundle {
         self
     }
 
-    pub(crate) fn with_workspace_sandbox(mut self, sandbox: Arc<SandboxService>) -> Self {
-        self.workspace_sandbox = Some(sandbox);
+    /// Forwards group titles the Gateway resolves asynchronously (the sandbox live view uses it).
+    pub(crate) fn with_group_title_sink(mut self, sink: GroupTitleSink) -> Self {
+        self.group_title_sink = Some(sink);
         self
     }
 
@@ -166,14 +162,12 @@ impl QqBotPluginBundle {
             .take()
             .ok_or_else(|| QqOpenApiError::InvalidPayload("event source already taken".into()))?;
         let control = source.control_handle();
-        let inbound = source.inbound_handle();
-        let intercept = SandboxInterceptHandle::default();
-        let intercept_for_factory = intercept.clone();
-        let intercept_for_runner = intercept.clone();
+        if let Some(sink) = self.group_title_sink.clone() {
+            source.inbound_handle().set_title_sink(sink);
+        }
         let management_config = self.config.clone();
         let management_health = self.health.clone();
         let management_credentials = self.credentials.clone();
-        let workspace_sandbox = self.workspace_sandbox.clone();
         let repository = if let Some(repository) = self.state_repository.clone() {
             repository
         } else {
@@ -208,10 +202,6 @@ impl QqBotPluginBundle {
             .capabilities
             .push("bot.qq.management".into());
         manifest.provides.capabilities.push("bot.state".into());
-        if workspace_sandbox.is_none() {
-            manifest.provides.services.push(SANDBOX_SERVICE_ID.into());
-            manifest.provides.capabilities.push("bot.sandbox".into());
-        }
         if let Some(provider_id) = media_provider_id {
             manifest.requires.push(SurfaceRequirement::new(
                 ContractSurfaceKind::ResourceProvider,
@@ -222,13 +212,9 @@ impl QqBotPluginBundle {
         let builder =
             builder.register_runtime_client_loaded_plugin_factory(manifest, move |runtime| {
                 let repository = repository_for_factory.clone();
-                let gateway = Arc::new(SandboxAwareDeliveryGateway::new(
-                    Arc::new(RuntimeDeliveryGateway {
-                        runtime: runtime.clone(),
-                    }),
-                    intercept_for_factory.clone(),
-                    management_config.account_id.clone(),
-                ));
+                let gateway = Arc::new(RuntimeDeliveryGateway {
+                    runtime: runtime.clone(),
+                });
                 let delivery = ActiveDeliveryService::new(
                     repository.clone(),
                     gateway,
@@ -255,43 +241,14 @@ impl QqBotPluginBundle {
                 let management =
                     Arc::new(QqBotManagementService::with_state_store(provider, state));
                 management.attach_gateway_status_watch(management_health.status_changes());
-                let sandbox = match &workspace_sandbox {
-                    Some(sandbox) => sandbox.clone(),
-                    None => Arc::new(
-                        SandboxService::with_history(
-                            management_config.account_id.clone(),
-                            repository.clone(),
-                        )
-                        .map_err(|error| error.to_string())?,
+                let host_services = vec![
+                    RuntimeBootstrapperService::new(
+                        QQ_MANAGEMENT_SERVICE_ID,
+                        management,
+                        "bot.qq.management",
                     ),
-                };
-                sandbox.set_runtime(Arc::new(HostSandboxRuntime {
-                    runtime,
-                    delivery,
-                    account_id: management_config.account_id.clone(),
-                }));
-                intercept_for_factory.bind(sandbox.clone());
-                let observed = sandbox.clone();
-                inbound.set(Arc::new({
-                    let observed = observed.clone();
-                    move |event| observed.observe_event(event)
-                }));
-                inbound.set_title_sink(Arc::new(move |group_id, title| {
-                    observed.apply_live_title(&group_id, &title);
-                }));
-                let mut host_services = vec![RuntimeBootstrapperService::new(
-                    QQ_MANAGEMENT_SERVICE_ID,
-                    management,
-                    "bot.qq.management",
-                )];
-                if workspace_sandbox.is_none() {
-                    host_services.push(RuntimeBootstrapperService::new(
-                        SANDBOX_SERVICE_ID,
-                        sandbox,
-                        "bot.sandbox",
-                    ));
-                }
-                host_services.push(bot_state_db_host_service(repository));
+                    bot_state_db_host_service(repository),
+                ];
                 Ok::<LoadedPlugin, String>(LoadedPlugin {
                     manifest: loaded_manifest.clone(),
                     runners: Vec::new(),
@@ -318,16 +275,11 @@ impl QqBotPluginBundle {
             })
         };
         let delivery_account_id = openapi_config.account_id.clone();
-        let delivery_intercept = intercept_for_runner.clone();
         Ok(builder
             .register_runtime_client_runner(move |client| {
-                let gateway = Arc::new(SandboxAwareDeliveryGateway::new(
-                    Arc::new(RuntimeDeliveryGateway {
-                        runtime: client.clone(),
-                    }),
-                    delivery_intercept.clone(),
-                    delivery_account_id.clone(),
-                ));
+                let gateway = Arc::new(RuntimeDeliveryGateway {
+                    runtime: client.clone(),
+                });
                 let delivery = ActiveDeliveryService::new(
                     repository_for_delivery.clone(),
                     gateway,
@@ -350,27 +302,19 @@ impl QqBotPluginBundle {
                 let http = ReqwestQqHttpClient::new(&openapi_config)
                     .map_err(|error| error.redacted_message())?;
                 Ok::<Box<dyn mutsuki_runtime_sdk::Runner>, String>(Box::new(
-                    SandboxAwareOpenApiRunner::new(
-                        Box::new(QqOpenApiRunner::new_with_auth(
-                            1,
-                            openapi_config.clone(),
-                            {
-                                let clients = QqBotClients::new(
-                                    Box::new(http),
-                                    Arc::new(credentials.clone()),
-                                );
-                                match &media_factory {
-                                    Some(factory) => {
-                                        clients.with_media_provider(factory(resources)?)
-                                    }
-                                    None => clients,
-                                }
-                            },
-                            id_factory(),
-                            auth.clone(),
-                        )),
-                        intercept_for_runner.clone(),
-                        openapi_config.account_id.clone(),
+                    QqOpenApiRunner::new_with_auth(
+                        1,
+                        openapi_config.clone(),
+                        {
+                            let clients =
+                                QqBotClients::new(Box::new(http), Arc::new(credentials.clone()));
+                            match &media_factory {
+                                Some(factory) => clients.with_media_provider(factory(resources)?),
+                                None => clients,
+                            }
+                        },
+                        id_factory(),
+                        auth.clone(),
                     ),
                 ))
             })
@@ -957,85 +901,6 @@ fn unix_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
         .unwrap_or_default()
-}
-
-struct HostSandboxRuntime {
-    runtime: RuntimeClientRef,
-    delivery: ActiveDeliveryService,
-    account_id: String,
-}
-
-#[async_trait]
-impl SandboxRuntime for HostSandboxRuntime {
-    fn live_available(&self) -> bool {
-        true
-    }
-
-    async fn ingest(&self, event: BotEvent) -> Result<(), SandboxError> {
-        let event_id = event.event_id.clone();
-        let envelope = BotFlowEventEnvelope::from_bot_event(event, None, Some(event_id.clone()))
-            .map_err(|error| SandboxError::new("encode_failed", error.to_string()))?;
-        let task = Task::new(
-            format!("sandbox.ingress:{event_id}"),
-            BOT_FLOW_INGRESS_PROTOCOL_ID,
-            TaskPayload::from_local(envelope),
-        );
-        self.runtime
-            .submit_one(task)
-            .map_err(|error| SandboxError::new("runtime.submit", error.to_string()))?;
-        Ok(())
-    }
-
-    async fn deliver(
-        &self,
-        operation_id: &str,
-        conversation: &BotConversationRef,
-        segments: &[MessageSegment],
-        reply_to: Option<&str>,
-    ) -> Result<Value, SandboxError> {
-        if conversation.account_id != self.account_id {
-            return Err(SandboxError::new(
-                "invalid_argument",
-                "会话不属于当前 QQ 账号",
-            ));
-        }
-        let request = BotActiveDeliveryRequest {
-            delivery_id: format!("sandbox-send-{operation_id}"),
-            idempotency_key: format!("sandbox-send-key-{operation_id}"),
-            conversation: conversation.clone(),
-            content: BotDeliveryContent {
-                segments: segments.to_vec(),
-                summary: Some("沙盒后台消息".into()),
-                reply_to: reply_to.map(str::to_owned),
-            },
-            policy: DeliveryPolicy {
-                max_attempts: 1,
-                initial_backoff_ms: 1_000,
-                max_backoff_ms: 1_000,
-                not_before_unix_ms: None,
-                expires_at_unix_ms: None,
-            },
-            dry_run: false,
-            source_execution_id: None,
-        };
-        let receipt = self
-            .delivery
-            .submit(&request, unix_ms())
-            .await
-            .map_err(|error| SandboxError::new("delivery.failed", error.to_string()))?;
-        if receipt.status != DeliveryStatus::Succeeded {
-            let code = receipt
-                .error_code
-                .clone()
-                .unwrap_or_else(|| "delivery.failed".into());
-            return Err(SandboxError::new(
-                code.clone(),
-                format!("真实消息发送失败（{code}）"),
-            ));
-        }
-        serde_json::to_value(receipt)
-            .map_err(|error| SandboxError::new("encode_failed", error.to_string()))
-    }
 }
 
 struct SystemQqIdSource {

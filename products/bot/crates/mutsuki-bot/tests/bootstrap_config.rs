@@ -39,7 +39,7 @@ async fn empty_single_instance_is_seeded_once_and_restored() {
     for id in [
         "mutsuki.agent.connections",
         "mutsuki.plugin.bot.flow",
-        "mutsuki.plugin.bot.sandbox",
+        "mutsuki.plugin.bot.adapter-sandbox",
         "mutsuki.plugin.bot.command",
         "mutsuki.plugin.bot.interaction",
     ] {

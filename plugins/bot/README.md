@@ -92,22 +92,25 @@ Console 的库依赖。
 - `mutsuki-bot-protocol`: common event/message and typed Bot Flow contracts.
 - `mutsuki-bot-flow`: Bot-owned graph catalog validation, immutable versions and revision CAS.
 - `mutsuki-bot-sdk`: author-facing helpers that lower to Mutsuki task protocols.
-- `mutsuki-plugin-bot-event-router`: `mutsuki.bot.flow/ingress@1` DAG executor and match nodes.
+- `mutsuki-plugin-bot-event-router`: `mutsuki.bot.flow/ingress@1` DAG executor, match nodes,
+  platform-neutral source/sink nodes and the account-routed outbound router.
 - `mutsuki-plugin-bot-command`: graph-configured command Match node.
 - `mutsuki-plugin-bot-agent`: explicit QQ-to-AgentKit bridge with durable conversation/session
   handling and production configured factory `mutsuki.plugin.bot.agent`. Its config stores only
   `connection_id`; AgentKit supplies the selected `agent_connection:<id>`.
 - `mutsuki-agent-web-extension`: authenticated Agent console (sessions, approvals, connections);
   event matching is edited in the Flow page.
-- `mutsuki-bot-sandbox`: QQ conversation sandbox with `BotStateDb` history. Simulate mode is a
-  Koishi-style closed loop through Bot Flow: the operator picks a virtual-user identity and
-  sends into Flow; live mode projects real inbound events and sends as the bot.
+- `mutsuki-bot-sandbox`: conversation sandbox with `BotStateDb` history. Simulate mode is a
+  Koishi-style closed loop through Bot Flow on the sandbox platform: the operator picks a
+  virtual-user identity and sends into Flow; live mode projects every adapter's inbound events
+  and sends as the bot on the real conversation's account.
   Conversations, users and messages hydrate from `bot_sandbox_*` tables on startup;
   other plugins query the same tables through `BotStateDbRepository`.
 - `mutsuki-bot-web-extension-sandbox`: WebExtension for the shared simulate/live Stapxs-style QQ conversation client.
 - `mutsuki-plugin-bot-adapter-qqbot`: QQBot platform adapter for gateway events and message/media OpenAPI tasks.
+- `mutsuki-plugin-bot-adapter-sandbox`: simulated sandbox platform adapter (`mutsuki.plugin.bot.adapter-sandbox`).
 - `mutsuki-bot-service-host-integration`: platform-neutral configured factories, shared `BotStateDb` actor and sandbox application services, console bridges, and reply/active-delivery/interaction recovery sources.
-- `mutsuki-bot-qq-service-host-integration`: QQ configured factory, Gateway EventSource bundle and sandbox outbound intercept.
+- `mutsuki-bot-qq-service-host-integration`: QQ configured factory, Gateway EventSource bundle and the sandbox live group-title sink.
 - `mutsuki-bot-bilibili-service-host-integration`: Bilibili configured factory and polling EventSource.
 - `mutsuki-bot-testkit`: reusable fake QQ HTTP/WebSocket boundary for downstream product E2E.
 - `examples/bot-echo`: platform-neutral example business plugin that depends only on Bot protocols and SDK helpers.

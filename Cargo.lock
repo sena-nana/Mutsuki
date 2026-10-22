@@ -4079,13 +4079,10 @@ name = "mutsuki-bot-sandbox"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "fastrand",
  "futures-executor",
  "mutsuki-bot-conversation",
- "mutsuki-bot-delivery",
  "mutsuki-bot-protocol",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-sdk",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -4128,6 +4125,7 @@ dependencies = [
  "mutsuki-config-service",
  "mutsuki-config-sqlite",
  "mutsuki-plugin-bot-adapter-qqbot",
+ "mutsuki-plugin-bot-adapter-sandbox",
  "mutsuki-plugin-bot-agent",
  "mutsuki-plugin-bot-bilibili",
  "mutsuki-plugin-bot-bilibili-workshop",
@@ -4694,6 +4692,22 @@ dependencies = [
  "tokio-tungstenite 0.30.0",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "mutsuki-plugin-bot-adapter-sandbox"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures-executor",
+ "mutsuki-bot-flow",
+ "mutsuki-bot-protocol",
+ "mutsuki-bot-sandbox",
+ "mutsuki-bot-sdk",
+ "mutsuki-runtime-contracts",
+ "mutsuki-runtime-sdk",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

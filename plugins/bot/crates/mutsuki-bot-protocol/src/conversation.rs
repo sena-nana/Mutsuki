@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{BotPlatform, BotSpeechReplyPolicy, BotTarget};
+use crate::{BotAccountRef, BotPlatform, BotSpeechReplyPolicy, BotTarget};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -157,6 +157,14 @@ impl BotConversationRef {
             self.platform.origin_prefix(),
             self.version
         )
+    }
+
+    /// The bot account this conversation belongs to; outbound protocols route by it.
+    pub fn account(&self) -> BotAccountRef {
+        BotAccountRef {
+            account_id: self.account_id.clone(),
+            platform: self.platform.clone(),
+        }
     }
 
     pub fn target(&self) -> Option<BotTarget> {

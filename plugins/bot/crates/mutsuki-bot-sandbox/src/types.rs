@@ -1,6 +1,6 @@
 use mutsuki_bot_protocol::{
-    BOT_CONVERSATION_REF_VERSION, BotConversationKind, BotConversationRef, BotTarget, BotUser,
-    MessageSegment,
+    BOT_CONVERSATION_REF_VERSION, BotConversationKind, BotConversationRef, BotPlatform, BotTarget,
+    BotUser, MessageSegment,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -321,33 +321,16 @@ pub fn is_sandbox_id(value: &str) -> bool {
     value.starts_with(SANDBOX_ID_PREFIX)
 }
 
+/// Simulated conversations live on the sandbox platform; every other conversation is live data
+/// observed from a real adapter.
 #[must_use]
 pub fn is_sandbox_conversation(conversation: &BotConversationRef) -> bool {
-    conversation.user_id.as_deref().is_some_and(is_sandbox_id)
-        || conversation.group_id.as_deref().is_some_and(is_sandbox_id)
-        || conversation.guild_id.as_deref().is_some_and(is_sandbox_id)
-        || conversation
-            .channel_id
-            .as_deref()
-            .is_some_and(is_sandbox_id)
+    conversation.platform == BotPlatform::Sandbox
 }
 
+/// The simulated conversation a sandbox account addresses with `target`.
 #[must_use]
-pub fn is_sandbox_target(target: &BotTarget) -> bool {
-    match target {
-        BotTarget::User { user_id } => is_sandbox_id(user_id),
-        BotTarget::Group { group_id } => is_sandbox_id(group_id),
-        BotTarget::GuildChannel {
-            guild_id,
-            channel_id,
-        } => is_sandbox_id(guild_id) || is_sandbox_id(channel_id),
-        BotTarget::Conversation { conversation_id } => conversation_id.contains(SANDBOX_ID_PREFIX),
-        BotTarget::PlatformSpecific { id, .. } => is_sandbox_id(id),
-    }
-}
-
-#[must_use]
-pub fn qq_conversation_from_target(
+pub fn sandbox_conversation_from_target(
     account_id: impl Into<String>,
     target: &BotTarget,
 ) -> Option<BotConversationRef> {
@@ -380,7 +363,7 @@ pub fn qq_conversation_from_target(
     };
     let conversation = BotConversationRef {
         version: BOT_CONVERSATION_REF_VERSION,
-        platform: mutsuki_bot_protocol::BotPlatform::QqBot,
+        platform: BotPlatform::Sandbox,
         account_id: account_id.into(),
         kind,
         user_id,

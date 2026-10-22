@@ -420,14 +420,12 @@ impl ConversationService {
     }
 }
 
-/// Converts a QQ Bot event target into the canonical conversation identity.
+/// Converts a Bot event target into the canonical conversation identity on the event's account.
 ///
 /// # Errors
 ///
-/// Returns an error for unsupported targets or invalid QQ conversation fields.
-pub fn qq_conversation_from_event(
-    event: &BotEvent,
-) -> Result<BotConversationRef, ConversationError> {
+/// Returns an error for unsupported targets or invalid conversation fields.
+pub fn conversation_from_event(event: &BotEvent) -> Result<BotConversationRef, ConversationError> {
     let (kind, user_id, group_id, guild_id, channel_id) = match &event.target {
         BotTarget::User { user_id } => (
             BotConversationKind::Private,
@@ -459,7 +457,7 @@ pub fn qq_conversation_from_event(
     };
     let conversation = BotConversationRef {
         version: BOT_CONVERSATION_REF_VERSION,
-        platform: mutsuki_bot_protocol::BotPlatform::QqBot,
+        platform: event.bot.platform.clone(),
         account_id: event.bot.account_id.clone(),
         kind,
         user_id,

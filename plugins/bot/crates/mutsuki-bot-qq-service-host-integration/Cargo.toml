@@ -14,7 +14,6 @@ mutsuki-bot-delivery.workspace = true
 mutsuki-bot-interaction.workspace = true
 mutsuki-bot-management.workspace = true
 mutsuki-bot-protocol.workspace = true
-mutsuki-bot-sandbox.workspace = true
 mutsuki-bot-sdk.workspace = true
 mutsuki-bot-service-host-integration.workspace = true
 mutsuki-bot-state-db.workspace = true
@@ -37,6 +36,7 @@ tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+mutsuki-bot-sandbox.workspace = true
 mutsuki-bot-flow.workspace = true
 mutsuki-bot-qq-protocol.workspace = true
 mutsuki-bot-testkit.workspace = true

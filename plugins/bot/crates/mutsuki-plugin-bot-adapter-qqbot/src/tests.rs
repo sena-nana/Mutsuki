@@ -1026,6 +1026,50 @@ fn openapi_runner_maps_standard_text_message_to_qqbot_send() {
 }
 
 #[test]
+fn openapi_endpoint_sends_for_its_own_account_and_refuses_another() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut runner = openapi_runner_with_shared(
+        requests.clone(),
+        vec![
+            token_response("TOKEN_A"),
+            ok_response(json!({"id": "MESSAGE_ID"})),
+        ],
+        Box::new(NoopIdSource::new(701)),
+    );
+    let request = |platform: mutsuki_bot_protocol::BotPlatform, account_id: &str| {
+        json!({
+            "account": {"account_id": account_id, "platform": platform},
+            "request": BotMessage::text(
+                BotTarget::User {
+                    user_id: "USER_OPENID".into(),
+                },
+                "hello",
+            ),
+        })
+    };
+    let foreign = Task::new(
+        "endpoint-foreign",
+        mutsuki_bot_qq_protocol::QQBOT_MESSAGE_SEND_PROTOCOL_ID,
+        request(mutsuki_bot_protocol::BotPlatform::Sandbox, "main"),
+    );
+    let error = run_one(&mut runner, foreign).unwrap_err();
+    assert!(error.route.contains("endpoint.account"), "{error:?}");
+    assert!(requests.lock().unwrap().is_empty(), "nothing reaches QQ");
+
+    let own = Task::new(
+        "endpoint-own",
+        mutsuki_bot_qq_protocol::QQBOT_MESSAGE_SEND_PROTOCOL_ID,
+        request(mutsuki_bot_protocol::BotPlatform::QqBot, "main"),
+    );
+    let result = run_one(&mut runner, own).unwrap();
+    assert_eq!(result.output.unwrap()["id"], "MESSAGE_ID");
+    assert_eq!(
+        requests.lock().unwrap()[1].body.as_ref().unwrap()["content"],
+        "hello"
+    );
+}
+
+#[test]
 fn openapi_runner_sends_group_text_without_msg_id_as_active_message() {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let mut runner = openapi_runner_with_shared(
@@ -2588,25 +2632,28 @@ fn qqbot_manifest_declares_the_adapter_contract_for_its_accounts() {
     };
     let entry = directory.resolve(&account).unwrap();
     assert_eq!(entry.plugin_id, crate::QQBOT_ADAPTER_PLUGIN_ID);
+    let upload = directory
+        .route(mutsuki_bot_protocol::BotOutboundOperation::Upload, &account)
+        .unwrap();
     assert_eq!(
-        entry.descriptor.operations.upload_runner_id.as_deref(),
-        Some(crate::tasks::QQBOT_OPENAPI_RUNNER_ID)
+        upload.endpoint.protocol_id,
+        mutsuki_bot_qq_protocol::QQBOT_MEDIA_UPLOAD_PROTOCOL_ID
     );
-    // Every runner the descriptor names is declared by the same manifest.
-    for runner_id in [
-        Some(&entry.descriptor.operations.send_runner_id),
-        entry.descriptor.operations.recall_runner_id.as_ref(),
-        entry.descriptor.operations.upload_runner_id.as_ref(),
-    ]
-    .into_iter()
-    .flatten()
-    {
+    // Every endpoint the descriptor names is served by a runner and bound by the same manifest.
+    for endpoint in entry.descriptor.operations.endpoints() {
+        assert!(manifest.provides.runners.iter().any(|runner| {
+            runner.runner_id == endpoint.runner_id
+                && runner
+                    .accepted_protocol_ids
+                    .iter()
+                    .any(|protocol| protocol == &endpoint.protocol_id)
+        }));
         assert!(
             manifest
                 .provides
-                .runners
+                .handler_bindings
                 .iter()
-                .any(|runner| &runner.runner_id == runner_id)
+                .any(|binding| binding.binding_id == format!("binding:{}", endpoint.protocol_id))
         );
     }
 

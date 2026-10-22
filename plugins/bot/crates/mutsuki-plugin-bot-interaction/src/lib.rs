@@ -7,7 +7,7 @@
     clippy::too_many_lines
 )]
 
-use mutsuki_bot_conversation::qq_conversation_from_event;
+use mutsuki_bot_conversation::conversation_from_event;
 use mutsuki_bot_interaction::{InteractionError, InteractionService};
 #[cfg(test)]
 use mutsuki_bot_protocol::BotNodeWiring;
@@ -457,7 +457,7 @@ fn session_from_event(
     config: &serde_json::Value,
 ) -> Result<BotInteractionSession, InteractionError> {
     let conversation =
-        qq_conversation_from_event(event).map_err(|_| InteractionError::UnsupportedTarget)?;
+        conversation_from_event(event).map_err(|_| InteractionError::UnsupportedTarget)?;
     let timeout_ms = config
         .get("timeout_ms")
         .and_then(serde_json::Value::as_u64)

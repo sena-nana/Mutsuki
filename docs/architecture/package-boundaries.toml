@@ -153,3 +153,29 @@ forbidden_target_packages = [
   "mutsuki-bot-web-host-integration",
   "mutsuki-std-service-host-integration",
 ]
+
+[[rules]]
+# The sandbox is a simulated platform adapter beside the real ones, not a wrapper around one:
+# replies reach it through its own endpoint and live mode observes Flow ingress. Neither its
+# library nor its plugin may reach a concrete platform adapter or its Host assembly.
+name = "bot-sandbox-adapter-depends-on-no-real-adapter"
+source_packages = ["mutsuki-bot-sandbox", "mutsuki-plugin-bot-adapter-sandbox"]
+forbidden_target_packages = [
+  "mutsuki-bot-bilibili-service-host-integration",
+  "mutsuki-bot-qq-protocol",
+  "mutsuki-bot-qq-service-host-integration",
+  "mutsuki-plugin-bot-adapter-qqbot",
+  "mutsuki-plugin-bot-bilibili",
+]
+
+[[rules]]
+# Real adapters and their Host assembly never wrap the sandbox: they reach it only through the
+# shared simulator application service for optional enrichment (QQ's group titles).
+name = "real-adapters-do-not-depend-on-the-sandbox"
+source_packages = [
+  "mutsuki-bot-bilibili-service-host-integration",
+  "mutsuki-bot-qq-service-host-integration",
+  "mutsuki-plugin-bot-adapter-qqbot",
+  "mutsuki-plugin-bot-bilibili",
+]
+forbidden_target_packages = ["mutsuki-bot-sandbox", "mutsuki-plugin-bot-adapter-sandbox"]

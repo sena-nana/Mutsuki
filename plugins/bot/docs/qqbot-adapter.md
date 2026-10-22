@@ -58,7 +58,11 @@ Select the native plugins under `[[plugins.configured]]`:
 - `mutsuki.plugin.bot.command`: optional empty owner config contributing the Command Match node.
 - `mutsuki.plugin.bot.adapter-qqbot`: owner config is `QqBotConfig`.
 
-After startup, publish a graph that connects the QQ Source to Match/Processor/Sink nodes. There is
+After startup, publish a graph that connects a Source (the neutral `mutsuki.bot.message.created`,
+optionally with `platform: qqbot`, or the QQ-only `mutsuki.bot.qq.message.created`) to
+Match/Processor/Sink nodes. The QQ sources only take `qqbot` events. Outbound sends either use the
+neutral `mutsuki.bot.send` (routed by account through `mutsuki.bot.message/send@2` to the QQ
+endpoint `mutsuki.bot.qqbot.message/send@1`) or the QQ-only `mutsuki.bot.qq.send`. There is
 no TOML subscription list, global command prefix or adapter-owned Handler switch.
 
 QQ fields are decoded strictly; unknown fields fail startup. Required fields are `account_id` and
@@ -89,7 +93,8 @@ last error, and the bot self profile from `/users/@me` (READY only fills empty f
 explicit supervised restart. Logs use account ID, a session digest, event type, sequence and
 correlation ID, never credentials or authorization headers.
 
-Sandbox live group titles never display `group_openid`. The EventSource copies `qqbot.group_name`
+Sandbox live mode observes QQ at Flow ingress like any adapter. Its group titles never display
+`group_openid`. The EventSource copies `qqbot.group_name`
 when the Gateway payload has it, then asynchronously calls `GET /v2/groups/{group_openid}/info`
 (30 QPM). Permission error 11253 and other non-retryable failures are cached for the process
 lifetime; the console shows `群聊` until a real name is known.

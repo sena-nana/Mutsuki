@@ -26,7 +26,7 @@ use mutsuki_agent_contracts::{
     SessionSnapshotRef, SessionVersion,
 };
 use mutsuki_bot_conversation::{
-    AgentEventClaim, ConversationError, ConversationService, qq_conversation_from_event,
+    AgentEventClaim, ConversationError, ConversationService, conversation_from_event,
     session_binding_key,
 };
 #[cfg(test)]

@@ -14,6 +14,11 @@
 
 mod flow;
 mod match_nodes;
+mod outbound;
+mod plan_bound;
+mod sources;
 
 pub use flow::*;
 pub use match_nodes::*;
+pub use outbound::*;
+pub use sources::{event_matches_source_types, neutral_source_nodes, source_kinds_for_node};

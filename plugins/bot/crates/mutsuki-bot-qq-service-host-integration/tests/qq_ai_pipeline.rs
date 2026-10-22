@@ -24,8 +24,9 @@ use mutsuki_bot_interaction::{InteractionConditionMatcher, InteractionError};
 use mutsuki_bot_protocol::{
     AgentSessionScope, BOT_AGENT_SUBMIT_PROTOCOL_ID, BOT_EVENT_INGEST_PROTOCOL_ID,
     BOT_FLOW_BOT_EVENT_TYPE, BOT_FLOW_INGRESS_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID,
-    BOT_REPLY_DELIVERY_PROTOCOL_ID, BotAccountRef, BotConversationRef, BotDeliveryContent,
-    BotEvent, BotEventKind, BotFlowContext, BotFlowDocument, BotFlowEdge, BotFlowEdgeKind,
+    BOT_REPLY_DELIVERY_PROTOCOL_ID, BotAccountRef, BotAccountRequest, BotAdapterDescriptor,
+    BotAdapterEndpoint, BotAdapterOperations, BotConversationRef, BotDeliveryContent, BotEvent,
+    BotEventKind, BotFlowContext, BotFlowDocument, BotFlowEdge, BotFlowEdgeKind,
     BotFlowEventEnvelope, BotFlowNode, BotFlowNodePosition, BotFlowPayload, BotFlowSourceSelector,
     BotFlowTypeRef, BotMessage, BotNodeCatalogFragment, BotNodeDescriptor, BotNodeInvocation,
     BotNodeOutput, BotNodePortDescriptor, BotNodePortDirection, BotNodeResult, BotNodeRole,
@@ -49,7 +50,7 @@ use mutsuki_plugin_bot_delivery::{
 };
 use mutsuki_plugin_bot_event_router::{
     BOT_FLOW_REGISTRY_SERVICE_ID, BOT_FLOW_ROUTER_PLUGIN_ID, BotFlowMatchRunner,
-    flow_ingress_runner, flow_node_runner, flow_router_manifest,
+    flow_ingress_runner, flow_node_runner, flow_outbound_runner, flow_router_manifest,
 };
 use mutsuki_plugin_bot_interaction::{BOT_INTERACTION_PLUGIN_ID, bot_interaction_manifest};
 use mutsuki_plugin_bot_persona::bot_persona_manifest;
@@ -73,6 +74,8 @@ const TEST_SOURCE_PLUGIN_ID: &str = "test.qq.flow.source";
 const TEST_SOURCE_NODE_TYPE: &str = "test.qq.flow.source";
 const TEST_SEND_PLUGIN_ID: &str = "test.qq.flow.send";
 const TEST_SEND_RUNNER_ID: &str = "test.qq.flow.send.runner";
+/// The fake adapter's endpoint behind the account-routed `message/send@2`.
+const TEST_SEND_ENDPOINT_PROTOCOL_ID: &str = "test.qq.message/send@1";
 const TEST_MEDIA_PLUGIN_ID: &str = "test.agent.media";
 const TEST_MEDIA_RUNNER_ID: &str = "test.agent.media.runner";
 const TEST_FORWARD_FOLD_PLUGIN_ID: &str = "test.qq.forward-fold.catalog";
@@ -488,6 +491,7 @@ async fn start_runtime_with_flow(
     let mut send_descriptor =
         RunnerDescriptorBuilder::new(TEST_SEND_RUNNER_ID, TEST_SEND_PLUGIN_ID)
             .accepted_protocol(BOT_MESSAGE_SEND_PROTOCOL_ID)
+            .accepted_protocol(TEST_SEND_ENDPOINT_PROTOCOL_ID)
             .execution_class(ExecutionClass::Io)
             .invocation_mode(InvocationMode::AsyncReentrant)
             .concurrency(RunnerConcurrency::Reentrant {
@@ -513,9 +517,32 @@ async fn start_runtime_with_flow(
             TEST_SEND_RUNNER_ID,
             "test-send",
         )
+        .protocol_handler(
+            test_protocol_descriptor(TEST_SEND_ENDPOINT_PROTOCOL_ID),
+            TEST_SEND_RUNNER_ID,
+            "test-send-endpoint",
+        )
         .extension(
             BotNodeCatalogFragment {
                 nodes: vec![qq_send_catalog_node()],
+            }
+            .into_plugin_extension()
+            .unwrap(),
+        )
+        .extension(
+            BotAdapterDescriptor {
+                platform: BotPlatform::QqBot,
+                display_name: "QQ".into(),
+                accounts: vec!["main".into()],
+                operations: BotAdapterOperations {
+                    send: BotAdapterEndpoint::new(
+                        TEST_SEND_ENDPOINT_PROTOCOL_ID,
+                        TEST_SEND_RUNNER_ID,
+                    ),
+                    recall: None,
+                    upload: None,
+                },
+                config_provider_id: None,
             }
             .into_plugin_extension()
             .unwrap(),
@@ -627,6 +654,7 @@ async fn start_runtime_with_flow(
 
     let ingress_registry = registry.clone();
     let node_registry = registry.clone();
+    let outbound_registry = registry.clone();
     let service_registry = registry.clone();
     let flow_loaded_manifest = flow_manifest.clone();
     let builder = ServiceRuntimeBuilder::new(config)
@@ -668,6 +696,9 @@ async fn start_runtime_with_flow(
         .register_builtin_runner(|| Box::new(TestForwardFoldRunner::default()))
         .register_runtime_client_runner(move |client| {
             flow_node_runner(client, node_registry.clone())
+        })
+        .register_runtime_client_runner(move |client| {
+            flow_outbound_runner(client, outbound_registry.clone())
         })
         .register_load_plan_hook(
             BOT_FLOW_REGISTRY_SERVICE_ID,
@@ -847,8 +878,7 @@ async fn wait_for_reply_succeeded(
 
 fn multipart_reply_request() -> BotReplyDeliveryRequest {
     let conversation =
-        mutsuki_bot_conversation::qq_conversation_from_event(&bot_event("multipart", "wake"))
-            .unwrap();
+        mutsuki_bot_conversation::conversation_from_event(&bot_event("multipart", "wake")).unwrap();
     let audio = test_audio_resource("voice");
     let contents = vec![
         vec![MessageSegment::text("text-only")],
@@ -1397,6 +1427,14 @@ impl AsyncBatchHandler for MessageSendHandler {
 
 fn outbound_send(task: &Task) -> (BotMessage, bool) {
     let value = task.payload.to_value();
+    if task.protocol_id == TEST_SEND_ENDPOINT_PROTOCOL_ID {
+        let request: BotAccountRequest<BotMessage> = serde_json::from_value(value).unwrap();
+        assert_eq!(
+            request.account.account_id, "main",
+            "routed by the event account"
+        );
+        return (request.request, false);
+    }
     if let Ok(invocation) = serde_json::from_value::<BotNodeInvocation>(value.clone()) {
         (
             serde_json::from_value(invocation.input.payload.value).unwrap(),

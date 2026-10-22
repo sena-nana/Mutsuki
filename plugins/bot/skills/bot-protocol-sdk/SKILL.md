@@ -12,8 +12,15 @@ description: Change generic mutsuki.bot protocol DTOs, protocol identifiers, mes
 - Keep library-surface crates (`mutsuki-bot-*`) free of `PluginBuilder` manifests; loadable
   plugin surfaces and their node catalogs live in `mutsuki-plugin-bot-*` crates.
 - Submit operations through RuntimeClient/TaskSubmitter and return `TaskHandle` semantics.
+- Outbound operations are account-routed: `mutsuki.bot.message/send@2`, `message/recall@2` and
+  `media/upload@2` carry `BotAccountRequest { account, request }`, and
+  `BotAdapterDirectory::route(BotOutboundOperation, account)` names the adapter endpoint.
+  `send@1` survives only behind the persisted `mutsuki.bot.qq.send` node and QQ management; new
+  callers use `@2` with the conversation's `account()`. The send-node message semantics
+  (`text`/`reply` config over a `BotMessage` or `BotEvent` input) live once in
+  `mutsuki_bot_sdk::outbound`.
 - Author helpers on business surfaces compose with `BotSubmissionGate`: direct submissions of
-  `mutsuki.bot.message/send@1`, `mutsuki.bot.message/recall@1`, `mutsuki.bot.delivery/*` and
+  `mutsuki.bot.message/send@1|@2`, `mutsuki.bot.message/recall@1|@2`, `mutsuki.bot.delivery/*` and
   `mutsuki.bot.agent/*` fail loud there, because Flow initiates business behavior. Durable
   services (delivery, agent bridge) and control-plane callers are exempt and keep their own
   clients.

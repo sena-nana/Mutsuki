@@ -5,18 +5,23 @@ use mutsuki_agent_contracts::{
 use mutsuki_agent_service_host_integration::AgentConnectionRegistry;
 use mutsuki_bot_conversation::{ConversationContextStore, ConversationService, PersonaStore};
 use mutsuki_bot_flow::{
-    BOT_FLOW_CONFIG_PROVIDER_ID, BotFlowConfigProvider, BotFlowRegistry, BotNodeCatalog,
+    BOT_FLOW_CONFIG_PROVIDER_ID, BotFlowConfigProvider, BotFlowRegistry, BotIngressObserver,
+    BotNodeCatalog,
 };
 use mutsuki_bot_interaction::{InteractionService, UnavailableInteractionMatcher};
 
 use mutsuki_bot_protocol::{BotFlowDocument, ConversationPolicy};
-use mutsuki_bot_sandbox::{SANDBOX_SERVICE_ID, SandboxService};
+use mutsuki_bot_sandbox::{DEFAULT_SANDBOX_ACCOUNT_ID, SANDBOX_SERVICE_ID, SandboxService};
 use mutsuki_bot_sdk::{BotManifestSurface, BotSubmissionGate};
 use mutsuki_bot_state_db::BotStateDbRepository;
 use mutsuki_config_service::{
     ConfigConstraints, ConfigContext, ConfigDescriptor, ConfigDocumentKey, ConfigKey,
     ConfigMutability, ConfigNode, ConfigPresentation, ConfigProviderId, ConfigProviderRegistration,
     ConfigScope, ConfigService, ConfigValue, ConfigValueType, LocalizedText, RestartPolicy,
+};
+use mutsuki_plugin_bot_adapter_sandbox::{
+    SANDBOX_ADAPTER_PLUGIN_ID, SANDBOX_LIVE_OBSERVER_ID, SandboxFlowRuntime, SandboxOutboundRunner,
+    sandbox_adapter_manifest, sandbox_live_observer,
 };
 use mutsuki_plugin_bot_agent::{
     BOT_AGENT_BRIDGE_PLUGIN_ID, BOT_AGENT_BRIDGE_RUNNER_ID, BOT_AGENT_CONFIG_SERVICE_ID,
@@ -32,7 +37,7 @@ use mutsuki_plugin_bot_conversation_context::{
 use mutsuki_plugin_bot_delivery::{bot_reply_delivery_manifest_for, reply_delivery_runner_for};
 use mutsuki_plugin_bot_event_router::{
     BOT_FLOW_REGISTRY_SERVICE_ID, BOT_FLOW_ROUTER_PLUGIN_ID, BotFlowMatchRunner,
-    flow_ingress_runner, flow_node_runner,
+    flow_ingress_runner, flow_node_runner, flow_outbound_runner,
 };
 use mutsuki_plugin_bot_interaction::{
     BOT_INTERACTION_PLUGIN_ID, InteractionCreateRunner, InteractionMatchRunner,
@@ -193,6 +198,7 @@ impl ConfiguredPluginFactory for BotFlowRouterConfiguredPlugin {
         let loaded_manifest = manifest.clone();
         let ingress_registry = registry.clone();
         let node_registry = registry.clone();
+        let outbound_registry = registry.clone();
         let service_registry = registry.clone();
         let ingress_stats_registry = registry.clone();
         let seed_status = Arc::new(BotFlowSeedStatus::default());
@@ -256,6 +262,9 @@ impl ConfiguredPluginFactory for BotFlowRouterConfiguredPlugin {
             .register_builtin_runner(move || Box::new(BotFlowMatchRunner::default()))
             .register_runtime_client_runner(move |client| {
                 flow_node_runner(client, node_registry.clone())
+            })
+            .register_runtime_client_runner(move |client| {
+                flow_outbound_runner(client, outbound_registry.clone())
             })
             .register_load_plan_observer(
                 BOT_FLOW_REGISTRY_SERVICE_ID,
@@ -343,7 +352,7 @@ impl ConfiguredPluginFactory for BotInteractionConfiguredPlugin {
 
 /// Outcome of the last Flow document seed or restore attempt.
 ///
-/// Both run on a detached task after LoadPlan activation, so a failure there used
+/// Both run on a detached task after `LoadPlan` activation, so a failure there used
 /// to reach the operator as a log line only while the process reported healthy and
 /// routed on an empty graph -- every business behavior frozen, nothing structurally
 /// failed. The health probe reads this back so the freeze is visible.
@@ -596,13 +605,14 @@ fn execution_product_policy(config: &BotAgentConfig) -> Result<ConversationPolic
     })
 }
 
-/// Configured plugin that publishes the sandbox simulator (`SANDBOX_SERVICE_ID`).
-pub const BOT_SANDBOX_PLUGIN_ID: &str = "mutsuki.plugin.bot.sandbox";
+/// The sandbox adapter (`mutsuki.plugin.bot.adapter-sandbox`), which also publishes the console's
+/// sandbox simulator (`SANDBOX_SERVICE_ID`).
+pub const BOT_SANDBOX_PLUGIN_ID: &str = SANDBOX_ADAPTER_PLUGIN_ID;
 
 /// Application service holding the single Bot state database actor of this Host.
 pub const BOT_STATE_SERVICE_ID: &str = "mutsuki.bot.state";
-/// Application service holding the sandbox simulator shared by the sandbox plugin and the QQ
-/// adapter's sandbox-aware runners.
+/// Application service holding the sandbox simulator shared by the sandbox adapter and the QQ
+/// adapter's live group-title sink.
 const BOT_SANDBOX_STATE_SERVICE_ID: &str = "mutsuki.bot.sandbox.state";
 
 /// Opens `data/bot/state.sqlite3` once per Host; every consumer shares the same actor.
@@ -628,15 +638,35 @@ pub fn bot_sandbox(
 ) -> Result<(ServiceRuntimeBuilder, Arc<SandboxService>), String> {
     let (builder, repository) = bot_state_db(builder)?;
     builder.ensure_application_service(BOT_SANDBOX_STATE_SERVICE_ID, move || {
-        SandboxService::with_history("local", repository)
+        SandboxService::with_history(DEFAULT_SANDBOX_ACCOUNT_ID, repository)
             .map(Arc::new)
             .map_err(|error| error.to_string())
     })
 }
 
-struct SandboxConfiguredPlugin;
+/// Removes this plugin generation's live observer from the Flow registry on unload.
+struct SandboxLiveObserverEffect {
+    registry: Arc<BotFlowRegistry>,
+    observer: BotIngressObserver,
+}
 
-impl ConfiguredPluginFactory for SandboxConfiguredPlugin {
+impl HostEffect for SandboxLiveObserverEffect {
+    fn dispose(&mut self) -> HostEffectFuture<'_> {
+        Box::pin(async move {
+            self.registry
+                .clear_ingress_observer(SANDBOX_LIVE_OBSERVER_ID, &self.observer);
+            Ok(())
+        })
+    }
+}
+
+/// The sandbox adapter. Without a Flow registry (a catalog that has no Flow Router) the console
+/// can still browse history, but nothing composes into ingress and live mode stays unavailable.
+struct SandboxAdapterConfiguredPlugin {
+    registry: Option<Arc<BotFlowRegistry>>,
+}
+
+impl ConfiguredPluginFactory for SandboxAdapterConfiguredPlugin {
     fn plugin_id(&self) -> &str {
         BOT_SANDBOX_PLUGIN_ID
     }
@@ -653,15 +683,28 @@ impl ConfiguredPluginFactory for SandboxConfiguredPlugin {
         };
         mutsuki_bot_sdk::config::decode_empty(self.plugin_id(), &config)?;
         let (builder, sandbox) = bot_sandbox(builder)?;
-        let mut manifest = PluginBuilder::new(BOT_SANDBOX_PLUGIN_ID).build().manifest;
-        manifest.provides.services.push(SANDBOX_SERVICE_ID.into());
-        manifest.provides.capabilities.push("bot.sandbox".into());
+        let manifest = sandbox_adapter_manifest(sandbox.account().account_id)?;
         let loaded_manifest = manifest.clone();
+        let registry = self.registry.clone();
         Ok(
-            builder.register_builtin_loaded_plugin_factory(manifest, move || {
+            builder.register_runtime_client_loaded_plugin_factory(manifest, move |runtime| {
+                let mut host_effects = Vec::new();
+                if let Some(registry) = &registry {
+                    sandbox
+                        .set_runtime(Arc::new(SandboxFlowRuntime::new(runtime, registry.clone())));
+                    let observer = sandbox_live_observer(sandbox.clone());
+                    registry.set_ingress_observer(SANDBOX_LIVE_OBSERVER_ID, Some(observer.clone()));
+                    host_effects.push(RuntimeBootstrapperEffect {
+                        kind: HostEffectKind::HostLocal,
+                        effect: Box::new(SandboxLiveObserverEffect {
+                            registry: registry.clone(),
+                            observer,
+                        }),
+                    });
+                }
                 Ok::<LoadedPlugin, String>(LoadedPlugin {
                     manifest: loaded_manifest.clone(),
-                    runners: Vec::new(),
+                    runners: vec![Box::new(SandboxOutboundRunner::new(sandbox.clone()))],
                     async_handlers: Vec::new(),
                     host_services: vec![RuntimeBootstrapperService::new(
                         SANDBOX_SERVICE_ID,
@@ -670,7 +713,7 @@ impl ConfiguredPluginFactory for SandboxConfiguredPlugin {
                     )],
                     resource_providers: Vec::new(),
                     async_resource_providers: Vec::new(),
-                    host_effects: Vec::new(),
+                    host_effects,
                 })
             }),
         )
@@ -818,7 +861,7 @@ fn field_node(
     }
 }
 
-/// Catalog of production Bot plugins that can be selected by ServiceHost configuration.
+/// Catalog of production Bot plugins that can be selected by `ServiceHost` configuration.
 /// Media upload is intentionally absent until a product registers an explicit provider-backed
 /// QQ factory of its own.
 ///
@@ -829,16 +872,19 @@ fn field_node(
 pub fn configured_bot_plugin_catalog(
     media_provider_id: String,
 ) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
-    configured_bot_plugin_catalog_inner(media_provider_id)
+    configured_bot_plugin_catalog_inner(media_provider_id, None)
 }
 
 fn configured_bot_plugin_catalog_inner(
     media_provider_id: String,
+    flow_registry: Option<Arc<BotFlowRegistry>>,
 ) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
     let mut catalog = ConfiguredPluginCatalog::new();
     catalog.register(BotCommandConfiguredPlugin)?;
     catalog.register(BotInteractionConfiguredPlugin)?;
-    catalog.register(SandboxConfiguredPlugin)?;
+    catalog.register(SandboxAdapterConfiguredPlugin {
+        registry: flow_registry,
+    })?;
     catalog.register(WorkshopConfiguredPlugin {
         media_provider_id: media_provider_id.clone(),
     })?;
@@ -852,7 +898,8 @@ pub fn configured_bot_plugin_catalog_with_config(
     media_provider_id: String,
 ) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
     let flow_registry = Arc::new(BotFlowRegistry::new(BotNodeCatalog::default()));
-    let mut catalog = configured_bot_plugin_catalog_inner(media_provider_id)?;
+    let mut catalog =
+        configured_bot_plugin_catalog_inner(media_provider_id, Some(flow_registry.clone()))?;
     catalog.register(BotFlowRouterConfiguredPlugin::with_registry(
         config,
         flow_registry,
@@ -862,7 +909,7 @@ pub fn configured_bot_plugin_catalog_with_config(
 
 /// Production Bot catalog with configurable Agent nodes wired to a shared Agent owner
 /// registry. The base catalog intentionally remains Agent-free for products that do not opt in.
-/// `seed_flow` is applied by LoadPlan activation into stores that never recorded a flow
+/// `seed_flow` is applied by `LoadPlan` activation into stores that never recorded a flow
 /// document; existing records, including a graph the user cleared, are never overwritten.
 pub fn configured_bot_plugin_catalog_with_agent_and_flow(
     config: Arc<ConfigService>,
@@ -871,7 +918,8 @@ pub fn configured_bot_plugin_catalog_with_agent_and_flow(
     seed_flow: Option<BotFlowDocument>,
     media_provider_id: String,
 ) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
-    let mut catalog = configured_bot_plugin_catalog_inner(media_provider_id)?;
+    let mut catalog =
+        configured_bot_plugin_catalog_inner(media_provider_id, Some(flow_registry.clone()))?;
     catalog.register(BotFlowRouterConfiguredPlugin {
         config,
         registry: Some(flow_registry),

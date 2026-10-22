@@ -26,10 +26,18 @@ description: Change Bot Flow graph validation/execution, node catalogs, command 
   repository, server draft, publish revision, path or database assumption.
 - Command prefix, path, aliases and typed arguments live only in Command Match node config;
   `matched` and `unmatched` are explicit outputs.
+- Sources select on `BotEventKind`: graphs use the platform-neutral sources
+  (`mutsuki.bot.message.created`, …, optional `platform`/`account` config) and sinks
+  (`mutsuki.bot.send`/`recall`/`upload`, routed by the triggering account through the router's
+  outbound runner). The QQ source and sink ids stay because stored graphs reference them; QQ
+  sources accept only `qqbot` events. Never rename or drop a persisted node type id; add a new one.
+  Per-source filters are decoded once per revision into the graph index, not per event.
+- Ingress hands every `BotEvent` to the registry's ingress observers before routing; observers
+  only queue the event (the sandbox live view applies it on its own thread).
 - Domain push pipelines submit `mutsuki.bot.flow/ingress@1` envelopes with a plugin-owned
   `mutsuki.bot.event.*` payload and stop there; rendering and delivery belong to graph nodes. A
   Source node whose payload is not a `BotEvent` is selected by its event-type selector alone and
-  must stay out of the router `source_kinds_for_node` kind table — registering it would reject
+  must stay out of the router source kind table (`sources.rs`) — registering it would reject
   every event. `mutsuki.bot.bilibili.notification` → `mutsuki.bot.bilibili.card` is the reference
   implementation.
 - Flow is the only initiation surface for business behavior: an event whose Source chain is not

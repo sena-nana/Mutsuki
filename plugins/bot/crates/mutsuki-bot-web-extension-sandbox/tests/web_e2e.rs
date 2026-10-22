@@ -31,7 +31,10 @@ impl SandboxRuntime for TestRuntime {
         _segments: &[mutsuki_bot_protocol::MessageSegment],
         _reply_to: Option<&str>,
     ) -> Result<Value, SandboxError> {
-        Err(SandboxError::new("qq.owner_unavailable", "尚未连接 QQ"))
+        Err(SandboxError::new(
+            mutsuki_bot_sandbox::LIVE_UNAVAILABLE,
+            "尚未连接真实平台",
+        ))
     }
 }
 

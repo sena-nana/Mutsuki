@@ -7,7 +7,10 @@
 
 use std::sync::Arc;
 
-use mutsuki_bot_protocol::{BOT_MESSAGE_RECALL_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID};
+use mutsuki_bot_protocol::{
+    BOT_MESSAGE_RECALL_PROTOCOL_ID, BOT_MESSAGE_RECALL_V2_PROTOCOL_ID,
+    BOT_MESSAGE_SEND_PROTOCOL_ID, BOT_MESSAGE_SEND_V2_PROTOCOL_ID,
+};
 use mutsuki_runtime_contracts::{PluginManifest, RuntimeError, TaskBatch, TaskHandle, TaskOutcome};
 use mutsuki_runtime_sdk::{RuntimeFailure, RuntimeResult, TaskSubmitter};
 
@@ -18,9 +21,19 @@ const DENIED_PROTOCOL_PREFIXES: &[&str] = &["mutsuki.bot.delivery/", "mutsuki.bo
 const DELIVERY_PREFIX: &str = "mutsuki.bot.delivery/";
 const AGENT_PREFIX: &str = "mutsuki.bot.agent/";
 
+/// Sends and recalls on the platform, in both the legacy and the account-routed version.
+fn platform_write(protocol_id: &str) -> bool {
+    [
+        BOT_MESSAGE_SEND_PROTOCOL_ID,
+        BOT_MESSAGE_RECALL_PROTOCOL_ID,
+        BOT_MESSAGE_SEND_V2_PROTOCOL_ID,
+        BOT_MESSAGE_RECALL_V2_PROTOCOL_ID,
+    ]
+    .contains(&protocol_id)
+}
+
 fn denied(protocol_id: &str) -> bool {
-    protocol_id == BOT_MESSAGE_SEND_PROTOCOL_ID
-        || protocol_id == BOT_MESSAGE_RECALL_PROTOCOL_ID
+    platform_write(protocol_id)
         || DENIED_PROTOCOL_PREFIXES
             .iter()
             .any(|prefix| protocol_id.starts_with(prefix))
@@ -51,8 +64,7 @@ pub enum BotManifestSurface {
 
 impl BotManifestSurface {
     fn forbids(self, protocol_id: &str) -> bool {
-        let platform_write = protocol_id == BOT_MESSAGE_SEND_PROTOCOL_ID
-            || protocol_id == BOT_MESSAGE_RECALL_PROTOCOL_ID;
+        let platform_write = platform_write(protocol_id);
         let delivery = protocol_id.starts_with(DELIVERY_PREFIX);
         let agent = protocol_id.starts_with(AGENT_PREFIX);
         match self {
@@ -202,6 +214,8 @@ mod tests {
         for protocol_id in [
             BOT_MESSAGE_SEND_PROTOCOL_ID,
             BOT_MESSAGE_RECALL_PROTOCOL_ID,
+            BOT_MESSAGE_SEND_V2_PROTOCOL_ID,
+            BOT_MESSAGE_RECALL_V2_PROTOCOL_ID,
             "mutsuki.bot.delivery/reply@1",
             "mutsuki.bot.agent/submit@1",
         ] {
@@ -242,6 +256,8 @@ mod tests {
             ("mutsuki.bot.delivery/reply@1", false, true, true),
             (BOT_MESSAGE_SEND_PROTOCOL_ID, false, false, true),
             (BOT_MESSAGE_RECALL_PROTOCOL_ID, false, false, true),
+            (BOT_MESSAGE_SEND_V2_PROTOCOL_ID, false, false, true),
+            (BOT_MESSAGE_RECALL_V2_PROTOCOL_ID, false, false, true),
             // No tier may originate an Agent turn outside a graph binding.
             ("mutsuki.bot.agent/submit@1", false, false, false),
         ];

@@ -211,6 +211,7 @@ mutsuki-bot-bilibili-service-host-integration = { path = "plugins/bot/crates/mut
 mutsuki-bot-testkit = { path = "plugins/bot/crates/mutsuki-bot-testkit" }
 mutsuki-bot-web-host-integration = { path = "plugins/bot/crates/mutsuki-bot-web-host-integration" }
 mutsuki-plugin-bot-adapter-qqbot = { path = "plugins/bot/crates/mutsuki-plugin-bot-adapter-qqbot" }
+mutsuki-plugin-bot-adapter-sandbox = { path = "plugins/bot/crates/mutsuki-plugin-bot-adapter-sandbox" }
 mutsuki-plugin-bot-agent = { path = "plugins/bot/crates/mutsuki-plugin-bot-agent" }
 mutsuki-agent-web-extension = { path = "kits/agent/crates/mutsuki-agent-web-extension" }
 mutsuki-plugin-bot-bilibili = { path = "plugins/bot/crates/mutsuki-plugin-bot-bilibili" }

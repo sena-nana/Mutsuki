@@ -17,6 +17,14 @@ description: Change Bot plugin bundles, manifests, native runner factories, heal
   `ServiceRuntimeBuilder::ensure_application_service`); the sandbox simulator is shared the same
   way (`mutsuki.bot.sandbox.state`). Never keep owner state in factory `OnceLock` slots or rely
   on selection order, and do not call `BotStateDbRepository::open` again on the same path.
+- The sandbox adapter (`mutsuki.plugin.bot.adapter-sandbox`) needs the shared `BotFlowRegistry`:
+  it installs `SandboxFlowRuntime` (compose into ingress, live send through `send@2`) and its
+  live ingress observer on that registry, and removes the observer through a host effect on
+  unload. Another adapter's integration may only feed it optional enrichment (QQ's group-title
+  sink); never wrap an adapter's runners or delivery gateway for the sandbox.
+- A hand-built Flow assembly registers the ingress, match, node and outbound runners
+  (`flow_outbound_runner`) and activates each LoadPlan on the registry; the node and outbound
+  runners are plan-bound and rebuild after `plan_generation` moves.
 - Register Host recovery EventSources for reply delivery `ResumeDue`, active delivery
   `ResumeDue`, and interaction `Recover`. Completion paths drain persisted work; they do not
   originate new business behavior. Active-delivery runner and recovery source share the QQ

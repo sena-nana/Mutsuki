@@ -3,10 +3,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
-use mutsuki_bot_conversation::qq_conversation_from_event;
+use mutsuki_bot_conversation::conversation_from_event;
 use mutsuki_bot_protocol::{
-    BOT_CONVERSATION_REF_VERSION, BotAccountRef, BotConversationKind, BotConversationRef, BotEvent,
-    BotEventKind, BotExtMap, BotMessage, BotPlatform, BotUser, MessageSegment,
+    BOT_CONVERSATION_REF_VERSION, BOT_EXT_MENTIONED_BOT, BotAccountRef, BotConversationKind,
+    BotConversationRef, BotEvent, BotEventKind, BotExtMap, BotMessage, BotPlatform, BotUser,
+    MessageSegment,
 };
 use mutsuki_runtime_contracts::{
     ResourceAccess, ResourceId, ResourceLifetime, ResourceRef, ResourceSealState, ResourceSemantic,
@@ -46,6 +47,8 @@ pub const REPLY_TARGET_NOT_USER: &str = "sandbox.reply_target_not_user";
 pub const REPLY_WINDOW_EXPIRED: &str = "sandbox.reply_window_expired";
 /// Real mode also refuses segments the platform has no wire form for.
 pub const UNSUPPORTED_SEGMENT: &str = "sandbox.unsupported_segment";
+/// Real mode needs an adapter other than the sandbox in the active `LoadPlan`.
+pub const LIVE_UNAVAILABLE: &str = "sandbox.live_unavailable";
 
 pub struct SandboxChangeSubscription {
     receiver: broadcast::Receiver<SandboxChangeEvent>,
@@ -161,7 +164,12 @@ struct Inner {
     persisted_media: HashSet<String>,
     persisted_stickers: HashSet<String>,
     bot: Option<BotUser>,
+    /// Group titles resolved before live mode observed the group; applied when it appears.
+    pending_live_titles: HashMap<String, String>,
 }
+
+/// Bound on titles held for groups live mode has not observed yet.
+const MAX_PENDING_LIVE_TITLES: usize = 256;
 
 /// QQ conversation sandbox used by the Web Console, with optional durable history.
 pub struct SandboxService {
@@ -207,7 +215,8 @@ impl SandboxService {
         snapshot: SandboxHistorySnapshot,
         history: Option<Arc<dyn SandboxHistoryStore>>,
     ) -> Result<Self, SandboxError> {
-        let mut simulate = store_from_history(snapshot.simulate);
+        let mut simulate =
+            store_from_history(migrate_simulate_history(snapshot.simulate, &account_id));
         let live = store_from_history(snapshot.live);
         let (changes, _) = broadcast::channel(64);
         if simulate.conversations.is_empty() {
@@ -237,6 +246,7 @@ impl SandboxService {
                 persisted_media,
                 persisted_stickers,
                 bot: None,
+                pending_live_titles: HashMap::new(),
             }),
             runtime: Mutex::new(None),
             changes,
@@ -244,6 +254,15 @@ impl SandboxService {
         };
         service.persist()?;
         Ok(service)
+    }
+
+    /// The sandbox adapter account simulated conversations belong to.
+    #[must_use]
+    pub fn account(&self) -> BotAccountRef {
+        BotAccountRef {
+            account_id: self.lock_inner().account_id.clone(),
+            platform: BotPlatform::Sandbox,
+        }
     }
 
     /// Installs the live ingest/delivery runtime used by real-data mode.
@@ -277,6 +296,15 @@ impl SandboxService {
             item.view.kind == BotConversationKind::Group
                 && item.view.conversation.group_id.as_deref() == Some(group_id)
         }) else {
+            // Live mode observes adapters at Flow ingress, after the adapter that resolved the
+            // title; keep it for the moment the group appears.
+            if inner.pending_live_titles.len() < MAX_PENDING_LIVE_TITLES
+                || inner.pending_live_titles.contains_key(group_id)
+            {
+                inner
+                    .pending_live_titles
+                    .insert(group_id.to_owned(), title.to_owned());
+            }
             return;
         };
         if !assign_live_group_title(stored, title) {
@@ -389,7 +417,7 @@ impl SandboxService {
             }) {
                 event
                     .ext
-                    .insert("qqbot.mentioned_bot".into(), Value::Bool(true));
+                    .insert(BOT_EXT_MENTIONED_BOT.into(), Value::Bool(true));
             }
             let (revision, mode) = finish(&mut inner);
             (event, revision, mode, message)
@@ -726,12 +754,12 @@ impl SandboxService {
         reply_to: Option<String>,
     ) -> Result<SandboxWriteResult, SandboxError> {
         let runtime = self.runtime().ok_or_else(|| {
-            SandboxError::new("qq.owner_unavailable", "尚未连接 QQ，无法发送真实消息")
+            SandboxError::new(LIVE_UNAVAILABLE, "尚未连接真实平台，无法发送真实消息")
         })?;
         if !runtime.live_available() {
             return Err(SandboxError::new(
-                "qq.owner_unavailable",
-                "尚未连接 QQ，无法发送真实消息",
+                LIVE_UNAVAILABLE,
+                "尚未连接真实平台，无法发送真实消息",
             ));
         }
         let (conversation, segments, reply_to) = {
@@ -976,7 +1004,11 @@ impl SandboxApi for SandboxService {
             }
             return;
         }
-        let Ok(conversation) = qq_conversation_from_event(&event) else {
+        // The sandbox's own simulated traffic reaches ingress too; live mode shows real adapters.
+        if event.platform == BotPlatform::Sandbox {
+            return;
+        }
+        let Ok(conversation) = conversation_from_event(&event) else {
             return;
         };
         if is_sandbox_conversation(&conversation) || event.kind == BotEventKind::BotDisconnected {
@@ -992,13 +1024,17 @@ impl SandboxApi for SandboxService {
             .filter(|value| !value.is_empty())
             .map(str::to_owned);
         let mut inner = self.lock_inner();
-        let account_id = inner.account_id.clone();
+        let bot_user_id = inner.bot.as_ref().map(|bot| bot.user_id.clone());
+        let pending_title = conversation
+            .group_id
+            .as_deref()
+            .and_then(|group_id| inner.pending_live_titles.remove(group_id));
         {
             let Inner {
                 live, media, faces, ..
             } = &mut *inner;
             let stored = ensure_conversation(live, conversation, &live_title, now);
-            if let Some(name) = group_name.as_deref() {
+            if let Some(name) = group_name.as_deref().or(pending_title.as_deref()) {
                 assign_live_group_title(stored, name);
             }
             if let Some(allowed) = active_message {
@@ -1019,7 +1055,10 @@ impl SandboxApi for SandboxService {
                 let sender_name = sender
                     .and_then(|user| user.display_name.as_deref())
                     .unwrap_or(sender_id);
-                let role = if sender_id == account_id {
+                let role = if event.is_self_sent_message()
+                    || sender_id == event.bot.account_id
+                    || bot_user_id.as_deref() == Some(sender_id)
+                {
                     SandboxSpeakerRole::Bot
                 } else {
                     SandboxSpeakerRole::User
@@ -1376,6 +1415,37 @@ fn history_conversation(stored: &StoredConversation) -> SandboxHistoryConversati
         users: stored.users.values().cloned().collect(),
         messages: stored.messages.clone(),
     }
+}
+
+/// Moves simulated conversations onto the sandbox platform and account.
+///
+/// Before the sandbox became its own adapter, simulated conversations were QQ conversations with
+/// `sandbox:` ids. Their origin keys change with the platform, so every id derived from the key is
+/// rewritten; the next `persist` stores the migrated history.
+fn migrate_simulate_history(
+    items: Vec<SandboxHistoryConversation>,
+    account_id: &str,
+) -> Vec<SandboxHistoryConversation> {
+    items
+        .into_iter()
+        .map(|mut item| {
+            let conversation = &mut item.view.conversation;
+            if conversation.platform == BotPlatform::Sandbox
+                && conversation.account_id == account_id
+            {
+                return item;
+            }
+            conversation.platform = BotPlatform::Sandbox;
+            conversation.account_id = account_id.to_owned();
+            let conversation_id = conversation.origin_key();
+            item.view.conversation_id = conversation_id.clone();
+            item.view.account_id = account_id.to_owned();
+            for message in &mut item.messages {
+                message.conversation_id = conversation_id.clone();
+            }
+            item
+        })
+        .collect()
 }
 
 fn store_from_history(items: Vec<SandboxHistoryConversation>) -> Store {
@@ -2104,10 +2174,10 @@ fn sandbox_event(
             || format!("evt-{}", Uuid::new_v4()),
             |item| item.message_id.clone(),
         ),
-        platform: BotPlatform::QqBot,
+        platform: BotPlatform::Sandbox,
         bot: BotAccountRef {
             account_id: account_id.into(),
-            platform: BotPlatform::QqBot,
+            platform: BotPlatform::Sandbox,
         },
         kind,
         time_ms,
@@ -2197,7 +2267,7 @@ fn conversation_missing(conversation_id: &str) -> SandboxError {
 fn group_ref(account_id: &str) -> BotConversationRef {
     BotConversationRef {
         version: BOT_CONVERSATION_REF_VERSION,
-        platform: mutsuki_bot_protocol::BotPlatform::QqBot,
+        platform: BotPlatform::Sandbox,
         account_id: account_id.into(),
         kind: BotConversationKind::Group,
         user_id: None,
@@ -2211,7 +2281,7 @@ fn group_ref(account_id: &str) -> BotConversationRef {
 fn private_ref(account_id: &str, user_id: &str) -> BotConversationRef {
     BotConversationRef {
         version: BOT_CONVERSATION_REF_VERSION,
-        platform: mutsuki_bot_protocol::BotPlatform::QqBot,
+        platform: BotPlatform::Sandbox,
         account_id: account_id.into(),
         kind: BotConversationKind::Private,
         user_id: Some(user_id.into()),

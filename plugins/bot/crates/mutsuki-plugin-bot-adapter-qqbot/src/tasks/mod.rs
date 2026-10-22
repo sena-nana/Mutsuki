@@ -2,17 +2,20 @@ use std::collections::BTreeMap;
 
 use mutsuki_bot_protocol::{
     BOT_FLOW_INGRESS_PROTOCOL_ID, BOT_MEDIA_UPLOAD_PROTOCOL_ID, BOT_MESSAGE_RECALL_PROTOCOL_ID,
-    BOT_MESSAGE_SEND_PROTOCOL_ID, BotAdapterDescriptor, BotAdapterOperations, BotEvent,
-    BotFlowEventEnvelope, BotFlowTypeRef, BotMediaUploadRequest, BotMessage,
+    BOT_MESSAGE_SEND_PROTOCOL_ID, BotAccountRequest, BotAdapterDescriptor, BotAdapterEndpoint,
+    BotAdapterOperations, BotFlowEventEnvelope, BotFlowTypeRef, BotMediaUploadRequest, BotMessage,
     BotMessageRecallRequest, BotNodeBinding, BotNodeCatalogFragment, BotNodeDescriptor,
     BotNodeInvocation, BotNodeOutput, BotNodePortDescriptor, BotNodePortDirection, BotNodeResult,
     BotNodeRole, BotPlatform, BotReplyDeliveryRequest, MessageSegment,
 };
 use mutsuki_bot_qq_protocol::{
     QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID, QQBOT_ACCOUNT_GET_PROTOCOL_ID,
-    QQBOT_CAPABILITY_GET_PROTOCOL_ID, QQBOT_GATEWAY_STATUS_PROTOCOL_ID, QQBOT_RAW_CALL_PROTOCOL_ID,
-    QqBotAccountGetRequest, QqBotCapabilityGetRequest, QqBotGatewayStatusRequest,
+    QQBOT_CAPABILITY_GET_PROTOCOL_ID, QQBOT_GATEWAY_STATUS_PROTOCOL_ID,
+    QQBOT_MEDIA_UPLOAD_PROTOCOL_ID, QQBOT_MESSAGE_RECALL_PROTOCOL_ID,
+    QQBOT_MESSAGE_SEND_PROTOCOL_ID, QQBOT_RAW_CALL_PROTOCOL_ID, QqBotAccountGetRequest,
+    QqBotCapabilityGetRequest, QqBotGatewayStatusRequest,
 };
+use mutsuki_bot_sdk::outbound::send_message_from_payload;
 use mutsuki_runtime_contracts::{
     CompletionBatch, ExecutionClass, InvocationMode, OrderingRequirement, PluginManifest,
     RunnerBatchCapability, RunnerConcurrency, RunnerControlCapability, RunnerDescriptor,
@@ -59,9 +62,14 @@ pub fn qqbot_adapter_descriptor(
         display_name: "QQ".into(),
         accounts,
         operations: BotAdapterOperations {
-            send_runner_id: QQBOT_OPENAPI_RUNNER_ID.into(),
-            recall_runner_id: Some(QQBOT_OPENAPI_RUNNER_ID.into()),
-            upload_runner_id: media_enabled.then(|| QQBOT_OPENAPI_RUNNER_ID.into()),
+            send: BotAdapterEndpoint::new(QQBOT_MESSAGE_SEND_PROTOCOL_ID, QQBOT_OPENAPI_RUNNER_ID),
+            recall: Some(BotAdapterEndpoint::new(
+                QQBOT_MESSAGE_RECALL_PROTOCOL_ID,
+                QQBOT_OPENAPI_RUNNER_ID,
+            )),
+            upload: media_enabled.then(|| {
+                BotAdapterEndpoint::new(QQBOT_MEDIA_UPLOAD_PROTOCOL_ID, QQBOT_OPENAPI_RUNNER_ID)
+            }),
         },
         config_provider_id: Some(QQBOT_ADAPTER_PLUGIN_ID.into()),
     }
@@ -101,6 +109,24 @@ pub fn qqbot_adapter_manifest_for_accounts(
             "qqbot-message-recall",
         )
         .protocol_handler(
+            qqbot_protocol_descriptor(
+                QQBOT_MESSAGE_SEND_PROTOCOL_ID,
+                &["account", "request"],
+                &["id"],
+            ),
+            QQBOT_OPENAPI_RUNNER_ID,
+            "qqbot-endpoint-send",
+        )
+        .protocol_handler(
+            qqbot_protocol_descriptor(
+                QQBOT_MESSAGE_RECALL_PROTOCOL_ID,
+                &["account", "request"],
+                &[],
+            ),
+            QQBOT_OPENAPI_RUNNER_ID,
+            "qqbot-endpoint-recall",
+        )
+        .protocol_handler(
             ProtocolDescriptorBuilder::new(QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID)
                 .input_schema(json!({"type": "object"}))
                 .output_schema(json!({"type": "object", "required": ["outputs", "metadata"]}))
@@ -118,6 +144,15 @@ pub fn qqbot_adapter_manifest_for_accounts(
             ),
             QQBOT_OPENAPI_RUNNER_ID,
             "qqbot-media-upload",
+        );
+        builder = builder.protocol_handler(
+            qqbot_protocol_descriptor(
+                QQBOT_MEDIA_UPLOAD_PROTOCOL_ID,
+                &["account", "request"],
+                &["file_info"],
+            ),
+            QQBOT_OPENAPI_RUNNER_ID,
+            "qqbot-endpoint-upload",
         );
     }
     builder
@@ -482,6 +517,31 @@ impl QqOpenApiRunner {
     }
 }
 
+impl QqOpenApiRunner {
+    /// Decodes an endpoint payload and refuses an account this runner does not serve: the
+    /// router resolved the account against the directory, so a mismatch is a routing bug.
+    fn endpoint_request<T: serde::de::DeserializeOwned>(
+        &self,
+        payload: &Value,
+    ) -> Result<T, RuntimeError> {
+        let request: BotAccountRequest<T> = serde_json::from_value(payload.clone())
+            .map_err(|error| failure("mutsuki.bot.qqbot.endpoint.decode", error))?;
+        if request.account.platform != BotPlatform::QqBot
+            || request.account.account_id != self.service.account_id()
+        {
+            return Err(failure(
+                "mutsuki.bot.qqbot.endpoint.account",
+                format!(
+                    "bot.adapter.account_mismatch: {}:{} is not this QQ account",
+                    request.account.platform.as_str(),
+                    request.account.account_id
+                ),
+            ));
+        }
+        Ok(request.request)
+    }
+}
+
 impl Runner for QqOpenApiRunner {
     fn descriptor(&self) -> &RunnerDescriptor {
         &self.descriptor
@@ -505,9 +565,27 @@ impl Runner for QqOpenApiRunner {
                 let (payload, invocation) = node_payload(task)?;
                 let response = match task.protocol_id.as_str() {
                     BOT_MESSAGE_SEND_PROTOCOL_ID => {
-                        let message = message_from_node_payload(&payload, invocation.as_ref())
+                        let message = send_message_from_payload(&payload, invocation.as_ref())
                             .map_err(|error| failure("mutsuki.bot.message.send.decode", error))?;
                         self.service.send_bot_message(message)
+                    }
+                    QQBOT_MESSAGE_SEND_PROTOCOL_ID => {
+                        let request = self.endpoint_request::<BotMessage>(&payload)?;
+                        self.service.send_bot_message(request)
+                    }
+                    QQBOT_MESSAGE_RECALL_PROTOCOL_ID => {
+                        let request = self.endpoint_request::<BotMessageRecallRequest>(&payload)?;
+                        self.service
+                            .recall_message(bot_recall_to_qq_recall(request).map_err(|error| {
+                                failure("mutsuki.bot.qqbot.message.recall.map", error)
+                            })?)
+                    }
+                    QQBOT_MEDIA_UPLOAD_PROTOCOL_ID => {
+                        let request = self.endpoint_request::<BotMediaUploadRequest>(&payload)?;
+                        self.service
+                            .upload_media(bot_media_upload_to_qq_upload(request).map_err(
+                                |error| failure("mutsuki.bot.qqbot.media.upload.map", error),
+                            )?)
                     }
                     BOT_MEDIA_UPLOAD_PROTOCOL_ID => {
                         let request: BotMediaUploadRequest = parse_payload(payload.clone())
@@ -667,50 +745,6 @@ pub fn apply_forward_fold(
     Ok(())
 }
 
-fn message_from_node_payload(
-    payload: &Value,
-    invocation: Option<&BotNodeInvocation>,
-) -> Result<BotMessage, serde_json::Error> {
-    let text = invocation
-        .and_then(|item| item.config.get("text"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned);
-    let reply = invocation
-        .and_then(|item| item.config.get("reply"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    if let Ok(mut message) = serde_json::from_value::<BotMessage>(payload.clone()) {
-        if let Some(text) = text {
-            message.segments = vec![MessageSegment::text(text)];
-        }
-        if reply && message.reply_to.is_none() {
-            message.reply_to = incoming_reply_to(invocation);
-        }
-        return Ok(message);
-    }
-    let event: BotEvent = serde_json::from_value(payload.clone())?;
-    let body = text
-        .or_else(|| event.message.as_ref().map(BotMessage::plain_text))
-        .unwrap_or_default();
-    let mut message = BotMessage::text(event.target.clone(), body);
-    if reply {
-        message.reply_to = event
-            .message
-            .as_ref()
-            .and_then(|item| item.message_id.clone());
-    }
-    Ok(message)
-}
-
-fn incoming_reply_to(invocation: Option<&BotNodeInvocation>) -> Option<String> {
-    let payload = invocation?.input.payload.value.clone();
-    serde_json::from_value::<BotEvent>(payload)
-        .ok()
-        .and_then(|event| event.message.and_then(|item| item.message_id))
-}
-
 /// Thin adapter-side wrapper mapping the encode failure into a runtime error.
 pub fn flow_envelope(
     event: mutsuki_bot_protocol::BotEvent,
@@ -755,6 +789,8 @@ pub fn openapi_descriptor(plugin_generation: u64, media_enabled: bool) -> Runner
     let mut accepted_protocol_ids = vec![
         BOT_MESSAGE_SEND_PROTOCOL_ID.into(),
         BOT_MESSAGE_RECALL_PROTOCOL_ID.into(),
+        QQBOT_MESSAGE_SEND_PROTOCOL_ID.into(),
+        QQBOT_MESSAGE_RECALL_PROTOCOL_ID.into(),
         QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID.into(),
         QQBOT_ACCOUNT_GET_PROTOCOL_ID.into(),
         QQBOT_GATEWAY_STATUS_PROTOCOL_ID.into(),
@@ -763,6 +799,7 @@ pub fn openapi_descriptor(plugin_generation: u64, media_enabled: bool) -> Runner
     ];
     if media_enabled {
         accepted_protocol_ids.push(BOT_MEDIA_UPLOAD_PROTOCOL_ID.into());
+        accepted_protocol_ids.push(QQBOT_MEDIA_UPLOAD_PROTOCOL_ID.into());
     }
     RunnerDescriptor {
         runner_id: QQBOT_OPENAPI_RUNNER_ID.into(),

@@ -28,7 +28,7 @@ use mutsuki_plugin_bot_adapter_qqbot::tasks::{
 };
 use mutsuki_plugin_bot_event_router::{
     BOT_FLOW_REGISTRY_SERVICE_ID, BotFlowMatchRunner, flow_ingress_runner, flow_node_runner,
-    flow_router_manifest,
+    flow_outbound_runner, flow_router_manifest,
 };
 use mutsuki_runtime_contracts::{
     CompletionBatch, ExecutionClass, RunnerDescriptor, RunnerResult, WorkBatch,
@@ -238,6 +238,7 @@ async fn fake_gateway_delivers_private_group_channel_and_distinct_delete_once() 
     let loaded_flow_manifest = flow_manifest.clone();
     let ingress_registry = flow_registry.clone();
     let node_registry = flow_registry.clone();
+    let outbound_registry = flow_registry.clone();
     let service_registry = flow_registry.clone();
     let runner_descriptor = descriptor.clone();
     let runner_events = events.clone();
@@ -266,6 +267,9 @@ async fn fake_gateway_delivers_private_group_channel_and_distinct_delete_once() 
         .register_builtin_runner(|| Box::new(BotFlowMatchRunner::default()))
         .register_runtime_client_runner(move |client| {
             flow_node_runner(client, node_registry.clone())
+        })
+        .register_runtime_client_runner(move |client| {
+            flow_outbound_runner(client, outbound_registry.clone())
         })
         .register_builtin_plugin(manifest)
         .register_builtin_runner(move || {

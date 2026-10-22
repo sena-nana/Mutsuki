@@ -3,16 +3,13 @@ name = "mutsuki-bot-sandbox"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "QQ conversation sandbox with durable BotStateDb history: virtual Koishi-style loop and live inbound projection."
+description = "Conversation sandbox with durable BotStateDb history: simulated sandbox-platform conversations and a live projection of every adapter."
 
 [dependencies]
-mutsuki-runtime-sdk.workspace = true
 async-trait.workspace = true
 mutsuki-bot-conversation.workspace = true
-mutsuki-bot-delivery.workspace = true
 mutsuki-bot-protocol.workspace = true
 mutsuki-runtime-contracts.workspace = true
-fastrand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

@@ -236,7 +236,7 @@ impl BotAgentBridge {
     ) -> Result<ResolvedConversationPolicy, BotAgentError> {
         Ok(self
             .conversations
-            .resolve_execution(qq_conversation_from_event(event)?)?)
+            .resolve_execution(conversation_from_event(event)?)?)
     }
 
     pub(crate) async fn advance_or_reuse_session_version(
@@ -562,7 +562,7 @@ pub(crate) fn event_message(
 }
 
 pub(crate) fn resolved_origin_key(event: &BotEvent) -> String {
-    qq_conversation_from_event(event)
+    conversation_from_event(event)
         .map(|conversation| conversation.origin_key())
         .unwrap_or_else(|_| event.event_id.clone())
 }

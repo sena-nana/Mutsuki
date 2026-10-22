@@ -341,7 +341,7 @@ pub fn conversation_sample(event_count: usize) -> Sample {
     let repository = Arc::new(BenchmarkConversationRepository::default());
     let service = ConversationService::new(repository, benchmark_policy());
     let event = benchmark_event(7, 1, true);
-    let conversation = mutsuki_bot_conversation::qq_conversation_from_event(&event).unwrap();
+    let conversation = mutsuki_bot_conversation::conversation_from_event(&event).unwrap();
     let allocation_start = allocation_snapshot();
     let started = Instant::now();
     let session_id = futures::executor::block_on(async {
@@ -377,7 +377,7 @@ pub fn delivery_idempotency_sample(delivery_count: usize) -> Sample {
         Arc::new(BenchmarkDeliveryPolicy),
     );
     let conversation =
-        mutsuki_bot_conversation::qq_conversation_from_event(&benchmark_event(7, 1, true)).unwrap();
+        mutsuki_bot_conversation::conversation_from_event(&benchmark_event(7, 1, true)).unwrap();
     let allocation_start = allocation_snapshot();
     let started = Instant::now();
     futures::executor::block_on(async {
@@ -421,7 +421,7 @@ pub fn interaction_transition_sample(session_count: usize) -> Sample {
     let repository = Arc::new(BenchmarkInteractionRepository::default());
     let service = InteractionService::new(repository, Arc::new(BenchmarkInteractionMatcher));
     let event = benchmark_event(7, 1, true);
-    let conversation = mutsuki_bot_conversation::qq_conversation_from_event(&event).unwrap();
+    let conversation = mutsuki_bot_conversation::conversation_from_event(&event).unwrap();
     let actor_id = event.actor.as_ref().unwrap().user_id.clone();
     let allocation_start = allocation_snapshot();
     let started = Instant::now();
@@ -497,7 +497,7 @@ pub fn delivery_claim_due_sample(receipt_count: usize) -> Sample {
     let root = tempfile::tempdir().unwrap();
     let repository = Arc::new(BotStateDbRepository::open(root.path().join("state.db")).unwrap());
     let conversation =
-        mutsuki_bot_conversation::qq_conversation_from_event(&benchmark_event(7, 1, true)).unwrap();
+        mutsuki_bot_conversation::conversation_from_event(&benchmark_event(7, 1, true)).unwrap();
     futures::executor::block_on(async {
         for index in 0..receipt_count {
             let request = BotActiveDeliveryRequest {

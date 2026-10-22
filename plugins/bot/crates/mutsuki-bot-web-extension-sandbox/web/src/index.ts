@@ -11,7 +11,7 @@ export default defineExtension({
       id: "sandbox.page",
       path: "/sandbox",
       title: "沙盒",
-      pluginId: "mutsuki.plugin.bot.sandbox",
+      pluginId: "mutsuki.plugin.bot.adapter-sandbox",
       component: SandboxPage,
       requiredCapability: "bot.read",
     });

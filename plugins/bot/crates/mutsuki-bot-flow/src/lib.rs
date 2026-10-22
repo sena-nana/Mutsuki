@@ -15,14 +15,14 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use async_trait::async_trait;
 use mutsuki_bot_protocol::{
     BOT_FLOW_ERROR_TYPE, BOT_FLOW_NODE_EXTENSION_ID, BOT_FLOW_NODE_EXTENSION_VERSION,
-    BotFlowDocument, BotFlowEdgeKind, BotFlowSnapshot, BotFlowValidationIssue,
-    BotFlowValidationResult, BotFlowValidationSeverity, BotNodeCatalogFragment, BotNodeDescriptor,
-    BotNodePortDirection, BotNodeRole, BotNodeWiring,
+    BotAdapterDirectory, BotEvent, BotFlowDocument, BotFlowEdgeKind, BotFlowSnapshot,
+    BotFlowValidationIssue, BotFlowValidationResult, BotFlowValidationSeverity,
+    BotNodeCatalogFragment, BotNodeDescriptor, BotNodePortDirection, BotNodeRole, BotNodeWiring,
 };
 use mutsuki_config_service::{
     ConfigActivation, ConfigConstraints, ConfigContext, ConfigDescriptor, ConfigError, ConfigKey,
@@ -620,10 +620,17 @@ impl BotFlowIngressStats {
     }
 }
 
+/// Called with every `BotEvent` that enters Flow ingress, from any adapter, before routing.
+/// Observers run on the ingress runner and must only hand the event off.
+pub type BotIngressObserver = Arc<dyn Fn(&BotEvent) + Send + Sync>;
+
 pub struct BotFlowRegistry {
     catalog: RwLock<BotNodeCatalog>,
     active: RwLock<Arc<BotFlowSnapshot>>,
     ingress_stats: BotFlowIngressStats,
+    adapters: RwLock<Arc<BotAdapterDirectory>>,
+    ingress_observers: Mutex<BTreeMap<String, BotIngressObserver>>,
+    plan_generation: AtomicU64,
 }
 
 impl BotFlowRegistry {
@@ -636,6 +643,9 @@ impl BotFlowRegistry {
                 flow: BotFlowDocument::default(),
             })),
             ingress_stats: BotFlowIngressStats::default(),
+            adapters: RwLock::default(),
+            ingress_observers: Mutex::default(),
+            plan_generation: AtomicU64::new(0),
         }
     }
 
@@ -653,12 +663,80 @@ impl BotFlowRegistry {
             catalog: RwLock::new(catalog),
             active: RwLock::new(Arc::new(snapshot)),
             ingress_stats: BotFlowIngressStats::default(),
+            adapters: RwLock::default(),
+            ingress_observers: Mutex::default(),
+            plan_generation: AtomicU64::new(0),
         })
     }
 
     #[must_use]
     pub fn ingress_stats(&self) -> &BotFlowIngressStats {
         &self.ingress_stats
+    }
+
+    /// Bumped each time a `LoadPlan` is activated, so plan-bound runners know to rebuild.
+    #[must_use]
+    pub fn plan_generation(&self) -> u64 {
+        self.plan_generation.load(Ordering::SeqCst)
+    }
+
+    /// Adapters of the active `LoadPlan`; account-routed outbound protocols resolve against it.
+    #[must_use]
+    pub fn adapters(&self) -> Arc<BotAdapterDirectory> {
+        self.adapters
+            .read()
+            .expect("Bot adapter directory lock poisoned")
+            .clone()
+    }
+
+    /// Installs (or with `None` removes) the ingress observer registered under `key`.
+    pub fn set_ingress_observer(
+        &self,
+        key: impl Into<String>,
+        observer: Option<BotIngressObserver>,
+    ) {
+        let key = key.into();
+        let mut observers = self
+            .ingress_observers
+            .lock()
+            .expect("Bot ingress observers lock poisoned");
+        match observer {
+            Some(observer) => {
+                observers.insert(key, observer);
+            }
+            None => {
+                observers.remove(&key);
+            }
+        }
+    }
+
+    /// Removes the observer under `key` only while it is still `observer`, so an unloading plugin
+    /// generation never removes the observer its successor already installed.
+    pub fn clear_ingress_observer(&self, key: &str, observer: &BotIngressObserver) {
+        let mut observers = self
+            .ingress_observers
+            .lock()
+            .expect("Bot ingress observers lock poisoned");
+        if observers
+            .get(key)
+            .is_some_and(|current| Arc::ptr_eq(current, observer))
+        {
+            observers.remove(key);
+        }
+    }
+
+    /// Hands `event` to every ingress observer.
+    pub fn notify_ingress(&self, event: &BotEvent) {
+        let observers = self
+            .ingress_observers
+            .lock()
+            .expect("Bot ingress observers lock poisoned")
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        for observer in observers {
+            observer(event);
+        }
     }
 
     #[must_use]
@@ -709,11 +787,21 @@ impl BotFlowRegistry {
     }
 
     pub fn validate_load_plan(&self, plan: &RuntimeLoadPlan) -> Result<(), BotFlowError> {
-        BotNodeCatalog::from_load_plan(plan).map(drop)
+        BotNodeCatalog::from_load_plan(plan)?;
+        BotAdapterDirectory::from_manifests(&plan.plugins)
+            .map(drop)
+            .map_err(BotFlowError::InvalidCatalog)
     }
 
+    /// Activates the node catalog and publishes the adapter directory of `plan`.
     pub fn activate_load_plan(&self, plan: &RuntimeLoadPlan) -> Result<(), BotFlowError> {
         let candidate = BotNodeCatalog::from_load_plan(plan)?;
+        let adapters = BotAdapterDirectory::from_manifests(&plan.plugins)
+            .map_err(BotFlowError::InvalidCatalog)?;
+        *self
+            .adapters
+            .write()
+            .expect("Bot adapter directory lock poisoned") = Arc::new(adapters);
         let validation = validate_flow(&self.active().flow, &candidate);
         *self
             .catalog
@@ -726,6 +814,7 @@ impl BotFlowRegistry {
                     flow: BotFlowDocument::default(),
                 });
         }
+        self.plan_generation.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
 }

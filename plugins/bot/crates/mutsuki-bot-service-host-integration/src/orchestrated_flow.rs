@@ -8,6 +8,7 @@ use mutsuki_plugin_bot_conversation_context::{
     BOT_CONVERSATION_ATTACH_ICL_NODE_TYPE, BOT_CONVERSATION_ATTACH_IDENTIFIERS_NODE_TYPE,
     BOT_CONVERSATION_RECORD_ICL_NODE_TYPE,
 };
+use mutsuki_plugin_bot_event_router::BOT_SEND_NODE_TYPE;
 use mutsuki_plugin_bot_interaction::{
     BOT_INTERACTION_CREATE_NODE_TYPE, BOT_INTERACTION_MATCH_NODE_TYPE,
     DEFAULT_INTERACTION_WAITER_TIMEOUT_MS,
@@ -45,6 +46,10 @@ fn prefixed_parts(prefix: &str, flow: &BotFlowDocument) -> (Vec<BotFlowNode>, Ve
     )
 }
 
+/// Platform-neutral message source of the first-party graphs: any adapter's messages, the
+/// sandbox included, run the same chain; replies leave through the account they arrived on.
+const MESSAGE_SOURCE_NODE_TYPE: &str = "mutsuki.bot.message.created";
+
 /// First-party example graph. Source fans out to `/persona` matching and `record-icl-listen`.
 /// Empty-mention Create opens a waiter; the next ingress rematches. Bare @ never edges to Agent.
 /// Submit is record-icl → attach-icl → identifiers → attach-bound-persona → bind-profile →
@@ -52,7 +57,7 @@ fn prefixed_parts(prefix: &str, flow: &BotFlowDocument) -> (Vec<BotFlowNode>, Ve
 #[must_use]
 pub fn qq_ai_orchestrated_flow() -> BotFlowDocument {
     qq_ai_orchestrated_flow_with_source(
-        "mutsuki.bot.qq.message.created",
+        MESSAGE_SOURCE_NODE_TYPE,
         Some(BotFlowSourceSelector {
             protocol_id: BOT_EVENT_INGEST_PROTOCOL_ID.into(),
             event_type: Some(BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1)),
@@ -88,7 +93,7 @@ pub fn qq_ai_orchestrated_flow_with_source(
                 None,
             ),
             flow_node("persona", BOT_PERSONA_COMMAND_NODE_TYPE, json!({}), None),
-            flow_node("qq-send", "mutsuki.bot.qq.send", json!({}), None),
+            flow_node("send", BOT_SEND_NODE_TYPE, json!({}), None),
             flow_node(
                 "empty-mention",
                 "mutsuki.bot.match.empty_mention",
@@ -191,7 +196,7 @@ pub fn qq_ai_orchestrated_flow_with_source(
                 "persona-message-send",
                 "persona",
                 "message",
-                "qq-send",
+                "send",
                 "input",
             ),
             flow_edge(
@@ -286,14 +291,14 @@ pub fn qq_ai_orchestrated_flow_with_source(
                 "present-fail-send",
                 "present-fail",
                 "message",
-                "qq-send",
+                "send",
                 "input",
             ),
         ],
     }
 }
 
-/// Example graph: QQ message → domain link match → Bilibili / Mihuashi resolve → QQ send.
+/// Example graph: message → domain link match → Bilibili / Mihuashi resolve → send.
 /// Requires `web_cookie` Bilibili, Mihuashi, Chromium snapshot, and full group receive
 /// (`GROUP_MESSAGE_CREATE`); AT-only mode will not see unmentioned mini-program shares.
 #[must_use]
@@ -304,7 +309,7 @@ pub fn qq_link_resolve_flow() -> BotFlowDocument {
         nodes: vec![
             flow_node(
                 "source",
-                "mutsuki.bot.qq.message.created",
+                MESSAGE_SOURCE_NODE_TYPE,
                 json!({}),
                 Some(BotFlowSourceSelector {
                     protocol_id: BOT_EVENT_INGEST_PROTOCOL_ID.into(),
@@ -335,7 +340,7 @@ pub fn qq_link_resolve_flow() -> BotFlowDocument {
                 json!({}),
                 None,
             ),
-            flow_node("qq-send", "mutsuki.bot.qq.send", json!({}), None),
+            flow_node("send", BOT_SEND_NODE_TYPE, json!({}), None),
         ],
         edges: vec![
             flow_edge("source-bili", "source", "event", "bili-link", "event"),
@@ -360,12 +365,12 @@ pub fn qq_link_resolve_flow() -> BotFlowDocument {
                 "mihuashi-resolve",
                 "event",
             ),
-            flow_edge("bili-send", "bili-resolve", "message", "qq-send", "input"),
+            flow_edge("bili-send", "bili-resolve", "message", "send", "input"),
             flow_edge(
                 "mihuashi-send",
                 "mihuashi-resolve",
                 "message",
-                "qq-send",
+                "send",
                 "input",
             ),
         ],
@@ -405,7 +410,9 @@ pub fn bilibili_push_flow() -> BotFlowDocument {
 
 /// First-party all-in-one reference graph. Flow activates a single document, so this
 /// merges the AI conversation, Bilibili/Mihuashi link resolve and Bilibili push graphs
-/// with `ai-` / `resolve-` / `push-` ID prefixes, each keeping its own `qq.send` sink.
+/// with `ai-` / `resolve-` / `push-` ID prefixes, each keeping its own sink. The message chains
+/// use the platform-neutral source and send, so the sandbox runs them too; the push chain keeps
+/// `qq.send` because a notification carries no account to route by.
 #[must_use]
 pub fn qq_full_business_flow() -> BotFlowDocument {
     let (mut nodes, mut edges) = prefixed_parts("ai-", &qq_ai_orchestrated_flow());

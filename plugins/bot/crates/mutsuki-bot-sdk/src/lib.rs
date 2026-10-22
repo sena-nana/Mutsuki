@@ -17,6 +17,7 @@ mod context;
 pub mod failure;
 pub mod manifest;
 mod message_builder;
+pub mod outbound;
 pub mod prelude;
 mod submission;
 

@@ -13,10 +13,11 @@
 use async_trait::async_trait;
 use mutsuki_agent_contracts::{ScheduleExecutionStatus, ScheduledRunResult};
 use mutsuki_bot_protocol::{
-    BOT_MESSAGE_SEND_PROTOCOL_ID, BotActiveDeliveryRequest, BotConversationRef, BotDeliveryAttempt,
-    BotDeliveryContent, BotDeliveryPartReceipt, BotDeliveryReceipt, BotMessage,
-    BotReplyDeliveryPart, BotReplyDeliveryReceipt, BotReplyDeliveryRequest, BotTarget,
-    DeliveryPartStatus, DeliveryPolicy, DeliveryStatus, MessageSegment,
+    BOT_MESSAGE_SEND_V2_PROTOCOL_ID, BotAccountRequest, BotActiveDeliveryRequest,
+    BotConversationRef, BotDeliveryAttempt, BotDeliveryContent, BotDeliveryPartReceipt,
+    BotDeliveryReceipt, BotMessage, BotReplyDeliveryPart, BotReplyDeliveryReceipt,
+    BotReplyDeliveryRequest, BotTarget, DeliveryPartStatus, DeliveryPolicy, DeliveryStatus,
+    MessageSegment,
 };
 use mutsuki_runtime_contracts::{ScalarValue, TaskOutcome};
 use mutsuki_runtime_sdk::AsyncRunnerContext;
@@ -756,10 +757,16 @@ impl ReplyDeliveryService {
             time_ms: None,
             ext: Default::default(),
         };
+        // Routed by the conversation's account, so a reply always leaves through the adapter
+        // the triggering event arrived on.
         let outcome = ctx
             .call_raw(
-                BOT_MESSAGE_SEND_PROTOCOL_ID,
-                serde_json::to_value(message).map_err(|_| DeliveryError::InvalidRequest)?,
+                BOT_MESSAGE_SEND_V2_PROTOCOL_ID,
+                serde_json::to_value(BotAccountRequest {
+                    account: request.conversation.account(),
+                    request: message,
+                })
+                .map_err(|_| DeliveryError::InvalidRequest)?,
             )
             .await;
         self.finish_runtime_outcome(

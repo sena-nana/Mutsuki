@@ -5,7 +5,7 @@
     "nodes": [
       {
         "node_id": "source",
-        "node_type_id": "mutsuki.bot.qq.message.created",
+        "node_type_id": "mutsuki.bot.message.created",
         "node_type_version": 1,
         "config": {},
         "source": {

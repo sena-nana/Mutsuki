@@ -255,7 +255,7 @@ mod tests {
             (MIHUASHI_PLUGIN_ID, "mihuashi"),
             (
                 mutsuki_bot_service_host_integration::BOT_SANDBOX_PLUGIN_ID,
-                "sandbox",
+                "adapter-sandbox",
             ),
             (
                 mutsuki_plugin_bot_flow_agent_tool::PLUGIN_ID,

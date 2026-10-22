@@ -22,15 +22,16 @@ Bot Agent final turn
   -> quote / mention / segment / QQ forward-fold may change parts
   -> Flow delivery node Submit clears occupancy-only, replaces unsent parts, then sends
   -> CAS claim one part
-  -> mutsuki.bot.message/send@1
+  -> mutsuki.bot.message/send@2 on the conversation's account
+  -> Flow outbound router -> adapter endpoint (runner_hint from BotAdapterDirectory)
   -> persist attempt + platform receipt
 ```
 
 Flow is the only initiation surface for Bot business behavior. Chat events, sandbox simulate
 traffic and domain push pipelines all enter through `mutsuki.bot.flow/ingress@1`; business
 plugins are invoked only through graph node bindings. Business EventSources submit through the
-SDK `BotSubmissionGate`, which rejects direct submissions of `mutsuki.bot.message/send@1`,
-`mutsuki.bot.message/recall@1`, `mutsuki.bot.delivery/*` and `mutsuki.bot.agent/*`, and their
+SDK `BotSubmissionGate`, which rejects direct submissions of `mutsuki.bot.message/send@1|@2`,
+`mutsuki.bot.message/recall@1|@2`, `mutsuki.bot.delivery/*` and `mutsuki.bot.agent/*`, and their
 manifests are validated against that surface at assembly. A graph with no matching Source chain
 freezes the business behavior behind the event; the freeze is observable through the ingress
 stats (`accepted_total` / `dropped_total`) on the `mutsuki.bot.flow.ingress` health snapshot.
@@ -62,20 +63,47 @@ The bundle also registers a domain-neutral ServiceHost health component that
 publishes the Gateway connection, identification, heartbeat, ACK, event,
 reconnect and last-error snapshot through the standard health control surface.
 
-Simulate-mode sandbox traffic stays on the same QQ-shaped Bot contracts, but
-`sandbox:` conversation ids are intercepted before `mutsuki.bot.message/send@1`
-reaches QQ OpenAPI. The interception runner and delivery gateway are owned by
-`mutsuki-bot-sandbox` (`SandboxAwareOpenApiRunner`, `SandboxAwareDeliveryGateway`);
-the ServiceHost integration only wires them around the QQ adapter:
+## Account routing
+
+Outbound operations are routed by the bot account they act for. `mutsuki.bot.message/send@2`,
+`mutsuki.bot.message/recall@2` and `mutsuki.bot.media/upload@2` carry a
+`BotAccountRequest { account: BotAccountRef, request }`. The Host admits one runner per protocol,
+so adapters cannot all accept those ids: exactly one runner serves them, the Flow outbound router
+(`mutsuki.bot.router.flow.outbound` in `mutsuki.plugin.bot.flow`). It resolves
+`BotAdapterDirectory::route(operation, account)` and calls the adapter-owned endpoint the
+adapter's `BotAdapterDescriptor` names (`mutsuki.bot.qqbot.message/send@1`,
+`mutsuki.bot.sandbox.message/send@1`, …) by `runner_hint`. The Flow LoadPlan observer publishes
+the directory on `BotFlowRegistry::adapters()` when it activates a plan. ServiceHost builds
+runners before that activation, so the router and the Flow node runner are plan-bound: each
+builds the task-await adapter that declares its callable protocols (adapter endpoints, catalog
+bindings) on first use and rebuilds it, once idle, when `BotFlowRegistry::plan_generation()`
+moves.
+
+Callers are durable reply delivery (on `request.conversation.account()`), the platform-neutral
+sink nodes `mutsuki.bot.send` / `mutsuki.bot.recall` / `mutsuki.bot.upload` (on the Flow context's
+bot account) and the sandbox's live send. `mutsuki.bot.message/send@1` remains only behind the
+persisted QQ sink node `mutsuki.bot.qq.send` and QQ management delivery, both of which only ever
+address QQ.
+
+## Sandbox adapter
+
+The sandbox is a simulated platform adapter (`mutsuki-plugin-bot-adapter-sandbox`, plugin id
+`mutsuki.plugin.bot.adapter-sandbox`, `BotPlatform::Sandbox`, account `sandbox`). It wraps no
+other adapter:
 
 ```text
 Sandbox console (virtual user)
-  -> mutsuki.bot.flow/ingress@1
-  -> Match / Processor nodes
-  -> mutsuki.bot.message/send@1 or delivery/reply@1
-  -> sandbox outbound sink
-  -> sandbox console (bot bubble)
+  -> compose: mutsuki.bot.flow/ingress@1 (sandbox platform event)
+  -> neutral Source / Match / Processor nodes
+  -> mutsuki.bot.send or delivery/reply@1 -> message/send@2
+  -> Flow outbound router -> mutsuki.bot.sandbox.message/send@1
+  -> sandbox application service records the bot bubble
 ```
+
+Live mode observes every adapter: the sandbox registers an ingress observer on `BotFlowRegistry`
+and projects each real `BotEvent` the router receives, and an operator's live send goes out
+through `message/send@2` on the real conversation's account. QQ only contributes the group titles
+its Gateway resolves after the event.
 
 Messages the bot itself sends are projected as bot bubbles and never start Flow Source chains.
 
@@ -158,10 +186,11 @@ Domain plugins and durable services:
   image assets, custom stickers and official face IDs persist in `bot_sandbox_*`
   tables. Other plugins query those tables through
   `BotStateDbRepository` or `inspect_rows`; sandbox startup hydrates from a snapshot.
-- `mutsuki-bot-sandbox`: QQ conversation sandbox with durable history in `BotStateDb`.
-  Simulate mode is a Koishi-style closed loop (virtual users always enter `mutsuki.bot.flow/ingress@1`,
-  outbound `message/send` for `sandbox:` conversations is intercepted back into the
-  console). Simulate compose is always a virtual user talking to the bot: private
+- `mutsuki-bot-sandbox`: conversation sandbox with durable history in `BotStateDb`.
+  Simulate mode is a Koishi-style closed loop on the sandbox platform (virtual users always enter
+  `mutsuki.bot.flow/ingress@1`; replies come back through the sandbox adapter's endpoint).
+  Simulated history stored before the sandbox became an adapter (QQ conversations with `sandbox:`
+  ids) is moved onto the sandbox platform and account when it loads. Simulate compose is always a virtual user talking to the bot: private
   chats pick identity from the left session list and edit it on the right,
   group chats pick it from the right-hand roster, and the bot identity is visible
   but not selectable as "me".
@@ -201,6 +230,9 @@ Domain plugins and durable services:
   (or bot removal) turn it off; `GROUP_MSG_RECEIVE` / `C2C_MSG_RECEIVE` turn it
   back on. Failed receipts are surfaced instead of a local bubble.
 - `mutsuki-plugin-bot-adapter-qqbot`: QQBot platform translation and OpenAPI side effects.
+- `mutsuki-plugin-bot-adapter-sandbox`: the simulated sandbox platform adapter (descriptor,
+  `mutsuki.bot.sandbox.message/send@1` endpoint, Flow ingress compose runtime, live ingress
+  observer); it depends on no other adapter.
 
 WebExtensions and product-facing assembly:
 
@@ -230,7 +262,7 @@ Pages with no Bot content live with their owners, and the console composes them:
 - `mutsuki-bot-web-host-integration`: Bot-package WebHost assembly helper that embeds the admin
   WebExtensions. Products may opt in; this crate is not a Host and not a product entry.
 - `mutsuki-bot-service-host-integration`: platform-neutral ServiceHost assembly (Flow Router,
-  command, interaction, sandbox, Agent chain, Workshop/Mihuashi factories, recovery sources,
+  command, interaction, sandbox adapter, Agent chain, Workshop/Mihuashi factories, recovery sources,
   console bridges, shared state helpers `bot_state_db`/`bot_sandbox`). It depends on no chat
   adapter or Bilibili crate; products merge the platform catalogs below. Command and interaction are selectable
   workspace factories against the shared `BotStateDb` actor; conversation-context, reply and
@@ -244,7 +276,7 @@ Pages with no Bot content live with their owners, and the console composes them:
   here. QQ Adapter still only translates official protocol.
 - `mutsuki-bot-qq-service-host-integration`: the QQ adapter's Host assembly
   (`configured_qq_plugin_catalog`, `QqBotPluginBundle`, `QqGatewayEventSource`, health mapping,
-  management provider, sandbox outbound intercept, the `QqAiBotPluginBundle` test assembly).
+  management provider, the live group-title sink, the `QqAiBotPluginBundle` test assembly).
 - `mutsuki-bot-bilibili-service-host-integration`: the Bilibili owner's Host assembly
   (`configured_bilibili_plugin_catalog`, polling EventSource, Host-backed credential/config
   stores).

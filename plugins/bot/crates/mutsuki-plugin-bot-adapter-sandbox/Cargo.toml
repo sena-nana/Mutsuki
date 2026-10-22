@@ -1,0 +1,23 @@
+[package]
+name = "mutsuki-plugin-bot-adapter-sandbox"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Simulated Bot platform adapter: sandbox conversations behind the BotAdapterDescriptor contract, composed into Flow ingress and answered through the account-routed outbound endpoint."
+
+[dependencies]
+async-trait.workspace = true
+mutsuki-bot-flow.workspace = true
+mutsuki-bot-protocol.workspace = true
+mutsuki-bot-sandbox.workspace = true
+mutsuki-bot-sdk.workspace = true
+mutsuki-runtime-contracts.workspace = true
+mutsuki-runtime-sdk.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+futures-executor.workspace = true
+
+[lints]
+workspace = true

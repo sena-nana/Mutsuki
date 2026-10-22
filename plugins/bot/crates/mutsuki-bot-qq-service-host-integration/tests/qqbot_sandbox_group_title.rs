@@ -52,7 +52,9 @@ async fn live_sandbox_group_title_comes_from_group_info() {
     let runtime = {
         let mut catalog =
             mutsuki_std_service_host_integration::configured_std_plugin_catalog().unwrap();
-        catalog.merge(support::bot_catalog_with_qq()).unwrap();
+        catalog
+            .merge(support::bot_catalog_with_qq_and_flow().0)
+            .unwrap();
         ServiceRuntimeBuilder::new(config)
             .with_configured_plugin_catalog(catalog)
             .start()
@@ -121,6 +123,12 @@ token = "test-token"
 [plugins]
 dynamic_dirs = []
 disabled_dir = "disabled"
+
+[[plugins.configured]]
+id = "mutsuki.plugin.bot.flow"
+
+[[plugins.configured]]
+id = "mutsuki.plugin.bot.adapter-sandbox"
 
 [[plugins.configured]]
 id = "mutsuki.std.resource.sqlite"

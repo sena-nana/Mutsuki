@@ -15,15 +15,17 @@ use mutsuki_runtime_contracts::{
 };
 use mutsuki_runtime_sdk::Runner;
 use mutsuki_runtime_sdk::{
-    AsyncRunnerContext, BoxedTaskAwaitRunner, PluginBuilder, RunnerDescriptorBuilder,
-    RuntimeClientRef, RuntimeFailure, RuntimeResult, TaskAwaitRunnerAdapter,
-    map_work_batch_entries,
+    AsyncRunnerContext, PluginBuilder, RunnerDescriptorBuilder, RuntimeClientRef, RuntimeFailure,
+    RuntimeResult, map_work_batch_entries,
 };
 use serde::{Deserialize, Serialize, Serializer};
 
+use crate::plan_bound::PlanBoundRunner;
+use crate::sources::SourceFilter;
 use crate::{
-    BOT_FLOW_MATCH_RUNNER_ID, MATCH_PROTOCOL_IDS, event_matches_source_types, match_descriptor,
-    match_node_catalog, source_kinds_for_node,
+    BOT_FLOW_MATCH_RUNNER_ID, BOT_FLOW_OUTBOUND_RUNNER_ID, MATCH_PROTOCOL_IDS,
+    OUTBOUND_PROTOCOL_IDS, match_descriptor, match_node_catalog, neutral_sink_nodes,
+    neutral_source_nodes, outbound_descriptor,
 };
 
 pub const BOT_FLOW_ROUTER_PLUGIN_ID: &str = "mutsuki.plugin.bot.flow";
@@ -44,6 +46,7 @@ pub fn flow_router_manifest_for_catalog(
         .runner_descriptor(ingress_descriptor())
         .runner_descriptor(node_descriptor(catalog))
         .runner_descriptor(match_descriptor())
+        .runner_descriptor(outbound_descriptor())
         .protocol_handler(
             protocol_descriptor(
                 BOT_FLOW_INGRESS_PROTOCOL_ID,
@@ -69,14 +72,30 @@ pub fn flow_router_manifest_for_catalog(
             (*protocol).to_string(),
         );
     }
+    for protocol in OUTBOUND_PROTOCOL_IDS {
+        builder = builder.protocol_handler(
+            protocol_descriptor(protocol, &["account", "request"], &[]),
+            BOT_FLOW_OUTBOUND_RUNNER_ID,
+            "bot-flow-outbound",
+        );
+    }
     builder
         .extension(
-            match_node_catalog()
+            flow_node_catalog()
                 .into_plugin_extension()
-                .expect("flow match node catalog serializes"),
+                .expect("flow node catalog serializes"),
         )
         .build()
         .manifest
+}
+
+/// Nodes the Flow router itself serves: match filters, neutral sources and neutral sinks.
+#[must_use]
+pub fn flow_node_catalog() -> mutsuki_bot_protocol::BotNodeCatalogFragment {
+    let mut catalog = match_node_catalog();
+    catalog.nodes.extend(neutral_source_nodes());
+    catalog.nodes.extend(neutral_sink_nodes());
+    catalog
 }
 
 use mutsuki_bot_sdk::manifest::object_protocol_descriptor as protocol_descriptor;
@@ -85,16 +104,20 @@ pub fn flow_ingress_runner(registry: Arc<BotFlowRegistry>) -> Box<dyn Runner> {
     Box::new(BotFlowIngressRunner::new(registry))
 }
 
+/// The node runner may call every binding of the active catalog, which the Flow `LoadPlan`
+/// observer publishes after runners are built; see [`PlanBoundRunner`].
 pub fn flow_node_runner(
     client: RuntimeClientRef,
     registry: Arc<BotFlowRegistry>,
 ) -> Box<dyn Runner> {
-    let descriptor = node_descriptor(&registry.catalog());
-    let factory: BoxedTaskAwaitRunner = Box::new(move |ctx, task| {
-        let registry = registry.clone();
-        Box::pin(run_node(ctx, task, registry))
-    });
-    Box::new(TaskAwaitRunnerAdapter::new(descriptor, client, factory).with_self_call_policy(false))
+    let call_registry = registry.clone();
+    Box::new(PlanBoundRunner::new(
+        node_descriptor(&registry.catalog()),
+        client,
+        registry,
+        |registry| node_descriptor(&registry.catalog()),
+        Arc::new(move |ctx, task| Box::pin(run_node(ctx, task, call_registry.clone()))),
+    ))
 }
 
 pub struct BotFlowIngressRunner {
@@ -130,17 +153,21 @@ struct GraphIndex {
     error_edges_from: HashMap<String, Vec<usize>>,
     wiring_by_node: HashMap<String, BotNodeWiring>,
     by_selector: SelectorIndex,
+    /// Decoded once per revision for every node with a source selector.
+    source_filters: HashMap<usize, SourceFilter>,
 }
 
 impl GraphIndex {
     fn new(flow: Arc<BotFlowDocument>) -> Self {
         let mut node_by_id = HashMap::with_capacity(flow.nodes.len());
         let mut by_selector = SelectorIndex::new();
+        let mut source_filters = HashMap::new();
         for (index, node) in flow.nodes.iter().enumerate() {
             node_by_id.insert(node.node_id.clone(), index);
             let Some(selector) = node.source.as_ref() else {
                 continue;
             };
+            source_filters.insert(index, SourceFilter::for_node(node));
             let sources = by_selector.entry(selector.protocol_id.clone()).or_default();
             match selector.event_type.as_ref() {
                 Some(event_type) => sources
@@ -185,7 +212,14 @@ impl GraphIndex {
             error_edges_from,
             wiring_by_node,
             by_selector,
+            source_filters,
         }
+    }
+
+    fn source_accepts(&self, source_index: usize, event: Option<&BotEvent>) -> bool {
+        self.source_filters
+            .get(&source_index)
+            .is_some_and(|filter| filter.accepts(event))
     }
 
     fn node(&self, node_id: &str) -> Option<&BotFlowNode> {
@@ -329,6 +363,9 @@ impl Runner for BotFlowIngressRunner {
                 .map_err(|error| runtime_error(task, "ingress.decode", error))?;
             // Borrowed rather than cloned: the payload is the whole inbound event.
             let event = BotEvent::deserialize(&envelope.payload.value).ok();
+            if let Some(event) = event.as_ref() {
+                self.registry.notify_ingress(event);
+            }
             let source_indexes = index.sources_for(
                 &envelope.protocol_id,
                 (
@@ -345,7 +382,7 @@ impl Runner for BotFlowIngressRunner {
             let mut tasks = Vec::new();
             for source_index in source_indexes {
                 let source = &index.flow.nodes[source_index];
-                if !source_accepts_event(source, event.as_ref()) {
+                if !index.source_accepts(source_index, event.as_ref()) {
                     continue;
                 }
                 matched_sources += 1;
@@ -404,16 +441,7 @@ pub(crate) fn source_accepts_envelope(
     envelope: &BotFlowEventEnvelope,
 ) -> bool {
     let event = serde_json::from_value::<BotEvent>(envelope.payload.value.clone()).ok();
-    source_accepts_event(source, event.as_ref())
-}
-
-fn source_accepts_event(source: &BotFlowNode, event: Option<&BotEvent>) -> bool {
-    let types = source_kinds_for_node(&source.node_type_id);
-    match event {
-        Some(event) if event.is_self_sent_message() => false,
-        Some(event) => types.is_empty() || event_matches_source_types(event, types),
-        None => types.is_empty(),
-    }
+    SourceFilter::for_node(source).accepts(event.as_ref())
 }
 
 async fn run_node(

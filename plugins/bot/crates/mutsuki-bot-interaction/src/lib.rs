@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use mutsuki_bot_conversation::qq_conversation_from_event;
+use mutsuki_bot_conversation::conversation_from_event;
 use mutsuki_bot_protocol::{
     BotEvent, BotInteractionSession, InteractionMatch, InteractionScope, InteractionStatus,
     InteractionWaitSpec,
@@ -155,7 +155,7 @@ impl InteractionService {
         now_unix_ms: u64,
     ) -> Result<Option<InteractionMatch>, InteractionError> {
         let conversation =
-            qq_conversation_from_event(event).map_err(|_| InteractionError::UnsupportedTarget)?;
+            conversation_from_event(event).map_err(|_| InteractionError::UnsupportedTarget)?;
         let mut sessions = self
             .repository
             .active_for_origin(&conversation.origin_key())?;
