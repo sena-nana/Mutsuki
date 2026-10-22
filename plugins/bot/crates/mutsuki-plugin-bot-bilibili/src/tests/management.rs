@@ -9,15 +9,14 @@ fn login_command_awaits_qr_renderer_then_sends_rendered_resource() {
     let config = SharedBilibiliConfig::new(managed_config());
     let management = Arc::new(BilibiliManagementService::new(
         config.clone(),
-        SharedBilibiliCredential::default(),
-        Box::new(FakeTransport(state.clone())),
+        Arc::new(FakeTransport(state.clone())),
         repository.clone(),
         Arc::new(RecordingCredentialStore::default()),
         Arc::new(RecordingConfigStore::default()),
         Arc::new(AlwaysPresentSecrets),
     ));
     let mut runner = BilibiliRunner::new(
-        Box::new(FakeTransport(state)),
+        Arc::new(FakeTransport(state)),
         repository,
         Arc::new(UnusedResources),
         "memory",
@@ -79,8 +78,8 @@ fn chat_login_start_is_allowed_for_admins_when_management_is_off() {
     assert_eq!(state.lock().unwrap().qr_starts, 1);
 }
 
-#[test]
-fn chat_login_status_requires_admin_even_when_management_is_off() {
+#[tokio::test]
+async fn chat_login_status_requires_admin_even_when_management_is_off() {
     let mut config = managed_config();
     config.management.enabled = false;
     let shared = SharedBilibiliConfig::new(config);
@@ -88,15 +87,14 @@ fn chat_login_status_requires_admin_even_when_management_is_off() {
     let repository = Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap());
     let management = Arc::new(BilibiliManagementService::new(
         shared.clone(),
-        SharedBilibiliCredential::default(),
-        Box::new(FakeTransport(state)),
+        Arc::new(FakeTransport(state)),
         repository.clone(),
         Arc::new(RecordingCredentialStore::default()),
         Arc::new(RecordingConfigStore::default()),
         Arc::new(AlwaysPresentSecrets),
     ));
     let runner = BilibiliRunner::new(
-        Box::new(FakeTransport(Arc::new(Mutex::new(
+        Arc::new(FakeTransport(Arc::new(Mutex::new(
             FakeTransportState::default(),
         )))),
         repository.clone(),
@@ -107,11 +105,11 @@ fn chat_login_status_requires_admin_even_when_management_is_off() {
     repository.set_qr_session("admin", "qr-key").unwrap();
     runner
         .commands()
-        .run_command(&command_task(
-            "login-status-admin",
-            "admin",
-            &["login-status"],
-        ))
+        .run_command(
+            &NoHttp,
+            &command_task("login-status-admin", "admin", &["login-status"]),
+        )
+        .await
         .unwrap();
 
     shared.replace({
@@ -121,34 +119,32 @@ fn chat_login_status_requires_admin_even_when_management_is_off() {
     });
     let forbidden = runner
         .commands()
-        .run_command(&command_task(
-            "login-status-empty",
-            "admin",
-            &["login-status"],
-        ))
+        .run_command(
+            &NoHttp,
+            &command_task("login-status-empty", "admin", &["login-status"]),
+        )
+        .await
         .unwrap_err();
     assert_eq!(forbidden.code, "bilibili.management_forbidden");
 }
 
-#[test]
-fn management_flow_rotates_secret_persists_verified_binding_and_previews_without_cursor() {
+#[tokio::test]
+async fn management_flow_confirms_login_persists_verified_binding_and_previews_without_cursor() {
     let state = Arc::new(Mutex::new(FakeTransportState::default()));
     let config = SharedBilibiliConfig::new(managed_config());
-    let credential = SharedBilibiliCredential::default();
     let credential_store = Arc::new(RecordingCredentialStore::default());
     let config_store = Arc::new(RecordingConfigStore::default());
     let repository = Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap());
     let management = Arc::new(BilibiliManagementService::new(
         config.clone(),
-        credential,
-        Box::new(FakeTransport(state.clone())),
+        Arc::new(FakeTransport(state.clone())),
         repository.clone(),
         credential_store.clone(),
         config_store.clone(),
         Arc::new(AlwaysPresentSecrets),
     ));
     let runner = BilibiliRunner::new(
-        Box::new(FakeTransport(state.clone())),
+        Arc::new(FakeTransport(state.clone())),
         repository.clone(),
         Arc::new(UnusedResources),
         "memory",
@@ -158,30 +154,38 @@ fn management_flow_rotates_secret_persists_verified_binding_and_previews_without
     repository.set_qr_session("admin", "qr-key").unwrap();
     let login = runner
         .commands()
-        .run_command(&command_task("login", "admin", &["login-status"]))
+        .run_command(&NoHttp, &command_task("login", "admin", &["login-status"]))
+        .await
         .unwrap();
     assert!(
         runner
             .commands()
-            .run_command(&command_task("forbidden-login", "alice", &["login-status"]))
+            .run_command(
+                &NoHttp,
+                &command_task("forbidden-login", "alice", &["login-status"])
+            )
+            .await
             .is_err()
     );
-    assert_eq!(credential_store.0.lock().unwrap().len(), 1);
+    // The HTTP effect stores the captured cookie; management never handles it.
+    assert!(credential_store.0.lock().unwrap().is_empty());
     assert!(
-        !serde_json::to_string(&login.tasks)
+        serde_json::to_string(&login.tasks)
             .unwrap()
-            .contains("ROTATED")
+            .contains("登录成功")
     );
 
     runner
         .commands()
-        .run_command(&command_task("bind", "alice", &["bind", "42"]))
+        .run_command(&NoHttp, &command_task("bind", "alice", &["bind", "42"]))
+        .await
         .unwrap();
     let (_, code) = repository.binding_challenge("alice").unwrap().unwrap();
     state.lock().unwrap().signature = format!("hello {code}");
     runner
         .commands()
-        .run_command(&command_task("verify", "alice", &["verify"]))
+        .run_command(&NoHttp, &command_task("verify", "alice", &["verify"]))
+        .await
         .unwrap();
     let snapshot = config.snapshot();
     assert_eq!(snapshot.subscriptions.len(), 1);
@@ -193,13 +197,17 @@ fn management_flow_rotates_secret_persists_verified_binding_and_previews_without
 
     runner
         .commands()
-        .run_command(&command_task("pause", "alice", &["pause"]))
+        .run_command(&NoHttp, &command_task("pause", "alice", &["pause"]))
+        .await
         .unwrap();
     assert!(config.snapshot().subscriptions[0].paused);
     assert!(config_store.0.lock().unwrap().len() >= 2);
 
     assert!(repository.cursor("Dynamic:42").unwrap().is_none());
-    let preview = management.preview("alice", false, None).unwrap();
+    let preview = management
+        .preview_via(&NoHttp, "alice", false, None)
+        .await
+        .unwrap();
     assert_eq!(preview.title, "latest");
     assert!(repository.cursor("Dynamic:42").unwrap().is_none());
 }
@@ -207,15 +215,12 @@ fn management_flow_rotates_secret_persists_verified_binding_and_previews_without
 #[tokio::test]
 async fn management_service_web_subscribe_and_clear_never_echo_cookie() {
     let config = SharedBilibiliConfig::new(managed_config());
-    let credential = SharedBilibiliCredential::default();
-    credential.set("SESSDATA=secret-cookie".into());
     let credential_store = Arc::new(RecordingCredentialStore::default());
     let config_store = Arc::new(RecordingConfigStore::default());
     let repository = Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap());
     let management = BilibiliManagementService::new(
         config.clone(),
-        credential.clone(),
-        Box::new(FakeTransport(Arc::new(Mutex::new(
+        Arc::new(FakeTransport(Arc::new(Mutex::new(
             FakeTransportState::default(),
         )))),
         repository,
@@ -228,11 +233,6 @@ async fn management_service_web_subscribe_and_clear_never_echo_cookie() {
         .subscribe_changes()
         .expect("Bilibili change source");
     assert!(status.credential_loaded);
-    assert!(
-        !serde_json::to_string(&status)
-            .unwrap()
-            .contains("secret-cookie")
-    );
 
     let view = management
         .subscribe(
@@ -256,7 +256,6 @@ async fn management_service_web_subscribe_and_clear_never_echo_cookie() {
     );
 
     management.credential_clear().unwrap();
-    assert!(!credential.is_loaded());
     assert_eq!(credential_store.0.lock().unwrap().last().unwrap().1, "");
 }
 
@@ -278,8 +277,7 @@ fn management_service_subscribe_rejects_duplicate_id_and_empty_target() {
     let config_store = Arc::new(RecordingConfigStore::default());
     let management = BilibiliManagementService::new(
         config.clone(),
-        SharedBilibiliCredential::default(),
-        Box::new(FakeTransport(Arc::new(Mutex::new(
+        Arc::new(FakeTransport(Arc::new(Mutex::new(
             FakeTransportState::default(),
         )))),
         Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap()),
@@ -331,8 +329,7 @@ fn management_service_subscribe_rejects_duplicate_id_and_empty_target() {
 async fn management_login_uses_bound_renderer_for_web_console_payload() {
     let management = BilibiliManagementService::new(
         SharedBilibiliConfig::new(managed_config()),
-        SharedBilibiliCredential::default(),
-        Box::new(FakeTransport(Arc::new(Mutex::new(
+        Arc::new(FakeTransport(Arc::new(Mutex::new(
             FakeTransportState::default(),
         )))),
         Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap()),
@@ -341,6 +338,7 @@ async fn management_login_uses_bound_renderer_for_web_console_payload() {
         Arc::new(AlwaysPresentSecrets),
     );
     management.bind_qr_renderer(Arc::new(FakeQrRenderer));
+    management.bind_http(Arc::new(NoHttp));
     let result = management.login_start("web-console").await.unwrap();
     assert_eq!(result.url, "https://passport.bilibili.com/qr");
     assert_eq!(result.qr_png, vec![1, 2, 3, 4]);
@@ -348,16 +346,14 @@ async fn management_login_uses_bound_renderer_for_web_console_payload() {
 }
 
 #[tokio::test]
-async fn management_login_rotates_credentials_without_the_management_switch() {
+async fn management_login_works_without_the_management_switch() {
     let mut config = managed_config();
     config.management.enabled = false;
-    let credential = SharedBilibiliCredential::default();
     let credential_store = Arc::new(RecordingCredentialStore::default());
     let config_store = Arc::new(RecordingConfigStore::default());
     let management = BilibiliManagementService::new(
         SharedBilibiliConfig::new(config),
-        credential.clone(),
-        Box::new(FakeTransport(Arc::new(Mutex::new(
+        Arc::new(FakeTransport(Arc::new(Mutex::new(
             FakeTransportState::default(),
         )))),
         Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap()),
@@ -366,14 +362,11 @@ async fn management_login_rotates_credentials_without_the_management_switch() {
         Arc::new(AlwaysPresentSecrets),
     );
     management.bind_qr_renderer(Arc::new(FakeQrRenderer));
+    management.bind_http(Arc::new(NoHttp));
     management.login_start("web-console").await.unwrap();
-    let polled = management.login_poll("web-console").unwrap();
+    let polled = management.login_poll("web-console").await.unwrap();
     assert_eq!(polled.status, BilibiliQrLoginStatus::Confirmed);
-    assert!(credential.is_loaded());
-    assert_eq!(
-        credential_store.0.lock().unwrap().last().unwrap(),
-        &("BILIBILI_COOKIE".into(), "SESSDATA=ROTATED".into())
-    );
+    assert!(credential_store.0.lock().unwrap().is_empty());
     for code in [
         management
             .subscribe(
@@ -392,13 +385,21 @@ async fn management_login_rotates_credentials_without_the_management_switch() {
             .set_paused("admin", true, None, true)
             .unwrap_err()
             .code,
-        management.preview("admin", true, None).unwrap_err().code,
+        management
+            .preview("admin", true, None)
+            .await
+            .unwrap_err()
+            .code,
         management.unbind("admin").unwrap_err().code,
     ] {
         assert_eq!(code, "bilibili.management_unavailable");
     }
     assert_eq!(
-        management.bind_start("admin", 7, "seed").unwrap_err().code,
+        management
+            .bind_start("admin", 7, "seed")
+            .await
+            .unwrap_err()
+            .code,
         "bilibili.management_forbidden"
     );
 }

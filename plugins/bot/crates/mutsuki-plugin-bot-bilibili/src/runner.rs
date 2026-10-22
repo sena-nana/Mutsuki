@@ -5,7 +5,6 @@ use std::sync::{Arc, Mutex};
 
 use mutsuki_bot_flow::BotFlowRegistry;
 use mutsuki_bot_link_parser::{ResolvedLinkCard, preferred_event_url};
-use mutsuki_bot_management::BilibiliManagementApi;
 use mutsuki_bot_protocol::{
     BOT_EVENT_INGEST_PROTOCOL_ID, BOT_FLOW_INGRESS_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID,
     BotCommandEvent, BotEvent, BotExtMap, BotFlowContext, BotFlowEventEnvelope, BotFlowPayload,
@@ -32,26 +31,23 @@ use crate::render::{
     CardMedia, CardRoute, PreparedCard, PreparedCards, layout_for_url, render_cards,
     render_qr_child, run_notification_card,
 };
-use crate::transport::ensure_bilibili_domain;
+use crate::transport::{RunnerHttp, ensure_bilibili_domain};
 use crate::{
-    BILIBILI_EVENT_TYPE, BilibiliError, BilibiliItem, BilibiliNotification, BilibiliPollKind,
-    BilibiliRiskControlConfig, BilibiliTransport, LINK_RESOLVE, LinkResolveRequest,
-    MANAGEMENT_COMMAND, NOTIFY_CARD, PLUGIN_ID, PollRequest, RISK_CONTROL_STATUS_EVENT,
-    SharedBilibiliConfig, SqliteBilibiliRepository,
+    BILIBILI_EVENT_TYPE, BilibiliError, BilibiliItem, BilibiliManagementService,
+    BilibiliNotification, BilibiliPollKind, BilibiliRiskControlConfig, BilibiliTransport,
+    LINK_RESOLVE, LinkResolveRequest, MANAGEMENT_COMMAND, NOTIFY_CARD, PLUGIN_ID, PollRequest,
+    RISK_CONTROL_STATUS_EVENT, SharedBilibiliConfig, SqliteBilibiliRepository,
 };
 
 pub struct BilibiliRunner {
-    /// Behind its own lock so a blocking upstream round trip never holds the
-    /// runner mutex. It used to: every poll and every `/bili` command queued
-    /// behind whichever request was currently in flight. Transport calls stay
-    /// serialised among themselves because the trait takes `&mut self` and the
-    /// session state it carries is shared.
-    transport: Arc<Mutex<Box<dyn BilibiliTransport>>>,
+    /// Shared with the management service; upstream calls are child HTTP tasks awaited
+    /// without the runner mutex held.
+    transport: Arc<dyn BilibiliTransport>,
     repository: Arc<SqliteBilibiliRepository>,
     resources: Arc<dyn ResourceRegistryGateway>,
     media_provider_id: String,
     managed_config: Option<SharedBilibiliConfig>,
-    management: Option<Arc<dyn BilibiliManagementApi>>,
+    management: Option<Arc<BilibiliManagementService>>,
     flow_registry: Option<Arc<BotFlowRegistry>>,
     /// Cursor keys skipped while the push chain was unwired. The next wired
     /// poll baselines them so the frozen window never replays as a backlog.
@@ -60,13 +56,13 @@ pub struct BilibiliRunner {
 
 impl BilibiliRunner {
     pub fn new(
-        transport: Box<dyn BilibiliTransport>,
+        transport: Arc<dyn BilibiliTransport>,
         repository: Arc<SqliteBilibiliRepository>,
         resources: Arc<dyn ResourceRegistryGateway>,
         media_provider_id: impl Into<String>,
     ) -> Self {
         Self {
-            transport: Arc::new(Mutex::new(transport)),
+            transport,
             repository,
             resources,
             media_provider_id: media_provider_id.into(),
@@ -96,7 +92,7 @@ impl BilibiliRunner {
     pub fn with_management(
         mut self,
         config: SharedBilibiliConfig,
-        management: Arc<dyn BilibiliManagementApi>,
+        management: Arc<BilibiliManagementService>,
     ) -> Self {
         self.managed_config = Some(config);
         self.management = Some(management);
@@ -182,12 +178,10 @@ impl BilibiliRunner {
     }
 
     /// Everything the card path needs, cloned out from under the runner lock so
-    /// the cover download and resource write happen without it held.
+    /// the resolve and cover download happen without it held.
     pub(crate) fn card_media(&self) -> CardMedia {
         CardMedia {
             transport: self.transport.clone(),
-            resources: self.resources.clone(),
-            media_provider_id: self.media_provider_id.clone(),
         }
     }
 }
@@ -225,11 +219,12 @@ async fn run_task_async(
         };
         let prepared = {
             // The cooldown read needs the runner and is cheap; the resolve and the
-            // cover download are blocking HTTP and must not hold its lock.
+            // cover download are awaited HTTP tasks and must not hold its lock.
             let (media, repository) = {
                 let runner = state.lock().expect("Bilibili runner mutex");
                 (runner.card_media(), runner.repository.clone())
             };
+            let http = RunnerHttp(&ctx);
             let cooldown_key = format!("{}:{}", request.account_id, request.url);
             if !repository
                 .cooldown_ready(&cooldown_key, request.now_ms, request.cooldown_ms)
@@ -243,11 +238,13 @@ async fn run_task_async(
                 None
             } else {
                 let card = media
-                    .resolve(&request.url)
+                    .resolve(&http, &request.url)
+                    .await
                     .map_err(|error| RuntimeFailure::new(bili_error(&task, error)))?;
                 let (layout, kicker, live) = layout_for_url(&card.url);
                 let card = media
-                    .prepare_card_request(card, &task, layout, kicker, live)
+                    .prepare_card_request(&http, card, &task, layout, kicker, live)
+                    .await
                     .map_err(RuntimeFailure::new)?;
                 Some(PreparedCards {
                     result: RunnerResult::completed(task.task_id.clone()),
@@ -311,18 +308,15 @@ async fn run_task_async(
         result.output = Some(json!({ "push_wired": false, "poll_skipped": true }));
         return Ok(result);
     };
-    // Clone the handle, then drop the runner guard before the blocking call:
-    // holding it here serialised every other poll and every `/bili` command
-    // behind whichever upstream request happened to be in flight.
+    // Clone the handle, then drop the runner guard before awaiting upstream:
+    // holding it here would serialise every other poll and every `/bili` command
+    // behind whichever request happened to be in flight.
     let transport = state
         .lock()
         .expect("Bilibili runner mutex")
         .transport
         .clone();
-    let attempt = transport
-        .lock()
-        .expect("Bilibili transport mutex")
-        .poll(&kind, request.uid);
+    let attempt = transport.poll(&RunnerHttp(&ctx), &kind, request.uid).await;
     match attempt {
         Ok(items) => state
             .lock()
@@ -434,7 +428,10 @@ async fn run_management_task(
     let action = command.args.first().map(String::as_str).unwrap_or("help");
     if action != "login" && action != "preview" {
         let commands = state.lock().expect("Bilibili runner mutex").commands();
-        return commands.run_command(&task).map_err(RuntimeFailure::new);
+        return commands
+            .run_command(&RunnerHttp(&ctx), &task)
+            .await
+            .map_err(RuntimeFailure::new);
     }
     let (management, config, actor_id, is_admin) = {
         let runner = state.lock().expect("Bilibili runner mutex");
@@ -467,7 +464,8 @@ async fn run_management_task(
     if action == "login" {
         require_admin(is_admin).map_err(|error| RuntimeFailure::new(bili_error(&task, error)))?;
         let session = management
-            .login_start_session(&actor_id)
+            .login_start_session_via(&RunnerHttp(&ctx), &actor_id)
+            .await
             .map_err(|error| RuntimeFailure::new(bili_management_error(&task, error)))?;
         let rendered = render_qr_child(&ctx, &task, session.url).await?;
         return Ok(state
@@ -481,12 +479,22 @@ async fn run_management_task(
                 Some(rendered.resource),
             ));
     }
-    match management.preview(&actor_id, is_admin, command.args.get(1).map(String::as_str)) {
+    let http = RunnerHttp(&ctx);
+    match management
+        .preview_via(
+            &http,
+            &actor_id,
+            is_admin,
+            command.args.get(1).map(String::as_str),
+        )
+        .await
+    {
         Ok(card) => {
             let (layout, kicker, live) = layout_for_url(&card.url);
             let media = state.lock().expect("Bilibili runner mutex").card_media();
             let request = media
                 .prepare_card_request(
+                    &http,
                     ResolvedLinkCard {
                         url: card.url,
                         title: card.title,
@@ -498,6 +506,7 @@ async fn run_management_task(
                     kicker,
                     live,
                 )
+                .await
                 .map_err(RuntimeFailure::new)?;
             render_cards(
                 &ctx,

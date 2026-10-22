@@ -39,7 +39,6 @@ mod poller;
 mod render;
 mod repository;
 mod runner;
-mod secure_media;
 mod transport;
 
 #[cfg(test)]
@@ -55,15 +54,18 @@ pub use manifest::{manifest, manifest_for_config, manifest_with_surfaces};
 pub use model::{
     BilibiliBackendConfig, BilibiliConfig, BilibiliConfigStore, BilibiliCredentialStore,
     BilibiliItem, BilibiliManagementConfig, BilibiliNotification, BilibiliPollKind,
-    BilibiliProfile, BilibiliQrCode, BilibiliQrPoll, BilibiliQrStatus, BilibiliRiskControlBackend,
+    BilibiliProfile, BilibiliQrCode, BilibiliQrStatus, BilibiliRiskControlBackend,
     BilibiliRiskControlConfig, BilibiliSubscription, LinkResolveRequest, LinkResolverConfig,
-    PollRequest, RetryConfig, SharedBilibiliConfig, SharedBilibiliCredential,
+    PollRequest, RetryConfig, SharedBilibiliConfig,
 };
 pub use poller::{BilibiliPollerHealth, run_bilibili_polling};
 pub use render::RuntimeBilibiliQrRenderer;
 pub use repository::SqliteBilibiliRepository;
 pub use runner::BilibiliRunner;
-pub use transport::{BilibiliTransport, ReqwestBilibiliTransport, sign_wbi_query};
+pub use transport::{
+    BilibiliHttp, BilibiliTransport, COOKIE_DOMAIN, HTTP_DOMAINS, HttpBilibiliTransport,
+    RuntimeBilibiliHttp, sign_wbi_query,
+};
 
 pub const PLUGIN_ID: &str = "mutsuki.bot.bilibili";
 pub const RUNNER_ID: &str = "mutsuki.bot.bilibili.runner";

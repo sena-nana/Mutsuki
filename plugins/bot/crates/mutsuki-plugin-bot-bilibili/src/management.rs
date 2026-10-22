@@ -1,7 +1,7 @@
 //! Structured Bilibili account/subscription management shared by chat commands and Web Console.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
 use mutsuki_bot_flow::BotFlowRegistry;
@@ -11,16 +11,15 @@ use mutsuki_bot_management::{
     BilibiliManagementChangeArea, BilibiliManagementChangeEvent,
     BilibiliManagementChangeSubscription, BilibiliManagementError, BilibiliManagementStatus,
     BilibiliNotificationKind, BilibiliPreviewCardView, BilibiliQrLoginStatus,
-    BilibiliSubscriptionView, in_blocking_section,
+    BilibiliSubscriptionView,
 };
 use mutsuki_bot_protocol::{BOT_EVENT_INGEST_PROTOCOL_ID, BotTarget};
 
 use crate::commands::{binding_code, select_subscription, self_subscription_id_for};
 use crate::{
     BILIBILI_EVENT_TYPE, BilibiliBackendConfig, BilibiliConfig, BilibiliConfigStore,
-    BilibiliCredentialStore, BilibiliError, BilibiliPollKind, BilibiliQrStatus,
-    BilibiliSubscription, BilibiliTransport, SharedBilibiliConfig, SharedBilibiliCredential,
-    SqliteBilibiliRepository,
+    BilibiliCredentialStore, BilibiliError, BilibiliHttp, BilibiliPollKind, BilibiliQrStatus,
+    BilibiliSubscription, BilibiliTransport, SharedBilibiliConfig, SqliteBilibiliRepository,
 };
 
 #[async_trait]
@@ -32,10 +31,13 @@ pub trait BilibiliSecretPresence: Send + Sync {
     fn inspect(&self, key: &str) -> BilibiliCredentialSecretState;
 }
 
+/// Account and subscription management. Upstream calls go through the HTTP effect: the
+/// runner passes its own child-task channel, while the Web Console path uses the channel
+/// bound with [`Self::bind_http`] once the runtime client exists.
 pub struct BilibiliManagementService {
     config: SharedBilibiliConfig,
-    credential: SharedBilibiliCredential,
-    transport: Mutex<Box<dyn BilibiliTransport>>,
+    transport: Arc<dyn BilibiliTransport>,
+    http: RwLock<Option<Arc<dyn BilibiliHttp>>>,
     repository: Arc<SqliteBilibiliRepository>,
     credential_store: Arc<dyn BilibiliCredentialStore>,
     config_store: Arc<dyn BilibiliConfigStore>,
@@ -49,8 +51,7 @@ pub struct BilibiliManagementService {
 impl BilibiliManagementService {
     pub fn new(
         config: SharedBilibiliConfig,
-        credential: SharedBilibiliCredential,
-        transport: Box<dyn BilibiliTransport>,
+        transport: Arc<dyn BilibiliTransport>,
         repository: Arc<SqliteBilibiliRepository>,
         credential_store: Arc<dyn BilibiliCredentialStore>,
         config_store: Arc<dyn BilibiliConfigStore>,
@@ -59,8 +60,8 @@ impl BilibiliManagementService {
         let (changes, _) = tokio::sync::broadcast::channel(64);
         Self {
             config,
-            credential,
-            transport: Mutex::new(transport),
+            transport,
+            http: RwLock::new(None),
             repository,
             credential_store,
             config_store,
@@ -87,6 +88,22 @@ impl BilibiliManagementService {
         *self.qr_renderer.write().expect("QR renderer lock") = Some(renderer);
     }
 
+    pub fn bind_http(&self, http: Arc<dyn BilibiliHttp>) {
+        *self.http.write().expect("Bilibili HTTP lock") = Some(http);
+    }
+
+    fn bound_http(&self) -> Result<Arc<dyn BilibiliHttp>, BilibiliManagementError> {
+        self.http
+            .read()
+            .expect("Bilibili HTTP lock")
+            .clone()
+            .ok_or_else(|| {
+                map_error(BilibiliError::ManagementUnavailable(
+                    "the runtime HTTP client is not bound yet".into(),
+                ))
+            })
+    }
+
     /// Shares the Flow registry so `status()` can report whether the push
     /// Source chain is wired into the active graph.
     pub fn with_flow_registry(mut self, registry: Arc<BotFlowRegistry>) -> Self {
@@ -97,12 +114,13 @@ impl BilibiliManagementService {
     fn status_impl(&self) -> BilibiliManagementStatus {
         let snapshot = self.config.snapshot();
         let backend = "web_cookie".into();
-        let (cookie_secret_key, cookie_secret_state) = match &snapshot.backend {
-            BilibiliBackendConfig::WebCookie { cookie_secret_key } => (
-                Some(cookie_secret_key.clone()),
-                Some(self.secret_presence.inspect(cookie_secret_key)),
-            ),
-        };
+        let (cookie_secret_key, cookie_secret_state): (_, Option<BilibiliCredentialSecretState>) =
+            match &snapshot.backend {
+                BilibiliBackendConfig::WebCookie { cookie_secret_key } => (
+                    Some(cookie_secret_key.clone()),
+                    Some(self.secret_presence.inspect(cookie_secret_key)),
+                ),
+            };
         let management_enabled = snapshot.management.enabled;
         let reason = if !management_enabled {
             Some("subscription management is disabled".into())
@@ -115,7 +133,7 @@ impl BilibiliManagementService {
             allow_self_binding: snapshot.management.allow_self_binding,
             cookie_secret_key,
             cookie_secret_state,
-            credential_loaded: self.credential.is_loaded(),
+            credential_loaded: cookie_secret_state == Some(BilibiliCredentialSecretState::Present),
             subscription_count: snapshot.subscriptions.len(),
             reason,
             push_wired: self.flow_registry.as_ref().map(|registry| {
@@ -126,6 +144,7 @@ impl BilibiliManagementService {
 
     async fn login_start_impl(
         &self,
+        http: &dyn BilibiliHttp,
         actor_id: &str,
     ) -> Result<BilibiliLoginStartResult, BilibiliError> {
         let renderer = self
@@ -136,7 +155,7 @@ impl BilibiliManagementService {
             .ok_or_else(|| {
                 BilibiliError::ManagementUnavailable("image QR renderer is unavailable".into())
             })?;
-        let session = in_blocking_section(|| self.login_start_session_impl(actor_id))?;
+        let session = self.login_start_session_impl(http, actor_id).await?;
         let png = renderer.render_qr(&session.url).await?;
         Ok(BilibiliLoginStartResult {
             url: session.url,
@@ -146,15 +165,12 @@ impl BilibiliManagementService {
         })
     }
 
-    fn login_start_session_impl(
+    async fn login_start_session_impl(
         &self,
+        http: &dyn BilibiliHttp,
         actor_id: &str,
     ) -> Result<BilibiliLoginSession, BilibiliError> {
-        let qr = self
-            .transport
-            .lock()
-            .expect("bilibili transport mutex")
-            .qr_start()?;
+        let qr = self.transport.qr_start(http).await?;
         self.repository
             .set_qr_session(actor_id, &qr.key)
             .map_err(|error| BilibiliError::Transport(error.to_string()))?;
@@ -164,8 +180,11 @@ impl BilibiliManagementService {
         })
     }
 
-    fn login_poll_impl(&self, actor_id: &str) -> Result<BilibiliLoginPollResult, BilibiliError> {
-        let config = self.config.snapshot();
+    async fn login_poll_impl(
+        &self,
+        http: &dyn BilibiliHttp,
+        actor_id: &str,
+    ) -> Result<BilibiliLoginPollResult, BilibiliError> {
         let key = self
             .repository
             .qr_session(actor_id)
@@ -173,12 +192,8 @@ impl BilibiliManagementService {
             .ok_or_else(|| {
                 BilibiliError::ManagementUnavailable("no active QR login; run login first".into())
             })?;
-        let polled = self
-            .transport
-            .lock()
-            .expect("bilibili transport mutex")
-            .qr_poll(&key)?;
-        let message = match polled.status {
+        let status = self.transport.qr_poll(http, &key).await?;
+        let message = match status {
             BilibiliQrStatus::Pending => "等待扫码。".into(),
             BilibiliQrStatus::Scanned => "已扫码，等待在 App 中确认。".into(),
             BilibiliQrStatus::Expired => {
@@ -187,17 +202,8 @@ impl BilibiliManagementService {
                     .map_err(|error| BilibiliError::Transport(error.to_string()))?;
                 "二维码已过期，请重新执行 login。".into()
             }
+            // The HTTP effect already stored the login cookies in the Host secret.
             BilibiliQrStatus::Confirmed => {
-                let credential = polled.credential.ok_or_else(|| {
-                    BilibiliError::InvalidResponse("confirmed QR login omitted credential".into())
-                })?;
-                let cookie_secret_key = config.backend.cookie_secret_key().ok_or_else(|| {
-                    BilibiliError::ManagementUnavailable("Cookie backend is not selected".into())
-                })?;
-                self.credential_store
-                    .rotate(cookie_secret_key, credential.clone())
-                    .map_err(BilibiliError::ManagementUnavailable)?;
-                self.credential.set(credential);
                 self.repository
                     .clear_qr_session(actor_id)
                     .map_err(|error| BilibiliError::Transport(error.to_string()))?;
@@ -205,7 +211,7 @@ impl BilibiliManagementService {
             }
         };
         Ok(BilibiliLoginPollResult {
-            status: polled.status.into(),
+            status: status.into(),
             message,
         })
     }
@@ -217,9 +223,7 @@ impl BilibiliManagementService {
         })?;
         self.credential_store
             .rotate(cookie_secret_key, String::new())
-            .map_err(BilibiliError::ManagementUnavailable)?;
-        self.credential.clear();
-        Ok(())
+            .map_err(BilibiliError::ManagementUnavailable)
     }
 
     fn list_impl(
@@ -322,8 +326,9 @@ impl BilibiliManagementService {
         Ok(view)
     }
 
-    fn preview_impl(
+    async fn preview_impl(
         &self,
+        http: &dyn BilibiliHttp,
         actor_id: &str,
         is_admin: bool,
         selector: Option<&str>,
@@ -338,9 +343,8 @@ impl BilibiliManagementService {
         let subscription = &config.subscriptions[index];
         let item = self
             .transport
-            .lock()
-            .expect("bilibili transport mutex")
-            .poll(&BilibiliPollKind::Dynamic, subscription.uid)?
+            .poll(http, &BilibiliPollKind::Dynamic, subscription.uid)
+            .await?
             .into_iter()
             .next()
             .ok_or_else(|| BilibiliError::ManagementUnavailable("该账号暂无可预览动态。".into()))?;
@@ -352,8 +356,9 @@ impl BilibiliManagementService {
         })
     }
 
-    fn bind_start_impl(
+    async fn bind_start_impl(
         &self,
+        http: &dyn BilibiliHttp,
         operator_user_id: &str,
         uid: u64,
         challenge_seed: &str,
@@ -367,11 +372,7 @@ impl BilibiliManagementService {
                 "invalid Bilibili UID".into(),
             ));
         }
-        let profile = self
-            .transport
-            .lock()
-            .expect("bilibili transport mutex")
-            .profile(uid)?;
+        let profile = self.transport.profile(http, uid).await?;
         let code = binding_code(operator_user_id, uid, challenge_seed);
         self.repository
             .set_binding_challenge(operator_user_id, uid, &code)
@@ -383,8 +384,9 @@ impl BilibiliManagementService {
         })
     }
 
-    fn bind_verify_impl(
+    async fn bind_verify_impl(
         &self,
+        http: &dyn BilibiliHttp,
         operator_user_id: &str,
         platform: &str,
         target: BotTarget,
@@ -400,11 +402,7 @@ impl BilibiliManagementService {
             .ok_or_else(|| {
                 BilibiliError::ManagementUnavailable("no binding challenge; run bind first".into())
             })?;
-        let profile = self
-            .transport
-            .lock()
-            .expect("bilibili transport mutex")
-            .profile(uid)?;
+        let profile = self.transport.profile(http, uid).await?;
         if !profile.signature.contains(&code) {
             return Ok(BilibiliBindVerifyResult::SignatureMismatch { code });
         }
@@ -471,6 +469,87 @@ impl BilibiliManagementService {
     }
 }
 
+/// The upstream-facing operations over an explicit HTTP channel; the runner passes its
+/// child-task channel, the [`BilibiliManagementApi`] impl the bound Host client.
+impl BilibiliManagementService {
+    pub(crate) async fn login_start_session_via(
+        &self,
+        http: &dyn BilibiliHttp,
+        actor_id: &str,
+    ) -> Result<BilibiliLoginSession, BilibiliManagementError> {
+        let result = self
+            .login_start_session_impl(http, actor_id)
+            .await
+            .map_err(map_error);
+        if result.is_ok() {
+            self.publish_change(vec![BilibiliManagementChangeArea::Login]);
+        }
+        result
+    }
+
+    pub(crate) async fn login_poll_via(
+        &self,
+        http: &dyn BilibiliHttp,
+        actor_id: &str,
+    ) -> Result<BilibiliLoginPollResult, BilibiliManagementError> {
+        let result = self
+            .login_poll_impl(http, actor_id)
+            .await
+            .map_err(map_error);
+        if result.is_ok() {
+            self.publish_change(vec![
+                BilibiliManagementChangeArea::Login,
+                BilibiliManagementChangeArea::Status,
+            ]);
+        }
+        result
+    }
+
+    pub(crate) async fn preview_via(
+        &self,
+        http: &dyn BilibiliHttp,
+        actor_id: &str,
+        is_admin: bool,
+        selector: Option<&str>,
+    ) -> Result<BilibiliPreviewCardView, BilibiliManagementError> {
+        self.preview_impl(http, actor_id, is_admin, selector)
+            .await
+            .map_err(map_error)
+    }
+
+    pub(crate) async fn bind_start_via(
+        &self,
+        http: &dyn BilibiliHttp,
+        operator_user_id: &str,
+        uid: u64,
+        challenge_seed: &str,
+    ) -> Result<BilibiliBindChallengeResult, BilibiliManagementError> {
+        self.bind_start_impl(http, operator_user_id, uid, challenge_seed)
+            .await
+            .map_err(map_error)
+    }
+
+    pub(crate) async fn bind_verify_via(
+        &self,
+        http: &dyn BilibiliHttp,
+        operator_user_id: &str,
+        platform: &str,
+        target: BotTarget,
+    ) -> Result<BilibiliBindVerifyResult, BilibiliManagementError> {
+        let result = self
+            .bind_verify_impl(http, operator_user_id, platform, target)
+            .await
+            .map_err(map_error);
+        if matches!(result, Ok(BilibiliBindVerifyResult::Verified(_))) {
+            self.publish_change(vec![
+                BilibiliManagementChangeArea::Subscriptions,
+                BilibiliManagementChangeArea::Status,
+            ]);
+        }
+        result
+    }
+}
+
 #[async_trait]
 impl BilibiliManagementApi for BilibiliManagementService {
     fn subscribe_changes(&self) -> Option<BilibiliManagementChangeSubscription> {
@@ -483,40 +562,34 @@ impl BilibiliManagementApi for BilibiliManagementService {
         self.status_impl()
     }
 
-    fn login_start_session(
+    async fn login_start_session(
         &self,
         actor_id: &str,
     ) -> Result<BilibiliLoginSession, BilibiliManagementError> {
-        let result = self.login_start_session_impl(actor_id).map_err(map_error);
-        if result.is_ok() {
-            self.publish_change(vec![BilibiliManagementChangeArea::Login]);
-        }
-        result
+        self.login_start_session_via(&*self.bound_http()?, actor_id)
+            .await
     }
 
     async fn login_start(
         &self,
         actor_id: &str,
     ) -> Result<BilibiliLoginStartResult, BilibiliManagementError> {
-        let result = self.login_start_impl(actor_id).await.map_err(map_error);
+        let http = self.bound_http()?;
+        let result = self
+            .login_start_impl(&*http, actor_id)
+            .await
+            .map_err(map_error);
         if result.is_ok() {
             self.publish_change(vec![BilibiliManagementChangeArea::Login]);
         }
         result
     }
 
-    fn login_poll(
+    async fn login_poll(
         &self,
         actor_id: &str,
     ) -> Result<BilibiliLoginPollResult, BilibiliManagementError> {
-        let result = self.login_poll_impl(actor_id).map_err(map_error);
-        if result.is_ok() {
-            self.publish_change(vec![
-                BilibiliManagementChangeArea::Login,
-                BilibiliManagementChangeArea::Status,
-            ]);
-        }
-        result
+        self.login_poll_via(&*self.bound_http()?, actor_id).await
     }
 
     fn credential_clear(&self) -> Result<(), BilibiliManagementError> {
@@ -588,42 +661,34 @@ impl BilibiliManagementApi for BilibiliManagementService {
         result
     }
 
-    fn preview(
+    async fn preview(
         &self,
         actor_id: &str,
         is_admin: bool,
         selector: Option<&str>,
     ) -> Result<BilibiliPreviewCardView, BilibiliManagementError> {
-        self.preview_impl(actor_id, is_admin, selector)
-            .map_err(map_error)
+        self.preview_via(&*self.bound_http()?, actor_id, is_admin, selector)
+            .await
     }
 
-    fn bind_start(
+    async fn bind_start(
         &self,
         operator_user_id: &str,
         uid: u64,
         challenge_seed: &str,
     ) -> Result<BilibiliBindChallengeResult, BilibiliManagementError> {
-        self.bind_start_impl(operator_user_id, uid, challenge_seed)
-            .map_err(map_error)
+        self.bind_start_via(&*self.bound_http()?, operator_user_id, uid, challenge_seed)
+            .await
     }
 
-    fn bind_verify(
+    async fn bind_verify(
         &self,
         operator_user_id: &str,
         platform: &str,
         target: BotTarget,
     ) -> Result<BilibiliBindVerifyResult, BilibiliManagementError> {
-        let result = self
-            .bind_verify_impl(operator_user_id, platform, target)
-            .map_err(map_error);
-        if matches!(result, Ok(BilibiliBindVerifyResult::Verified(_))) {
-            self.publish_change(vec![
-                BilibiliManagementChangeArea::Subscriptions,
-                BilibiliManagementChangeArea::Status,
-            ]);
-        }
-        result
+        self.bind_verify_via(&*self.bound_http()?, operator_user_id, platform, target)
+            .await
     }
 
     fn unbind(&self, operator_user_id: &str) -> Result<bool, BilibiliManagementError> {

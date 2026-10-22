@@ -12,19 +12,27 @@ use mutsuki_runtime_contracts::{RunnerResult, RuntimeError, Task};
 
 use crate::error::{bili_error, bili_management_error};
 use crate::runner::decode;
-use crate::{BilibiliConfig, BilibiliError, SharedBilibiliConfig};
+use crate::{
+    BilibiliConfig, BilibiliError, BilibiliHttp, BilibiliManagementService, SharedBilibiliConfig,
+};
 
 /// The `/bili` admin commands need only the management API and the shared config,
 /// and `command_reply` touches no runner state at all. Cloning them out lets a
 /// command that talks to upstream (subscribe resolves a profile, for instance)
 /// run without the runner mutex, which used to block every poll for its duration.
 pub(crate) struct BilibiliCommands {
-    pub(crate) management: Option<Arc<dyn BilibiliManagementApi>>,
+    pub(crate) management: Option<Arc<BilibiliManagementService>>,
     pub(crate) managed_config: Option<SharedBilibiliConfig>,
 }
 
 impl BilibiliCommands {
-    pub(crate) fn run_command(&self, task: &Task) -> Result<RunnerResult, RuntimeError> {
+    /// Upstream calls (login status, bind, verify) go through `http`, the runner's
+    /// child-task channel.
+    pub(crate) async fn run_command(
+        &self,
+        http: &dyn BilibiliHttp,
+        task: &Task,
+    ) -> Result<RunnerResult, RuntimeError> {
         let command: BotCommandEvent = decode(task)?;
         let Some(management) = self.management.clone() else {
             return Ok(RunnerResult::completed(task.task_id.clone()));
@@ -68,14 +76,16 @@ impl BilibiliCommands {
             "login-status" => {
                 require_admin(is_admin).map_err(|error| bili_error(task, error))?;
                 let polled = management
-                    .login_poll(actor_id)
+                    .login_poll_via(http, actor_id)
+                    .await
                     .map_err(|error| bili_management_error(task, error))?;
                 Ok(self.command_reply(task, &command, polled.message, None))
             }
             "bind" => {
                 let uid = parse_uid(command.args.get(1)).map_err(|error| bili_error(task, error))?;
                 let challenge = management
-                    .bind_start(actor_id, uid, task.task_id.as_str())
+                    .bind_start_via(http, actor_id, uid, task.task_id.as_str())
+                    .await
                     .map_err(|error| bili_management_error(task, error))?;
                 Ok(self.command_reply(
                     task,
@@ -89,11 +99,13 @@ impl BilibiliCommands {
             }
             "verify" => {
                 match management
-                    .bind_verify(
+                    .bind_verify_via(
+                        http,
                         actor_id,
                         command.source.platform.as_str(),
                         command.source.target.clone(),
                     )
+                    .await
                     .map_err(|error| bili_management_error(task, error))?
                 {
                     BilibiliBindVerifyResult::Verified(subscription) => Ok(self.command_reply(

@@ -27,9 +27,10 @@ use url::Url;
 use crate::commands::command_outbound_result;
 use crate::error::bili_error;
 use crate::runner::BilibiliRunner;
+use crate::transport::RunnerHttp;
 use crate::{
-    BilibiliError, BilibiliNotification, BilibiliPollKind, BilibiliQrRenderer, BilibiliTransport,
-    MAX_MEDIA_BYTES, SqliteBilibiliRepository,
+    BilibiliError, BilibiliHttp, BilibiliNotification, BilibiliPollKind, BilibiliQrRenderer,
+    BilibiliTransport, MAX_MEDIA_BYTES, SqliteBilibiliRepository,
 };
 
 pub struct RuntimeBilibiliQrRenderer {
@@ -124,45 +125,36 @@ pub(crate) enum CardRoute {
 }
 
 pub(crate) struct CardMedia {
-    pub(crate) transport: Arc<Mutex<Box<dyn BilibiliTransport>>>,
-    pub(crate) resources: Arc<dyn ResourceRegistryGateway>,
-    pub(crate) media_provider_id: String,
+    pub(crate) transport: Arc<dyn BilibiliTransport>,
 }
 
 impl CardMedia {
-    pub(crate) fn resolve(&self, url: &str) -> Result<ResolvedLinkCard, BilibiliError> {
-        self.transport
-            .lock()
-            .expect("Bilibili transport mutex")
-            .resolve(url)
+    pub(crate) async fn resolve(
+        &self,
+        http: &dyn BilibiliHttp,
+        url: &str,
+    ) -> Result<ResolvedLinkCard, BilibiliError> {
+        self.transport.resolve(http, url).await
     }
 
-    pub(crate) fn prepare_card_request(
+    /// The cover is the HTTP response body resource itself; it is never copied.
+    pub(crate) async fn prepare_card_request(
         &self,
+        http: &dyn BilibiliHttp,
         card: ResolvedLinkCard,
         task: &Task,
         layout: CardLayout,
         kicker: &str,
         live: bool,
     ) -> Result<CardRenderRequest, RuntimeError> {
-        let cover = if let Some(image_url) = card.image_url {
-            let bytes = self
-                .transport
-                .lock()
-                .expect("Bilibili transport mutex")
-                .download(&image_url, MAX_MEDIA_BYTES)
-                .map_err(|error| bili_error(task, error))?;
-            let resource = self
-                .resources
-                .create_blob_resource(
-                    &self.media_provider_id,
-                    "mutsuki.bot.image.original.v1",
-                    bytes,
-                )
-                .map_err(|error| bili_error(task, BilibiliError::Transport(error.to_string())))?;
-            Some(resource)
-        } else {
-            None
+        let cover = match card.image_url {
+            Some(image_url) => Some(
+                self.transport
+                    .download(http, &image_url, MAX_MEDIA_BYTES)
+                    .await
+                    .map_err(|error| bili_error(task, error))?,
+            ),
+            None => None,
         };
         Ok(CardRenderRequest {
             brand: "哔哩哔哩".into(),
@@ -333,6 +325,7 @@ pub(crate) async fn run_notification_card(
         let (layout, kicker, live) = layout_for_poll(notification.kind);
         media
             .prepare_card_request(
+                &RunnerHttp(ctx),
                 ResolvedLinkCard {
                     url: notification.url.clone(),
                     title: notification.title.clone(),
@@ -344,6 +337,7 @@ pub(crate) async fn run_notification_card(
                 kicker,
                 live,
             )
+            .await
             .map_err(RuntimeFailure::new)?
     };
     let outcome = ctx

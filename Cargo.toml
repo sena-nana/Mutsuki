@@ -201,7 +201,6 @@ mutsuki-plugin-bot-interaction = { path = "plugins/bot/crates/mutsuki-plugin-bot
 mutsuki-bot-state-db = { path = "plugins/bot/crates/mutsuki-bot-state-db" }
 mutsuki-bot-protocol = { path = "plugins/bot/crates/mutsuki-bot-protocol" }
 mutsuki-bot-sandbox = { path = "plugins/bot/crates/mutsuki-bot-sandbox" }
-mutsuki-bot-secure-fetch = { path = "plugins/bot/crates/mutsuki-bot-secure-fetch" }
 mutsuki-bot-sdk = { path = "plugins/bot/crates/mutsuki-bot-sdk" }
 mutsuki-bot-service-host-integration = { path = "plugins/bot/crates/mutsuki-bot-service-host-integration" }
 mutsuki-bot-testkit = { path = "plugins/bot/crates/mutsuki-bot-testkit" }

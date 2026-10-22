@@ -54,9 +54,11 @@ struct FakeTransportState {
 
 struct FakeTransport(Arc<Mutex<FakeTransportState>>);
 
+#[async_trait]
 impl BilibiliTransport for FakeTransport {
-    fn poll(
-        &mut self,
+    async fn poll(
+        &self,
+        _http: &dyn BilibiliHttp,
         _kind: &BilibiliPollKind,
         uid: u64,
     ) -> Result<Vec<BilibiliItem>, BilibiliError> {
@@ -68,15 +70,24 @@ impl BilibiliTransport for FakeTransport {
         }])
     }
 
-    fn resolve(&mut self, _url: &str) -> Result<ResolvedLinkCard, BilibiliError> {
+    async fn resolve(
+        &self,
+        _http: &dyn BilibiliHttp,
+        _url: &str,
+    ) -> Result<ResolvedLinkCard, BilibiliError> {
         unreachable!()
     }
 
-    fn download(&mut self, _url: &str, _max_bytes: usize) -> Result<Vec<u8>, BilibiliError> {
+    async fn download(
+        &self,
+        _http: &dyn BilibiliHttp,
+        _url: &str,
+        _max_bytes: usize,
+    ) -> Result<ResourceRef, BilibiliError> {
         unreachable!()
     }
 
-    fn qr_start(&mut self) -> Result<BilibiliQrCode, BilibiliError> {
+    async fn qr_start(&self, _http: &dyn BilibiliHttp) -> Result<BilibiliQrCode, BilibiliError> {
         self.0.lock().unwrap().qr_starts += 1;
         Ok(BilibiliQrCode {
             url: "https://passport.bilibili.com/qr".into(),
@@ -84,18 +95,36 @@ impl BilibiliTransport for FakeTransport {
         })
     }
 
-    fn qr_poll(&mut self, _key: &str) -> Result<BilibiliQrPoll, BilibiliError> {
-        Ok(BilibiliQrPoll {
-            status: BilibiliQrStatus::Confirmed,
-            credential: Some("SESSDATA=ROTATED".into()),
-        })
+    async fn qr_poll(
+        &self,
+        _http: &dyn BilibiliHttp,
+        _key: &str,
+    ) -> Result<BilibiliQrStatus, BilibiliError> {
+        Ok(BilibiliQrStatus::Confirmed)
     }
 
-    fn profile(&mut self, uid: u64) -> Result<BilibiliProfile, BilibiliError> {
+    async fn profile(
+        &self,
+        _http: &dyn BilibiliHttp,
+        uid: u64,
+    ) -> Result<BilibiliProfile, BilibiliError> {
         Ok(BilibiliProfile {
             name: format!("user-{uid}"),
             signature: self.0.lock().unwrap().signature.clone(),
         })
+    }
+}
+
+/// The fake transports never reach the HTTP effect.
+struct NoHttp;
+
+#[async_trait]
+impl BilibiliHttp for NoHttp {
+    async fn send(
+        &self,
+        _request: mutsuki_protocol_http::HttpRequest,
+    ) -> Result<mutsuki_protocol_http::HttpResponse, BilibiliError> {
+        unreachable!()
     }
 }
 
@@ -325,11 +354,21 @@ fn rendered_image_resource() -> ResourceRef {
 
 struct LinkTransport;
 
+#[async_trait]
 impl BilibiliTransport for LinkTransport {
-    fn poll(&mut self, _: &BilibiliPollKind, _: u64) -> Result<Vec<BilibiliItem>, BilibiliError> {
+    async fn poll(
+        &self,
+        _http: &dyn BilibiliHttp,
+        _: &BilibiliPollKind,
+        _: u64,
+    ) -> Result<Vec<BilibiliItem>, BilibiliError> {
         unreachable!()
     }
-    fn resolve(&mut self, url: &str) -> Result<ResolvedLinkCard, BilibiliError> {
+    async fn resolve(
+        &self,
+        _http: &dyn BilibiliHttp,
+        url: &str,
+    ) -> Result<ResolvedLinkCard, BilibiliError> {
         Ok(ResolvedLinkCard {
             url: url.into(),
             title: "视频标题".into(),
@@ -337,24 +376,43 @@ impl BilibiliTransport for LinkTransport {
             image_url: None,
         })
     }
-    fn download(&mut self, _: &str, _: usize) -> Result<Vec<u8>, BilibiliError> {
+    async fn download(
+        &self,
+        _http: &dyn BilibiliHttp,
+        _: &str,
+        _: usize,
+    ) -> Result<ResourceRef, BilibiliError> {
         unreachable!()
     }
-    fn qr_start(&mut self) -> Result<BilibiliQrCode, BilibiliError> {
+    async fn qr_start(&self, _http: &dyn BilibiliHttp) -> Result<BilibiliQrCode, BilibiliError> {
         unreachable!()
     }
-    fn qr_poll(&mut self, _: &str) -> Result<BilibiliQrPoll, BilibiliError> {
+    async fn qr_poll(
+        &self,
+        _http: &dyn BilibiliHttp,
+        _: &str,
+    ) -> Result<BilibiliQrStatus, BilibiliError> {
         unreachable!()
     }
-    fn profile(&mut self, _: u64) -> Result<BilibiliProfile, BilibiliError> {
+    async fn profile(
+        &self,
+        _http: &dyn BilibiliHttp,
+        _: u64,
+    ) -> Result<BilibiliProfile, BilibiliError> {
         unreachable!()
     }
 }
 
 struct MultiPollTransport;
 
+#[async_trait]
 impl BilibiliTransport for MultiPollTransport {
-    fn poll(&mut self, _: &BilibiliPollKind, _: u64) -> Result<Vec<BilibiliItem>, BilibiliError> {
+    async fn poll(
+        &self,
+        _http: &dyn BilibiliHttp,
+        _: &BilibiliPollKind,
+        _: u64,
+    ) -> Result<Vec<BilibiliItem>, BilibiliError> {
         Ok(["3", "2", "1"]
             .into_iter()
             .map(|id| BilibiliItem {
@@ -365,42 +423,82 @@ impl BilibiliTransport for MultiPollTransport {
             })
             .collect())
     }
-    fn resolve(&mut self, _: &str) -> Result<ResolvedLinkCard, BilibiliError> {
+    async fn resolve(
+        &self,
+        _http: &dyn BilibiliHttp,
+        _: &str,
+    ) -> Result<ResolvedLinkCard, BilibiliError> {
         unreachable!()
     }
-    fn download(&mut self, _: &str, _: usize) -> Result<Vec<u8>, BilibiliError> {
+    async fn download(
+        &self,
+        _http: &dyn BilibiliHttp,
+        _: &str,
+        _: usize,
+    ) -> Result<ResourceRef, BilibiliError> {
         unreachable!()
     }
-    fn qr_start(&mut self) -> Result<BilibiliQrCode, BilibiliError> {
+    async fn qr_start(&self, _http: &dyn BilibiliHttp) -> Result<BilibiliQrCode, BilibiliError> {
         unreachable!()
     }
-    fn qr_poll(&mut self, _: &str) -> Result<BilibiliQrPoll, BilibiliError> {
+    async fn qr_poll(
+        &self,
+        _http: &dyn BilibiliHttp,
+        _: &str,
+    ) -> Result<BilibiliQrStatus, BilibiliError> {
         unreachable!()
     }
-    fn profile(&mut self, _: u64) -> Result<BilibiliProfile, BilibiliError> {
+    async fn profile(
+        &self,
+        _http: &dyn BilibiliHttp,
+        _: u64,
+    ) -> Result<BilibiliProfile, BilibiliError> {
         unreachable!()
     }
 }
 
 struct RiskControlledTransport;
 
+#[async_trait]
 impl BilibiliTransport for RiskControlledTransport {
-    fn poll(&mut self, _: &BilibiliPollKind, _: u64) -> Result<Vec<BilibiliItem>, BilibiliError> {
+    async fn poll(
+        &self,
+        _http: &dyn BilibiliHttp,
+        _: &BilibiliPollKind,
+        _: u64,
+    ) -> Result<Vec<BilibiliItem>, BilibiliError> {
         Err(BilibiliError::RiskControl352)
     }
-    fn resolve(&mut self, _: &str) -> Result<ResolvedLinkCard, BilibiliError> {
+    async fn resolve(
+        &self,
+        _http: &dyn BilibiliHttp,
+        _: &str,
+    ) -> Result<ResolvedLinkCard, BilibiliError> {
         unreachable!()
     }
-    fn download(&mut self, _: &str, _: usize) -> Result<Vec<u8>, BilibiliError> {
+    async fn download(
+        &self,
+        _http: &dyn BilibiliHttp,
+        _: &str,
+        _: usize,
+    ) -> Result<ResourceRef, BilibiliError> {
         unreachable!()
     }
-    fn qr_start(&mut self) -> Result<BilibiliQrCode, BilibiliError> {
+    async fn qr_start(&self, _http: &dyn BilibiliHttp) -> Result<BilibiliQrCode, BilibiliError> {
         unreachable!()
     }
-    fn qr_poll(&mut self, _: &str) -> Result<BilibiliQrPoll, BilibiliError> {
+    async fn qr_poll(
+        &self,
+        _http: &dyn BilibiliHttp,
+        _: &str,
+    ) -> Result<BilibiliQrStatus, BilibiliError> {
         unreachable!()
     }
-    fn profile(&mut self, _: u64) -> Result<BilibiliProfile, BilibiliError> {
+    async fn profile(
+        &self,
+        _http: &dyn BilibiliHttp,
+        _: u64,
+    ) -> Result<BilibiliProfile, BilibiliError> {
         unreachable!()
     }
 }
@@ -462,15 +560,14 @@ fn login_runtime_runner(
     let shared = SharedBilibiliConfig::new(config);
     let management = Arc::new(BilibiliManagementService::new(
         shared.clone(),
-        SharedBilibiliCredential::default(),
-        Box::new(FakeTransport(state.clone())),
+        Arc::new(FakeTransport(state.clone())),
         repository.clone(),
         Arc::new(RecordingCredentialStore::default()),
         Arc::new(RecordingConfigStore::default()),
         Arc::new(AlwaysPresentSecrets),
     ));
     let runner = BilibiliRunner::new(
-        Box::new(FakeTransport(state.clone())),
+        Arc::new(FakeTransport(state.clone())),
         repository,
         Arc::new(UnusedResources),
         "memory",
@@ -549,9 +646,11 @@ struct CountingTransport {
     polls: Arc<AtomicU64>,
 }
 
+#[async_trait]
 impl BilibiliTransport for CountingTransport {
-    fn poll(
-        &mut self,
+    async fn poll(
+        &self,
+        _http: &dyn BilibiliHttp,
         _kind: &BilibiliPollKind,
         uid: u64,
     ) -> Result<Vec<BilibiliItem>, BilibiliError> {
@@ -564,23 +663,40 @@ impl BilibiliTransport for CountingTransport {
         }])
     }
 
-    fn resolve(&mut self, _url: &str) -> Result<ResolvedLinkCard, BilibiliError> {
+    async fn resolve(
+        &self,
+        _http: &dyn BilibiliHttp,
+        _url: &str,
+    ) -> Result<ResolvedLinkCard, BilibiliError> {
         unreachable!()
     }
 
-    fn download(&mut self, _url: &str, _max_bytes: usize) -> Result<Vec<u8>, BilibiliError> {
+    async fn download(
+        &self,
+        _http: &dyn BilibiliHttp,
+        _url: &str,
+        _max_bytes: usize,
+    ) -> Result<ResourceRef, BilibiliError> {
         unreachable!()
     }
 
-    fn qr_start(&mut self) -> Result<BilibiliQrCode, BilibiliError> {
+    async fn qr_start(&self, _http: &dyn BilibiliHttp) -> Result<BilibiliQrCode, BilibiliError> {
         unreachable!()
     }
 
-    fn qr_poll(&mut self, _key: &str) -> Result<BilibiliQrPoll, BilibiliError> {
+    async fn qr_poll(
+        &self,
+        _http: &dyn BilibiliHttp,
+        _key: &str,
+    ) -> Result<BilibiliQrStatus, BilibiliError> {
         unreachable!()
     }
 
-    fn profile(&mut self, _uid: u64) -> Result<BilibiliProfile, BilibiliError> {
+    async fn profile(
+        &self,
+        _http: &dyn BilibiliHttp,
+        _uid: u64,
+    ) -> Result<BilibiliProfile, BilibiliError> {
         unreachable!()
     }
 }
@@ -665,7 +781,7 @@ fn run_poll_task(runner: &mut Box<dyn Runner>, task_id: &str) -> RunnerResult {
 
 fn count_runner(polls: Arc<AtomicU64>, registry: Option<Arc<BotFlowRegistry>>) -> Box<dyn Runner> {
     let mut runner = BilibiliRunner::new(
-        Box::new(CountingTransport {
+        Arc::new(CountingTransport {
             polls: polls.clone(),
         }),
         Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap()),
@@ -681,8 +797,7 @@ fn count_runner(polls: Arc<AtomicU64>, registry: Option<Arc<BotFlowRegistry>>) -
 fn managed_status_service(state: Arc<Mutex<FakeTransportState>>) -> BilibiliManagementService {
     BilibiliManagementService::new(
         SharedBilibiliConfig::new(managed_config()),
-        SharedBilibiliCredential::default(),
-        Box::new(FakeTransport(state)),
+        Arc::new(FakeTransport(state)),
         Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap()),
         Arc::new(RecordingCredentialStore::default()),
         Arc::new(RecordingConfigStore::default()),

@@ -32,9 +32,12 @@ use mutsuki_plugin_bot_bilibili::{
     BILIBILI_COOKIE_FIELD, BILIBILI_COOKIE_KEY, BilibiliConfig, PLUGIN_ID as BILIBILI_PLUGIN_ID,
     bilibili_config_descriptor, bilibili_config_from_value, bilibili_config_value,
 };
-use mutsuki_plugin_bot_bilibili_workshop::PLUGIN_ID as WORKSHOP_PLUGIN_ID;
+use mutsuki_plugin_bot_bilibili_workshop::{PLUGIN_ID as WORKSHOP_PLUGIN_ID, WORKSHOP_DOMAINS};
 use mutsuki_plugin_bot_event_router::BOT_FLOW_ROUTER_PLUGIN_ID;
-use mutsuki_plugin_bot_mihuashi::PLUGIN_ID as MIHUASHI_PLUGIN_ID;
+use mutsuki_plugin_bot_mihuashi::{MIHUASHI_DOMAIN, PLUGIN_ID as MIHUASHI_PLUGIN_ID};
+use mutsuki_plugin_io_http_client::{
+    HttpClientConfig, HttpSecretGrant, PLUGIN_ID as HTTP_CLIENT_PLUGIN_ID,
+};
 use mutsuki_service_config::{
     ConfiguredPluginSelection, HostSecretStore, PreparedHostSecretTransaction,
 };
@@ -411,6 +414,7 @@ pub(crate) fn configured_product_selections(
             config: serde_json::json!({}),
         },
     ]);
+    selections.push(http_client_selection());
     selections.extend(owner_selections);
     // The local engine rides on the workspace-provided Agent connections and
     // flow router, so it cannot outlive `workspace_enabled` even when its own
@@ -423,6 +427,36 @@ pub(crate) fn configured_product_selections(
         }
     }
     Ok(selections)
+}
+
+/// The std HTTP client the built-in platform plugins fetch through. Like the media
+/// provider it is a product binding: responses land in the media provider, the allowlist
+/// is the union of the platform hosts, and only Bilibili may send and capture its login
+/// cookie secret.
+fn http_client_selection() -> ConfiguredPluginSelection {
+    let mut domain_allowlist = mutsuki_plugin_bot_bilibili::HTTP_DOMAINS
+        .iter()
+        .chain(WORKSHOP_DOMAINS.iter())
+        .chain([MIHUASHI_DOMAIN].iter())
+        .map(|&domain| domain.to_owned())
+        .collect::<Vec<_>>();
+    domain_allowlist.sort();
+    domain_allowlist.dedup();
+    let config = HttpClientConfig {
+        response_provider_id: MEDIA_RESOURCE_PROVIDER_ID.into(),
+        domain_allowlist,
+        secret_grants: vec![HttpSecretGrant {
+            secret_key: mutsuki_plugin_bot_bilibili::BILIBILI_COOKIE_KEY.into(),
+            domains: vec![mutsuki_plugin_bot_bilibili::COOKIE_DOMAIN.into()],
+            capture: true,
+        }],
+        ..HttpClientConfig::default()
+    };
+    ConfiguredPluginSelection {
+        id: HTTP_CLIENT_PLUGIN_ID.into(),
+        enabled: true,
+        config: serde_json::to_value(config).expect("HTTP client config serializes"),
+    }
 }
 
 pub(crate) fn runtime_plugin_selections(
@@ -468,6 +502,7 @@ pub(crate) fn is_product_owner_plugin(id: &str) -> bool {
             | BILIBILI_PLUGIN_ID
             | WORKSHOP_PLUGIN_ID
             | MIHUASHI_PLUGIN_ID
+            | HTTP_CLIENT_PLUGIN_ID
     )
 }
 
@@ -584,6 +619,44 @@ mod tests {
 
     fn select(value: ConfigValue) -> ConfiguredPluginSelection {
         configured_plugin_selection_from_value(QQBOT_ADAPTER_PLUGIN_ID, &value, None).unwrap()
+    }
+
+    #[test]
+    fn http_client_covers_platform_hosts_and_scopes_the_cookie_grant_to_bilibili() {
+        let selections = configured_product_selections(
+            &serde_json::json!({"workspace_enabled": false, "runtime_plugins": {}}),
+            Vec::new(),
+        )
+        .unwrap();
+        let selection = selections
+            .iter()
+            .find(|selection| selection.id == HTTP_CLIENT_PLUGIN_ID)
+            .expect("the product always selects the HTTP client");
+        assert!(selection.enabled);
+        let config: HttpClientConfig = serde_json::from_value(selection.config.clone()).unwrap();
+        config.validate().unwrap();
+        assert_eq!(config.response_provider_id, MEDIA_RESOURCE_PROVIDER_ID);
+        for host in [
+            "b23.tv",
+            "bilibili.com",
+            "hdslb.com",
+            "mall.bilibili.com",
+            "mihuashi.com",
+        ] {
+            assert!(
+                config.domain_allowlist.iter().any(|domain| domain == host),
+                "{host} must be reachable"
+            );
+        }
+        assert_eq!(
+            config.secret_grants,
+            vec![HttpSecretGrant {
+                secret_key: "BILIBILI_COOKIE".into(),
+                domains: vec!["bilibili.com".into()],
+                capture: true,
+            }]
+        );
+        assert!(is_product_owner_plugin(HTTP_CLIENT_PLUGIN_ID));
     }
 
     #[test]

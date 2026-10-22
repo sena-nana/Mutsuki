@@ -1,44 +1,187 @@
-//! Upstream Bilibili transport: the transport trait, the blocking HTTP client, WBI signing
-//! and the domain allowlist.
+//! Upstream Bilibili API over the std HTTP effect (`mutsuki.http.request@2`): the transport
+//! trait, its HTTP implementation, WBI signing and the domain allowlist.
+//!
+//! No request carries the login cookie itself: API calls name the Host secret through
+//! `secret_headers` and the HTTP effect resolves it when it runs, and QR login stores the
+//! returned cookies straight into that secret through `capture_cookies`.
 
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use async_trait::async_trait;
 use mutsuki_bot_link_parser::ResolvedLinkCard;
-use reqwest::blocking::Client;
+use mutsuki_protocol_http::{
+    HttpCookieCapture, HttpRequest, HttpResponse, HttpResponseBody, REQUEST as HTTP_REQUEST,
+};
+use mutsuki_runtime_contracts::{ResourceRef, RuntimeError, Task, TaskBatch, TaskOutcome};
+use mutsuki_runtime_sdk::{AsyncRunnerContext, RuntimeClientRef, TaskHandleFuture};
 use serde_json::Value;
 use url::Url;
 
 use crate::parse::parse_poll_items;
-use crate::secure_media;
 use crate::{
-    BilibiliError, BilibiliItem, BilibiliPollKind, BilibiliProfile, BilibiliQrCode, BilibiliQrPoll,
-    BilibiliQrStatus, SharedBilibiliCredential,
+    BilibiliError, BilibiliItem, BilibiliPollKind, BilibiliProfile, BilibiliQrCode,
+    BilibiliQrStatus, SharedBilibiliConfig,
 };
 
-pub trait BilibiliTransport: Send {
-    fn poll(
-        &mut self,
+/// Hosts every Bilibili request may reach; the product grants these to the HTTP client.
+pub const HTTP_DOMAINS: &[&str] = &["b23.tv", "bilibili.com", "hdslb.com"];
+/// The domain the login cookie secret is sent to and captured from.
+pub const COOKIE_DOMAIN: &str = "bilibili.com";
+const USER_AGENT: &str = "Mozilla/5.0 MutsukiBot/0.1";
+const REQUEST_TIMEOUT_MS: u64 = 15_000;
+const QR_COOKIES: &[&str] = &[
+    "SESSDATA",
+    "bili_jct",
+    "DedeUserID",
+    "DedeUserID__ckMd5",
+    "buvid3",
+];
+
+/// One round trip through `mutsuki.http.request@2`.
+#[async_trait]
+pub trait BilibiliHttp: Send + Sync {
+    async fn send(&self, request: HttpRequest) -> Result<HttpResponse, BilibiliError>;
+}
+
+/// Inside the runner every request is a child task of the task being run.
+pub(crate) struct RunnerHttp<'a>(pub(crate) &'a AsyncRunnerContext);
+
+#[async_trait]
+impl BilibiliHttp for RunnerHttp<'_> {
+    async fn send(&self, request: HttpRequest) -> Result<HttpResponse, BilibiliError> {
+        let payload = serde_json::to_value(request)
+            .map_err(|error| BilibiliError::InvalidResponse(error.to_string()))?;
+        let outcome = self
+            .0
+            .call_raw(HTTP_REQUEST, payload)
+            .await
+            .map_err(|failure| http_error(failure.error()))?;
+        decode_http_outcome(outcome.into_outcome())
+    }
+}
+
+/// Outside a runner (Web Console management) each request is its own task submitted through
+/// the Host client.
+pub struct RuntimeBilibiliHttp {
+    client: RuntimeClientRef,
+    next_task: AtomicU64,
+}
+
+impl RuntimeBilibiliHttp {
+    #[must_use]
+    pub fn new(client: RuntimeClientRef) -> Self {
+        Self {
+            client,
+            next_task: AtomicU64::new(0),
+        }
+    }
+}
+
+#[async_trait]
+impl BilibiliHttp for RuntimeBilibiliHttp {
+    async fn send(&self, request: HttpRequest) -> Result<HttpResponse, BilibiliError> {
+        let sequence = self.next_task.fetch_add(1, Ordering::Relaxed) + 1;
+        let epoch_nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let task_id = format!("bilibili.http.{epoch_nanos}.{sequence}");
+        let task = Task::new(
+            task_id.clone(),
+            HTTP_REQUEST,
+            serde_json::to_value(request)
+                .map_err(|error| BilibiliError::InvalidResponse(error.to_string()))?,
+        );
+        let handle = self
+            .client
+            .submit_batch(TaskBatch::one(format!("{task_id}.batch"), task))
+            .map_err(|failure| http_error(failure.error()))?
+            .into_iter()
+            .next()
+            .ok_or_else(|| {
+                BilibiliError::Transport("HTTP request returned no task handle".into())
+            })?;
+        let outcome = TaskHandleFuture::new(self.client.clone(), handle)
+            .await
+            .map_err(|failure| http_error(failure.error()))?;
+        decode_http_outcome(outcome)
+    }
+}
+
+fn decode_http_outcome(outcome: TaskOutcome) -> Result<HttpResponse, BilibiliError> {
+    match outcome {
+        TaskOutcome::Completed {
+            output: Some(output),
+            ..
+        } => serde_json::from_value(output)
+            .map_err(|error| BilibiliError::InvalidResponse(error.to_string())),
+        TaskOutcome::Completed { output: None, .. } => Err(BilibiliError::InvalidResponse(
+            "HTTP request completed without a response".into(),
+        )),
+        TaskOutcome::Failed { error, .. } => Err(http_error(&error)),
+        outcome => Err(BilibiliError::Transport(format!(
+            "HTTP request did not complete: {outcome:?}"
+        ))),
+    }
+}
+
+fn http_error(error: &RuntimeError) -> BilibiliError {
+    let detail = format!("{}: {}", error.code, error.route);
+    match error.code.as_str() {
+        "http.secret_unavailable" => BilibiliError::CookieExpired,
+        "http.domain_denied"
+        | "http.redirect_denied"
+        | "http.https_required"
+        | "http.invalid_url"
+        | "http.private_address" => BilibiliError::DomainDenied(detail),
+        _ => BilibiliError::Transport(detail),
+    }
+}
+
+/// The Bilibili API surface the runner and the management service use. `http` is the
+/// caller's channel to the HTTP effect, so one transport (and its WBI key cache) serves
+/// both the runner and the Web Console.
+#[async_trait]
+pub trait BilibiliTransport: Send + Sync {
+    async fn poll(
+        &self,
+        http: &dyn BilibiliHttp,
         kind: &BilibiliPollKind,
         uid: u64,
     ) -> Result<Vec<BilibiliItem>, BilibiliError>;
-    fn resolve(&mut self, url: &str) -> Result<ResolvedLinkCard, BilibiliError>;
-    fn download(&mut self, url: &str, max_bytes: usize) -> Result<Vec<u8>, BilibiliError>;
-    fn qr_start(&mut self) -> Result<BilibiliQrCode, BilibiliError>;
-    fn qr_poll(&mut self, key: &str) -> Result<BilibiliQrPoll, BilibiliError>;
-    fn profile(&mut self, uid: u64) -> Result<BilibiliProfile, BilibiliError>;
+    async fn resolve(
+        &self,
+        http: &dyn BilibiliHttp,
+        url: &str,
+    ) -> Result<ResolvedLinkCard, BilibiliError>;
+    /// The downloaded body as the resource the HTTP effect stored it in.
+    async fn download(
+        &self,
+        http: &dyn BilibiliHttp,
+        url: &str,
+        max_bytes: usize,
+    ) -> Result<ResourceRef, BilibiliError>;
+    async fn qr_start(&self, http: &dyn BilibiliHttp) -> Result<BilibiliQrCode, BilibiliError>;
+    /// On `Confirmed` the login cookies are already stored in the cookie secret.
+    async fn qr_poll(
+        &self,
+        http: &dyn BilibiliHttp,
+        key: &str,
+    ) -> Result<BilibiliQrStatus, BilibiliError>;
+    async fn profile(
+        &self,
+        http: &dyn BilibiliHttp,
+        uid: u64,
+    ) -> Result<BilibiliProfile, BilibiliError>;
 }
 
-/// Blocking HTTP transport for the Bilibili runner.
-///
-/// The runner reaches this through `TaskAwaitRunnerAdapter`, which the Host polls on its sync
-/// worker threads, so a call here occupies one worker and never the async reactor. Every request
-/// is bounded by `timeout` to keep that occupancy finite. Console code paths are async and must
-/// not call these methods inline; `management::in_blocking_section` marks the hand-off.
-pub struct ReqwestBilibiliTransport {
-    client: Option<Client>,
-    credential: SharedBilibiliCredential,
-    timeout: Duration,
-    wbi_key: WbiKeyCache,
+/// The production transport. The cookie secret key is read from the shared config per
+/// request, so a config change applies to the next request.
+pub struct HttpBilibiliTransport {
+    config: SharedBilibiliConfig,
+    wbi_key: Mutex<WbiKeyCache>,
 }
 
 /// Upstream rotates the WBI mixin key about once a day, so re-deriving it per
@@ -73,48 +216,46 @@ impl WbiKeyCache {
     }
 }
 
-impl ReqwestBilibiliTransport {
-    pub fn new(credential: SharedBilibiliCredential, timeout: Duration) -> Self {
+impl HttpBilibiliTransport {
+    #[must_use]
+    pub fn new(config: SharedBilibiliConfig) -> Self {
         Self {
-            client: None,
-            credential,
-            timeout,
-            wbi_key: WbiKeyCache::default(),
+            config,
+            wbi_key: Mutex::new(WbiKeyCache::default()),
         }
     }
 
-    fn client(&mut self) -> Result<&Client, BilibiliError> {
-        if self.client.is_none() {
-            self.client = Some(secure_media::try_media_client(
-                self.timeout,
-                "Mozilla/5.0 MutsukiBot/0.1",
-            )?);
-        }
-        Ok(self.client.as_ref().expect("client initialized"))
+    fn cookie_secret_key(&self) -> Result<String, BilibiliError> {
+        self.config
+            .current()
+            .backend
+            .cookie_secret_key()
+            .map(ToOwned::to_owned)
+            .ok_or(BilibiliError::CookieExpired)
     }
 
-    fn json(&mut self, url: &str) -> Result<Value, BilibiliError> {
-        ensure_bilibili_domain(url)?;
-        let cookie = self.credential.get()?;
-        let response = self
-            .client()?
-            .get(url)
-            .header("Cookie", cookie)
-            .send()
-            .map_err(|error| BilibiliError::Transport(error.to_string()))?;
-        if response.status().as_u16() == 429 {
+    fn wbi_cache(&self) -> std::sync::MutexGuard<'_, WbiKeyCache> {
+        self.wbi_key.lock().expect("Bilibili WBI key mutex")
+    }
+
+    /// An authenticated API call; the cookie is resolved by the HTTP effect.
+    async fn json(&self, http: &dyn BilibiliHttp, url: &str) -> Result<Value, BilibiliError> {
+        let mut request = bilibili_request(url, json_body())?;
+        request
+            .secret_headers
+            .insert("Cookie".into(), self.cookie_secret_key()?);
+        let response = http.send(request).await?;
+        if response.metadata.status == 429 {
             return Err(BilibiliError::RateLimited);
         }
-        let value: Value = response
-            .json()
-            .map_err(|error| BilibiliError::InvalidResponse(error.to_string()))?;
+        let value = response_json(response)?;
         match value.get("code").and_then(Value::as_i64) {
             Some(-101) => {
-                self.wbi_key.invalidate();
+                self.wbi_cache().invalidate();
                 Err(BilibiliError::CookieExpired)
             }
             Some(-352 | 352) => {
-                self.wbi_key.invalidate();
+                self.wbi_cache().invalidate();
                 Err(BilibiliError::RiskControl352)
             }
             Some(code) if code != 0 => Err(BilibiliError::InvalidResponse(format!("code {code}"))),
@@ -122,25 +263,28 @@ impl ReqwestBilibiliTransport {
         }
     }
 
-    fn wbi_mixin_key(&mut self) -> Result<String, BilibiliError> {
+    async fn wbi_mixin_key(&self, http: &dyn BilibiliHttp) -> Result<String, BilibiliError> {
         let now = Instant::now();
-        if let Some(key) = self.wbi_key.fresh(now) {
+        if let Some(key) = self.wbi_cache().fresh(now) {
             return Ok(key);
         }
-        let nav = self.json("https://api.bilibili.com/x/web-interface/nav")?;
+        let nav = self
+            .json(http, "https://api.bilibili.com/x/web-interface/nav")
+            .await?;
         let img = string_field(&nav["data"]["wbi_img"], "img_url")?;
         let sub = string_field(&nav["data"]["wbi_img"], "sub_url")?;
         let key = wbi_mixin_key(&img, &sub)?;
-        self.wbi_key.store(key.clone(), now);
+        self.wbi_cache().store(key.clone(), now);
         Ok(key)
     }
 
-    fn wbi_url(
-        &mut self,
+    async fn wbi_url(
+        &self,
+        http: &dyn BilibiliHttp,
         path: &str,
         params: Vec<(String, String)>,
     ) -> Result<String, BilibiliError> {
-        let key = self.wbi_mixin_key()?;
+        let key = self.wbi_mixin_key(http).await?;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|error| BilibiliError::Transport(error.to_string()))?
@@ -152,46 +296,90 @@ impl ReqwestBilibiliTransport {
     }
 }
 
-impl BilibiliTransport for ReqwestBilibiliTransport {
-    fn poll(
-        &mut self,
+fn json_body() -> HttpResponseBody {
+    HttpResponseBody::Json { select: Vec::new() }
+}
+
+/// A GET restricted to the Bilibili hosts, without credentials.
+fn bilibili_request(url: &str, body: HttpResponseBody) -> Result<HttpRequest, BilibiliError> {
+    ensure_bilibili_domain(url)?;
+    let mut request = HttpRequest::get(url);
+    request
+        .headers
+        .insert("User-Agent".into(), USER_AGENT.into());
+    request.response_body = body;
+    request.limits.total_timeout_ms = Some(REQUEST_TIMEOUT_MS);
+    request.limits.domain_allowlist =
+        Some(HTTP_DOMAINS.iter().map(|&domain| domain.into()).collect());
+    Ok(request)
+}
+
+fn response_json(response: HttpResponse) -> Result<Value, BilibiliError> {
+    let status = response.metadata.status;
+    response
+        .json
+        .ok_or_else(|| BilibiliError::InvalidResponse(format!("HTTP {status} without a JSON body")))
+}
+
+#[async_trait]
+impl BilibiliTransport for HttpBilibiliTransport {
+    async fn poll(
+        &self,
+        http: &dyn BilibiliHttp,
         kind: &BilibiliPollKind,
         uid: u64,
     ) -> Result<Vec<BilibiliItem>, BilibiliError> {
         let url = match kind {
-            BilibiliPollKind::Live => self.wbi_url(
-                "/x/space/wbi/acc/info",
-                vec![("mid".into(), uid.to_string())],
-            )?,
+            BilibiliPollKind::Live => {
+                self.wbi_url(
+                    http,
+                    "/x/space/wbi/acc/info",
+                    vec![("mid".into(), uid.to_string())],
+                )
+                .await?
+            }
             BilibiliPollKind::Dynamic => format!(
                 "https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space?host_mid={uid}"
             ),
-            BilibiliPollKind::Video => self.wbi_url(
-                "/x/space/wbi/arc/search",
-                vec![
-                    ("mid".into(), uid.to_string()),
-                    ("pn".into(), "1".into()),
-                    ("ps".into(), "10".into()),
-                ],
-            )?,
+            BilibiliPollKind::Video => {
+                self.wbi_url(
+                    http,
+                    "/x/space/wbi/arc/search",
+                    vec![
+                        ("mid".into(), uid.to_string()),
+                        ("pn".into(), "1".into()),
+                        ("ps".into(), "10".into()),
+                    ],
+                )
+                .await?
+            }
         };
-        parse_poll_items(kind, uid, self.json(&url)?)
+        parse_poll_items(kind, uid, self.json(http, &url).await?)
     }
 
-    fn resolve(&mut self, url: &str) -> Result<ResolvedLinkCard, BilibiliError> {
+    async fn resolve(
+        &self,
+        http: &dyn BilibiliHttp,
+        url: &str,
+    ) -> Result<ResolvedLinkCard, BilibiliError> {
         ensure_bilibili_domain(url)?;
         let mut parsed =
             Url::parse(url).map_err(|error| BilibiliError::InvalidResponse(error.to_string()))?;
         if parsed.host_str() == Some("b23.tv") {
-            let client = self.client()?;
-            parsed = secure_media::secure_resolve_redirect(client, parsed, allow_bilibili_url)?;
+            // Only the redirect target matters; the effect revalidates every hop.
+            let response = http
+                .send(bilibili_request(url, HttpResponseBody::Discard)?)
+                .await?;
+            ensure_bilibili_domain(&response.metadata.final_url)?;
+            parsed = Url::parse(&response.metadata.final_url)
+                .map_err(|error| BilibiliError::InvalidResponse(error.to_string()))?;
         }
         let path = parsed.path();
         let bvid = path.split('/').find(|part| part.starts_with("BV"));
         let api = bvid
             .map(|bvid| format!("https://api.bilibili.com/x/web-interface/view?bvid={bvid}"))
             .ok_or_else(|| BilibiliError::InvalidResponse("unsupported Bilibili link".into()))?;
-        let value = self.json(&api)?;
+        let value = self.json(http, &api).await?;
         let data = &value["data"];
         Ok(ResolvedLinkCard {
             url: parsed.to_string(),
@@ -208,19 +396,35 @@ impl BilibiliTransport for ReqwestBilibiliTransport {
         })
     }
 
-    fn download(&mut self, url: &str, max_bytes: usize) -> Result<Vec<u8>, BilibiliError> {
-        let client = self.client()?;
-        secure_media::secure_media_download(client, url, max_bytes, allow_bilibili_url)
+    async fn download(
+        &self,
+        http: &dyn BilibiliHttp,
+        url: &str,
+        max_bytes: usize,
+    ) -> Result<ResourceRef, BilibiliError> {
+        let mut request = bilibili_request(url, HttpResponseBody::Resource)?;
+        request.limits.max_response_bytes = Some(max_bytes as u64);
+        let response = http.send(request).await?;
+        if !(200..300).contains(&response.metadata.status) {
+            return Err(BilibiliError::Transport(format!(
+                "media download returned HTTP {}",
+                response.metadata.status
+            )));
+        }
+        ensure_bilibili_domain(&response.metadata.final_url)?;
+        response
+            .body
+            .ok_or_else(|| BilibiliError::InvalidResponse("media response body is empty".into()))
     }
 
-    fn qr_start(&mut self) -> Result<BilibiliQrCode, BilibiliError> {
-        let value: Value = self
-            .client()?
-            .get("https://passport.bilibili.com/x/passport-login/web/qrcode/generate")
-            .send()
-            .map_err(|error| BilibiliError::Transport(error.to_string()))?
-            .json()
-            .map_err(|error| BilibiliError::InvalidResponse(error.to_string()))?;
+    async fn qr_start(&self, http: &dyn BilibiliHttp) -> Result<BilibiliQrCode, BilibiliError> {
+        let response = http
+            .send(bilibili_request(
+                "https://passport.bilibili.com/x/passport-login/web/qrcode/generate",
+                json_body(),
+            )?)
+            .await?;
+        let value = response_json(response)?;
         if value.get("code").and_then(Value::as_i64) != Some(0) {
             return Err(BilibiliError::InvalidResponse(
                 "QR generation failed".into(),
@@ -232,55 +436,74 @@ impl BilibiliTransport for ReqwestBilibiliTransport {
         })
     }
 
-    fn qr_poll(&mut self, key: &str) -> Result<BilibiliQrPoll, BilibiliError> {
+    async fn qr_poll(
+        &self,
+        http: &dyn BilibiliHttp,
+        key: &str,
+    ) -> Result<BilibiliQrStatus, BilibiliError> {
         let mut url = Url::parse("https://passport.bilibili.com/x/passport-login/web/qrcode/poll")
             .expect("static Bilibili QR URL");
         url.query_pairs_mut()
             .append_pair("qrcode_key", key)
             .append_pair("source", "main-fe-header");
-        let value: Value = self
-            .client()?
-            .get(url)
-            .send()
-            .map_err(|error| BilibiliError::Transport(error.to_string()))?
-            .json()
-            .map_err(|error| BilibiliError::InvalidResponse(error.to_string()))?;
-        let code = value["data"]["code"]
+        // The confirmed response repeats the cookies in `data.url`; selecting only the status
+        // keeps them out of the task output, and the effect stores the Set-Cookie values.
+        let mut request = bilibili_request(
+            url.as_str(),
+            HttpResponseBody::Json {
+                select: vec![QR_STATUS_POINTER.into()],
+            },
+        )?;
+        request.capture_cookies = Some(HttpCookieCapture {
+            secret_key: self.cookie_secret_key()?,
+            cookies: QR_COOKIES.iter().map(|&name| name.into()).collect(),
+            required: vec!["SESSDATA".into()],
+        });
+        let response = http.send(request).await?;
+        let captured = response.captured_secret.is_some();
+        let code = response_json(response)?[QR_STATUS_POINTER]
             .as_i64()
             .ok_or_else(|| BilibiliError::InvalidResponse("QR status code".into()))?;
         let status = match code {
             86101 => BilibiliQrStatus::Pending,
             86090 => BilibiliQrStatus::Scanned,
             86038 => BilibiliQrStatus::Expired,
-            0 => BilibiliQrStatus::Confirmed,
+            0 if captured => BilibiliQrStatus::Confirmed,
+            0 => {
+                return Err(BilibiliError::InvalidResponse(
+                    "confirmed QR login did not set the SESSDATA cookie".into(),
+                ));
+            }
             _ => {
                 return Err(BilibiliError::InvalidResponse(format!(
                     "QR status code {code}"
                 )));
             }
         };
-        let credential = if status == BilibiliQrStatus::Confirmed {
-            Some(credential_from_redirect(
-                string_field(&value["data"], "url")?.as_str(),
-            )?)
-        } else {
-            None
-        };
-        Ok(BilibiliQrPoll { status, credential })
+        Ok(status)
     }
 
-    fn profile(&mut self, uid: u64) -> Result<BilibiliProfile, BilibiliError> {
-        let url = self.wbi_url(
-            "/x/space/wbi/acc/info",
-            vec![("mid".into(), uid.to_string())],
-        )?;
-        let value = self.json(&url)?;
+    async fn profile(
+        &self,
+        http: &dyn BilibiliHttp,
+        uid: u64,
+    ) -> Result<BilibiliProfile, BilibiliError> {
+        let url = self
+            .wbi_url(
+                http,
+                "/x/space/wbi/acc/info",
+                vec![("mid".into(), uid.to_string())],
+            )
+            .await?;
+        let value = self.json(http, &url).await?;
         Ok(BilibiliProfile {
             name: string_field(&value["data"], "name")?,
             signature: value["data"]["sign"].as_str().unwrap_or_default().into(),
         })
     }
 }
+
+const QR_STATUS_POINTER: &str = "/data/code";
 
 pub(crate) fn ensure_bilibili_domain(value: &str) -> Result<(), BilibiliError> {
     let url = Url::parse(value).map_err(|error| BilibiliError::DomainDenied(error.to_string()))?;
@@ -299,29 +522,6 @@ pub(crate) fn allow_bilibili_url(url: &Url) -> Result<(), BilibiliError> {
     } else {
         Err(BilibiliError::DomainDenied(host))
     }
-}
-
-fn credential_from_redirect(value: &str) -> Result<String, BilibiliError> {
-    let url =
-        Url::parse(value).map_err(|error| BilibiliError::InvalidResponse(error.to_string()))?;
-    let allowed = [
-        "SESSDATA",
-        "bili_jct",
-        "DedeUserID",
-        "DedeUserID__ckMd5",
-        "buvid3",
-    ];
-    let values = url
-        .query_pairs()
-        .filter(|(key, value)| allowed.contains(&key.as_ref()) && !value.trim().is_empty())
-        .map(|(key, value)| format!("{key}={value}"))
-        .collect::<Vec<_>>();
-    if !values.iter().any(|value| value.starts_with("SESSDATA=")) {
-        return Err(BilibiliError::InvalidResponse(
-            "QR login response did not contain SESSDATA".into(),
-        ));
-    }
-    Ok(values.join("; "))
 }
 
 fn string_field(value: &Value, field: &str) -> Result<String, BilibiliError> {
@@ -425,15 +625,5 @@ mod tests {
             sign_wbi_query(&[("mid".into(), "1".into())], "secret", 1_700_000_000)
         );
         assert!(signed.contains("wts=1700000000&w_rid="));
-    }
-
-    #[test]
-    fn qr_redirect_extracts_only_cookie_fields_and_requires_sessdata() {
-        let credential = credential_from_redirect(
-            "https://www.bilibili.com/?SESSDATA=abc%3D%3D&bili_jct=csrf&ignored=value",
-        )
-        .unwrap();
-        assert_eq!(credential, "SESSDATA=abc==; bili_jct=csrf");
-        assert!(credential_from_redirect("https://www.bilibili.com/?bili_jct=x").is_err());
     }
 }

@@ -2,12 +2,12 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 
 use mutsuki_bot_protocol::BotTarget;
 use serde::{Deserialize, Serialize};
 
-use crate::{BilibiliError, POLL_DYNAMIC, POLL_LIVE, POLL_VIDEO};
+use crate::{POLL_DYNAMIC, POLL_LIVE, POLL_VIDEO};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -272,45 +272,6 @@ impl fmt::Debug for SharedBilibiliConfig {
     }
 }
 
-#[derive(Clone, Default)]
-pub struct SharedBilibiliCredential(Arc<Mutex<Option<String>>>);
-
-impl fmt::Debug for SharedBilibiliCredential {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("SharedBilibiliCredential([REDACTED])")
-    }
-}
-
-impl SharedBilibiliCredential {
-    pub fn set(&self, cookie: String) {
-        *self.0.lock().expect("credential mutex") = Some(cookie);
-    }
-
-    pub fn clear(&self) {
-        *self.0.lock().expect("credential mutex") = None;
-    }
-
-    pub fn is_loaded(&self) -> bool {
-        self.0
-            .lock()
-            .expect("credential mutex")
-            .as_ref()
-            .is_some_and(|value| !value.trim().is_empty())
-    }
-
-    pub fn raw(&self) -> Option<String> {
-        self.0
-            .lock()
-            .expect("credential mutex")
-            .clone()
-            .filter(|value| !value.trim().is_empty())
-    }
-
-    pub(crate) fn get(&self) -> Result<String, BilibiliError> {
-        self.raw().ok_or(BilibiliError::CookieExpired)
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BilibiliItem {
     pub id: String,
@@ -340,12 +301,6 @@ pub enum BilibiliQrStatus {
     Confirmed,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BilibiliQrPoll {
-    pub status: BilibiliQrStatus,
-    pub credential: Option<String>,
-}
-
 pub trait BilibiliCredentialStore: Send + Sync {
     fn rotate(&self, key: &str, credential: String) -> Result<(), String>;
 }
@@ -358,18 +313,6 @@ pub trait BilibiliConfigStore: Send + Sync {
 mod tests {
     use super::*;
     use crate::LINK_RESOLVE;
-
-    #[test]
-    fn credential_debug_and_errors_never_expose_cookie() {
-        let credential = SharedBilibiliCredential::default();
-        credential.set("SESSDATA=top-secret".into());
-        assert!(!format!("{credential:?}").contains("top-secret"));
-        assert!(
-            !BilibiliError::CookieExpired
-                .to_string()
-                .contains("SESSDATA")
-        );
-    }
 
     #[test]
     fn poll_protocol_is_the_kind_discriminator() {

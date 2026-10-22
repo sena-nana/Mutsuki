@@ -6,7 +6,10 @@
 
 use mutsuki_plugin_image_render::{ImageRenderConfig, ImageRenderRunner};
 use mutsuki_plugin_io_browser_chromium::{BrowserSnapshotRunner, ChromiumConfig};
-use mutsuki_plugin_io_http_client::{HttpClientConfig, HttpEffectHandler, SecureHttpGateway};
+use mutsuki_plugin_io_http_client::{
+    HttpClientConfig, HttpEffectHandler, HttpSecretStore, SecureHttpGateway,
+};
+use mutsuki_service_config::HostSecretStore;
 use mutsuki_service_runtime::{
     ConfiguredPluginCatalog, ConfiguredPluginFactory, ServiceRuntimeBuilder, ServiceRuntimeResult,
 };
@@ -120,6 +123,19 @@ impl ConfiguredPluginFactory for ImageRenderPluginFactory {
     }
 }
 
+/// Lets granted HTTP requests read and rotate Host secrets at effect time.
+struct HostHttpSecrets(HostSecretStore);
+
+impl HttpSecretStore for HostHttpSecrets {
+    fn resolve(&self, key: &str) -> Option<String> {
+        self.0.resolve(key)
+    }
+
+    fn store(&self, key: &str, value: String) -> Result<(), String> {
+        self.0.rotate(key, value).map_err(|error| error.to_string())
+    }
+}
+
 pub struct HttpClientPluginFactory;
 
 impl ConfiguredPluginFactory for HttpClientPluginFactory {
@@ -136,17 +152,22 @@ impl ConfiguredPluginFactory for HttpClientPluginFactory {
             .map_err(|error| format!("invalid HTTP client plugin config: {error}"))?;
         let manifest = std_plugin_catalog().http_client_manifest(&config)?;
         let response_provider_id = config.response_provider_id.clone();
+        let secrets: std::sync::Arc<dyn HttpSecretStore> =
+            std::sync::Arc::new(HostHttpSecrets(builder.host_secret_store()));
         Ok(builder
             .register_builtin_plugin(manifest)
             .register_runtime_client_runner(mutsuki_plugin_io_http_client::facade_runner)
             .register_fallible_runtime_services_async_handler(move |_client, resources| {
                 let gateway = SecureHttpGateway::new(config.clone())?;
                 Ok::<std::sync::Arc<dyn mutsuki_runtime_sdk::AsyncBatchHandler>, String>(
-                    std::sync::Arc::new(HttpEffectHandler::new(
-                        std::sync::Arc::new(gateway),
-                        resources,
-                        response_provider_id.clone(),
-                    )),
+                    std::sync::Arc::new(
+                        HttpEffectHandler::new(
+                            std::sync::Arc::new(gateway),
+                            resources,
+                            response_provider_id.clone(),
+                        )
+                        .with_secrets(secrets.clone(), config.secret_grants.clone()),
+                    ),
                 )
             }))
     }

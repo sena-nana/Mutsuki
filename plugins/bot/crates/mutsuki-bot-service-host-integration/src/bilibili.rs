@@ -1,11 +1,11 @@
-//! ServiceHost event source for Bilibili polling: secret loading, descriptor and health. The
-//! poll loop itself is `mutsuki_plugin_bot_bilibili::run_bilibili_polling`.
+//! ServiceHost event source for Bilibili polling: secret requirement, descriptor and health.
+//! The poll loop itself is `mutsuki_plugin_bot_bilibili::run_bilibili_polling`; the cookie is
+//! resolved by the HTTP effect per request, never loaded here.
 
 use std::sync::{Arc, Mutex};
 
 use mutsuki_plugin_bot_bilibili::{
-    BilibiliPollerHealth, PLUGIN_ID, SharedBilibiliConfig, SharedBilibiliCredential,
-    run_bilibili_polling,
+    BilibiliPollerHealth, PLUGIN_ID, SharedBilibiliConfig, run_bilibili_polling,
 };
 use mutsuki_service_runtime::{
     HostEventSource, HostEventSourceContext, HostEventSourceDescriptor, HostEventSourceFuture,
@@ -16,7 +16,6 @@ use tokio::sync::{oneshot, watch};
 pub struct BilibiliPollingEventSource {
     descriptor: HostEventSourceDescriptor,
     config: SharedBilibiliConfig,
-    credentials: BilibiliPollingCredentials,
     health: Arc<Mutex<BilibiliPollerHealth>>,
     stop: Arc<Mutex<Option<watch::Sender<bool>>>>,
     stopped: Arc<Mutex<Option<oneshot::Receiver<()>>>>,
@@ -24,11 +23,7 @@ pub struct BilibiliPollingEventSource {
 
 #[derive(Clone)]
 pub enum BilibiliPollingCredentials {
-    WebCookie {
-        secret_key: String,
-        credential: SharedBilibiliCredential,
-        required: bool,
-    },
+    WebCookie { secret_key: String, required: bool },
 }
 
 impl BilibiliPollingCredentials {
@@ -37,28 +32,8 @@ impl BilibiliPollingCredentials {
             Self::WebCookie {
                 secret_key,
                 required,
-                ..
             } if *required => descriptor.require_secret(secret_key.clone()),
-            _ => descriptor,
-        }
-    }
-
-    fn load(&self, ctx: &HostEventSourceContext) {
-        match self {
-            Self::WebCookie {
-                secret_key,
-                credential,
-                ..
-            } => match ctx.config.secret(secret_key) {
-                Some(value) => credential.set(value),
-                None => credential.clear(),
-            },
-        }
-    }
-
-    fn clear(&self) {
-        match self {
-            Self::WebCookie { credential, .. } => credential.clear(),
+            Self::WebCookie { .. } => descriptor,
         }
     }
 }
@@ -72,7 +47,6 @@ impl BilibiliPollingEventSource {
         Self {
             descriptor,
             config,
-            credentials,
             health: Arc::new(Mutex::new(BilibiliPollerHealth::default())),
             stop: Arc::new(Mutex::new(None)),
             stopped: Arc::new(Mutex::new(None)),
@@ -86,10 +60,8 @@ impl HostEventSource for BilibiliPollingEventSource {
     }
 
     fn start(&mut self, ctx: HostEventSourceContext) -> HostEventSourceFuture {
-        self.credentials.load(&ctx);
         let config = self.config.clone();
         let health = self.health.clone();
-        let credentials = self.credentials.clone();
         let (stop_tx, stop_rx) = watch::channel(false);
         *self.stop.lock().expect("Bilibili stop mutex") = Some(stop_tx);
         let (stopped_tx, stopped_rx) = oneshot::channel();
@@ -103,7 +75,6 @@ impl HostEventSource for BilibiliPollingEventSource {
                 ctx.shutdown.receiver(),
             )
             .await;
-            credentials.clear();
             let _ = stopped_tx.send(());
             result
         })

@@ -167,7 +167,7 @@ pub trait BilibiliManagementApi: Send + Sync {
 
     fn status(&self) -> BilibiliManagementStatus;
 
-    fn login_start_session(
+    async fn login_start_session(
         &self,
         actor_id: &str,
     ) -> Result<BilibiliLoginSession, BilibiliManagementError>;
@@ -177,7 +177,7 @@ pub trait BilibiliManagementApi: Send + Sync {
         actor_id: &str,
     ) -> Result<BilibiliLoginStartResult, BilibiliManagementError>;
 
-    fn login_poll(
+    async fn login_poll(
         &self,
         actor_id: &str,
     ) -> Result<BilibiliLoginPollResult, BilibiliManagementError>;
@@ -209,21 +209,21 @@ pub trait BilibiliManagementApi: Send + Sync {
         paused: bool,
     ) -> Result<BilibiliSubscriptionView, BilibiliManagementError>;
 
-    fn preview(
+    async fn preview(
         &self,
         actor_id: &str,
         is_admin: bool,
         selector: Option<&str>,
     ) -> Result<BilibiliPreviewCardView, BilibiliManagementError>;
 
-    fn bind_start(
+    async fn bind_start(
         &self,
         operator_user_id: &str,
         uid: u64,
         challenge_seed: &str,
     ) -> Result<BilibiliBindChallengeResult, BilibiliManagementError>;
 
-    fn bind_verify(
+    async fn bind_verify(
         &self,
         operator_user_id: &str,
         platform: &str,

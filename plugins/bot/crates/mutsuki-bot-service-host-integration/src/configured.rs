@@ -65,14 +65,12 @@ use crate::{
 };
 use mutsuki_plugin_bot_bilibili::{
     BilibiliBackendConfig, BilibiliConfig, BilibiliConfigStore, BilibiliCredentialStore,
-    BilibiliManagementService, BilibiliRunner, BilibiliSecretPresence,
-    PLUGIN_ID as BILIBILI_PLUGIN_ID, ReqwestBilibiliTransport, RuntimeBilibiliQrRenderer,
-    SharedBilibiliConfig, SharedBilibiliCredential, SqliteBilibiliRepository,
+    BilibiliManagementService, BilibiliRunner, BilibiliSecretPresence, BilibiliTransport,
+    HttpBilibiliTransport, PLUGIN_ID as BILIBILI_PLUGIN_ID, RuntimeBilibiliHttp,
+    RuntimeBilibiliQrRenderer, SharedBilibiliConfig, SqliteBilibiliRepository,
     bilibili_config_descriptor, bilibili_config_value,
 };
-use mutsuki_plugin_bot_bilibili_workshop::{
-    PLUGIN_ID as WORKSHOP_PLUGIN_ID, ReqwestWorkshopTransport, WorkshopRunner,
-};
+use mutsuki_plugin_bot_bilibili_workshop::PLUGIN_ID as WORKSHOP_PLUGIN_ID;
 use mutsuki_plugin_bot_mihuashi::PLUGIN_ID as MIHUASHI_PLUGIN_ID;
 
 /// Media resource provider id for assemblies that do not inject their own
@@ -81,7 +79,6 @@ use mutsuki_plugin_bot_mihuashi::PLUGIN_ID as MIHUASHI_PLUGIN_ID;
 pub const DEFAULT_MEDIA_PROVIDER_ID: &str = mutsuki_plugin_resource_sqlite::PROVIDER_ID;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -805,18 +802,13 @@ impl BilibiliConfiguredPlugin {
     }
 }
 
-struct HostBilibiliCredentialStore {
-    host: HostSecretStore,
-    shared: SharedBilibiliCredential,
-}
+struct HostBilibiliCredentialStore(HostSecretStore);
 
 impl BilibiliCredentialStore for HostBilibiliCredentialStore {
     fn rotate(&self, key: &str, credential: String) -> Result<(), String> {
-        self.host
-            .rotate(key, credential.clone())
-            .map_err(|error| error.to_string())?;
-        self.shared.set(credential);
-        Ok(())
+        self.0
+            .rotate(key, credential)
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -941,16 +933,17 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
             SqliteBilibiliRepository::open(builder.data_dir().join("bilibili/state.sqlite3"))
                 .map_err(|error| error.to_string())?,
         );
-        let web_credential = SharedBilibiliCredential::default();
         let shared_config = SharedBilibiliConfig::new(config);
         let runner_config = shared_config.clone();
         let runner_repository = repository.clone();
-        let runner_web_credential = web_credential.clone();
+        // One transport for the runner and the Web Console so they share the WBI key cache.
+        let transport: Arc<dyn BilibiliTransport> =
+            Arc::new(HttpBilibiliTransport::new(shared_config.clone()));
+        let runner_transport = transport.clone();
         let source_credentials = match &shared_config.snapshot().backend {
             BilibiliBackendConfig::WebCookie { cookie_secret_key } => {
                 BilibiliPollingCredentials::WebCookie {
                     secret_key: cookie_secret_key.clone(),
-                    credential: web_credential.clone(),
                     required: !shared_config.snapshot().management.enabled,
                 }
             }
@@ -968,16 +961,9 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
         let management_service = if let Some(config_service) = config_service {
             let mut service = BilibiliManagementService::new(
                 runner_config.clone(),
-                web_credential.clone(),
-                Box::new(ReqwestBilibiliTransport::new(
-                    web_credential.clone(),
-                    Duration::from_secs(15),
-                )),
+                transport,
                 repository.clone(),
-                Arc::new(HostBilibiliCredentialStore {
-                    host: host_secret_store.clone(),
-                    shared: web_credential.clone(),
-                }),
+                Arc::new(HostBilibiliCredentialStore(host_secret_store.clone())),
                 Arc::new(ConfigServiceBilibiliConfigStore(config_service)),
                 Arc::new(HostSecretPresence(host_secret_store.clone())),
             );
@@ -1045,17 +1031,8 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
             builder
                 .register_fallible_runtime_services_runner(move |client, resources| {
                     let snapshot = runner_config.snapshot();
-                    let transport: Box<dyn mutsuki_plugin_bot_bilibili::BilibiliTransport> =
-                        match &snapshot.backend {
-                            BilibiliBackendConfig::WebCookie { .. } => {
-                                Box::new(ReqwestBilibiliTransport::new(
-                                    runner_web_credential.clone(),
-                                    Duration::from_secs(15),
-                                ))
-                            }
-                        };
                     let mut runner = BilibiliRunner::new(
-                        transport,
+                        runner_transport.clone(),
                         runner_repository.clone(),
                         resources.clone(),
                         snapshot.media_provider_id.clone(),
@@ -1070,6 +1047,7 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
                             client.clone(),
                             resources,
                         )));
+                        management.bind_http(Arc::new(RuntimeBilibiliHttp::new(client.clone())));
                         runner = runner.with_management(runner_config.clone(), management);
                     }
                     if let Some(registry) = runner_flow_registry.clone() {
@@ -1103,7 +1081,9 @@ impl ConfiguredPluginFactory for WorkshopConfiguredPlugin {
     ) -> Result<ServiceRuntimeBuilder, String> {
         // The owner document only carries the enable switch, which the catalog
         // already applied by calling this factory; the media provider binding
-        // comes from the product assembly.
+        // comes from the product assembly. The runner fetches through the std
+        // HTTP effect, whose `response_provider_id` must be that media provider:
+        // the cover body resource it stores is sent as the image segment.
         let _ = config;
         let mut manifest = mutsuki_plugin_bot_bilibili_workshop::manifest();
         manifest.requires.push(SurfaceRequirement::new(
@@ -1112,17 +1092,9 @@ impl ConfiguredPluginFactory for WorkshopConfiguredPlugin {
         ));
         BotSubmissionGate::ensure_manifest_business_surface(&manifest)
             .map_err(|error| error.to_string())?;
-        let media_provider_id = self.media_provider_id.clone();
         Ok(builder
             .register_builtin_plugin(manifest)
-            .register_fallible_runtime_services_runner(move |_client, resources| {
-                let transport = ReqwestWorkshopTransport::new();
-                Ok::<Box<dyn mutsuki_runtime_sdk::Runner>, String>(Box::new(WorkshopRunner::new(
-                    Box::new(transport),
-                    resources,
-                    media_provider_id.clone(),
-                )))
-            }))
+            .register_runtime_services_runner(mutsuki_plugin_bot_bilibili_workshop::runner))
     }
 }
 

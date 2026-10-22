@@ -14,8 +14,8 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use mutsuki_protocol_http::{
-    EFFECT_REQUEST, HttpErrorCode, HttpMethod, HttpRequest, HttpResponse, HttpResponseMetadata,
-    REQUEST, RESPONSE_BODY_SCHEMA,
+    EFFECT_REQUEST, HttpCookieCapture, HttpErrorCode, HttpMethod, HttpRequest, HttpResponse,
+    HttpResponseBody, HttpResponseMetadata, MAX_INLINE_JSON_BYTES, REQUEST, RESPONSE_BODY_SCHEMA,
 };
 use mutsuki_runtime_contracts::{
     CompletionBatch, DomainEvent, EntryCompletion, ExecutionClass, InvocationMode, ReadPlan,
@@ -64,6 +64,31 @@ pub struct HttpClientConfig {
     pub total_timeout_ms: u64,
     #[serde(default = "default_max_redirects")]
     pub max_redirects: u8,
+    /// Host secrets requests may reference; anything not granted here is rejected.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub secret_grants: Vec<HttpSecretGrant>,
+}
+
+/// Lets requests to `domains` (and their subdomains) send the Host secret `secret_key` as a
+/// header and, with `capture`, replace it from response cookies.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HttpSecretGrant {
+    pub secret_key: String,
+    pub domains: Vec<String>,
+    #[serde(default)]
+    pub capture: bool,
+}
+
+/// Host secret access for the effect runner. Values are read when a request runs, so a
+/// rotated secret applies to the next request without reloading the plugin.
+pub trait HttpSecretStore: Send + Sync {
+    fn resolve(&self, key: &str) -> Option<String>;
+
+    /// # Errors
+    ///
+    /// Returns a message when the Host cannot persist the secret.
+    fn store(&self, key: &str, value: String) -> Result<(), String>;
 }
 
 impl HttpClientConfig {
@@ -80,13 +105,20 @@ impl HttpClientConfig {
             return Err("domain_allowlist must contain at least one domain".into());
         }
         for domain in &self.domain_allowlist {
-            let normalized = normalize_domain(domain);
-            if normalized.is_empty()
-                || normalized.contains('/')
-                || normalized.contains(':')
-                || normalized.parse::<IpAddr>().is_ok()
-            {
-                return Err(format!("invalid allowlisted domain `{domain}`"));
+            validate_domain(domain)?;
+        }
+        for grant in &self.secret_grants {
+            if grant.secret_key.trim().is_empty() {
+                return Err("secret grant requires a secret_key".into());
+            }
+            if grant.domains.is_empty() {
+                return Err(format!(
+                    "secret grant `{}` must name at least one domain",
+                    grant.secret_key
+                ));
+            }
+            for domain in &grant.domains {
+                validate_domain(domain)?;
             }
         }
         if self.max_response_bytes == 0 {
@@ -109,12 +141,17 @@ impl HttpClientConfig {
     }
 
     fn effective_limits(&self, request: &HttpRequest) -> EffectiveLimits {
+        let inline_cap = match request.response_body {
+            HttpResponseBody::Json { .. } => MAX_INLINE_JSON_BYTES,
+            HttpResponseBody::Resource | HttpResponseBody::Discard => u64::MAX,
+        };
         EffectiveLimits {
             max_response_bytes: request
                 .limits
                 .max_response_bytes
                 .unwrap_or(self.max_response_bytes)
-                .min(self.max_response_bytes),
+                .min(self.max_response_bytes)
+                .min(inline_cap),
             connect_timeout: Duration::from_millis(
                 request
                     .limits
@@ -163,8 +200,21 @@ impl Default for HttpClientConfig {
             idle_timeout_ms: DEFAULT_IDLE_TIMEOUT_MS,
             total_timeout_ms: DEFAULT_TOTAL_TIMEOUT_MS,
             max_redirects: DEFAULT_MAX_REDIRECTS,
+            secret_grants: Vec::new(),
         }
     }
+}
+
+fn validate_domain(domain: &str) -> Result<(), String> {
+    let normalized = normalize_domain(domain);
+    if normalized.is_empty()
+        || normalized.contains('/')
+        || normalized.contains(':')
+        || normalized.parse::<IpAddr>().is_ok()
+    {
+        return Err(format!("invalid allowlisted domain `{domain}`"));
+    }
+    Ok(())
 }
 
 const fn default_max_response_bytes() -> u64 {
@@ -386,6 +436,12 @@ impl SecureHttpGateway {
         limits: EffectiveLimits,
     ) -> Result<FetchedHttpResponse, HttpGatewayError> {
         let request_allowlist = request.limits.domain_allowlist;
+        let discard_body = request.response_body == HttpResponseBody::Discard;
+        let secret_header_names = request
+            .secret_headers
+            .keys()
+            .map(|name| name.to_ascii_lowercase())
+            .collect::<Vec<_>>();
         let mut url = Url::parse(&request.url)
             .map_err(|error| HttpGatewayError::new(HttpErrorCode::InvalidUrl, error.to_string()))?;
         let mut method = request.method;
@@ -410,15 +466,14 @@ impl SecureHttpGateway {
                 body: body.clone(),
                 connect_timeout: limits.connect_timeout,
             };
-            let mut response =
-                tokio::time::timeout(limits.header_timeout, self.hop.send(hop_request))
-                    .await
-                    .map_err(|_| {
-                        HttpGatewayError::new(
-                            HttpErrorCode::HeaderTimeout,
-                            "response headers exceeded the configured timeout",
-                        )
-                    })??;
+            let response = tokio::time::timeout(limits.header_timeout, self.hop.send(hop_request))
+                .await
+                .map_err(|_| {
+                    HttpGatewayError::new(
+                        HttpErrorCode::HeaderTimeout,
+                        "response headers exceeded the configured timeout",
+                    )
+                })??;
             if is_redirect(response.status) {
                 let location = response.location.ok_or_else(|| {
                     HttpGatewayError::new(
@@ -437,7 +492,7 @@ impl SecureHttpGateway {
                 })?;
                 self.validate_url(&next, true, request_allowlist.as_deref())?;
                 if next.host_str() != url.host_str() {
-                    remove_sensitive_headers(&mut headers);
+                    remove_sensitive_headers(&mut headers, &secret_header_names);
                 }
                 if response.status == 303
                     || ((response.status == 301 || response.status == 302)
@@ -451,29 +506,8 @@ impl SecureHttpGateway {
                 url = next;
                 continue;
             }
-            if response
-                .content_length
-                .is_some_and(|length| length > limits.max_response_bytes)
-            {
-                return Err(HttpGatewayError::new(
-                    HttpErrorCode::BodyTooLarge,
-                    "Content-Length exceeds the configured response limit",
-                )
-                .evidence("max_response_bytes", limits.max_response_bytes.to_string()));
-            }
-            let (bytes, peak_buffered_bytes) =
-                collect_response_body(&mut response, &limits).await?;
-            return Ok(FetchedHttpResponse {
-                metadata: HttpResponseMetadata {
-                    status: response.status,
-                    final_url: url.to_string(),
-                    headers: response.headers,
-                    body_bytes: bytes.len() as u64,
-                    redirects_followed,
-                },
-                body: bytes,
-                peak_buffered_bytes,
-            });
+            return finish_response(response, &url, redirects_followed, &limits, discard_body)
+                .await;
         }
     }
 
@@ -522,20 +556,45 @@ impl SecureHttpGateway {
     }
 
     fn domain_allowed(&self, host: &str, request_allowlist: Option<&[String]>) -> bool {
-        let host = normalize_domain(host);
-        let matches = |allowed: &str| {
-            let allowed = normalize_domain(allowed);
-            host == allowed
-                || host
-                    .strip_suffix(&allowed)
-                    .is_some_and(|prefix| prefix.ends_with('.'))
-        };
-        self.config
-            .domain_allowlist
-            .iter()
-            .any(|allowed| matches(allowed))
-            && request_allowlist.map_or(true, |list| list.iter().any(|allowed| matches(allowed)))
+        domain_listed(host, &self.config.domain_allowlist)
+            && request_allowlist.map_or(true, |list| domain_listed(host, list))
     }
+}
+
+/// Reads the final (non-redirect) hop's body within the limits, or skips it when discarded.
+async fn finish_response(
+    mut response: HttpHopResponse,
+    url: &Url,
+    redirects_followed: u8,
+    limits: &EffectiveLimits,
+    discard_body: bool,
+) -> Result<FetchedHttpResponse, HttpGatewayError> {
+    let (body, peak_buffered_bytes) = if discard_body {
+        (Vec::new(), 0)
+    } else {
+        if response
+            .content_length
+            .is_some_and(|length| length > limits.max_response_bytes)
+        {
+            return Err(HttpGatewayError::new(
+                HttpErrorCode::BodyTooLarge,
+                "Content-Length exceeds the configured response limit",
+            )
+            .evidence("max_response_bytes", limits.max_response_bytes.to_string()));
+        }
+        collect_response_body(&mut response, limits).await?
+    };
+    Ok(FetchedHttpResponse {
+        metadata: HttpResponseMetadata {
+            status: response.status,
+            final_url: url.to_string(),
+            headers: response.headers,
+            body_bytes: body.len() as u64,
+            redirects_followed,
+        },
+        body,
+        peak_buffered_bytes,
+    })
 }
 
 async fn collect_response_body(
@@ -626,6 +685,7 @@ pub struct HttpEffectHandler {
     gateway: Arc<dyn HttpGateway>,
     resources: Arc<dyn ResourceRegistryGateway>,
     response_provider_id: String,
+    secrets: SecretAccess,
 }
 
 impl HttpEffectHandler {
@@ -639,8 +699,131 @@ impl HttpEffectHandler {
             gateway,
             resources,
             response_provider_id: response_provider_id.into(),
+            secrets: SecretAccess::default(),
         }
     }
+
+    /// Enables `secret_headers` and `capture_cookies` for the granted keys. Without this,
+    /// every request that references a secret is rejected.
+    #[must_use]
+    pub fn with_secrets(
+        mut self,
+        store: Arc<dyn HttpSecretStore>,
+        grants: Vec<HttpSecretGrant>,
+    ) -> Self {
+        self.secrets = SecretAccess {
+            store: Some(store),
+            grants: grants.into(),
+        };
+        self
+    }
+}
+
+#[derive(Clone, Default)]
+struct SecretAccess {
+    store: Option<Arc<dyn HttpSecretStore>>,
+    grants: Arc<[HttpSecretGrant]>,
+}
+
+impl SecretAccess {
+    fn authorize(&self, key: &str, host: &str, capture: bool) -> Result<(), HttpGatewayError> {
+        let granted = self.grants.iter().any(|grant| {
+            normalize_secret_key(&grant.secret_key) == normalize_secret_key(key)
+                && (grant.capture || !capture)
+                && domain_listed(host, &grant.domains)
+        });
+        if granted {
+            Ok(())
+        } else {
+            Err(
+                HttpGatewayError::new(HttpErrorCode::SecretDenied, "secret is not granted")
+                    .evidence("secret_key", key)
+                    .evidence("host", host),
+            )
+        }
+    }
+
+    fn store(&self) -> Result<&Arc<dyn HttpSecretStore>, HttpGatewayError> {
+        self.store.as_ref().ok_or_else(|| {
+            HttpGatewayError::new(
+                HttpErrorCode::SecretUnavailable,
+                "no Host secret store is attached",
+            )
+        })
+    }
+
+    /// Moves every `secret_headers` entry into `headers` with its resolved value.
+    fn inject(&self, request: &mut HttpRequest, host: &str) -> Result<(), HttpGatewayError> {
+        for (name, key) in &request.secret_headers {
+            if request
+                .headers
+                .keys()
+                .any(|existing| existing.eq_ignore_ascii_case(name))
+            {
+                return Err(HttpGatewayError::new(
+                    HttpErrorCode::InvalidHeader,
+                    format!("header `{name}` is set both directly and from a secret"),
+                ));
+            }
+            self.authorize(key, host, false)?;
+            let value = self
+                .store()?
+                .resolve(key)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    HttpGatewayError::new(HttpErrorCode::SecretUnavailable, "secret is not set")
+                        .evidence("secret_key", key.as_str())
+                })?;
+            request.headers.insert(name.clone(), value);
+        }
+        Ok(())
+    }
+
+    fn capture(
+        &self,
+        capture: &HttpCookieCapture,
+        headers: &BTreeMap<String, Vec<String>>,
+    ) -> Result<bool, HttpGatewayError> {
+        let received = headers
+            .get("set-cookie")
+            .into_iter()
+            .flatten()
+            .filter_map(|line| {
+                let pair = line.split(';').next()?.trim();
+                let (name, value) = pair.split_once('=')?;
+                Some((name.trim(), value.trim()))
+            })
+            .collect::<BTreeMap<_, _>>();
+        let kept = capture
+            .cookies
+            .iter()
+            .filter_map(|name| {
+                received
+                    .get(name.as_str())
+                    .filter(|value| !value.is_empty())
+                    .map(|value| format!("{name}={value}"))
+            })
+            .collect::<Vec<_>>();
+        let complete = capture.required.iter().all(|name| {
+            received
+                .get(name.as_str())
+                .is_some_and(|value| !value.is_empty())
+        });
+        if kept.is_empty() || !complete {
+            return Ok(false);
+        }
+        self.store()?
+            .store(&capture.secret_key, kept.join("; "))
+            .map_err(|error| {
+                HttpGatewayError::new(HttpErrorCode::SecretStoreFailed, error)
+                    .evidence("secret_key", capture.secret_key.as_str())
+            })?;
+        Ok(true)
+    }
+}
+
+fn normalize_secret_key(key: &str) -> String {
+    key.trim().to_ascii_uppercase()
 }
 
 impl AsyncBatchHandler for HttpEffectHandler {
@@ -658,6 +841,7 @@ impl AsyncBatchHandler for HttpEffectHandler {
         let gateway = self.gateway.clone();
         let resources = self.resources.clone();
         let provider_id = self.response_provider_id.clone();
+        let secrets = self.secrets.clone();
         Box::pin(async move {
             let mut results = Vec::with_capacity(batch.entries.len());
             for entry in &batch.entries {
@@ -671,6 +855,7 @@ impl AsyncBatchHandler for HttpEffectHandler {
                     gateway.clone(),
                     resources.clone(),
                     provider_id.clone(),
+                    &secrets,
                 )
                 .await;
                 let (result, error) = match completion {
@@ -694,6 +879,7 @@ async fn execute_effect_task(
     gateway: Arc<dyn HttpGateway>,
     resources: Arc<dyn ResourceRegistryGateway>,
     response_provider_id: String,
+    secrets: &SecretAccess,
 ) -> RuntimeResult<RunnerResult> {
     if task.protocol_id != EFFECT_HTTP_REQUEST_PROTOCOL {
         return Err(task_failure(
@@ -702,8 +888,24 @@ async fn execute_effect_task(
             "unsupported HTTP effect protocol",
         ));
     }
-    let request: HttpRequest = serde_json::from_value(task.payload.clone().into())
+    let mut request: HttpRequest = serde_json::from_value(task.payload.clone().into())
         .map_err(|error| task_failure(&task, HttpErrorCode::InvalidRequest, error.to_string()))?;
+    if !request.secret_headers.is_empty() || request.capture_cookies.is_some() {
+        let host = Url::parse(&request.url)
+            .ok()
+            .and_then(|url| url.host_str().map(ToOwned::to_owned))
+            .ok_or_else(|| task_failure(&task, HttpErrorCode::InvalidUrl, "URL host is missing"))?;
+        if let Some(capture) = &request.capture_cookies {
+            secrets
+                .authorize(&capture.secret_key, &host, true)
+                .map_err(|error| gateway_failure(&task, error))?;
+        }
+        secrets
+            .inject(&mut request, &host)
+            .map_err(|error| gateway_failure(&task, error))?;
+    }
+    let response_body = request.response_body.clone();
+    let capture = request.capture_cookies.clone();
     let request_body = request
         .body
         .as_ref()
@@ -719,33 +921,73 @@ async fn execute_effect_task(
         .map_err(|error| {
             task_failure(&task, HttpErrorCode::RequestBodyFailed, error.to_string())
         })?;
-    let fetched = gateway
+    let mut fetched = gateway
         .execute(request, request_body)
         .await
         .map_err(|error| gateway_failure(&task, error))?;
-    let body = if fetched.body.is_empty() {
-        None
-    } else {
-        Some(resources.create_blob_resource(
-            &response_provider_id,
-            RESPONSE_BODY_SCHEMA,
-            fetched.body,
-        )?)
+    let captured_secret = match &capture {
+        Some(capture) if (200..300).contains(&fetched.metadata.status) => secrets
+            .capture(capture, &fetched.metadata.headers)
+            .map_err(|error| gateway_failure(&task, error))?
+            .then(|| capture.secret_key.clone()),
+        _ => None,
     };
-    let response = HttpResponse {
+    fetched.metadata.headers.remove("set-cookie");
+    let (body, json) = match response_body {
+        HttpResponseBody::Resource if !fetched.body.is_empty() => (
+            Some(resources.create_blob_resource(
+                &response_provider_id,
+                RESPONSE_BODY_SCHEMA,
+                fetched.body,
+            )?),
+            None,
+        ),
+        HttpResponseBody::Json { select } => (None, select_json(&fetched.body, &select)),
+        HttpResponseBody::Resource | HttpResponseBody::Discard => (None, None),
+    };
+    let mut response = HttpResponse {
         metadata: fetched.metadata,
         body,
+        json: None,
+        captured_secret,
     };
+    // The event carries metadata only: inline bodies stay in the caller's task output.
+    let event_payload = serde_json::to_value(&response)
+        .map_err(|error| task_failure(&task, HttpErrorCode::ResponseFailed, error.to_string()))?;
+    response.json = json;
     let payload = serde_json::to_value(&response)
         .map_err(|error| task_failure(&task, HttpErrorCode::ResponseFailed, error.to_string()))?;
     let mut result = RunnerResult::completed(task.task_id.clone());
-    result.output = Some(payload.clone());
+    result.output = Some(payload);
     result.events.push(DomainEvent {
         event_id: format!("event:{}.http_response", task.task_id),
         kind: HTTP_REQUEST_PROTOCOL.into(),
-        payload,
+        payload: event_payload,
     });
     Ok(result)
+}
+
+/// The body as JSON, or only the `select`ed pointers keyed by pointer (missing ones as
+/// `null`). `None` when the body is not JSON.
+fn select_json(body: &[u8], select: &[String]) -> Option<serde_json::Value> {
+    let document = serde_json::from_slice::<serde_json::Value>(body).ok()?;
+    if select.is_empty() {
+        return Some(document);
+    }
+    Some(serde_json::Value::Object(
+        select
+            .iter()
+            .map(|pointer| {
+                (
+                    pointer.clone(),
+                    document
+                        .pointer(pointer)
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null),
+                )
+            })
+            .collect(),
+    ))
 }
 
 pub fn facade_runner(client: RuntimeClientRef) -> Box<dyn mutsuki_runtime_sdk::Runner> {
@@ -941,6 +1183,18 @@ fn normalize_domain(domain: &str) -> String {
     domain.trim().trim_end_matches('.').to_ascii_lowercase()
 }
 
+/// Whether `host` is one of `domains` or a subdomain of one.
+fn domain_listed(host: &str, domains: &[String]) -> bool {
+    let host = normalize_domain(host);
+    domains.iter().any(|allowed| {
+        let allowed = normalize_domain(allowed);
+        host == allowed
+            || host
+                .strip_suffix(&allowed)
+                .is_some_and(|prefix| prefix.ends_with('.'))
+    })
+}
+
 fn validated_address(host: &str, addresses: &[SocketAddr]) -> Result<SocketAddr, HttpGatewayError> {
     if let Some(address) = addresses.iter().find(|address| forbidden_ip(address.ip())) {
         return Err(HttpGatewayError::new(
@@ -994,12 +1248,13 @@ fn is_redirect(status: u16) -> bool {
     matches!(status, 301 | 302 | 303 | 307 | 308)
 }
 
-fn remove_sensitive_headers(headers: &mut BTreeMap<String, String>) {
+fn remove_sensitive_headers(headers: &mut BTreeMap<String, String>, secret_names: &[String]) {
     headers.retain(|name, _| {
+        let name = name.to_ascii_lowercase();
         !matches!(
-            name.to_ascii_lowercase().as_str(),
+            name.as_str(),
             "authorization" | "cookie" | "proxy-authorization"
-        )
+        ) && !secret_names.contains(&name)
     });
 }
 
@@ -1030,6 +1285,7 @@ mod tests {
             idle_timeout_ms: 50,
             total_timeout_ms: 100,
             max_redirects: 2,
+            secret_grants: Vec::new(),
         }
     }
 
@@ -1064,6 +1320,7 @@ mod tests {
     struct FakeHop {
         replies: Mutex<VecDeque<FakeReply>>,
         addresses: Mutex<Vec<SocketAddr>>,
+        headers: Mutex<Vec<BTreeMap<String, String>>>,
     }
 
     struct FakeReply {
@@ -1079,6 +1336,7 @@ mod tests {
             Self {
                 replies: Mutex::new(replies.into_iter().collect()),
                 addresses: Mutex::new(Vec::new()),
+                headers: Mutex::new(Vec::new()),
             }
         }
     }
@@ -1090,6 +1348,7 @@ mod tests {
             request: VerifiedHttpRequest,
         ) -> Result<HttpHopResponse, HttpGatewayError> {
             self.addresses.lock().unwrap().push(request.address);
+            self.headers.lock().unwrap().push(request.headers.clone());
             let reply = self.replies.lock().unwrap().pop_front().unwrap();
             tokio::time::sleep(reply.header_delay).await;
             Ok(HttpHopResponse {
@@ -1442,5 +1701,317 @@ mod tests {
             .unwrap();
         // Fail on the second 64-byte chunk (80 limit); never buffer all three chunks (192).
         assert!(observed <= 128, "observed_bytes={observed}");
+    }
+
+    #[tokio::test]
+    async fn secret_headers_are_dropped_when_a_redirect_leaves_the_host() {
+        let mut config = config();
+        config.domain_allowlist.push("other.example".into());
+        let hop = Arc::new(FakeHop::new([
+            redirect("https://other.example/next"),
+            reply(200, &[b"ok"]),
+        ]));
+        let gateway = SecureHttpGateway::with_gateways(
+            config,
+            Arc::new(FakeDns::new([
+                vec![public_address()],
+                vec![public_address()],
+            ])),
+            hop.clone(),
+        );
+        let mut request = HttpRequest::get("https://example.com/start");
+        request
+            .headers
+            .insert("X-Api-Key".into(), "resolved".into());
+        request
+            .secret_headers
+            .insert("X-Api-Key".into(), "API_KEY".into());
+        gateway.execute(request, None).await.unwrap();
+        let headers = hop.headers.lock().unwrap();
+        assert_eq!(
+            headers[0].get("X-Api-Key").map(String::as_str),
+            Some("resolved")
+        );
+        assert!(!headers[1].contains_key("X-Api-Key"));
+    }
+
+    struct MapSecrets(Mutex<BTreeMap<String, String>>);
+
+    impl HttpSecretStore for MapSecrets {
+        fn resolve(&self, key: &str) -> Option<String> {
+            self.0.lock().unwrap().get(key).cloned()
+        }
+
+        fn store(&self, key: &str, value: String) -> Result<(), String> {
+            self.0.lock().unwrap().insert(key.into(), value);
+            Ok(())
+        }
+    }
+
+    struct ScriptedGateway {
+        headers: BTreeMap<String, Vec<String>>,
+        body: Vec<u8>,
+        seen: Mutex<Option<HttpRequest>>,
+    }
+
+    #[async_trait]
+    impl HttpGateway for ScriptedGateway {
+        async fn execute(
+            &self,
+            request: HttpRequest,
+            _request_body: Option<Vec<u8>>,
+        ) -> Result<FetchedHttpResponse, HttpGatewayError> {
+            *self.seen.lock().unwrap() = Some(request.clone());
+            Ok(FetchedHttpResponse {
+                metadata: HttpResponseMetadata {
+                    status: 200,
+                    final_url: request.url,
+                    headers: self.headers.clone(),
+                    body_bytes: self.body.len() as u64,
+                    redirects_followed: 0,
+                },
+                body: self.body.clone(),
+                peak_buffered_bytes: self.body.len() as u64,
+            })
+        }
+    }
+
+    /// Inline and discarded bodies never touch the resource registry.
+    struct NoResources;
+
+    impl mutsuki_runtime_sdk::ResourcePlanGateway for NoResources {
+        fn collect_read_plan(&self, _: &ReadPlan) -> RuntimeResult<Vec<u8>> {
+            unreachable!()
+        }
+        fn snapshot_read_plan(
+            &self,
+            _: &ReadPlan,
+            _: &str,
+            _: &str,
+        ) -> RuntimeResult<mutsuki_runtime_contracts::SnapshotDescriptor> {
+            unreachable!()
+        }
+        fn open_stream_plan(
+            &self,
+            _: &ReadPlan,
+        ) -> RuntimeResult<mutsuki_runtime_contracts::StreamPlan> {
+            unreachable!()
+        }
+        fn execute_export_plan(
+            &self,
+            _: &mutsuki_runtime_contracts::ExportPlan,
+        ) -> RuntimeResult<mutsuki_runtime_contracts::PlanReceipt> {
+            unreachable!()
+        }
+        fn commit_write_plan(
+            &self,
+            _: &mutsuki_runtime_contracts::WritePlan,
+            _: Vec<u8>,
+        ) -> RuntimeResult<mutsuki_runtime_contracts::PlanReceipt> {
+            unreachable!()
+        }
+        fn execute_command_plan(
+            &self,
+            _: &mutsuki_runtime_contracts::CommandPlan,
+        ) -> RuntimeResult<mutsuki_runtime_contracts::PlanReceipt> {
+            unreachable!()
+        }
+        fn execute_command_batch(
+            &self,
+            _: &mutsuki_runtime_contracts::resource::experimental::CommandBatch,
+        ) -> RuntimeResult<Vec<mutsuki_runtime_contracts::PlanReceipt>> {
+            unreachable!()
+        }
+        fn execute_saga_plan(
+            &self,
+            _: &mutsuki_runtime_contracts::resource::experimental::SagaPlan,
+        ) -> RuntimeResult<Vec<mutsuki_runtime_contracts::PlanReceipt>> {
+            unreachable!()
+        }
+    }
+
+    impl ResourceRegistryGateway for NoResources {
+        fn open_resource_descriptor(
+            &self,
+            _: &str,
+        ) -> RuntimeResult<mutsuki_runtime_contracts::ResourceRef> {
+            unreachable!()
+        }
+        fn create_blob_resource(
+            &self,
+            _: &str,
+            _: &str,
+            _: Vec<u8>,
+        ) -> RuntimeResult<mutsuki_runtime_contracts::ResourceRef> {
+            unreachable!()
+        }
+        fn create_cow_state_resource(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: Vec<u8>,
+        ) -> RuntimeResult<mutsuki_runtime_contracts::ResourceRef> {
+            unreachable!()
+        }
+        fn create_capability_resource(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+        ) -> RuntimeResult<mutsuki_runtime_contracts::ResourceRef> {
+            unreachable!()
+        }
+    }
+
+    fn cookie_grant(capture: bool) -> HttpSecretGrant {
+        HttpSecretGrant {
+            secret_key: "SITE_COOKIE".into(),
+            domains: vec!["example.com".into()],
+            capture,
+        }
+    }
+
+    fn secret_access(grants: Vec<HttpSecretGrant>, values: &[(&str, &str)]) -> SecretAccess {
+        SecretAccess {
+            store: Some(Arc::new(MapSecrets(Mutex::new(
+                values
+                    .iter()
+                    .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+                    .collect(),
+            )))),
+            grants: grants.into(),
+        }
+    }
+
+    async fn run_effect(
+        request: &HttpRequest,
+        gateway: Arc<ScriptedGateway>,
+        secrets: &SecretAccess,
+    ) -> RuntimeResult<RunnerResult> {
+        let task = Task::new(
+            "t1",
+            EFFECT_HTTP_REQUEST_PROTOCOL,
+            serde_json::to_value(request).unwrap(),
+        );
+        execute_effect_task(
+            task,
+            gateway,
+            Arc::new(NoResources),
+            "memory".into(),
+            secrets,
+        )
+        .await
+    }
+
+    fn scripted(headers: &[(&str, &[&str])], body: &[u8]) -> Arc<ScriptedGateway> {
+        Arc::new(ScriptedGateway {
+            headers: headers
+                .iter()
+                .map(|(name, values)| {
+                    (
+                        (*name).to_owned(),
+                        values.iter().map(|value| (*value).to_owned()).collect(),
+                    )
+                })
+                .collect(),
+            body: body.to_vec(),
+            seen: Mutex::new(None),
+        })
+    }
+
+    #[tokio::test]
+    async fn secret_header_is_resolved_at_effect_time_and_kept_out_of_the_output() {
+        let gateway = scripted(&[], b"{}");
+        let mut request = HttpRequest::get("https://api.example.com/x");
+        request
+            .secret_headers
+            .insert("Cookie".into(), "SITE_COOKIE".into());
+        request.response_body = HttpResponseBody::Json { select: Vec::new() };
+        let secrets = secret_access(vec![cookie_grant(false)], &[("SITE_COOKIE", "a=1")]);
+        let result = run_effect(&request, gateway.clone(), &secrets)
+            .await
+            .unwrap();
+        let seen = gateway.seen.lock().unwrap().clone().unwrap();
+        assert_eq!(seen.headers.get("Cookie").map(String::as_str), Some("a=1"));
+        let output = serde_json::to_string(&result.output).unwrap();
+        assert!(!output.contains("a=1"), "{output}");
+    }
+
+    #[tokio::test]
+    async fn secret_header_outside_the_granted_domains_or_unset_is_rejected() {
+        let mut request = HttpRequest::get("https://evil.example/x");
+        request
+            .secret_headers
+            .insert("Cookie".into(), "SITE_COOKIE".into());
+        let secrets = secret_access(vec![cookie_grant(false)], &[("SITE_COOKIE", "a=1")]);
+        let error = run_effect(&request, scripted(&[], b""), &secrets)
+            .await
+            .unwrap_err();
+        assert_eq!(error.error().code, "http.secret_denied");
+
+        request.url = "https://example.com/x".into();
+        let unset = secret_access(vec![cookie_grant(false)], &[("SITE_COOKIE", "")]);
+        let error = run_effect(&request, scripted(&[], b""), &unset)
+            .await
+            .unwrap_err();
+        assert_eq!(error.error().code, "http.secret_unavailable");
+    }
+
+    #[tokio::test]
+    async fn json_selection_and_cookie_capture_keep_credentials_out_of_the_task_output() {
+        let gateway = scripted(
+            &[(
+                "set-cookie",
+                &[
+                    "SESSDATA=s1; Path=/; HttpOnly",
+                    "bili_jct=j1; Path=/",
+                    "other=x",
+                ],
+            )],
+            br#"{"code":0,"data":{"code":0,"url":"https://x/?SESSDATA=s1"}}"#,
+        );
+        let store = Arc::new(MapSecrets(Mutex::new(BTreeMap::new())));
+        let secrets = SecretAccess {
+            store: Some(store.clone()),
+            grants: vec![cookie_grant(true)].into(),
+        };
+        let mut request = HttpRequest::get("https://passport.example.com/poll");
+        request.response_body = HttpResponseBody::Json {
+            select: vec!["/data/code".into()],
+        };
+        request.capture_cookies = Some(HttpCookieCapture {
+            secret_key: "SITE_COOKIE".into(),
+            cookies: vec!["SESSDATA".into(), "bili_jct".into()],
+            required: vec!["SESSDATA".into()],
+        });
+        let result = run_effect(&request, gateway, &secrets).await.unwrap();
+        let response: HttpResponse =
+            serde_json::from_value(result.output.clone().unwrap()).unwrap();
+        assert_eq!(response.json, Some(serde_json::json!({"/data/code": 0})));
+        assert_eq!(response.captured_secret.as_deref(), Some("SITE_COOKIE"));
+        assert!(!response.metadata.headers.contains_key("set-cookie"));
+        assert_eq!(
+            store.resolve("SITE_COOKIE").as_deref(),
+            Some("SESSDATA=s1; bili_jct=j1")
+        );
+        let rendered = serde_json::to_string(&result).unwrap();
+        assert!(!rendered.contains("s1"), "{rendered}");
+        assert!(result.events[0].payload.get("json").is_none());
+    }
+
+    #[tokio::test]
+    async fn cookie_capture_requires_a_capture_grant() {
+        let mut request = HttpRequest::get("https://example.com/poll");
+        request.capture_cookies = Some(HttpCookieCapture {
+            secret_key: "SITE_COOKIE".into(),
+            cookies: vec!["SESSDATA".into()],
+            required: Vec::new(),
+        });
+        let secrets = secret_access(vec![cookie_grant(false)], &[]);
+        let error = run_effect(&request, scripted(&[], b""), &secrets)
+            .await
+            .unwrap_err();
+        assert_eq!(error.error().code, "http.secret_denied");
     }
 }

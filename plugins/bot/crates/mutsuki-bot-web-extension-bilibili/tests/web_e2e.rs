@@ -62,7 +62,7 @@ impl BilibiliManagementApi for Api {
         }
     }
 
-    fn login_start_session(
+    async fn login_start_session(
         &self,
         actor_id: &str,
     ) -> Result<BilibiliLoginSession, BilibiliManagementError> {
@@ -92,7 +92,7 @@ impl BilibiliManagementApi for Api {
         })
     }
 
-    fn login_poll(
+    async fn login_poll(
         &self,
         actor_id: &str,
     ) -> Result<BilibiliLoginPollResult, BilibiliManagementError> {
@@ -149,7 +149,7 @@ impl BilibiliManagementApi for Api {
         Err(unused())
     }
 
-    fn preview(
+    async fn preview(
         &self,
         _actor_id: &str,
         _is_admin: bool,
@@ -158,7 +158,7 @@ impl BilibiliManagementApi for Api {
         Err(unused())
     }
 
-    fn bind_start(
+    async fn bind_start(
         &self,
         _operator_user_id: &str,
         _uid: u64,
@@ -167,7 +167,7 @@ impl BilibiliManagementApi for Api {
         Err(unused())
     }
 
-    fn bind_verify(
+    async fn bind_verify(
         &self,
         _operator_user_id: &str,
         _platform: &str,
@@ -350,19 +350,20 @@ async fn web_login_stays_available_when_subscription_management_is_disabled() {
     host.stop().await.unwrap();
 }
 
-#[test]
-fn login_poll_requires_runtime_write_capability() {
+#[tokio::test]
+async fn login_poll_requires_runtime_write_capability() {
     let api = Arc::new(Api::default());
     let extension = BilibiliWebExtension::new(api);
     let mut registry = RpcRegistry::new(PLUGIN_ID);
     extension.register_rpc(&mut registry).unwrap();
 
     let error = registry
-        .call_with_context(
+        .call_async_with_context(
             "login.poll",
             json!({}),
             RpcCallContext::authenticated("read-only", &[CAPABILITY_RUNTIME_READ.into()]),
         )
+        .await
         .unwrap_err();
     assert_eq!(error.rpc_code(), "capability_denied");
     assert_eq!(error.to_string(), "capability denied: runtime.write");

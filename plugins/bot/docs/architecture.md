@@ -93,11 +93,6 @@ Libraries (not host-loadable plugins):
   persistence traits over conversation-scoped state and both are implemented by
   `mutsuki-bot-state-db`. Plugin runners live in `mutsuki-plugin-bot-persona`.
 - `mutsuki-bot-link-parser`: shared URL/card extraction for link-match flows.
-- `mutsuki-bot-secure-fetch`: allowlisted HTTP fetch with manual redirects and a hard
-  streamed size budget. Bilibili and Workshop each had their own copy of this loop, and
-  two copies of an SSRF guard means a hop-validation fix can land in only one of them.
-  Node runners should submit `mutsuki.std.io.http` instead — the std plugin owns that
-  policy; this exists for the synchronous transports that hold no task submitter.
 - `mutsuki-bot-management`: headless QQ/Bilibili management API traits.
 - `mutsuki-bot-testkit`: fakes for E2E — the QQ HTTP/WS boundary, plus the in-memory
   `ConversationContextStore` / `PersonaStore` doubles. Production stores are always
@@ -129,7 +124,18 @@ Domain plugins and durable services:
   platform processors that consume `bot.link.url`. Bilibili polling only detects fresh items and
   submits `mutsuki.bot.event.bilibili` trigger events into Flow ingress; the push card render and
   delivery live in the `mutsuki.bot.bilibili.notification` → `mutsuki.bot.bilibili.card` graph
-  nodes.
+  nodes. Workshop is an Orchestration runner that holds no HTTP client: it fetches the
+  `mall.bilibili.com` item page and the `hdslb.com` cover as `mutsuki.http.request@2` child tasks
+  (per-request `domain_allowlist`, its own final-URL re-check) and sends the cover body resource
+  the std HTTP effect stored as the image segment, so the HTTP client's `response_provider_id`
+  must be the product media provider and its domain allowlist must cover both hosts.
+  Bilibili does the same for every upstream call (polls, link resolution, covers, QR login,
+  profiles): the runner awaits `mutsuki.http.request@2` child tasks through `RunnerHttp`, and the
+  Web Console management path submits them through `RuntimeBilibiliHttp`. API calls name the
+  cookie secret in `secret_headers`; QR login selects only `/data/code` from the response and
+  lets `capture_cookies` store the `Set-Cookie` values in that secret, so the cookie never enters
+  a task payload, task output or the plugin. The HTTP client must grant the cookie secret to
+  `bilibili.com` with `capture`.
 - `mutsuki-bot-state-db`: durable session, delivery, interaction, persona, conversation-context
   and sandbox history repository; implements store traits from library crates rather than
   depending on plugin packages. Production assembly opens one actor per `data/bot/state.sqlite3`

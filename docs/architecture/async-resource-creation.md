@@ -48,8 +48,8 @@ registry or ordered lifecycle guarantee; it is not a substitute for a Host clien
 The existing synchronous consumers keep their public interfaces:
 
 - `ImageRenderRunner` creates its PNG output and reads image inputs through its injected registry.
-- Bilibili and workshop card pipelines create/read cover resources through injected registries;
-  Mihuashi reads rendered resources through the same boundary.
+- Bilibili, Workshop and Mihuashi card pipelines use the cover body resource the std HTTP
+  effect created; Mihuashi and Workshop read fetched pages through the injected registry.
 - QQ inbound media creates resource descriptors through a `spawn_blocking` hand-off around the
   synchronous Host bridge; outbound media reads descriptors through the injected gateway.
 

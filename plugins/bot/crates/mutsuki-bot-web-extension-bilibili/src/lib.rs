@@ -104,14 +104,18 @@ impl WebExtension for BilibiliWebExtension {
 
         // Polling a confirmed QR session rotates the stored credential, so this
         // is a write however much it reads like a status check.
-        ctx.register_contextual("login.poll", {
+        ctx.register_async_contextual("login.poll", {
             let service = service.clone();
             move |context, _params| {
-                context.require(CAPABILITY_RUNTIME_WRITE)?;
-                let result = service
-                    .login_poll(CONSOLE_LOGIN_ACTOR)
-                    .map_err(map_bili_error)?;
-                encode_json(result)
+                let service = service.clone();
+                async move {
+                    context.require(CAPABILITY_RUNTIME_WRITE)?;
+                    let result = service
+                        .login_poll(CONSOLE_LOGIN_ACTOR)
+                        .await
+                        .map_err(map_bili_error)?;
+                    encode_json(result)
+                }
             }
         });
 
@@ -189,46 +193,59 @@ impl WebExtension for BilibiliWebExtension {
             }
         });
 
-        ctx.register_contextual("subscriptions.preview", {
+        ctx.register_async_contextual("subscriptions.preview", {
             let service = service.clone();
             move |context, params| {
-                context.require(CAPABILITY_RUNTIME_READ)?;
-                let actor = optional_str(&params, "operator_user_id").unwrap_or_default();
-                let is_admin = console_is_admin(&context);
-                let selector = optional_str(&params, "selector");
-                let card = service
-                    .preview(&actor, is_admin, selector.as_deref())
-                    .map_err(map_bili_error)?;
-                encode_json(card)
+                let service = service.clone();
+                async move {
+                    context.require(CAPABILITY_RUNTIME_READ)?;
+                    let actor = optional_str(&params, "operator_user_id").unwrap_or_default();
+                    let is_admin = console_is_admin(&context);
+                    let selector = optional_str(&params, "selector");
+                    let card = service
+                        .preview(&actor, is_admin, selector.as_deref())
+                        .await
+                        .map_err(map_bili_error)?;
+                    encode_json(card)
+                }
             }
         });
 
-        ctx.register_contextual("binding.start", {
+        ctx.register_async_contextual("binding.start", {
             let service = service.clone();
             move |context, params| {
-                context.require(CAPABILITY_RUNTIME_WRITE)?;
-                let operator = required_str(&params, "operator_user_id")?;
-                let uid = required_u64(&params, "uid")?;
-                let seed = optional_str(&params, "challenge_seed")
-                    .unwrap_or_else(|| format!("web-{}", operator));
-                let result = service
-                    .bind_start(&operator, uid, &seed)
-                    .map_err(map_bili_error)?;
-                encode_json(result)
+                let service = service.clone();
+                async move {
+                    context.require(CAPABILITY_RUNTIME_WRITE)?;
+                    let operator = required_str(&params, "operator_user_id")?;
+                    let uid = required_u64(&params, "uid")?;
+                    let seed = optional_str(&params, "challenge_seed")
+                        .unwrap_or_else(|| format!("web-{}", operator));
+                    let result = service
+                        .bind_start(&operator, uid, &seed)
+                        .await
+                        .map_err(map_bili_error)?;
+                    encode_json(result)
+                }
             }
         });
 
-        ctx.register_contextual("binding.verify", {
+        ctx.register_async_contextual("binding.verify", {
             let service = service.clone();
             move |context, params| {
-                context.require(CAPABILITY_RUNTIME_WRITE)?;
-                let operator = required_str(&params, "operator_user_id")?;
-                let platform = optional_str(&params, "platform").unwrap_or_else(|| "web".into());
-                let target = parse_target(&params)?;
-                let result = service
-                    .bind_verify(&operator, &platform, target)
-                    .map_err(map_bili_error)?;
-                encode_json(result)
+                let service = service.clone();
+                async move {
+                    context.require(CAPABILITY_RUNTIME_WRITE)?;
+                    let operator = required_str(&params, "operator_user_id")?;
+                    let platform =
+                        optional_str(&params, "platform").unwrap_or_else(|| "web".into());
+                    let target = parse_target(&params)?;
+                    let result = service
+                        .bind_verify(&operator, &platform, target)
+                        .await
+                        .map_err(map_bili_error)?;
+                    encode_json(result)
+                }
             }
         });
 

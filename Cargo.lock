@@ -3823,6 +3823,7 @@ dependencies = [
  "mutsuki-plugin-bot-event-router",
  "mutsuki-plugin-bot-flow-agent-tool",
  "mutsuki-plugin-bot-mihuashi",
+ "mutsuki-plugin-io-http-client",
  "mutsuki-plugin-resource-sqlite",
  "mutsuki-protocol-browser",
  "mutsuki-runtime-contracts",
@@ -4012,17 +4013,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
-]
-
-[[package]]
-name = "mutsuki-bot-secure-fetch"
-version = "0.1.0"
-dependencies = [
- "reqwest",
- "rustls",
- "thiserror 2.0.20",
- "tokio",
- "url",
 ]
 
 [[package]]
@@ -4630,9 +4620,9 @@ dependencies = [
  "mutsuki-bot-management",
  "mutsuki-bot-protocol",
  "mutsuki-bot-sdk",
- "mutsuki-bot-secure-fetch",
  "mutsuki-config-service",
  "mutsuki-protocol-browser",
+ "mutsuki-protocol-http",
  "mutsuki-protocol-image",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-sdk",
@@ -4650,16 +4640,22 @@ dependencies = [
 name = "mutsuki-plugin-bot-bilibili-workshop"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "mutsuki-bot-link-parser",
  "mutsuki-bot-protocol",
- "mutsuki-bot-secure-fetch",
+ "mutsuki-plugin-io-http-client",
+ "mutsuki-plugin-resource-memory",
+ "mutsuki-protocol-http",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-sdk",
- "reqwest",
- "rustls",
+ "mutsuki-service-config",
+ "mutsuki-service-control",
+ "mutsuki-service-runtime",
  "scraper",
  "serde",
  "serde_json",
+ "tempfile",
+ "tokio",
  "url",
 ]
 
@@ -5396,6 +5392,7 @@ dependencies = [
  "mutsuki-plugin-resource-memory",
  "mutsuki-plugin-resource-sqlite",
  "mutsuki-runtime-sdk",
+ "mutsuki-service-config",
  "mutsuki-service-runtime",
  "mutsuki-std-plugins",
  "serde_json",

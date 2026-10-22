@@ -106,9 +106,17 @@ fn management_manifest_exposes_a_behavior_node_without_a_command_name() {
             .requires
             .contains(&SurfaceRequirement::task_protocol(SNAPSHOT))
     );
+    assert!(
+        risk_control
+            .requires
+            .contains(&SurfaceRequirement::task_protocol(
+                mutsuki_protocol_http::REQUEST
+            ))
+    );
+    // Upstream I/O runs in the HTTP effect; the runner only awaits it.
     assert_eq!(
         risk_control.provides.runners[0].execution_class,
-        ExecutionClass::Io
+        ExecutionClass::Orchestration
     );
 }
 
@@ -126,7 +134,7 @@ fn explicit_chromium_backend_awaits_snapshot_and_reports_degraded_success() {
     .unwrap();
     let repository = Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap());
     let runner = BilibiliRunner::new(
-        Box::new(RiskControlledTransport),
+        Arc::new(RiskControlledTransport),
         repository.clone(),
         Arc::new(SnapshotResources { bytes }),
         "memory",
@@ -179,7 +187,7 @@ fn explicit_chromium_backend_awaits_snapshot_and_reports_degraded_success() {
 fn link_resolution_awaits_card_renderer_then_sends_image_and_url() {
     let repository = Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap());
     let mut runner = BilibiliRunner::new(
-        Box::new(LinkTransport),
+        Arc::new(LinkTransport),
         repository.clone(),
         Arc::new(UnusedResources),
         "memory",
@@ -258,7 +266,7 @@ fn link_resolution_awaits_card_renderer_then_sends_image_and_url() {
 fn link_resolution_from_flow_invocation_reads_event_url() {
     let repository = Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap());
     let mut runner = BilibiliRunner::new(
-        Box::new(LinkTransport),
+        Arc::new(LinkTransport),
         repository,
         Arc::new(UnusedResources),
         "memory",
@@ -339,7 +347,7 @@ fn multiple_fresh_items_are_emitted_as_flow_events_in_order() {
     let repository = Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap());
     repository.set_cursor("Dynamic:7:sub", "1").unwrap();
     let mut runner = BilibiliRunner::new(
-        Box::new(MultiPollTransport),
+        Arc::new(MultiPollTransport),
         repository.clone(),
         Arc::new(UnusedResources),
         "memory",
@@ -409,7 +417,7 @@ fn multiple_fresh_items_are_emitted_as_flow_events_in_order() {
 fn notification_card_node_renders_subscription_payload_into_message_send() {
     let repository = Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap());
     let mut runner = BilibiliRunner::new(
-        Box::new(LinkTransport),
+        Arc::new(LinkTransport),
         repository,
         Arc::new(UnusedResources),
         "memory",
@@ -553,7 +561,7 @@ fn forced_baseline_poll_advances_the_cursor_without_notifications() {
     let repository = Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap());
     repository.set_cursor("Live:7:sub", "item-8").unwrap();
     let mut runner = BilibiliRunner::new(
-        Box::new(CountingTransport {
+        Arc::new(CountingTransport {
             polls: Arc::new(AtomicU64::new(0)),
         }),
         repository.clone(),

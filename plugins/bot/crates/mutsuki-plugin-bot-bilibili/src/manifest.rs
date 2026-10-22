@@ -5,6 +5,7 @@ use mutsuki_bot_protocol::{
     BotNodePortDescriptor, BotNodePortDirection, BotNodeRole,
 };
 use mutsuki_protocol_browser::SNAPSHOT;
+use mutsuki_protocol_http::REQUEST as HTTP_REQUEST;
 use mutsuki_protocol_image::{CARD_RENDER, QR_RENDER};
 use mutsuki_runtime_contracts::{
     CompletionBatch, ExecutionClass, ProtocolClass, RunnerBatchCapability, RunnerContext,
@@ -217,11 +218,11 @@ pub(crate) fn runner_descriptor(risk_control: bool) -> RunnerDescriptor {
     }
     builder
         .requires_protocol(CARD_RENDER)
+        .requires_protocol(HTTP_REQUEST)
         .purity(RunnerPurity::Effectful)
-        // Polls, link resolution and card media use the blocking secure-fetch
-        // transport; declaring Io keeps that I/O off the orchestration domain
-        // that drives Flow.
-        .execution_class(ExecutionClass::Io)
+        // Upstream I/O runs in the std HTTP effect; this runner only awaits those
+        // child tasks.
+        .execution_class(ExecutionClass::Orchestration)
         .batch_capability(RunnerBatchCapability {
             mode: RunnerMode::ScalarAdapter,
             side_effect: RunnerSideEffect::External,

@@ -45,7 +45,8 @@ pub const PLUGIN_ID: &str = "mutsuki.bot.mihuashi";
 pub const RUNNER_ID: &str = "mutsuki.bot.mihuashi.runner";
 pub const LINK_RESOLVE: &str = "mutsuki.bot.mihuashi.link/resolve@1";
 
-const MIHUASHI_DOMAIN: &str = "mihuashi.com";
+/// The host Mihuashi fetches from; the product grants it to the HTTP client.
+pub const MIHUASHI_DOMAIN: &str = "mihuashi.com";
 const DEFAULT_SNAPSHOT_SELECTOR: &str = "h1";
 const MEDIA_CONNECT_TIMEOUT_MS: u64 = 5_000;
 const MEDIA_HEADER_TIMEOUT_MS: u64 = 10_000;
