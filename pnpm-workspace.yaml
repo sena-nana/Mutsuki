@@ -10,7 +10,9 @@ packages:
 # Shared runtime versions are pinned once. Extension packages reference them with
 # `catalog:` so the shell and every extension agree on one vue/vue-router/pinia.
 catalog:
+  "@axe-core/playwright": ^4.14.0
   "@msgpack/msgpack": ^3.1.3
+  "@playwright/test": ^1.64.1
   "@types/node": ^26.6.5
   "@vitejs/plugin-vue": ^6.0.10
   "@vue/test-utils": ^2.5.1

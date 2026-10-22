@@ -60,3 +60,26 @@
   `shared/ui.<hash>.css`。确认/输入/提示改用 `useConfirm`/`usePrompt`/`useToast`
   （需 `installMutsukiUi(app)` 与一个 `<MkOverlayHost />`）。
 - `I18n` 新增 `has(key)`；`@mutsuki/web-shell` 的类型检查与构建改用 `vue-tsc`。
+
+## W5 Shell v2
+
+- 控制台入口由 `@mutsuki/bot-console`（`mutsuki-bot-web-host-integration/web`，产物
+  `web/browser/console.js`）提供，`assets/console-bootstrap.js` 删除。它读取
+  `console-options.json` 并调用 `@mutsuki/web-shell` 的 `startConsole`。
+- `console-options.json` 改为 `{ brand, homePageId, layout: { activities, placements }, extensions }`；
+  顶层 `activities` 不再存在。activity 只由产品布局定义：`WebConsoleConfig.layout`
+  （`ConsoleLayout`，缺省为 概览/插件/诊断/设置），Bot 产品用 `console_layout()`（总览、平台与消息、
+  会话与 Agent、自动化、沙盒、数据、插件、系统、设置）。构建控制台时校验布局（重复 id、缺少
+  `settings`、悬空 placement 均拒绝）。
+- 扩展调用 `ctx.activities.register` 不再生效；未知 activity 记入失败面板。旧导航按
+  `placements`（导航 id 或旧 activity id → 布局 activity）落位，随各扩展迁移逐条删除。
+- 外观设置固定在 `settings` activity 的 `webui.settings` 页（不再随 `plugins` 切换）；新增语言、
+  退出登录与关于。`mountWebShell`、`configureActivities`、`configureWebUiSettings` 删除，改用
+  `startConsole`/`configureLayout`。`PageRegistration.component` 可为 Vue 组件，旧 `{ mount }`
+  经 `legacyMount` 适配。
+- `@mutsuki/web-shell` 改由 Vite 构建（SFC），共享运行时从其 `dist` 打包。
+- 新增 `--mk-color-accent-solid`/`-hover`：浅色主题下把强调色压暗用于实心控件（主按钮、跳转链接、
+  登录按钮），使白字对比度 ≥ 4.5:1。
+- Playwright smoke（`pnpm --filter @mutsuki/bot-console e2e`，CI `console-e2e`）基于
+  `examples/embedded_console_fixture.rs`；该示例读取 `MUTSUKI_CONSOLE_FIXTURE_LISTEN`，并启用
+  config（demo provider）与沙盒页。

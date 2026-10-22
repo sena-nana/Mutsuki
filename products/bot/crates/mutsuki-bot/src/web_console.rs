@@ -12,11 +12,11 @@ use mutsuki_bot_service_host_integration::{
     QqConsoleBridge, SANDBOX_SERVICE_ID, SandboxConsoleBridge,
 };
 use mutsuki_bot_web_host_integration::{
-    BotAgentConsoleServices, ConfigNavigationGroup, ConfigNavigationItem, ConsoleAssetDirs,
-    ControlChangeBridge, ManagementChangeBridge, SecretKeyResolver, SecretMonitor,
-    WebConsoleConfig, WebConsolePaths, WebConsoleSecrets, attach_control_changed_bridge,
-    attach_management_changed_bridges, attach_revision_changed_bridge,
-    build_console_host_with_agent,
+    BotAgentConsoleServices, ConfigNavigationGroup, ConfigNavigationItem, ConsoleActivity,
+    ConsoleAssetDirs, ConsoleLayout, ControlChangeBridge, ManagementChangeBridge,
+    SecretKeyResolver, SecretMonitor, WebConsoleConfig, WebConsolePaths, WebConsoleSecrets,
+    attach_control_changed_bridge, attach_management_changed_bridges,
+    attach_revision_changed_bridge, build_console_host_with_agent,
 };
 use mutsuki_plugin_bot_adapter_qqbot::QQBOT_ADAPTER_PLUGIN_ID;
 
@@ -86,6 +86,7 @@ impl WebConsoleGuard {
             primary_config_provider_id: Some(PRODUCT_CONFIG_PROVIDER_ID.into()),
             config_navigation_groups: config_navigation_groups(),
             release_set: config.release_set,
+            layout: console_layout(),
         };
         let secrets = resolve_secrets(service, &config)?;
         let secret_monitor = build_secret_monitor(service, &config);
@@ -207,6 +208,34 @@ fn build_secret_monitor(
     ))
 }
 
+/// The Bot console's information architecture. Only this list defines activities; extension
+/// pages land in them through their navigation.
+pub fn console_layout() -> ConsoleLayout {
+    ConsoleLayout {
+        activities: vec![
+            ConsoleActivity::top("home", "总览", "home", 0),
+            ConsoleActivity::top("platforms", "平台与消息", "bot", 10),
+            ConsoleActivity::top("agent", "会话与 Agent", "chat", 20),
+            ConsoleActivity::top("automation", "自动化", "flow", 30),
+            ConsoleActivity::top("sandbox", "沙盒", "sandbox", 40),
+            ConsoleActivity::top("data", "数据", "data", 50),
+            ConsoleActivity::top("plugins", "插件", "config", 60),
+            ConsoleActivity::top("system", "系统", "system", 70),
+            ConsoleActivity::bottom("settings", "设置", "settings", 100),
+        ],
+        // Pages of extensions not yet migrated to the layout file themselves under their old
+        // activities; each entry goes away when its extension migrates (W7–W10).
+        placements: [
+            ("bot", "agent"),
+            ("bilibili.nav", "automation"),
+            ("database.nav", "data"),
+        ]
+        .into_iter()
+        .map(|(from, to)| (from.to_owned(), to.to_owned()))
+        .collect(),
+    }
+}
+
 fn config_navigation_groups() -> Vec<ConfigNavigationGroup> {
     let item = |provider_id: &str, label: &str| ConfigNavigationItem {
         provider_id: provider_id.into(),
@@ -293,6 +322,35 @@ mod tests {
         BOT_COMMAND_PLUGIN_ID,
         BOT_INTERACTION_PLUGIN_ID,
     ];
+
+    #[test]
+    fn console_layout_is_the_documented_information_architecture() {
+        let layout = console_layout();
+        layout.validate().unwrap();
+        let ids: Vec<_> = layout.activities.iter().map(|a| a.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "home",
+                "platforms",
+                "agent",
+                "automation",
+                "sandbox",
+                "data",
+                "plugins",
+                "system",
+                "settings"
+            ]
+        );
+        // Every legacy activity id an extension still files navigation under is either a
+        // layout activity or placed into one.
+        for legacy in ["home", "system", "bot", "automation", "sandbox", "plugins"] {
+            assert!(
+                layout.has_activity(legacy) || layout.placements.contains_key(legacy),
+                "legacy activity `{legacy}` has no home in the console layout"
+            );
+        }
+    }
 
     #[test]
     fn non_extension_config_navigation_uses_product_providers() {

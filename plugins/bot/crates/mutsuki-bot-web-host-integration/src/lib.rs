@@ -18,6 +18,7 @@
 )]
 
 mod config_demo;
+mod layout;
 mod secret_status;
 mod watch_bridge;
 
@@ -25,6 +26,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub use config_demo::demo_config_service;
+pub use layout::{ActivityPosition, ConsoleActivity, ConsoleLayout, SETTINGS_ACTIVITY};
 pub use secret_status::{SecretKeyResolver, SecretMonitor, SecretStatusWebExtension};
 pub use watch_bridge::{
     ControlChangeBridge, ManagementChangeBridge, attach_control_changed_bridge,
@@ -104,6 +106,9 @@ pub struct WebConsoleConfig {
     pub config_navigation_groups: Vec<ConfigNavigationGroup>,
     /// Relative path to active release set manifest (enables auto-upgrade page).
     pub release_set: Option<String>,
+    /// Product-owned activities; extensions cannot add any.
+    #[serde(default, skip)]
+    pub layout: ConsoleLayout,
 }
 
 fn default_listen() -> String {
@@ -209,6 +214,10 @@ pub fn build_console_host_with_agent(
             "web.console.enabled is false".into(),
         ));
     }
+    config
+        .layout
+        .validate()
+        .map_err(mutsuki_web_host::WebHostError::InvalidConfig)?;
 
     // Unlike the other optional pages this one follows the service, not the id: the
     // console shows Bilibili exactly when the plugin is wired. Naming it in
@@ -231,7 +240,7 @@ pub fn build_console_host_with_agent(
         })
         .map(|page| page.id)
         .collect::<Vec<_>>();
-    let asset_dirs = ConsoleAssetDirs::materialize(&selected)?;
+    let asset_dirs = ConsoleAssetDirs::materialize(&selected, &config.layout)?;
     let page = |id: &str| asset_dirs.page_assets(id).expect("selected page is staged");
     let caller = ControlRpcCaller::new(control, control_token);
     let mut builder = base_builder(config, secrets, &asset_dirs);
@@ -486,7 +495,7 @@ fn io_error(error: impl std::fmt::Display) -> mutsuki_web_host::WebHostError {
 
 impl ConsoleAssetDirs {
     /// Stages the base pages plus the `optional` page ids, then writes the console document.
-    fn materialize(optional: &[&str]) -> WebHostResult<Self> {
+    fn materialize(optional: &[&str], layout: &ConsoleLayout) -> WebHostResult<Self> {
         let document = tempfile::tempdir().map_err(io_error)?;
         let mut pages = Vec::new();
         let selected = BASE_PAGES.iter().chain(
@@ -513,7 +522,7 @@ impl ConsoleAssetDirs {
         }
         // Agent trajectory modules are imported from the document root as well.
         materialize_trajectory_assets(document.path()).map_err(io_error)?;
-        materialize_console_shell(document.path(), optional).map_err(io_error)?;
+        materialize_console_shell(document.path(), optional, layout).map_err(io_error)?;
         Ok(Self {
             document,
             shell: tempfile::tempdir().map_err(io_error)?,
@@ -620,24 +629,30 @@ fn console_extension_entry(
     }))
 }
 
-pub(crate) fn materialize_console_shell(out_dir: &Path, optional: &[&str]) -> std::io::Result<()> {
+/// Shell page shown for `#/` and unknown routes.
+const HOME_PAGE_ID: &str = "overview.page";
+
+pub(crate) fn materialize_console_shell(
+    out_dir: &Path,
+    optional: &[&str],
+    layout: &ConsoleLayout,
+) -> std::io::Result<()> {
     let runtime = shared_runtime();
     runtime.write_to(out_dir)?;
     materialize_lilia_fonts(out_dir)?;
 
-    let bootstrap_name = "console-bootstrap.js";
-    let bootstrap = include_str!("../assets/console-bootstrap.js");
-    std::fs::write(out_dir.join(bootstrap_name), bootstrap)?;
+    // Built by the `web/` package (`@mutsuki/bot-console`); it imports the shell through the
+    // import map and starts it with `console-options.json`.
+    let entry_name = "console.js";
+    let entry = include_str!("../web/browser/console.js");
+    std::fs::write(out_dir.join(entry_name), entry)?;
     let index = include_str!("../assets/console-shell-overview.html")
         .replace("__CONSOLE_CSP__", &document_csp(optional))
         .replace("__SHARED_STYLESHEET__", runtime.stylesheet_path())
         .replace("__IMPORT_MAP__", &runtime.import_map_script())
         .replace(
-            &format!("./{bootstrap_name}"),
-            &format!(
-                "./{bootstrap_name}?v={}",
-                asset_version_stamp(bootstrap.as_bytes())
-            ),
+            &format!("./{entry_name}"),
+            &format!("./{entry_name}?v={}", asset_version_stamp(entry.as_bytes())),
         );
     std::fs::write(out_dir.join("index.html"), index)?;
 
@@ -650,28 +665,12 @@ pub(crate) fn materialize_console_shell(out_dir: &Path, optional: &[&str]) -> st
         )
         .map(|page| console_extension_entry(out_dir, page))
         .collect::<std::io::Result<Vec<_>>>()?;
-    let mut activities = vec![
-        json!({"id": "home", "label": "概览", "icon": "home", "order": 0, "position": "top"}),
-        json!({"id": "system", "label": "诊断", "icon": "system", "order": 50, "position": "top"}),
-    ];
-    if optional.contains(&CONFIG_PAGE) {
-        activities.push(json!({
-            "id": "plugins",
-            "label": "插件",
-            "icon": "config",
-            "order": 40,
-            "position": "top"
-        }));
-    } else {
-        activities.push(json!({
-            "id": "settings",
-            "label": "设置",
-            "icon": "settings",
-            "order": 100,
-            "position": "bottom"
-        }));
-    }
-    let options = json!({ "activities": activities, "extensions": extensions });
+    let options = json!({
+        "brand": "Mutsuki",
+        "homePageId": HOME_PAGE_ID,
+        "layout": layout,
+        "extensions": extensions,
+    });
     std::fs::write(
         out_dir.join("console-options.json"),
         serde_json::to_string(&options)?,
@@ -712,7 +711,9 @@ mod owner_console_tests {
 
     #[test]
     fn owner_pages_are_materialized_only_for_registered_services() {
-        let dirs = ConsoleAssetDirs::materialize(&[AGENT_PAGE, FLOW_PAGE]).unwrap();
+        let dirs =
+            ConsoleAssetDirs::materialize(&[AGENT_PAGE, FLOW_PAGE], &ConsoleLayout::default())
+                .unwrap();
         let root = dirs.document_root();
         for staged in [
             "extensions/bot-agent/index.js",
@@ -734,7 +735,7 @@ mod owner_console_tests {
         );
         assert!(dirs.page_assets(AGENT_PAGE).is_some());
 
-        let dirs = ConsoleAssetDirs::materialize(&[]).unwrap();
+        let dirs = ConsoleAssetDirs::materialize(&[], &ConsoleLayout::default()).unwrap();
         let root = dirs.document_root();
         assert!(!root.join("extensions/bot-agent").exists());
         assert!(!root.join("extensions/bot-flow").exists());
@@ -751,7 +752,7 @@ mod owner_console_tests {
             .iter()
             .map(|page| page.id)
             .collect::<Vec<_>>();
-        let dirs = ConsoleAssetDirs::materialize(&all).unwrap();
+        let dirs = ConsoleAssetDirs::materialize(&all, &ConsoleLayout::default()).unwrap();
         let options =
             std::fs::read_to_string(dirs.document_root().join("console-options.json")).unwrap();
         for page in BASE_PAGES.iter().chain(&OPTIONAL_PAGES) {
@@ -773,7 +774,9 @@ mod owner_console_tests {
     #[test]
     fn enabled_panel_with_missing_assets_fails_materialization() {
         let root = tempfile::tempdir().unwrap();
-        let error = materialize_console_shell(root.path(), &[CONFIG_PAGE]).unwrap_err();
+        let error =
+            materialize_console_shell(root.path(), &[CONFIG_PAGE], &ConsoleLayout::default())
+                .unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
     }
 }

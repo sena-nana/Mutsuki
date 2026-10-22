@@ -111,8 +111,8 @@ export function createI18n<T extends MessageTree>(
 
 export const MUTSUKI_I18N: InjectionKey<I18n> = Symbol("mutsuki.i18n");
 
-export function provideI18n(app: App, i18n: I18n): void {
-  app.provide(MUTSUKI_I18N, i18n);
+export function provideI18n(app: App, i18n: I18n<any>): void {
+  app.provide(MUTSUKI_I18N, i18n as I18n);
 }
 
 let fallback: I18n | undefined;

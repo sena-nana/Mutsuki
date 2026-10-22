@@ -4,17 +4,17 @@
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "types": "./dist/types/index.d.ts",
   "exports": {
     ".": {
       "source": "./src/index.ts",
-      "types": "./dist/index.d.ts",
+      "types": "./dist/types/index.d.ts",
       "import": "./dist/index.js"
     }
   },
   "scripts": {
     "typecheck": "vue-tsc --noEmit",
-    "build": "vue-tsc",
+    "build": "vite build && vue-tsc -p tsconfig.build.json",
     "test": "vitest run"
   },
   "dependencies": {
@@ -28,8 +28,11 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "catalog:",
+    "@vue/test-utils": "catalog:",
+    "happy-dom": "catalog:",
     "pinia": "catalog:",
     "typescript": "catalog:",
+    "vite": "catalog:",
     "vitest": "catalog:",
     "vue": "catalog:",
     "vue-router": "catalog:",

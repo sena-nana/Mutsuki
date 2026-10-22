@@ -124,13 +124,13 @@
   height: 42px;
   margin-top: 20px;
   border-radius: var(--radius-sm);
-  background: var(--accent);
-  color: var(--accent-text);
+  background: var(--mk-color-accent-solid);
+  color: var(--mk-color-on-accent);
   font-weight: 600;
 }
 
 .console-login__submit:hover:not(:disabled) {
-  background: var(--accent-strong);
+  background: var(--mk-color-accent-solid-hover);
 }
 
 .console-login__submit:focus-visible {
@@ -1396,4 +1396,28 @@
   .persona-card {
     grid-template-columns: 1fr;
   }
+}
+
+/* Shell v2: extension failures drawer. */
+.shell-failures {
+  display: grid;
+  gap: var(--mk-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.shell-failures__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--mk-space-2);
+}
+.shell-failures__message {
+  margin: var(--mk-space-1) 0 0;
+  color: var(--mk-color-text-muted);
+  font-size: var(--mk-font-size-sm);
+  overflow-wrap: anywhere;
+}
+#main:focus {
+  outline: none;
 }

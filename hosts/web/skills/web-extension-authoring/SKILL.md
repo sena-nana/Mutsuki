@@ -20,6 +20,16 @@ package and is built by `@mutsuki/web-build`.
 - `src/index.ts` default-exports `defineExtension({ id, setup(ctx) })`. `id` is the owner id
   (`mutsuki.<owner>.<surface>`). Only bare imports of the shared runtime are allowed.
 
+## Shell contract
+
+- Activities belong to the product layout (`ConsoleLayout`, e.g. `console_layout()` in
+  `products/bot`); an extension registers pages and navigation into existing activity ids and
+  never calls `ctx.activities.register` (unknown ids land in the shell's failures panel).
+- Register a Vue component as `PageRegistration.component`; plain `{ mount }` objects still work
+  through `legacyMount` until W11. Each page renders inside an `ExtensionBoundary`.
+- Header actions teleport into `#mk-page-actions`; the shell owns title, skip link, landmarks and
+  the connection live region.
+
 ## Data access
 
 - Reads: `useRpc(api.method, params?, { refreshOn: [topic] })` — deduplicated, stale responses

@@ -1,0 +1,25 @@
+{
+  "name": "@mutsuki/bot-console",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Bot console entry: loads console-options.json and starts the shell.",
+  "scripts": {
+    "typecheck": "vue-tsc --noEmit",
+    "build": "vite build && node ./scripts/check.mjs",
+    "e2e": "playwright test"
+  },
+  "dependencies": {
+    "@mutsuki/web-shell": "workspace:*"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "catalog:",
+    "@mutsuki/web-build": "workspace:*",
+    "@playwright/test": "catalog:",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vue": "catalog:",
+    "vue-tsc": "catalog:"
+  }
+}

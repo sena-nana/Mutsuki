@@ -24,8 +24,8 @@ for (const module of SHARED_MODULES) {
   const entry = path.join(entries, module.file);
   await writeFile(entry, `export * from ${JSON.stringify(module.specifier)};\n`);
   const isVue = module.specifier === "vue";
-  // @mutsuki/ui ships Vue SFCs; its own Vite build (dist) is the compiled form.
-  const fromDist = module.specifier === "@mutsuki/ui";
+  // @mutsuki/ui and @mutsuki/web-shell ship Vue SFCs; their own Vite builds are the compiled form.
+  const fromDist = module.specifier === "@mutsuki/ui" || module.specifier === "@mutsuki/web-shell";
   await build({
     configFile: false,
     root,

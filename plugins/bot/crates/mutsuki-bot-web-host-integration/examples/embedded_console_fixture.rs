@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
+use mutsuki_bot_sandbox::{SandboxApi, SandboxService};
 use mutsuki_bot_web_host_integration::{
-    WebConsoleConfig, WebConsolePaths, WebConsoleSecrets, attach_control_changed_bridge,
-    build_console_host,
+    BotAgentConsoleServices, ConsoleActivity, ConsoleLayout, WebConsoleConfig, WebConsolePaths,
+    WebConsoleSecrets, attach_control_changed_bridge, build_console_host_with_agent,
+    demo_config_service,
 };
 use mutsuki_service_control::{ControlChangeDomain, ControlChangeEvent, ControlChangeSubscription};
 use mutsuki_web_extension_control::FixtureControlHandler;
@@ -10,9 +12,18 @@ use mutsuki_web_host::WebHost;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The Playwright smoke pins the address; manual runs take any free port.
+    let listen =
+        std::env::var("MUTSUKI_CONSOLE_FIXTURE_LISTEN").unwrap_or_else(|_| "127.0.0.1:0".into());
+    let mut layout = ConsoleLayout::default();
+    layout
+        .activities
+        .push(ConsoleActivity::top("sandbox", "沙盒", "sandbox", 30));
     let config = WebConsoleConfig {
         enabled: true,
-        listen: "127.0.0.1:0".into(),
+        listen,
+        extensions: vec!["config".into(), "sandbox".into()],
+        layout,
         ..Default::default()
     };
     let secrets = WebConsoleSecrets {
@@ -21,16 +32,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let control = FixtureControlHandler::default();
     let uptime_ms = control.uptime_ms.clone();
     let service_status_calls = control.service_status_calls.clone();
-    let (mut host, _assets) = build_console_host(
+    let (mut host, _assets) = build_console_host_with_agent(
         &config,
         &secrets,
         Arc::new(control),
         "fixture",
-        None,
+        Some(demo_config_service()),
         None,
         &WebConsolePaths::default(),
         None,
         None,
+        Some(Arc::new(SandboxService::new()) as Arc<dyn SandboxApi>),
+        None,
+        BotAgentConsoleServices::default(),
     )?;
     host.start().await?;
     let (changes, receiver) = tokio::sync::broadcast::channel(8);

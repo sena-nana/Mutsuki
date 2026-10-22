@@ -17,7 +17,7 @@ const text = useUiText();
   z-index: var(--mk-z-toast);
   padding: var(--mk-space-2) var(--mk-space-3);
   border-radius: var(--mk-radius);
-  background: var(--mk-color-accent);
+  background: var(--mk-color-accent-solid);
   color: var(--mk-color-on-accent);
   transform: translateY(-200%);
 }

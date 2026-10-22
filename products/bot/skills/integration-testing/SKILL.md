@@ -13,6 +13,10 @@ description: Validate the first-party Mutsuki Bot product through real ServiceRu
 - 集成测试可替换 transport，但必须保留正常 task、Runner 和 ResultRouter 路径。
 - 产品 E2E 从外部配置启动真实 `ServiceRuntime`；fake server 只替换 QQ/HTTP/WebSocket/Provider 等外部系统，业务处理器仅可作为 test-only owner double。
 - 在测试临时目录生成所有配置，不提交可直接运行的 TOML/JSON。
+- 控制台浏览器层：`plugins/bot/crates/mutsuki-bot-web-host-integration/web` 的 Playwright smoke
+  （`pnpm --filter @mutsuki/bot-console e2e`，CI job `console-e2e`）对
+  `examples/embedded_console_fixture.rs` 运行：登录、每页挂载无 boundary/console 错误、主题切换、
+  axe 无 serious/critical、刷新后 cookie 会话恢复。它是 fake 层级，不替代真实账号 smoke。
 - 真实 smoke 默认使用仓库内被忽略的本地产品配置和专用 secret 文件，也可由环境覆盖路径或 secret；不提交凭据或敏感输出。
 - B 站真实 smoke（`tests/bilibili_real_smoke.rs`，ignored）在临时实例中经控制台扫码登录：
   `MUTSUKI_BILIBILI_QR_PNG` 指定二维码输出，需要有人扫码；过期自动换码至多 3 次。它断言 Cookie

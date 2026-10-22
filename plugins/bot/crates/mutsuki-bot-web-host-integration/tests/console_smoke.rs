@@ -61,17 +61,19 @@ async fn embedded_console_document_resolves_through_its_import_map() {
         "Host CSP header must stay at baseline when QQ/sandbox WebExtensions are not selected"
     );
 
-    let activities = document.options["activities"].as_array().unwrap();
-    let activity_ids = activities
-        .iter()
-        .map(|item| item["id"].as_str().unwrap())
-        .collect::<Vec<_>>();
-    assert_eq!(activity_ids, ["home", "system", "settings"]);
+    // Activities come only from the layout (the generic default here), never extensions.
+    assert_eq!(
+        document.activity_ids(),
+        ["home", "plugins", "system", "settings"]
+    );
     assert!(
-        activities
+        document.options["layout"]["activities"]
+            .as_array()
+            .unwrap()
             .iter()
             .any(|item| item["id"] == "settings" && item["position"] == "bottom")
     );
+    assert_eq!(document.options["homePageId"], "overview.page");
     assert_eq!(
         document.extension_ids(),
         ["overview", "control", "database"]
@@ -248,27 +250,10 @@ async fn embedded_console_with_config_shell() {
         document.extension_ids().last().map(String::as_str),
         Some("config")
     );
-    let parsed = &document.options;
-    assert!(
-        parsed["activities"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|item| { item["id"] == "plugins" && item["position"] == "top" })
-    );
-    assert!(
-        !parsed["activities"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|item| item["id"] == "config")
-    );
-    assert!(
-        !parsed["activities"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|item| item["id"] == "settings")
+    // Selecting the config extension does not change the product layout.
+    assert_eq!(
+        document.activity_ids(),
+        ["home", "plugins", "system", "settings"]
     );
     host.stop().await.unwrap();
 }
@@ -550,13 +535,8 @@ async fn embedded_console_serves_sandbox_panel() {
     );
     let document = ConsoleDocument::fetch(&addr).await;
     document.assert_complete(&addr).await;
-    assert!(
-        !document.options["activities"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|item| item["id"] == "sandbox")
-    );
+    // The extension's own `sandbox` activity is not honoured: only a layout can add it.
+    assert!(!document.activity_ids().contains(&"sandbox".to_string()));
     assert!(document.extension_ids().contains(&"sandbox".to_string()));
     let snap = ws_rpc_params(&addr, "sandbox", "snapshot", json!({}))
         .await
@@ -680,6 +660,51 @@ fn embedded_console_rejects_explicit_sandbox_extension_without_service() {
     );
 }
 
+#[tokio::test]
+async fn product_layout_reaches_the_console_and_invalid_layouts_are_refused() {
+    use mutsuki_bot_web_host_integration::{ConsoleActivity, ConsoleLayout};
+    let mut layout = ConsoleLayout::default();
+    layout
+        .activities
+        .push(ConsoleActivity::top("agent", "会话与 Agent", "chat", 20));
+    layout.placements.insert("bot".into(), "agent".into());
+    let build = |layout: ConsoleLayout| {
+        build_console_host(
+            &WebConsoleConfig {
+                enabled: true,
+                listen: "127.0.0.1:0".into(),
+                layout,
+                ..Default::default()
+            },
+            &WebConsoleSecrets {
+                auth_token: "local-dev".into(),
+            },
+            Arc::new(FixtureControlHandler::default()),
+            "local-dev",
+            None,
+            None,
+            &WebConsolePaths::default(),
+            None,
+            None,
+        )
+    };
+    let (mut host, _dirs) = build(layout).unwrap();
+    host.start().await.unwrap();
+    let addr = host.listen_addr().unwrap().to_string();
+    let document = ConsoleDocument::fetch(&addr).await;
+    assert_eq!(
+        document.activity_ids(),
+        ["home", "plugins", "system", "settings", "agent"]
+    );
+    assert_eq!(document.options["layout"]["placements"]["bot"], "agent");
+    host.stop().await.unwrap();
+
+    let mut dangling = ConsoleLayout::default();
+    dangling.placements.insert("bot".into(), "nowhere".into());
+    let error = build(dangling).err().expect("dangling placement");
+    assert!(error.to_string().contains("nowhere"));
+}
+
 /// The console document as a browser sees it: CSP, import map, stylesheet and module list.
 struct ConsoleDocument {
     csp: String,
@@ -714,6 +739,15 @@ impl ConsoleDocument {
             module_scripts,
             options,
         }
+    }
+
+    fn activity_ids(&self) -> Vec<String> {
+        self.options["layout"]["activities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["id"].as_str().unwrap().to_string())
+            .collect()
     }
 
     fn extension_ids(&self) -> Vec<String> {

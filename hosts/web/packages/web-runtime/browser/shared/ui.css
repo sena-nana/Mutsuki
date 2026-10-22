@@ -1267,6 +1267,9 @@ button:disabled {
   --mk-color-accent-soft: var(--accent-soft);
   --mk-color-accent-on-soft: var(--accent-on-soft);
   --mk-color-on-accent: var(--accent-text);
+  /* Filled controls (primary buttons, skip link): text on them must reach 4.5:1. */
+  --mk-color-accent-solid: var(--accent);
+  --mk-color-accent-solid-hover: var(--accent-strong);
   --mk-color-ok: var(--ok);
   --mk-color-ok-soft: var(--ok-soft);
   --mk-color-warn: var(--warn);
@@ -1308,6 +1311,13 @@ button:disabled {
   --mk-z-menu: calc(var(--z-dialog) - 1);
   --mk-z-dialog: var(--z-dialog);
   --mk-z-toast: calc(var(--z-dialog) + 1);
+}
+
+/* Lilia's light accent is tuned for links and outlines; white text on it stays near 3.3:1, so
+ * filled controls use a darker shade of the same hue. */
+:root[data-theme="light"] {
+  --mk-color-accent-solid: color-mix(in oklch, var(--accent-strong), black 22%);
+  --mk-color-accent-solid-hover: color-mix(in oklch, var(--accent-strong), black 32%);
 }
 
 /* Opt-in container for compact/medium component layouts. */
@@ -1461,13 +1471,13 @@ button:disabled {
   height: 42px;
   margin-top: 20px;
   border-radius: var(--radius-sm);
-  background: var(--accent);
-  color: var(--accent-text);
+  background: var(--mk-color-accent-solid);
+  color: var(--mk-color-on-accent);
   font-weight: 600;
 }
 
 .console-login__submit:hover:not(:disabled) {
-  background: var(--accent-strong);
+  background: var(--mk-color-accent-solid-hover);
 }
 
 .console-login__submit:focus-visible {
@@ -2735,6 +2745,30 @@ button:disabled {
   }
 }
 
+/* Shell v2: extension failures drawer. */
+.shell-failures {
+  display: grid;
+  gap: var(--mk-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.shell-failures__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--mk-space-2);
+}
+.shell-failures__message {
+  margin: var(--mk-space-1) 0 0;
+  color: var(--mk-color-text-muted);
+  font-size: var(--mk-font-size-sm);
+  overflow-wrap: anywhere;
+}
+#main:focus {
+  outline: none;
+}
+
 /* —— node-editor.css —— */
 /* Lilia node editor surface. Product pages mount `.lilia-node-editor` inside Console main. */
 
@@ -3278,11 +3312,11 @@ button:disabled {
 }
 .mk-button--primary {
   border-color: transparent;
-  background: var(--mk-color-accent);
+  background: var(--mk-color-accent-solid);
   color: var(--mk-color-on-accent);
 }
 .mk-button--primary:hover:not(:disabled) {
-  background: var(--mk-color-accent-strong);
+  background: var(--mk-color-accent-solid-hover);
 }
 .mk-button--ghost {
   border-color: transparent;
@@ -4203,7 +4237,7 @@ textarea.mk-input {
   z-index: var(--mk-z-toast);
   padding: var(--mk-space-2) var(--mk-space-3);
   border-radius: var(--mk-radius);
-  background: var(--mk-color-accent);
+  background: var(--mk-color-accent-solid);
   color: var(--mk-color-on-accent);
   transform: translateY(-200%);
 }

@@ -36,7 +36,7 @@ Issue 是需求线索，不是当前 API 的事实源。
 | `mutsuki-web-recovery` | 最小恢复与安全模式 Shell |
 | `mutsuki-web-shared-runtime` | 嵌入 `@mutsuki/web-runtime` 预构建的共享模块：内容寻址文件名、import map、CSP 哈希 |
 | `@mutsuki/web-sdk` | Vue/WebExtension 前端 SDK：bridge、`RpcError`、`defineRpc`、composables、i18n、`defineExtension`；`/testing` 提供 fake bridge |
-| `@mutsuki/web-shell` | 可复用 Shell 基础实现 |
+| `@mutsuki/web-shell` | Vue Shell v2：`startConsole`、hash 路由、ActivityBar/ContextNav、ExtensionBoundary、失败面板、登录与设置页、`legacyMount`；activity 只来自产品布局（`ConsoleLayout`） |
 | `@mutsuki/ui` | Vue 组件库 `Mk*`（基于 Lilia token 的 `--mk-*`，全局 `mk-` 类）、`useConfirm`/`usePrompt`/`useToast`、Shell a11y 件；视觉基座来自 pinned `@lilia/theme`，`bundle-css.mjs` 合成 `dist/mutsuki-ui.css`，经共享运行时以 `shared/ui.<hash>.css` 发布一次 |
 | `@mutsuki/web-runtime` | 构建 `browser/shared/{vue,vue-router,pinia,web-sdk,ui,web-shell}.js` 与 `ui.css`（提交产物，Rust 嵌入） |
 | `@mutsuki/web-build` | Vite + `@vitejs/plugin-vue` 扩展构建与产物门禁（运行时不调用） |

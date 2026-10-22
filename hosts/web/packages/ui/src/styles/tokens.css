@@ -21,6 +21,9 @@
   --mk-color-accent-soft: var(--accent-soft);
   --mk-color-accent-on-soft: var(--accent-on-soft);
   --mk-color-on-accent: var(--accent-text);
+  /* Filled controls (primary buttons, skip link): text on them must reach 4.5:1. */
+  --mk-color-accent-solid: var(--accent);
+  --mk-color-accent-solid-hover: var(--accent-strong);
   --mk-color-ok: var(--ok);
   --mk-color-ok-soft: var(--ok-soft);
   --mk-color-warn: var(--warn);
@@ -62,6 +65,13 @@
   --mk-z-menu: calc(var(--z-dialog) - 1);
   --mk-z-dialog: var(--z-dialog);
   --mk-z-toast: calc(var(--z-dialog) + 1);
+}
+
+/* Lilia's light accent is tuned for links and outlines; white text on it stays near 3.3:1, so
+ * filled controls use a darker shade of the same hue. */
+:root[data-theme="light"] {
+  --mk-color-accent-solid: color-mix(in oklch, var(--accent-strong), black 22%);
+  --mk-color-accent-solid-hover: color-mix(in oklch, var(--accent-strong), black 32%);
 }
 
 /* Opt-in container for compact/medium component layouts. */

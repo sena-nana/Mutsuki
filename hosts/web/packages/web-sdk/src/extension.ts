@@ -1,3 +1,4 @@
+import type { Component } from "vue";
 import type { EventClient, RpcClient } from "./bridge.js";
 
 export interface Disposable {
@@ -53,7 +54,8 @@ export interface PageRegistration {
   id: string;
   path: string;
   title: string;
-  component: PageComponent;
+  /** A Vue component, or a legacy `{ mount }` object adapted by the shell. */
+  component: PageComponent | Component;
   requiredCapability?: string;
   /** Runtime plugin / config provider that owns this extra page. */
   pluginId?: string;

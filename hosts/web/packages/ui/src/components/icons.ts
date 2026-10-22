@@ -25,6 +25,7 @@ export const ICON_PATHS = {
   info: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Zm0-11v6m0-9h.01",
   external: "M14 4h6v6M20 4l-9 9M18 14v6H4V6h6",
   menu: "M4 6h16M4 12h16M4 18h16",
+  chat: "M4 5h16v11H9l-5 4V5Zm4 5h8M8 13h5",
 } as const;
 
 export type IconName = keyof typeof ICON_PATHS;

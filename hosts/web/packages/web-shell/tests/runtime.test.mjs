@@ -445,6 +445,10 @@ test("extensions beyond the shell budget fail without being imported", async () 
   await loadExtensions(state, urls, () => context([]));
   assert.equal(state.extensions.length, MAX_EXTENSIONS);
   assert.deepEqual(state.failures, [
-    { extensionId: `ext-${MAX_EXTENSIONS}`, message: `extension budget of ${MAX_EXTENSIONS} exceeded` },
+    {
+      extensionId: `ext-${MAX_EXTENSIONS}`,
+      stage: "load",
+      message: `extension budget of ${MAX_EXTENSIONS} exceeded`,
+    },
   ]);
 });

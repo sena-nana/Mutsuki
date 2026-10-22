@@ -74,11 +74,11 @@ withDefaults(
 }
 .mk-button--primary {
   border-color: transparent;
-  background: var(--mk-color-accent);
+  background: var(--mk-color-accent-solid);
   color: var(--mk-color-on-accent);
 }
 .mk-button--primary:hover:not(:disabled) {
-  background: var(--mk-color-accent-strong);
+  background: var(--mk-color-accent-solid-hover);
 }
 .mk-button--ghost {
   border-color: transparent;
