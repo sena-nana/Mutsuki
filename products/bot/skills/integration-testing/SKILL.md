@@ -14,6 +14,10 @@ description: Validate the first-party Mutsuki Bot product through real ServiceRu
 - 产品 E2E 从外部配置启动真实 `ServiceRuntime`；fake server 只替换 QQ/HTTP/WebSocket/Provider 等外部系统，业务处理器仅可作为 test-only owner double。
 - 在测试临时目录生成所有配置，不提交可直接运行的 TOML/JSON。
 - 真实 smoke 默认使用仓库内被忽略的本地产品配置和专用 secret 文件，也可由环境覆盖路径或 secret；不提交凭据或敏感输出。
+- B 站真实 smoke（`tests/bilibili_real_smoke.rs`，ignored）在临时实例中经控制台扫码登录：
+  `MUTSUKI_BILIBILI_QR_PNG` 指定二维码输出，需要有人扫码；过期自动换码至多 3 次。它断言 Cookie
+  经 HTTP effect 写入 Host secret、预览走鉴权请求，且 Cookie 不出现在进程输出与日志中。读回 secret
+  的失败信息不得回显 secret 文件内容。
 
 ## 验收
 

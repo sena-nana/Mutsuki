@@ -14,8 +14,10 @@ use mutsuki_bot_link_parser::ResolvedLinkCard;
 use mutsuki_protocol_http::{
     HttpCookieCapture, HttpRequest, HttpResponse, HttpResponseBody, REQUEST as HTTP_REQUEST,
 };
-use mutsuki_runtime_contracts::{ResourceRef, RuntimeError, Task, TaskBatch, TaskOutcome};
-use mutsuki_runtime_sdk::{AsyncRunnerContext, RuntimeClientRef, TaskHandleFuture};
+use mutsuki_runtime_contracts::{
+    ResourceRef, RuntimeError, Task, TaskBatch, TaskHandle, TaskOutcome,
+};
+use mutsuki_runtime_sdk::{AsyncRunnerContext, RuntimeClientRef};
 use serde_json::Value;
 use url::Url;
 
@@ -31,6 +33,8 @@ pub const HTTP_DOMAINS: &[&str] = &["b23.tv", "bilibili.com", "hdslb.com"];
 pub const COOKIE_DOMAIN: &str = "bilibili.com";
 const USER_AGENT: &str = "Mozilla/5.0 MutsukiBot/0.1";
 const REQUEST_TIMEOUT_MS: u64 = 15_000;
+/// How long a Web Console caller waits for a submitted task; above any HTTP total timeout.
+const TOP_LEVEL_TASK_WAIT: Duration = Duration::from_secs(60);
 const QR_COOKIES: &[&str] = &[
     "SESSDATA",
     "bili_jct",
@@ -103,11 +107,22 @@ impl BilibiliHttp for RuntimeBilibiliHttp {
             .ok_or_else(|| {
                 BilibiliError::Transport("HTTP request returned no task handle".into())
             })?;
-        let outcome = TaskHandleFuture::new(self.client.clone(), handle)
-            .await
-            .map_err(|failure| http_error(failure.error()))?;
-        decode_http_outcome(outcome)
+        decode_http_outcome(await_top_level_task(self.client.clone(), handle).await?)
     }
+}
+
+/// Waits for a task submitted outside a runner. Host clients answer `wait_outcome` from the
+/// actor's completion notification but never wake a `TaskHandleFuture`, so the wait runs on
+/// the blocking pool instead of parking the caller's executor forever.
+pub(crate) async fn await_top_level_task(
+    client: RuntimeClientRef,
+    handle: TaskHandle,
+) -> Result<TaskOutcome, BilibiliError> {
+    tokio::task::spawn_blocking(move || client.wait_outcome(&handle, Some(TOP_LEVEL_TASK_WAIT)))
+        .await
+        .map_err(|error| BilibiliError::Transport(error.to_string()))?
+        .map_err(|failure| http_error(failure.error()))?
+        .ok_or_else(|| BilibiliError::Transport("task did not finish in time".into()))
 }
 
 fn decode_http_outcome(outcome: TaskOutcome) -> Result<HttpResponse, BilibiliError> {

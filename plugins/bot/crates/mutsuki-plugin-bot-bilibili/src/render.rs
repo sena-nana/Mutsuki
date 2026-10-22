@@ -19,7 +19,6 @@ use mutsuki_runtime_contracts::{
 };
 use mutsuki_runtime_sdk::{
     AsyncRunnerContext, ResourceRegistryGateway, RuntimeClientRef, RuntimeFailure, RuntimeResult,
-    TaskHandleFuture,
 };
 use serde_json::Value;
 use url::Url;
@@ -27,7 +26,7 @@ use url::Url;
 use crate::commands::command_outbound_result;
 use crate::error::bili_error;
 use crate::runner::BilibiliRunner;
-use crate::transport::RunnerHttp;
+use crate::transport::{RunnerHttp, await_top_level_task};
 use crate::{
     BilibiliError, BilibiliHttp, BilibiliNotification, BilibiliPollKind, BilibiliQrRenderer,
     BilibiliTransport, MAX_MEDIA_BYTES, SqliteBilibiliRepository,
@@ -75,9 +74,7 @@ impl BilibiliQrRenderer for RuntimeBilibiliQrRenderer {
             .into_iter()
             .next()
             .ok_or_else(|| BilibiliError::Transport("QR render returned no task handle".into()))?;
-        let outcome = TaskHandleFuture::new(self.client.clone(), handle)
-            .await
-            .map_err(|error| BilibiliError::Transport(error.to_string()))?;
+        let outcome = await_top_level_task(self.client.clone(), handle).await?;
         let response: ImageRenderResponse = match outcome {
             TaskOutcome::Completed {
                 output: Some(output),
