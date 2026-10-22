@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use mutsuki_agent_contracts::{
     AgentError, AgentSessionCheckpoint, AgentSessionEvent, SessionSnapshotRef,
 };
-use mutsuki_agent_runtime::{AgentSessionRecovery, AgentSessionStore};
+use mutsuki_agent_services::{AgentSessionRecovery, AgentSessionStore};
 use mutsuki_runtime_contracts::Task;
 use serde_json::{Value, json};
 

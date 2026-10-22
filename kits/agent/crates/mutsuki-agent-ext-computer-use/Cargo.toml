@@ -1,0 +1,17 @@
+[package]
+name = "mutsuki-agent-ext-computer-use"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mutsuki-agent-contracts.workspace = true
+mutsuki-agent-ext-api.workspace = true
+mutsuki-agent-services.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

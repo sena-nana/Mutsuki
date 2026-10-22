@@ -1,11 +1,11 @@
 use mutsuki_agent_contracts::*;
-use mutsuki_agent_runtime::{ContextProviderBatchPlan, ContextProviderCompletion};
 use mutsuki_agent_sdk::{
     AgentContextBuildProtocol, AgentContextProviderCollectProtocol, AgentKnowledgeRetrieveProtocol,
     AgentMemoryQueryProtocol, AgentModelGenerateProtocol, AgentPromptRenderProtocol,
     AgentSkillDiscoverProtocol, AgentSkillLoadProtocol, completed_output, orchestration_runner,
     result_event, runtime_failure, task_payload, unsupported_protocol,
 };
+use mutsuki_agent_services::{ContextProviderBatchPlan, ContextProviderCompletion};
 use mutsuki_runtime_sdk::contracts::{RunnerResult, Task};
 use mutsuki_runtime_sdk::{
     AsyncRunnerContext, PluginBuilder, RuntimeClientRef, RuntimeResult, TaskAwaitRunnerAdapter,
@@ -13,7 +13,7 @@ use mutsuki_runtime_sdk::{
 use std::collections::BTreeMap;
 
 use crate::{AgentContextBuildPreparation, AgentContextModelSummary};
-use mutsuki_agent_runtime::ContextBuilder;
+use mutsuki_agent_services::ContextBuilder;
 
 pub const PLUGIN_ID: &str = "mutsuki.plugin.agent.context";
 pub const RUNNER_ID: &str = "mutsuki.agent.context.runner";

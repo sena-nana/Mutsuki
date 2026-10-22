@@ -9,21 +9,23 @@ use std::{
 use mutsuki_agent_client::{AgentClient, AgentLinkClient, AgentLinkServer, InProcessAgentService};
 use mutsuki_agent_contracts::*;
 use mutsuki_agent_distributed_integration::{AgentCapabilityResolver, distributed_request};
-use mutsuki_agent_plugin_code_index::SharedCodeIndexService;
-use mutsuki_agent_plugin_computer_use::{
+use mutsuki_agent_ext_code_index::SharedCodeIndexService;
+use mutsuki_agent_ext_computer_use::{
     FakeBrowserBackend, FakeProcessBackend, InMemoryFilesystemBackend, SharedComputerUseService,
 };
-use mutsuki_agent_plugin_lsp::{LspProcess, LspProcessFactory, SharedLspService};
-use mutsuki_agent_plugin_next_edit::{NextEditServiceConfig, SharedNextEditService};
-use mutsuki_agent_plugin_web_search::{
+use mutsuki_agent_ext_lsp::{LspProcess, LspProcessFactory, SharedLspService};
+use mutsuki_agent_ext_next_edit::{NextEditServiceConfig, SharedNextEditService};
+use mutsuki_agent_ext_web_search::{
     FakeHttpTransport, HttpJsonSearchService, HttpPageFetchService, SharedWebSearchService,
 };
-use mutsuki_agent_runtime::AgentLoop;
-use mutsuki_agent_runtime::ContextBuilder;
-use mutsuki_agent_runtime::MemoryRouter;
-use mutsuki_agent_runtime::SessionStore;
-use mutsuki_agent_runtime::ToolRegistry;
-use mutsuki_agent_runtime::{CredentialBrokerService, KnowledgeService, SkillRegistry, SkillRoots};
+use mutsuki_agent_services::AgentLoop;
+use mutsuki_agent_services::ContextBuilder;
+use mutsuki_agent_services::MemoryRouter;
+use mutsuki_agent_services::SessionStore;
+use mutsuki_agent_services::ToolRegistry;
+use mutsuki_agent_services::{
+    CredentialBrokerService, KnowledgeService, SkillRegistry, SkillRoots,
+};
 use mutsuki_agent_testkit::{
     BENCHMARK_FIXED_SEED, BENCHMARK_MODEL_ID, BENCHMARK_TOOL_NAME, BENCHMARK_TOOL_PROTOCOL,
     BenchmarkModelProvider, SimulatedLatency, benchmark_tool_descriptor, execute_benchmark_tool,
@@ -863,7 +865,7 @@ pub fn lsp_query_sample(query_count: usize) -> Sample {
 }
 
 pub fn web_search_sample(query_count: usize) -> Sample {
-    let resources = mutsuki_agent_runtime::AgentResourceStore::default();
+    let resources = mutsuki_agent_services::AgentResourceStore::default();
     let hits = vec![SearchHit {
         title: "Benchmark".into(),
         url: "https://docs.example.com/bench".into(),
@@ -961,7 +963,7 @@ pub fn web_search_sample(query_count: usize) -> Sample {
 }
 
 pub fn computer_use_sample(op_count: usize) -> Sample {
-    let resources = mutsuki_agent_runtime::AgentResourceStore::default();
+    let resources = mutsuki_agent_services::AgentResourceStore::default();
     let fs = Arc::new(
         InMemoryFilesystemBackend::default()
             .with_file("src/lib.rs", b"pub fn answer() -> u32 { 42 }")
@@ -1062,7 +1064,7 @@ pub fn computer_use_sample(op_count: usize) -> Sample {
 }
 
 pub fn code_index_sample(query_count: usize) -> Sample {
-    let resources = mutsuki_agent_runtime::AgentResourceStore::default();
+    let resources = mutsuki_agent_services::AgentResourceStore::default();
     let service = SharedCodeIndexService::new(resources);
     let workspace = CodeWorkspaceRef {
         workspace_id: "benchmark".into(),
@@ -1149,7 +1151,7 @@ pub fn code_index_sample(query_count: usize) -> Sample {
 }
 
 pub fn next_edit_sample(plan_count: usize) -> Sample {
-    let resources = mutsuki_agent_runtime::AgentResourceStore::default();
+    let resources = mutsuki_agent_services::AgentResourceStore::default();
     let service = SharedNextEditService::with_config(
         resources,
         NextEditServiceConfig {
@@ -1258,8 +1260,8 @@ pub fn native_coding_bundle_sample(iterations: usize) -> Sample {
         EchoChildExecutor, NativeCodingAgentBundle, NativeCodingBackends, run_fix_golden_path,
         run_review_golden_path,
     };
-    use mutsuki_agent_plugin_computer_use::InMemoryFilesystemBackend;
-    use mutsuki_agent_plugin_git::InMemoryGitBackend;
+    use mutsuki_agent_ext_computer_use::InMemoryFilesystemBackend;
+    use mutsuki_agent_ext_git::InMemoryGitBackend;
 
     let mut files = BTreeMap::new();
     files.insert(

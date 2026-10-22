@@ -36,9 +36,9 @@ MutsukiAgentKit   Runtime + Adapter + Plugin
 
 ## Workspace
 
-- `crates/mutsuki-agent-contracts` · `mutsuki-agent-runtime`
+- `crates/mutsuki-agent-contracts` · `mutsuki-agent-services`
 - `crates/mutsuki-agent-adapter-api`（含 SimpleReact）· `mutsuki-agent-adapter-openai`（Chat Completions + Responses）· `mutsuki-agent-adapter-anthropic`
-- `crates/mutsuki-agent-plugin-api` · `mutsuki-agent-plugin-conformance`
+- `crates/mutsuki-agent-ext-api` · `mutsuki-agent-ext-conformance`
 - `crates/mutsuki-agent-client` · `mutsuki-agent-distributed-integration`
 - `crates/mutsuki-agent-service-host-integration` · configured connection catalog、健康状态、
   revision-fenced 管理与 Local Link connector；endpoint/认证仍由 connector owner 配置

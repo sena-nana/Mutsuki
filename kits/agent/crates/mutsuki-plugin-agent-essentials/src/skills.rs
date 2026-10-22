@@ -1,9 +1,9 @@
 use mutsuki_agent_contracts::*;
-use mutsuki_agent_runtime::SkillRegistry;
 use mutsuki_agent_sdk::{
     AgentSkillDiscoverProtocol, AgentSkillLoadProtocol, AgentSkillReloadProtocol,
     orchestration_runner, service_result_event, unsupported_protocol,
 };
+use mutsuki_agent_services::SkillRegistry;
 use mutsuki_runtime_sdk::contracts::{RunnerResult, Task};
 use mutsuki_runtime_sdk::{PluginBuilder, RuntimeClientRef, RuntimeResult, TaskAwaitRunnerAdapter};
 

@@ -14,7 +14,7 @@ use mutsuki_agent_contracts::{
     CredentialRevokeRequest, CredentialStatus, CredentialStatusRequest, ModelCapability,
     OPENAI_CREDENTIAL_PROVIDER_ID, ProviderInstanceDescriptor, official_credential_providers,
 };
-use mutsuki_agent_runtime::CredentialBrokerService;
+use mutsuki_agent_services::CredentialBrokerService;
 use mutsuki_plugin_agent_essentials::credential::AdapterCredentialBroker;
 use serde_json::{Value, json};
 

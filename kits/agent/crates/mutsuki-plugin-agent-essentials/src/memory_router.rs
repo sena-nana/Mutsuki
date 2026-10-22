@@ -8,7 +8,7 @@ use mutsuki_agent_sdk::{
 use mutsuki_runtime_sdk::contracts::{RunnerResult, Task};
 use mutsuki_runtime_sdk::{PluginBuilder, RuntimeClientRef, RuntimeResult, TaskAwaitRunnerAdapter};
 
-use mutsuki_agent_runtime::MemoryRouter;
+use mutsuki_agent_services::MemoryRouter;
 
 pub const PLUGIN_ID: &str = "mutsuki.plugin.agent.memory_router";
 pub const RUNNER_ID: &str = "mutsuki.agent.memory_router.runner";

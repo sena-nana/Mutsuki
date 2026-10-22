@@ -16,12 +16,12 @@ use std::sync::Arc;
 
 mod native_coding;
 
-use mutsuki_agent_plugin_api::uninjected_context_collect_plugin;
-pub use mutsuki_agent_runtime::{
+use mutsuki_agent_ext_api::uninjected_context_collect_plugin;
+pub use mutsuki_agent_services::{
     AgentLoop, ContextBuilder, CredentialBrokerService, KnowledgeService, MemoryRouter,
     PromptRegistry, SessionStore, SkillRegistry, ToolRegistry,
 };
-pub use mutsuki_agent_runtime::{
+pub use mutsuki_agent_services::{
     EchoChildExecutor, RequiredChildExecutor, RuntimeClientChildExecutor,
 };
 pub use mutsuki_plugin_agent_model_gateway::{
@@ -260,8 +260,8 @@ mod tests {
         AgentToolExecution, ContextBudget, CredentialRef, InteractionKind, InteractionResolution,
         PermissionDecision, PermissionDecisionKind,
     };
-    use mutsuki_agent_runtime::AgentRuntimeProfileBuilder;
     use mutsuki_agent_sdk::orchestration_runner;
+    use mutsuki_agent_services::AgentRuntimeProfileBuilder;
     use mutsuki_runtime_contracts::{
         PluginDeploymentKind, RuntimeError, RuntimeProfile, RuntimeProfileMode, ScalarValue, Task,
         TaskOutcome,
@@ -287,7 +287,7 @@ mod tests {
             .map(|manifest| manifest.plugin_id.as_str())
             .collect::<BTreeSet<_>>();
         assert_eq!(ids.len(), manifests.len());
-        assert!(ids.contains(mutsuki_agent_plugin_api::UNINJECTED_CONTEXT_COLLECT_PLUGIN_ID));
+        assert!(ids.contains(mutsuki_agent_ext_api::UNINJECTED_CONTEXT_COLLECT_PLUGIN_ID));
         assert!(manifests.iter().all(|manifest| {
             !manifest.provides.runners.is_empty()
                 && manifest

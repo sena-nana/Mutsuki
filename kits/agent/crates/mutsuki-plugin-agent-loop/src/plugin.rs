@@ -11,7 +11,7 @@ use mutsuki_runtime_sdk::AsyncRunnerContext;
 use mutsuki_runtime_sdk::contracts::{RunnerResult, ScalarValue, Task};
 use mutsuki_runtime_sdk::{PluginBuilder, RuntimeClientRef, RuntimeResult, TaskAwaitRunnerAdapter};
 
-use mutsuki_agent_runtime::AgentLoop;
+use mutsuki_agent_services::AgentLoop;
 
 pub const PLUGIN_ID: &str = "mutsuki.plugin.agent.loop";
 pub const RUNNER_ID: &str = "mutsuki.agent.loop.runner";

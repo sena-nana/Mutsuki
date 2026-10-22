@@ -6,7 +6,7 @@ use mutsuki_agent_sdk::{
 use mutsuki_runtime_sdk::contracts::{RunnerResult, Task};
 use mutsuki_runtime_sdk::{PluginBuilder, RuntimeClientRef, RuntimeResult, TaskAwaitRunnerAdapter};
 
-use mutsuki_agent_runtime::PromptRegistry;
+use mutsuki_agent_services::PromptRegistry;
 
 pub const PLUGIN_ID: &str = "mutsuki.plugin.agent.prompt";
 pub const RUNNER_ID: &str = "mutsuki.agent.prompt.runner";

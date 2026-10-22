@@ -1,9 +1,9 @@
 use mutsuki_agent_contracts::*;
-use mutsuki_agent_runtime::KnowledgeService;
 use mutsuki_agent_sdk::{
     AgentKnowledgeDeleteProtocol, AgentKnowledgeIngestProtocol, AgentKnowledgeRetrieveProtocol,
     orchestration_runner, service_result_event, unsupported_protocol,
 };
+use mutsuki_agent_services::KnowledgeService;
 use mutsuki_runtime_sdk::contracts::{RunnerResult, Task};
 use mutsuki_runtime_sdk::{PluginBuilder, RuntimeClientRef, RuntimeResult, TaskAwaitRunnerAdapter};
 

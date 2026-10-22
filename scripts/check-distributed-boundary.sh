@@ -30,7 +30,7 @@ source_roots=(
   crates/mutsuki-plugin-host
   hosts/cli
   kits/agent/crates/mutsuki-agent-contracts
-  kits/agent/crates/mutsuki-agent-runtime
+  kits/agent/crates/mutsuki-agent-services
   kits/agent/crates/mutsuki-agent-sdk
   hosts/service
   hosts/tauri

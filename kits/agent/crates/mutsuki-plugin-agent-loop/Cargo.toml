@@ -6,7 +6,7 @@ license.workspace = true
 
 [dependencies]
 mutsuki-agent-contracts.workspace = true
-mutsuki-agent-runtime.workspace = true
+mutsuki-agent-services.workspace = true
 mutsuki-agent-sdk.workspace = true
 mutsuki-runtime-sdk.workspace = true
 serde.workspace = true

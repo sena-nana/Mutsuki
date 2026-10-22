@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use mutsuki_agent_contracts::{DocumentVersion, EditorDocumentRef, TextPosition};
-use mutsuki_agent_plugin_code_completion::{
+use mutsuki_agent_ext_code_completion::{
     CodeCompletionConfig, CodeCompletionService, DeterministicCompletionAdapter,
     request_from_snapshot, test_provider,
 };
@@ -65,7 +65,7 @@ mod tests {
     use mutsuki_agent_contracts::{
         CodeCompletionFeedback, CodeCompletionFeedbackAction, CodeCompletionStatus,
     };
-    use mutsuki_agent_plugin_code_completion::hash_text;
+    use mutsuki_agent_ext_code_completion::hash_text;
 
     #[test]
     fn fake_editor_and_deterministic_adapter_complete_e2e() {

@@ -49,7 +49,7 @@ use mutsuki_agent_contracts::{
     ProviderInstanceDescriptor, ResourceRef, SessionVersion, SkillDiscoverRequest,
     SkillReloadRequest,
 };
-use mutsuki_agent_runtime::{AgentRuntimeProfileBuilder, SessionPersistence, SkillRoots};
+use mutsuki_agent_services::{AgentRuntimeProfileBuilder, SessionPersistence, SkillRoots};
 use mutsuki_config_service::{
     ConfigConstraints, ConfigContext, ConfigDescriptor, ConfigError, ConfigExpr, ConfigKey,
     ConfigMutability, ConfigNode, ConfigPresentation, ConfigProvider, ConfigProviderId,

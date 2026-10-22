@@ -1,9 +1,9 @@
 use mutsuki_agent_contracts::*;
-use mutsuki_agent_runtime::ToolRegistry;
 use mutsuki_agent_sdk::{
     AgentToolExecuteProtocol, AgentToolListProtocol, orchestration_runner, result_event,
     runtime_failure, service_result_event, task_payload, unsupported_protocol,
 };
+use mutsuki_agent_services::ToolRegistry;
 use mutsuki_runtime_sdk::contracts::{RunnerResult, ScalarValue, Task, TaskOutcome};
 use mutsuki_runtime_sdk::{
     AsyncRunnerContext, PluginBuilder, RuntimeClientRef, RuntimeResult, TaskAwaitRunnerAdapter,

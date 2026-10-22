@@ -1,4 +1,4 @@
-pub use mutsuki_agent_runtime::ToolRegistry;
+pub use mutsuki_agent_services::ToolRegistry;
 
 use mutsuki_agent_contracts::{
     AgentToolDescriptor, AgentToolExecuteRequest, AgentToolExecuteResult, ToolSideEffect,

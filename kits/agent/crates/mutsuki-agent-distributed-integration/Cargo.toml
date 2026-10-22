@@ -6,7 +6,7 @@ license.workspace = true
 
 [dependencies]
 mutsuki-agent-contracts.workspace = true
-mutsuki-agent-runtime.workspace = true
+mutsuki-agent-services.workspace = true
 mutsuki-distributed-contracts.workspace = true
 mutsuki-distributed-runtime.workspace = true
 mutsuki-runtime-contracts.workspace = true

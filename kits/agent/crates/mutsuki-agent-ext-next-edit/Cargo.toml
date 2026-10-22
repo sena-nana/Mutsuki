@@ -1,0 +1,20 @@
+[package]
+name = "mutsuki-agent-ext-next-edit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mutsuki-agent-adapter-api.workspace = true
+mutsuki-agent-contracts.workspace = true
+mutsuki-agent-ext-api.workspace = true
+mutsuki-agent-services.workspace = true
+mutsuki-runtime-sdk.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+mutsuki-agent-testkit.workspace = true
+
+[lints]
+workspace = true

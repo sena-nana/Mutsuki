@@ -19,9 +19,11 @@ Bridge, storage in a Protocol, scheduling in an SDK, or business behavior in a p
 Update the owning `AGENTS.md` and skill whenever a new boundary is introduced.
 
 Package prefixes: `mutsuki-plugin-*` is reserved for loadable Mutsuki plugins (a `PluginBuilder`
-manifest); they never depend on one another. AgentKit tool/capability packages loaded by the Agent
-runtime use `mutsuki-agent-plugin-*`: they are Agent plugins, not Mutsuki plugins, so the plugin-to-plugin
-rule does not apply to them. A package directory carries the package name, never a backend suffix
+manifest); they never depend on one another, and the Agent ones are `mutsuki-plugin-agent-*`.
+AgentKit extensions loaded through the Agent extension API use `mutsuki-agent-ext-*` (API:
+`mutsuki-agent-ext-api`): they are Agent extensions, not Mutsuki plugins, so the plugin-to-plugin rule
+does not apply to them. Agent domain services (sessions, prompts, credentials, knowledge, ...) live in
+`mutsuki-agent-services`; it is a service library, not a runtime. A package directory carries the package name, never a backend suffix
 (the Takumi renderer lives in `plugins/std/plugins/mutsuki-plugin-image-render`).
 
 For a multi-component audit, read [naming rules](references/naming-rules.md).

@@ -3,9 +3,9 @@
 ## From `mutsuki-agent-protocol`
 
 The former catch-all protocol crate has been replaced by `mutsuki-agent-contracts`. Consumers must
-depend on the owner package directly. Runtime behavior belongs to `mutsuki-agent-runtime`, model
+depend on the owner package directly. Runtime behavior belongs to `mutsuki-agent-services`, model
 protocol integration to `mutsuki-agent-adapter-*`, and extension surfaces to
-`mutsuki-agent-plugin-*`.
+`mutsuki-agent-ext-*`.
 
 ## From direct provider/tool calls
 

@@ -5,5 +5,5 @@
 
 pub mod plugin;
 
-pub use mutsuki_agent_runtime::{AgentContextBuildPreparation, AgentContextModelSummary};
+pub use mutsuki_agent_services::{AgentContextBuildPreparation, AgentContextModelSummary};
 pub use plugin::*;

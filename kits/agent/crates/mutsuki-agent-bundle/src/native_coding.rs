@@ -18,24 +18,24 @@ use mutsuki_agent_contracts::{
     LspServiceRequest, LspWorkspaceId, ProcessExecRequest, SubAgentDescriptor, SubAgentOutcomeKind,
     ToolSideEffect, ToolTargetPayloadMode, WorkspacePathRequest,
 };
-use mutsuki_agent_plugin_api::{
+use mutsuki_agent_ext_api::{
     AgentPluginRegistrar, AgentService, ContextProvider, ToolProvider, context_collect_plugin,
 };
-use mutsuki_agent_plugin_code_index::{CodeIndexLspSignals, SharedCodeIndexService};
-use mutsuki_agent_plugin_computer_use::{
+use mutsuki_agent_ext_code_index::{CodeIndexLspSignals, SharedCodeIndexService};
+use mutsuki_agent_ext_computer_use::{
     BrowserGateway, FakeBrowserBackend, FakeProcessBackend, FilesystemGateway,
     InMemoryFilesystemBackend, ProcessGateway, SharedComputerUseService,
 };
-use mutsuki_agent_plugin_git::{GitGateway, InMemoryGitBackend, SharedGitService};
-use mutsuki_agent_plugin_lsp::{LspProcess, LspProcessFactory, SharedLspService};
-use mutsuki_agent_plugin_mcp::{
+use mutsuki_agent_ext_git::{GitGateway, InMemoryGitBackend, SharedGitService};
+use mutsuki_agent_ext_lsp::{LspProcess, LspProcessFactory, SharedLspService};
+use mutsuki_agent_ext_mcp::{
     McpRequestControl, McpTransport, McpTransportFactory, SharedMcpService,
 };
-use mutsuki_agent_runtime::{
+use mutsuki_agent_sdk::{orchestration_runner, runtime_failure};
+use mutsuki_agent_services::{
     AgentResourceStore, ChildAgentExecutor, RequiredChildExecutor, SubAgentOrchestrator,
     reference_coding_agent_test_profile,
 };
-use mutsuki_agent_sdk::{orchestration_runner, runtime_failure};
 use mutsuki_runtime_sdk::contracts::{RunnerResult, Task};
 use mutsuki_runtime_sdk::{
     PluginBuilder, ProtocolSpec, RuntimeClientRef, SdkProtocol, TaskAwaitRunnerAdapter,
@@ -113,7 +113,7 @@ impl Default for NativeCodingBackends {
             browser: None,
             lsp: Arc::new(UnavailableLspFactory),
             mcp: Arc::new(UnavailableMcpFactory),
-            code_index_lsp: Arc::new(mutsuki_agent_plugin_code_index::UnavailableLspSignals),
+            code_index_lsp: Arc::new(mutsuki_agent_ext_code_index::UnavailableLspSignals),
         }
     }
 }
@@ -752,11 +752,11 @@ impl NativeCodingAgentBundle {
             }
         }
         for expected in [
-            mutsuki_agent_plugin_git::SERVICE_ID,
-            mutsuki_agent_plugin_code_index::SERVICE_ID,
-            mutsuki_agent_plugin_lsp::SERVICE_ID,
-            mutsuki_agent_plugin_computer_use::SERVICE_ID,
-            mutsuki_agent_plugin_mcp::SERVICE_ID,
+            mutsuki_agent_ext_git::SERVICE_ID,
+            mutsuki_agent_ext_code_index::SERVICE_ID,
+            mutsuki_agent_ext_lsp::SERVICE_ID,
+            mutsuki_agent_ext_computer_use::SERVICE_ID,
+            mutsuki_agent_ext_mcp::SERVICE_ID,
         ] {
             if !service_ids.contains(expected) {
                 return Err(AgentError::not_found(format!(
@@ -1033,15 +1033,15 @@ fn code_workspace(workspace: &AgentWorkspaceRef) -> CodeWorkspaceRef {
 fn lsp_plugin_descriptor(generation: u64) -> AgentResult<AgentKitPluginDescriptor> {
     let mut registrar = AgentPluginRegistrar::new(LSP_PLUGIN_ID, generation)
         .service(AgentServiceDescriptor {
-            service_id: mutsuki_agent_plugin_lsp::SERVICE_ID.into(),
+            service_id: mutsuki_agent_ext_lsp::SERVICE_ID.into(),
             version: "1".into(),
             request_schema: "mutsuki.agent.lsp.request@1".into(),
             response_schema: "mutsuki.agent.lsp.response@1".into(),
             state: AgentPluginStateKind::Stateful,
             affinity: Some("workspace".into()),
         })
-        .context_provider(mutsuki_agent_plugin_lsp::CONTEXT_PROVIDER_ID)
-        .require_service(mutsuki_agent_plugin_lsp::SERVICE_ID);
+        .context_provider(mutsuki_agent_ext_lsp::CONTEXT_PROVIDER_ID)
+        .require_service(mutsuki_agent_ext_lsp::SERVICE_ID);
     for (name, side_effect) in [
         ("lsp.definition", ToolSideEffect::WorkspaceRead),
         ("lsp.hover", ToolSideEffect::WorkspaceRead),
@@ -1331,7 +1331,7 @@ mod tests {
     use mutsuki_agent_contracts::{
         AgentRuntimeMode, EditorContextServiceRequest, EditorContextServiceResponse,
     };
-    use mutsuki_agent_runtime::EchoChildExecutor;
+    use mutsuki_agent_services::EchoChildExecutor;
     use mutsuki_agent_testkit::{
         CodingEventLog, FakeEditorContextService, emit_deterministic_coding_run,
     };

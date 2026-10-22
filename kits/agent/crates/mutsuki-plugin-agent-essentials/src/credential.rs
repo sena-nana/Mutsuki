@@ -6,13 +6,13 @@ use mutsuki_agent_contracts::{
 };
 
 use mutsuki_agent_contracts::*;
-use mutsuki_agent_runtime::CredentialBrokerService;
 use mutsuki_agent_sdk::{
     AgentCredentialImportProtocol, AgentCredentialIssueHandleProtocol,
     AgentCredentialLoginProtocol, AgentCredentialRefreshProtocol, AgentCredentialRevokeProtocol,
     AgentCredentialStatusProtocol, orchestration_runner, service_result_event,
     unsupported_protocol,
 };
+use mutsuki_agent_services::CredentialBrokerService;
 use mutsuki_runtime_sdk::contracts::{RunnerResult, Task};
 use mutsuki_runtime_sdk::{PluginBuilder, RuntimeClientRef, RuntimeResult, TaskAwaitRunnerAdapter};
 

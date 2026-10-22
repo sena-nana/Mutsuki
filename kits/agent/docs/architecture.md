@@ -21,7 +21,7 @@ Runtime -------- Adapter -------- Plugin
 
 ## Runtime
 
-`mutsuki-agent-runtime` 拥有 session coordinator、turn 状态、approval、interaction、
+`mutsuki-agent-services` 拥有 session coordinator、turn 状态、approval、interaction、
 budget、checkpoint 语义和 `AgentRuntimeProfile` validation。AgentLoop 将类型化 interaction
 tool call 持久为等待点，并以版本绑定的 resolution 继续原 session/turn；产品 Host 不得用
 新 user message 或隐藏直调模拟恢复。昂贵或可取消的步骤由 orchestration runner 通过
@@ -46,7 +46,7 @@ tool call 持久为等待点，并以版本绑定的 resolution 继续原 sessio
 
 ## Plugin
 
-`mutsuki-agent-plugin-api` 定义 tool、context provider、hook、policy、command 和 service
+`mutsuki-agent-ext-api` 定义 tool、context provider、hook、policy、command 和 service
 贡献。装载、依赖、权限、generation、drain-and-swap 和 service registry 都由 Mutsuki
 插件生命周期兑现。可移植的 Agent service 通过 `AgentServiceRunner` 进入普通 batch-first
 Task/Runner surface；其 `Runner::dispose` 先 drain 再 dispose，不建立 Agent 专属 loader、
@@ -62,7 +62,7 @@ LSP 语义。
 - remote task/sub-agent 映射到 DistributedHost placement，不复制选主与 scheduler。
 - client wire 运行在 MutsukiLink control stream，不建立 Agent 专属网络 server。
 - ServiceHost/TauriHost 只提供公开 runner、async handler、service 和 bridge 装配入口。
-- Git 写入由 `mutsuki-agent-plugin-git` 提供的 `GitWorktreeState` 做乐观并发门禁；令牌覆盖
+- Git 写入由 `mutsuki-agent-ext-git` 提供的 `GitWorktreeState` 做乐观并发门禁；令牌覆盖
   canonical worktree 的 HEAD、index 与未忽略 working files，并可跨 service 重启比较。同一 service
   内的同 worktree 写请求在“重读状态→校验 expected state→执行”期间串行化；产品 UI 应从 status 或
   approval plan 回传完整令牌，旧 `expected_head` 只保留兼容用途。

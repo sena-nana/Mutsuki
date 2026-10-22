@@ -7,8 +7,8 @@ license.workspace = true
 [dependencies]
 mutsuki-agent-adapter-api.workspace = true
 mutsuki-agent-contracts.workspace = true
-mutsuki-agent-plugin-code-completion.workspace = true
-mutsuki-agent-runtime.workspace = true
+mutsuki-agent-ext-code-completion.workspace = true
+mutsuki-agent-services.workspace = true
 mutsuki-plugin-agent-essentials.workspace = true
 mutsuki-plugin-agent-loop.workspace = true
 mutsuki-plugin-agent-model-gateway.workspace = true
