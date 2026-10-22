@@ -38,3 +38,15 @@
   要求重新输入口令。
 - `/ws`、`/auth/*` 拒绝与请求 Host 不一致的 `Origin`（403）。自带 Origin 的跨站嵌入需与 Host
   同源。
+
+## W3 SDK v2
+
+- 错误统一为 `RpcError { code, message, details, retryable }`；`WebBridgeError` 是其子类，
+  仍可 `instanceof`。`BridgeErrorCode` 移到 `errors.ts` 并新增 `auth_failed`。
+- 默认超时改为读 15s、写 30s（原统一 30s）；`requestTimeoutMs` 仍同时覆盖两者，新增
+  `readTimeoutMs`/`writeTimeoutMs`。
+- `EventClient.subscribe` 第四个参数 `onError` 接收订阅被拒；被拒订阅不再在重连时恢复。
+- 新增 `defineRpc`/`query`/`mutation`/`topic`、`useRpc`/`useMutation`/`useSubscription`/
+  `usePolling`/`useSession`/`useConnectionState`、`createI18n`/`defineMessages`/`useI18n`、
+  格式化函数、`defineExtension` 与 `MAX_EXTENSIONS`（Shell 超出即记失败）。测试替身在
+  `@mutsuki/web-sdk/testing`（不进入共享运行时）。

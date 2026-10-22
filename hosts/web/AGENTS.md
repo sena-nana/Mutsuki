@@ -20,6 +20,7 @@ Issue 是需求线索，不是当前 API 的事实源。
 - `skills/capability-boundaries/SKILL.md`：能力归属与跨仓库顺序。
 - `skills/web-host/SKILL.md`：Host 生命周期、bridge、extension、recovery、安全与测试。
 - `skills/web-build/SKILL.md`：前端 SDK/Shell 与预编译构建工具。
+- `skills/web-extension-authoring/SKILL.md`：扩展前端（`web/` 包）的契约、composables、i18n、预算与测试。
 
 职责不明先读 capability-boundaries。
 
@@ -34,7 +35,7 @@ Issue 是需求线索，不是当前 API 的事实源。
 | `mutsuki-web-extension` | Host registry、budget、reactor 分发 |
 | `mutsuki-web-recovery` | 最小恢复与安全模式 Shell |
 | `mutsuki-web-shared-runtime` | 嵌入 `@mutsuki/web-runtime` 预构建的共享模块：内容寻址文件名、import map、CSP 哈希 |
-| `@mutsuki/web-sdk` | Vue/WebExtension 前端 SDK |
+| `@mutsuki/web-sdk` | Vue/WebExtension 前端 SDK：bridge、`RpcError`、`defineRpc`、composables、i18n、`defineExtension`；`/testing` 提供 fake bridge |
 | `@mutsuki/web-shell` | 可复用 Shell 基础实现 |
 | `@mutsuki/ui` | LiliaUI token/layout 包装（styles + ConsoleShell）；视觉基座来自 pinned `@lilia/theme`，构建期由 `bundle-css.mjs` 打进 `dist/mutsuki-ui.css`，经共享运行时以 `shared/ui.<hash>.css` 发布一次 |
 | `@mutsuki/web-runtime` | 构建 `browser/shared/{vue,vue-router,pinia,web-sdk,ui,web-shell}.js` 与 `ui.css`（提交产物，Rust 嵌入） |

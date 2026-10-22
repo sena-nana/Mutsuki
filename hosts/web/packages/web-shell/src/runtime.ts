@@ -1,4 +1,5 @@
 import {
+  MAX_EXTENSIONS,
   WEB_PROTOCOL_VERSION,
   WebBridgeClient,
   DisposableScope,
@@ -150,6 +151,13 @@ export async function loadExtensions(
 ): Promise<Disposable[]> {
   const disposables: Disposable[] = [];
   for (const item of urls) {
+    if (state.extensions.length >= MAX_EXTENSIONS) {
+      state.failures.push({
+        extensionId: item.id,
+        message: `extension budget of ${MAX_EXTENSIONS} exceeded`,
+      });
+      continue;
+    }
     const scope = new DisposableScope();
     try {
       await Promise.all((item.styles ?? []).map(linkStylesheet));

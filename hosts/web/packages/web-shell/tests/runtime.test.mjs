@@ -433,3 +433,18 @@ test("config extension keeps provider navigation when plugin_list fails", async 
   assert.equal(state.navigation.list().some((item) => item.group === "已加载"), false);
   validateShellState(state);
 });
+
+test("extensions beyond the shell budget fail without being imported", async () => {
+  const { MAX_EXTENSIONS } = await import("@mutsuki/web-sdk");
+  const state = createShellState();
+  globalThis.__mutsukiBudgetExtension = () => undefined;
+  const urls = Array.from({ length: MAX_EXTENSIONS + 1 }, (_, index) => ({
+    id: `ext-${index}`,
+    url: extensionUrl("__mutsukiBudgetExtension"),
+  }));
+  await loadExtensions(state, urls, () => context([]));
+  assert.equal(state.extensions.length, MAX_EXTENSIONS);
+  assert.deepEqual(state.failures, [
+    { extensionId: `ext-${MAX_EXTENSIONS}`, message: `extension budget of ${MAX_EXTENSIONS} exceeded` },
+  ]);
+});
