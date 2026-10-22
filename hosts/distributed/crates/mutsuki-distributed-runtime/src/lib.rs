@@ -27,9 +27,9 @@ use mutsuki_link_core::{
     ProtocolChannelId, ProtocolDescriptor, ProtocolOffer, ProtocolVersion, SecurityLevel,
     VersionRange,
 };
-use mutsuki_runtime_contracts::{
-    ExecutionMobility, PortableTask, RequirementSet, RuntimeEvent, TaskBatch, TaskHandle,
-};
+use mutsuki_runtime_contracts::{RuntimeEvent, TaskBatch, TaskHandle};
+use mutsuki_runtime_execution_policy::RequirementSet;
+use mutsuki_runtime_portability::{ExecutionMobility, PortableTask};
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::pin::Pin;

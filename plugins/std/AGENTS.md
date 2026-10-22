@@ -37,19 +37,25 @@ workflow 能力，不实现 Agent、Bot、产品配置或平台 UI。
 Rust 改动运行 `cargo fmt --check`、`cargo check` 和 `cargo test`。协议、provider、effect 或
 LoadPlan surface 改动补充行为测试，并报告实际命令与结果。
 
-## Descriptor invalidation (#184)
+## Descriptor 失效（#184）
 
-Provider `execute` returns `ResourceProviderOutcome`: committed invalidations are independent of operation success, including partial batch/saga failure. Host applies provider/ref/resource-generation removals on the actor before replying. Absent refs are idempotent; conflicting owners/generations fail. Invalidation dominates same-outcome updates and removes writer/derived occupancy facts. Receipt status and business JSON are not lifecycle signals.
+Provider `execute` 返回 `ResourceProviderOutcome`：已提交的 invalidation 与操作是否成功无关，
+batch/saga 部分失败也一样。Host 在 actor 上应用 provider/ref/resource-generation 删除后才回复。
+不存在的 ref 幂等；owner 或 generation 冲突则失败。同一 outcome 中 invalidation 优先于更新，并移除
+writer/派生 occupancy 事实。回执状态和业务 JSON 不是生命周期信号。
 
-Invalidating providers declare Ordered. Their provider-id lane survives staged reload, retains the executing provider until actor application, and remains occupied after caller timeout/disconnect until actual completion. Queue count/bytes use Host limits; panic with unknown effects poisons the lane until restart. No permanent tombstone history or I/O in open. SQLite keeps create-before-insert retention and capability exemption.
+发出 invalidation 的 provider 声明 Ordered。其 provider-id lane 跨越分阶段 reload 保留，执行中的
+provider 保留到 actor 应用结果为止；调用方超时或断开后 lane 仍占用，直到调用实际完成。队列条数与
+字节使用 Host 限额；带未知副作用的 panic 会使该 lane 失效直到重启。open 中不保留永久 tombstone
+历史，也不做 I/O。SQLite 保持 create-before-insert 的 retention 与 capability 豁免。
 
 容量 retention 以单事务删除最旧资源前缀，避免逐行事务和将所有候选 ID 拉到 provider；回收 ID
 随 create outcome 的 invalidations 进入 Host actor。测试同时覆盖 bulk rollback、零字节资源、
 capability 豁免，以及同文件 provider 实例交替 reload 的调用/restore 计数。
 
-## Async resource creation (#182)
+## 异步资源创建（#182）
 
-Keep SQLite Offloaded and Ordered. Awaitable Host registry creation still registers on the actor;
-image-render may retain the documented synchronous Host bridge. Owner tests cover an 8 MiB blob
-through async create, synchronous read and restart, using the public Host client. Validate the
-futures dev dependency in an independent clone. See ../../docs/architecture/async-resource-creation.md.
+SQLite 保持 Offloaded 与 Ordered。可 await 的 Host registry 创建仍在 actor 上登记；image-render
+可以保留文档化的同步 Host bridge。owner 测试用公开 Host client 覆盖 8 MiB blob 的异步 create、
+同步 read 与重启。futures dev 依赖须在独立 clone 中验证。见
+../../docs/architecture/async-resource-creation.md。

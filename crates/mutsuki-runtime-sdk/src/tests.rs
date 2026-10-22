@@ -1274,11 +1274,11 @@ struct DemoCheckpointCodec;
 impl Checkpointable for DemoCheckpointCodec {
     fn checkpoint(
         &mut self,
-        task: &mutsuki_runtime_contracts::PortableTask,
+        task: &mutsuki_runtime_portability::PortableTask,
         sequence: u64,
-    ) -> RuntimeResult<mutsuki_runtime_contracts::TaskCheckpoint> {
-        Ok(mutsuki_runtime_contracts::TaskCheckpoint::new(
-            mutsuki_runtime_contracts::SchemaIdentity::new("demo.checkpoint", "1.0.0"),
+    ) -> RuntimeResult<mutsuki_runtime_portability::TaskCheckpoint> {
+        Ok(mutsuki_runtime_portability::TaskCheckpoint::new(
+            mutsuki_runtime_portability::SchemaIdentity::new("demo.checkpoint", "1.0.0"),
             3,
             sequence,
             task.clone(),
@@ -1288,8 +1288,8 @@ impl Checkpointable for DemoCheckpointCodec {
 
     fn restore(
         &mut self,
-        checkpoint: &mutsuki_runtime_contracts::TaskCheckpoint,
-    ) -> RuntimeResult<mutsuki_runtime_contracts::PortableTask> {
+        checkpoint: &mutsuki_runtime_portability::TaskCheckpoint,
+    ) -> RuntimeResult<mutsuki_runtime_portability::PortableTask> {
         checkpoint
             .validate_restore(
                 &checkpoint.task.task_schema,
@@ -1303,16 +1303,21 @@ impl Checkpointable for DemoCheckpointCodec {
 
 #[test]
 fn optional_checkpointable_plugin_can_persist_and_restore_a_local_task() {
-    let task = mutsuki_runtime_contracts::PortableTask::new(
+    let task = mutsuki_runtime_portability::PortableTask::new(
         Task::new("portable-sdk", "demo.portable", json!({"offset": 12})),
-        mutsuki_runtime_contracts::SchemaIdentity::new("demo.portable", "1.0.0"),
-        mutsuki_runtime_contracts::ContentId::new("sha256", "input-digest", 13, "application/json"),
-        mutsuki_runtime_contracts::PortabilityCapability {
-            mobility: mutsuki_runtime_contracts::ExecutionMobility::Checkpointable,
-            retry_safety: mutsuki_runtime_contracts::RetrySafety::Verifiable,
-            task_acceptance: mutsuki_runtime_contracts::TaskAcceptanceDurability::Persisted,
-            resource_persistence: mutsuki_runtime_contracts::ResourcePersistence::Durable,
-            recovery: mutsuki_runtime_contracts::RecoveryMode::RestoreCheckpoint,
+        mutsuki_runtime_portability::SchemaIdentity::new("demo.portable", "1.0.0"),
+        mutsuki_runtime_portability::ContentId::new(
+            "sha256",
+            "input-digest",
+            13,
+            "application/json",
+        ),
+        mutsuki_runtime_portability::PortabilityCapability {
+            mobility: mutsuki_runtime_portability::ExecutionMobility::Checkpointable,
+            retry_safety: mutsuki_runtime_portability::RetrySafety::Verifiable,
+            task_acceptance: mutsuki_runtime_portability::TaskAcceptanceDurability::Persisted,
+            resource_persistence: mutsuki_runtime_portability::ResourcePersistence::Durable,
+            recovery: mutsuki_runtime_portability::RecoveryMode::RestoreCheckpoint,
         },
     );
     let mut codec = DemoCheckpointCodec;

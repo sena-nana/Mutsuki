@@ -5,9 +5,11 @@ use mutsuki_distributed_contracts::{
 use mutsuki_distributed_runtime::{
     ContentStore, PersistentRegistry, ResourceCatalog, effect_recovery_action,
 };
-use mutsuki_runtime_contracts::{
-    ExecutionMobility, PortabilityCapability, PortableTask, RequirementSet, RetrySafety,
-    SchemaIdentity, Task, TaskAcceptanceDurability,
+use mutsuki_runtime_contracts::Task;
+use mutsuki_runtime_execution_policy::RequirementSet;
+use mutsuki_runtime_portability::{
+    ExecutionMobility, PortabilityCapability, PortableTask, RetrySafety, SchemaIdentity,
+    TaskAcceptanceDurability,
 };
 use serde::Serialize;
 use serde_json::json;
@@ -241,7 +243,7 @@ struct Fixture {
     registry_path: PathBuf,
     catalog: ResourceCatalog,
     task_id: GlobalTaskId,
-    output: mutsuki_runtime_contracts::ContentId,
+    output: mutsuki_runtime_portability::ContentId,
 }
 
 fn fixture(path: &Path, id: &str) -> Fixture {

@@ -2,9 +2,11 @@ use mutsuki_distributed_contracts::{AcceptanceMode, DurableTaskSpec, GlobalTaskI
 use mutsuki_distributed_runtime::{
     FileMetadataReplica, MetadataReplica, PersistentRegistry, RegistryOptions, ResourceCatalog,
 };
-use mutsuki_runtime_contracts::{
-    ContentId, ExecutionMobility, PortabilityCapability, PortableTask, RequirementSet, RetrySafety,
-    SchemaIdentity, Task, TaskAcceptanceDurability,
+use mutsuki_runtime_contracts::Task;
+use mutsuki_runtime_execution_policy::RequirementSet;
+use mutsuki_runtime_portability::{
+    ContentId, ExecutionMobility, PortabilityCapability, PortableTask, RetrySafety, SchemaIdentity,
+    TaskAcceptanceDurability,
 };
 use serde_json::json;
 use std::env;

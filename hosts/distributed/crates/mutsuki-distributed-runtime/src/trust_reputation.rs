@@ -2,7 +2,7 @@ use mutsuki_distributed_contracts::{
     AnomalyKind, CompromiseImpact, DistributedError, DistributedErrorKind, GlobalTaskId, NodeId,
     ReputationSnapshot,
 };
-use mutsuki_runtime_contracts::ContentId;
+use mutsuki_runtime_portability::ContentId;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{NodeIdentityRegistry, ResourceAuthorizer};

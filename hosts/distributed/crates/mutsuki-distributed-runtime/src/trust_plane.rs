@@ -7,7 +7,7 @@ use mutsuki_distributed_contracts::{
     TaskTrustPolicy, TrustBoundObjectKind, TrustMode, TrustPlaneBudget, VerificationAction,
     VerificationStatus,
 };
-use mutsuki_runtime_contracts::ContentId;
+use mutsuki_runtime_portability::ContentId;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 

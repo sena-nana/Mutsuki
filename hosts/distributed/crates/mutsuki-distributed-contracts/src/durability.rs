@@ -1,4 +1,6 @@
-use mutsuki_runtime_contracts::{ContentId, PortableTask, RequirementSet, TaskHandle};
+use mutsuki_runtime_contracts::TaskHandle;
+use mutsuki_runtime_execution_policy::RequirementSet;
+use mutsuki_runtime_portability::{ContentId, PortableTask};
 use serde::{Deserialize, Serialize};
 
 use crate::{GlobalTaskId, NodeId};

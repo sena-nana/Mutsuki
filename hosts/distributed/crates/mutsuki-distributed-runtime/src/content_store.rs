@@ -1,7 +1,7 @@
 use mutsuki_distributed_contracts::{
     ChunkDescriptor, ContentManifest, DistributedError, DistributedErrorKind, ResourcePolicy,
 };
-use mutsuki_runtime_contracts::ContentId;
+use mutsuki_runtime_portability::ContentId;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, VecDeque};
 use std::fs::{self, File};

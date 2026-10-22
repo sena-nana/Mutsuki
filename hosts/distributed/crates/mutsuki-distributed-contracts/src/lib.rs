@@ -4,9 +4,10 @@
 #![forbid(unsafe_code)]
 #![allow(clippy::missing_errors_doc, clippy::must_use_candidate)]
 
-use mutsuki_runtime_contracts::{
-    CapabilitySet, ContentId, ExecutionMobility, PortabilityCatalog, PortableTask, ProtocolId,
-    RefId, RequirementSet, RetrySafety, RunnerId, TaskHandle, TaskId, TaskLeaseId,
+use mutsuki_runtime_contracts::{ProtocolId, RefId, RunnerId, TaskHandle, TaskId, TaskLeaseId};
+use mutsuki_runtime_execution_policy::{CapabilitySet, RequirementSet};
+use mutsuki_runtime_portability::{
+    ContentId, ExecutionMobility, PortabilityCatalog, PortableTask, RetrySafety,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -504,8 +505,9 @@ pub fn runner_generations(advertisement: &WorkerAdvertisement) -> BTreeMap<&str,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mutsuki_runtime_contracts::{
-        PortabilityCapability, SchemaIdentity, Task, TaskAcceptanceDurability,
+    use mutsuki_runtime_contracts::Task;
+    use mutsuki_runtime_portability::{
+        PortabilityCapability, SchemaIdentity, TaskAcceptanceDurability,
     };
     use serde_json::json;
 

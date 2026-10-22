@@ -1,9 +1,10 @@
 use super::*;
 use mutsuki_distributed_contracts::RunnerGeneration;
-use mutsuki_runtime_contracts::{
-    CancelPolicy, CapabilitySet, ContentId, PortabilityCapability, PortableResourceDescriptor,
-    ResourcePersistence, RetrySafety, SchemaIdentity, Task, TaskAcceptanceDurability,
-    TaskPortabilityDescriptor,
+use mutsuki_runtime_contracts::{CancelPolicy, Task};
+use mutsuki_runtime_execution_policy::CapabilitySet;
+use mutsuki_runtime_portability::{
+    ContentId, PortabilityCapability, PortableResourceDescriptor, ResourcePersistence, RetrySafety,
+    SchemaIdentity, TaskAcceptanceDurability, TaskPortabilityDescriptor,
 };
 use serde_json::json;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -176,7 +177,7 @@ fn advertisement(node: &str, portable: &PortableTask) -> WorkerAdvertisement {
         protocol_major: DISTRIBUTED_PROTOCOL_MAJOR,
         snapshot_version: 1,
         capabilities: CapabilitySet::default(),
-        portability: mutsuki_runtime_contracts::PortabilityCatalog {
+        portability: mutsuki_runtime_portability::PortabilityCatalog {
             tasks: vec![TaskPortabilityDescriptor {
                 protocol_id: portable.task.protocol_id.clone(),
                 task_schema: portable.task_schema.clone(),

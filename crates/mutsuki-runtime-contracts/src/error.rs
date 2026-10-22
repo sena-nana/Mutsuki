@@ -98,6 +98,8 @@ mod tests {
     /// Kernel packages whose error codes must come from this closed registry.
     const KERNEL_CRATES: &[&str] = &[
         "mutsuki-runtime-contracts",
+        "mutsuki-runtime-execution-policy",
+        "mutsuki-runtime-portability",
         "mutsuki-runtime-wire",
         "mutsuki-runtime-core",
         "mutsuki-runtime-host",

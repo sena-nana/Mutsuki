@@ -1,7 +1,7 @@
 use super::*;
 use mutsuki_distributed_contracts::*;
 use mutsuki_link_core::{ConnectionQuality, PeerId, SecurityLevel};
-use mutsuki_runtime_contracts::ContentId;
+use mutsuki_runtime_portability::ContentId;
 use std::collections::{BTreeMap, BTreeSet};
 use tempfile::TempDir;
 

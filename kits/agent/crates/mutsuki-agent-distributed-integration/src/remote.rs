@@ -15,10 +15,11 @@ use mutsuki_distributed_contracts::{
     DirectDataRef, GlobalTaskId, LocalTaskOutcome, RemoteResult, TaskPlacement,
 };
 use mutsuki_distributed_runtime::Coordinator;
-use mutsuki_runtime_contracts::{
-    ContentId, ExecutionMobility, PortabilityCapability, PortableTask, RecoveryMode, RefId,
-    RequirementSet, ResourcePersistence, RetrySafety, SchemaIdentity, Task,
-    TaskAcceptanceDurability,
+use mutsuki_runtime_contracts::{RefId, Task};
+use mutsuki_runtime_execution_policy::RequirementSet;
+use mutsuki_runtime_portability::{
+    ContentId, ExecutionMobility, PortabilityCapability, PortableTask, RecoveryMode,
+    ResourcePersistence, RetrySafety, SchemaIdentity, TaskAcceptanceDurability,
 };
 use sha2::{Digest, Sha256};
 
@@ -321,10 +322,9 @@ mod tests {
         RemoteWorker, ResourceLocalizer, WireRemoteWorker, WorkerEndpoint, WorkerFuture,
         WorkerRegistry, WorkerRequestDispatcher, WorkerTransport,
     };
-    use mutsuki_runtime_contracts::{
-        CancelPolicy, CapabilitySet, PortabilityCatalog, RuntimeEvent, TaskBatch, TaskHandle,
-        TaskId, TaskPortabilityDescriptor,
-    };
+    use mutsuki_runtime_contracts::{CancelPolicy, RuntimeEvent, TaskBatch, TaskHandle, TaskId};
+    use mutsuki_runtime_execution_policy::CapabilitySet;
+    use mutsuki_runtime_portability::{PortabilityCatalog, TaskPortabilityDescriptor};
 
     #[derive(Default)]
     struct FakeCoordinator {

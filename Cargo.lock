@@ -3533,6 +3533,8 @@ dependencies = [
  "mutsuki-plugin-db-sqlite",
  "mutsuki-protocol-db",
  "mutsuki-runtime-contracts",
+ "mutsuki-runtime-execution-policy",
+ "mutsuki-runtime-portability",
  "mutsuki-runtime-sdk",
  "serde",
  "serde_json",
@@ -4288,6 +4290,8 @@ dependencies = [
  "mutsuki-distributed-contracts",
  "mutsuki-distributed-runtime",
  "mutsuki-runtime-contracts",
+ "mutsuki-runtime-execution-policy",
+ "mutsuki-runtime-portability",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -4300,6 +4304,8 @@ name = "mutsuki-distributed-contracts"
 version = "0.1.0"
 dependencies = [
  "mutsuki-runtime-contracts",
+ "mutsuki-runtime-execution-policy",
+ "mutsuki-runtime-portability",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
@@ -4352,6 +4358,8 @@ dependencies = [
  "mutsuki-link",
  "mutsuki-link-core",
  "mutsuki-runtime-contracts",
+ "mutsuki-runtime-execution-policy",
+ "mutsuki-runtime-portability",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -5078,6 +5086,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mutsuki-runtime-execution-policy"
+version = "0.1.0"
+dependencies = [
+ "mutsuki-runtime-contracts",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "mutsuki-runtime-host"
 version = "0.1.0"
 dependencies = [
@@ -5120,12 +5137,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "mutsuki-runtime-portability"
+version = "0.1.0"
+dependencies = [
+ "mutsuki-runtime-contracts",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "mutsuki-runtime-sdk"
 version = "0.1.0"
 dependencies = [
  "mutsuki-plugin-api",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
+ "mutsuki-runtime-portability",
  "mutsuki-runtime-sdk-macros",
  "mutsuki-runtime-wire",
  "serde",

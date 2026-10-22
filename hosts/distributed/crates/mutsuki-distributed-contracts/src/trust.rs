@@ -1,4 +1,4 @@
-use mutsuki_runtime_contracts::ContentId;
+use mutsuki_runtime_portability::ContentId;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 

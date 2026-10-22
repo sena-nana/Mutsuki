@@ -2,7 +2,8 @@
 
 本文冻结不依赖部署拓扑的任务录制、重放、checkpoint 和内容寻址边界。这些契约可由
 单机持久队列、测试重放工具、跨进程 Host 或外层部署系统复用；CoreRuntime 默认不执行
-持久化、哈希扫描、传输或恢复策略。
+持久化、哈希扫描、传输或恢复策略。类型位于独立 crate `mutsuki-runtime-portability`，
+只有需要它的 SDK helper 与分布式 Host 依赖它。
 
 ## 现有契约审计
 

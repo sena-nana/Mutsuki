@@ -72,7 +72,7 @@ SQLite 新增 Host dev dependency，因此另用 `git clone --no-local` 建立�
 `CARGO_INCREMENTAL=0 cargo test -p mutsuki-plugin-resource-sqlite -p mutsuki-runtime-host -p mutsuki-runtime-wire --lib --locked`：
 SQLite 24、Host 165、wire 13 通过，Host 1 个 helper ignored。该验证不依赖兄弟仓库路径。
 
-性能产物：[core-smoke-time.json](../target/mutsuki-benchmarks/core-smoke-time.json)。
+性能产物：[core-smoke-time.json](../../target/mutsuki-benchmarks/core-smoke-time.json)。
 报告 ID：`core-smoke-time-20260914T075400Z`，0 failed gates。
 这是本机 smoke，不能替代固定机器的批准基线比较；本轮性能优化另以数据结构复杂度和 bulk 行为测试验证，没有宣称固定比例提速。
 

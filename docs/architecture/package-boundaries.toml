@@ -5,7 +5,12 @@ version = 1
 
 [[rules]]
 name = "runtime-contracts-remain-pure"
-source_roots = ["crates/mutsuki-runtime-contracts"]
+# The optional execution-policy and portability surfaces are contract crates too.
+source_roots = [
+  "crates/mutsuki-runtime-contracts",
+  "crates/mutsuki-runtime-execution-policy",
+  "crates/mutsuki-runtime-portability",
+]
 forbidden_target_roots = [
   "crates/mutsuki-runtime-core",
   "crates/mutsuki-runtime-host",

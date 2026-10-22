@@ -51,12 +51,13 @@ RuntimeProfile + PluginManifest
 `MutsukiDistributedHost` 只能位于普通 Host Runtime 外层，Core、contracts、SDK 与普通
 Host 不得反向依赖集群、共识、跨机 transport 或节点信任实现。
 
-版本化任务录制、checkpoint 和内容寻址属于独立可选 contract surface，规则见
+版本化任务录制、checkpoint 和内容寻址属于独立可选 contract surface（`crates/mutsuki-runtime-portability`），规则见
 [portable-recovery-contracts.md](portable-recovery-contracts.md)。它们不进入默认 Core 热
 路径；外部 Host/工具把 portable task 或 checkpoint 恢复为普通本地 Task，把 portable
 resource materialize 为本地 ResourceRef。
 
-通用执行策略、异构 backend variant 和固定容量性能画像同样是独立可选 contract surface，
+通用执行策略、异构 backend variant 和固定容量性能画像同样是独立可选 contract surface
+（`crates/mutsuki-runtime-execution-policy`），
 规则见 [execution-policy-contracts.md](execution-policy-contracts.md)。单机 Host 可用本地
 capability facts 选择 runner/variant；Core 不收集画像、不启动 sampler，也不把选择扩展为
 全局 placement。
@@ -486,7 +487,8 @@ policy。active backend 引用的 bridge deployment 和 codec 支持关系必须
 启动前校验；host config 中配置的 scheduler policy 必须匹配 active scheduler descriptor。
 完整 backend instantiation supervision、连接 drain / replacement 仍是后续工作。
 
-ABI 动态库不定义第二套 runner/resource 方法面。Core SDK 只为动态库提供版本化的最小
+第一方插件默认以 builtin 部署；ABI v2 面向需要独立构建与发布的外部插件，新能力不要求同时维护
+builtin 与 ABI 两条路径。ABI 动态库不定义第二套 runner/resource 方法面。Core SDK 只为动态库提供版本化的最小
 bytes transport：固定入口建立 connection，Host 与 guest 互相发送 typed MessagePack request /
 response。首个请求必须是 `plugin.initialize({ config })`，配置来自与 builtin 相同的
 owner-defined product config；初始化返回 manifest、codec、bridge 与 provider surface。

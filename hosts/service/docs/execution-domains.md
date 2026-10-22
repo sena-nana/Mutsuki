@@ -50,6 +50,6 @@ submit-to-dispatch, cancel, completion-route and scheduler latency counters,
 plus queue/running/inflight capacity for every execution domain and lane.
 
 The reference performance method is defined in MutsukiCore
-`docs/issue43-acceptance.md`. It compares the same interactive task while an
+`docs/acceptance/issue43-acceptance.md`. It compares the same interactive task while an
 identical blocking background task is active; only the execution topology
 changes between the single-domain and multi-domain cases.

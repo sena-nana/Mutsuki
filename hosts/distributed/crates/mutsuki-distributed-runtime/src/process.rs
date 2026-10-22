@@ -819,8 +819,8 @@ impl ControllerClient {
     pub async fn submit(
         &self,
         global_task_id: GlobalTaskId,
-        portable: mutsuki_runtime_contracts::PortableTask,
-        requirements: mutsuki_runtime_contracts::RequirementSet,
+        portable: mutsuki_runtime_portability::PortableTask,
+        requirements: mutsuki_runtime_execution_policy::RequirementSet,
         direct_inputs: Vec<mutsuki_distributed_contracts::DirectDataRef>,
     ) -> Result<TaskPlacement, DistributedError> {
         match self
@@ -1186,11 +1186,11 @@ mod tests {
         DirectDataRef, LocalTaskOutcome, LocalTaskSnapshot, RunnerGeneration,
     };
     use mutsuki_distributed_host_adapter::HostFuture;
-    use mutsuki_runtime_contracts::{
-        CancelPolicy, CapabilitySet, ContentId, ExecutionMobility, PortabilityCapability,
-        PortabilityCatalog, PortableTask, RequirementSet, RetrySafety, RuntimeEvent,
-        SchemaIdentity, Task, TaskAcceptanceDurability, TaskBatch, TaskHandle,
-        TaskPortabilityDescriptor,
+    use mutsuki_runtime_contracts::{CancelPolicy, RuntimeEvent, Task, TaskBatch, TaskHandle};
+    use mutsuki_runtime_execution_policy::{CapabilitySet, RequirementSet};
+    use mutsuki_runtime_portability::{
+        ContentId, ExecutionMobility, PortabilityCapability, PortabilityCatalog, PortableTask,
+        RetrySafety, SchemaIdentity, TaskAcceptanceDurability, TaskPortabilityDescriptor,
     };
     use serde_json::json;
     use std::fs;

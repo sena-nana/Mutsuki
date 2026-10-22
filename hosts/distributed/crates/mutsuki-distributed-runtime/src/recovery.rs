@@ -5,7 +5,7 @@ use mutsuki_distributed_contracts::{
     MigrationEstimate, MirrorBudget, NodeId, RealtimeSession, RecoveryAction, RecoveryPolicy,
     RecoveryTarget, RecoveryTier, ResourcePolicy, SessionMigrationDecision, WorkerAdvertisement,
 };
-use mutsuki_runtime_contracts::{RetrySafety, TaskCheckpoint};
+use mutsuki_runtime_portability::{RetrySafety, TaskCheckpoint};
 use std::collections::BTreeMap;
 use std::io::Cursor;
 
@@ -127,9 +127,9 @@ impl CheckpointManager {
     pub fn restore(
         &self,
         artifact: &CheckpointArtifactManifest,
-        task_schema: &mutsuki_runtime_contracts::SchemaIdentity,
+        task_schema: &mutsuki_runtime_portability::SchemaIdentity,
         plugin_generation: u64,
-        input_content_id: &mutsuki_runtime_contracts::ContentId,
+        input_content_id: &mutsuki_runtime_portability::ContentId,
     ) -> Result<TaskCheckpoint, DistributedError> {
         if plugin_generation != artifact.plugin_generation
             || task_schema != &artifact.task_schema

@@ -10,6 +10,8 @@ members = [
     "crates/mutsuki-plugin-host",
     "crates/mutsuki-module-catalog",
     "crates/mutsuki-runtime-plugin-loader",
+    "crates/mutsuki-runtime-execution-policy",
+    "crates/mutsuki-runtime-portability",
     "crates/mutsuki-runtime-benchmarks",
     "crates/mutsuki-runtime-host/fixtures/abi-v2-plugin",
     "crates/link/crates/*",
@@ -108,6 +110,8 @@ windows-service = "0.8.1"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
 mutsuki-runtime-contracts = { path = "crates/mutsuki-runtime-contracts" }
+mutsuki-runtime-execution-policy = { path = "crates/mutsuki-runtime-execution-policy" }
+mutsuki-runtime-portability = { path = "crates/mutsuki-runtime-portability" }
 mutsuki-runtime-core = { path = "crates/mutsuki-runtime-core" }
 mutsuki-runtime-host = { path = "crates/mutsuki-runtime-host" }
 mutsuki-runtime-sdk = { path = "crates/mutsuki-runtime-sdk" }

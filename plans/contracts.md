@@ -823,13 +823,13 @@ binding 自动重新 fan-out；补跑必须显式生成 migration/backfill task�
 由 `kits/python-runner/tests/test_contracts_error_codes.py` 直接解析 Rust 源做门禁。
 错误码只能以常量形式声明，不得在发出点写裸字符串字面量，否则镜像检查看不到它。
 
-以下三个 contracts 模块**明确不镜像到 Python**：
+以下三组契约**明确不镜像到 Python**（后两组是独立 crate，不在 `mutsuki-runtime-contracts` 内）：
 
 | 模块 | 不镜像的理由 |
 |---|---|
 | `domain.rs` | RuntimeDomain 是 Host 一致性域与跨域 gateway 的事实，Runner 只在单个域内执行 |
-| `portability.rs` | portable envelope 与 checkpoint 由 Core/分布式 sidecar 生成和校验 |
-| `execution_policy.rs` | variant 选择、质量策略与执行画像属于 Core 调度，Runner 不参与决策 |
+| `mutsuki-runtime-portability` | portable envelope 与 checkpoint 由 Core/分布式 sidecar 生成和校验 |
+| `mutsuki-runtime-execution-policy` | variant 选择、质量策略与执行画像属于 Core 调度，Runner 不参与决策 |
 
 判据是 Runner Link wire 面：这三个模块的类型不出现在
 `crates/mutsuki-runtime-wire/schema/runtime-wire-v1.json` 的任何 operation 中，Python

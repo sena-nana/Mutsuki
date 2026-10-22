@@ -1,8 +1,32 @@
+//! Optional execution-policy contracts: variants, quality/deadline policies and fixed-capacity
+//! profiling. Kept out of `mutsuki-runtime-contracts` so plugins and Core do not compile them;
+//! see `plans/execution-policy-contracts.md`.
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::assigning_clones,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    clippy::default_trait_access,
+    clippy::doc_markdown,
+    clippy::match_same_arms,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value,
+    clippy::return_self_not_must_use,
+    clippy::struct_excessive_bools,
+    clippy::too_many_lines,
+    clippy::trivially_copy_pass_by_ref
+)]
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ERR_EXECUTION_NO_VARIANT, ProtocolId, RuntimeError, ScalarValue};
+use mutsuki_runtime_contracts::{ERR_EXECUTION_NO_VARIANT, ProtocolId, RuntimeError, ScalarValue};
 
 pub const EXECUTION_PROFILE_WINDOW_CAPACITY: usize = 32;
 pub const EXECUTION_PROFILE_HISTOGRAM_BUCKETS: usize = 16;
@@ -174,8 +198,8 @@ fn versions_match(
 pub struct ExecutionVariant {
     pub variant_id: String,
     pub task_type: ProtocolId,
-    pub runner_id: crate::RunnerId,
-    pub plugin_id: crate::PluginId,
+    pub runner_id: mutsuki_runtime_contracts::RunnerId,
+    pub plugin_id: mutsuki_runtime_contracts::PluginId,
     pub implementation_version: String,
     pub requirements: RequirementSet,
     pub quality_level: u8,
@@ -421,7 +445,7 @@ pub struct ExecutionProfileAccumulator {
 
 impl ExecutionProfileAccumulator {
     pub fn new(
-        task_type: impl Into<crate::ProtocolId>,
+        task_type: impl Into<mutsuki_runtime_contracts::ProtocolId>,
         variant_id: impl Into<String>,
         input_bucket: impl Into<String>,
     ) -> Self {

@@ -3,9 +3,11 @@ use mutsuki_distributed_contracts::{
     AcceptanceMode, DurableTaskSpec, GlobalTaskId, GlobalTaskState, NodeId, ReplicaHealth,
     ReplicaRecord, ReplicaTarget, ResourcePolicy,
 };
-use mutsuki_runtime_contracts::{
-    CancelPolicy, ContentId, ExecutionMobility, PortabilityCapability, PortableTask,
-    RequirementSet, RetrySafety, SchemaIdentity, Task, TaskAcceptanceDurability, TaskHandle,
+use mutsuki_runtime_contracts::{CancelPolicy, Task, TaskHandle};
+use mutsuki_runtime_execution_policy::RequirementSet;
+use mutsuki_runtime_portability::{
+    ContentId, ExecutionMobility, PortabilityCapability, PortableTask, RetrySafety, SchemaIdentity,
+    TaskAcceptanceDurability,
 };
 use serde_json::json;
 use std::fs;

@@ -16,6 +16,7 @@ use crate::{
 pub enum ArtifactType {
     Abi,
     Process,
+    /// Reserved: no Host has a WASM backend yet, so loaders reject these packages.
     Wasm,
     Python,
     Native,
@@ -26,6 +27,7 @@ pub enum ArtifactType {
 pub enum PluginDeploymentKind {
     Builtin,
     Abi,
+    /// Reserved: no Host has a WASM backend yet, so loaders reject these packages.
     Wasm,
     Process,
     Python,

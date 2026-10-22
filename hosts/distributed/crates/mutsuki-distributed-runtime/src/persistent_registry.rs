@@ -3,7 +3,8 @@ use mutsuki_distributed_contracts::{
     DurableAttempt, DurableTaskRecord, DurableTaskSpec, GlobalTaskId, GlobalTaskState,
     MetadataCommitProof, NodeId, StagedOutput,
 };
-use mutsuki_runtime_contracts::{ContentId, TaskHandle};
+use mutsuki_runtime_contracts::TaskHandle;
+use mutsuki_runtime_portability::ContentId;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};

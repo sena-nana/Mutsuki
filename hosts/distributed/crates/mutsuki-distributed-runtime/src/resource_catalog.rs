@@ -3,7 +3,7 @@ use mutsuki_distributed_contracts::{
     AcceptanceMode, DistributedError, DistributedErrorKind, ReplicaHealth, ReplicaRecord,
     ReplicaTarget, ResourceCatalogRecord, ResourcePolicy,
 };
-use mutsuki_runtime_contracts::ContentId;
+use mutsuki_runtime_portability::ContentId;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs::{self};

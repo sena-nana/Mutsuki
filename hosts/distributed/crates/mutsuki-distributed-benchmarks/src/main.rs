@@ -13,10 +13,11 @@ use mutsuki_distributed_contracts::{
     WorkerAdvertisement, WorkerHealth,
 };
 use mutsuki_distributed_runtime::ControllerClient;
-use mutsuki_runtime_contracts::{
-    CapabilitySet, ContentId, ExecutionMobility, PortabilityCapability, PortabilityCatalog,
-    PortableTask, RequirementSet, RetrySafety, SchemaIdentity, Task, TaskAcceptanceDurability,
-    TaskPortabilityDescriptor,
+use mutsuki_runtime_contracts::Task;
+use mutsuki_runtime_execution_policy::{CapabilitySet, RequirementSet};
+use mutsuki_runtime_portability::{
+    ContentId, ExecutionMobility, PortabilityCapability, PortabilityCatalog, PortableTask,
+    RetrySafety, SchemaIdentity, TaskAcceptanceDurability, TaskPortabilityDescriptor,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

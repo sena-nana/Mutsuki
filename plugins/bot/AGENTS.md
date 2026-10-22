@@ -86,12 +86,11 @@ Rust 改动运行 `cargo fmt --check`、`cargo check` 和 `cargo test`。平台�
 
 提交前检查 `git status --short` 和定向 diff，提交标题使用中文短句。
 
-## Large-blob Host bridge (#182)
+## 大 blob 的 Host bridge（#182）
 
-Image/card and QQ media consumers may keep synchronous injected Host resource gateways. The
-Host bridges native async and Offloaded providers without holding its actor; the caller worker
-still blocks. Async code must await the async gateways instead. Do not substitute standalone
-LocalResourceClient or access provider storage directly. See
-../../docs/architecture/async-resource-creation.md; report fake tests separately from real accounts.
+图片/卡片与 QQ 媒体消费方可以保留同步注入的 Host 资源 gateway。Host 桥接原生异步与 Offloaded
+provider 时不占用 actor，但调用方 worker 仍会阻塞；异步代码必须改为 await 异步 gateway。不得改用
+独立的 `LocalResourceClient`，也不得直接访问 provider 存储。见
+../../docs/architecture/async-resource-creation.md；fake 测试与真实账号结果分开报告。
 
 技能统一由本目录 `skills/` 路由；旧独立仓库的隐藏技能入口已合并，不维护第二套规则。

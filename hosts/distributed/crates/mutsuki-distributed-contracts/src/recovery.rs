@@ -1,4 +1,4 @@
-use mutsuki_runtime_contracts::{ContentId, RetrySafety, SchemaIdentity};
+use mutsuki_runtime_portability::{ContentId, RetrySafety, SchemaIdentity};
 use serde::{Deserialize, Serialize};
 
 use crate::{GlobalTaskId, NodeId};

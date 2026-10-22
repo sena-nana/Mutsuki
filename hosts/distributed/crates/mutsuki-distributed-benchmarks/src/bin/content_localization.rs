@@ -3,7 +3,7 @@ use mutsuki_distributed_runtime::{
     FileContentServer, FileContentSource, LinkResourceLocalizer, LocalizationIoBudget,
     LocalizationIoMetricsSnapshot, LocalizationIoRuntime, ResourceLocalizer,
 };
-use mutsuki_runtime_contracts::ContentId;
+use mutsuki_runtime_portability::ContentId;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::env;

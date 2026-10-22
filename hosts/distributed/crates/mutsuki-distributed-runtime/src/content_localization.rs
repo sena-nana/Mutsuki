@@ -24,13 +24,13 @@ use tokio::sync::{OnceCell, mpsc, oneshot};
 
 #[derive(Clone, Debug)]
 pub struct FileContentSource {
-    pub content_id: mutsuki_runtime_contracts::ContentId,
+    pub content_id: mutsuki_runtime_portability::ContentId,
     pub path: PathBuf,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct ContentRequest {
-    content_id: mutsuki_runtime_contracts::ContentId,
+    content_id: mutsuki_runtime_portability::ContentId,
     #[serde(default)]
     offset: u64,
 }
@@ -42,13 +42,13 @@ struct ContentManifestReply {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct ContentManifest {
-    content_id: mutsuki_runtime_contracts::ContentId,
+    content_id: mutsuki_runtime_portability::ContentId,
     chunk_bytes: usize,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct ContentTransferAck {
-    content_id: mutsuki_runtime_contracts::ContentId,
+    content_id: mutsuki_runtime_portability::ContentId,
 }
 
 pub struct FileContentServer {
@@ -595,7 +595,7 @@ impl LinkResourceLocalizer {
             .await
     }
 
-    pub fn content_path(&self, content_id: &mutsuki_runtime_contracts::ContentId) -> PathBuf {
+    pub fn content_path(&self, content_id: &mutsuki_runtime_portability::ContentId) -> PathBuf {
         self.destination.join(&content_id.digest)
     }
 }
@@ -626,7 +626,7 @@ fn write_and_commit(
     mut receiver: mpsc::Receiver<BufferedBytes>,
     io: &LocalizationIoRuntime,
     cancelled: &AtomicBool,
-    expected: &mutsuki_runtime_contracts::ContentId,
+    expected: &mutsuki_runtime_portability::ContentId,
     temporary: &Path,
     final_path: &Path,
 ) -> Result<(), DistributedError> {
@@ -697,7 +697,7 @@ fn validate_content_file(
 }
 
 fn validate_sha256_content_id(
-    content_id: &mutsuki_runtime_contracts::ContentId,
+    content_id: &mutsuki_runtime_portability::ContentId,
 ) -> Result<(), DistributedError> {
     if content_id.algorithm != "sha256"
         || content_id.digest.len() != 64
@@ -777,7 +777,7 @@ fn protocol_error(message: &'static str) -> DistributedError {
 mod tests {
     use super::*;
     use crate::{LocalizationIoBudget, LocalizationIoInjectedFault};
-    use mutsuki_runtime_contracts::ContentId;
+    use mutsuki_runtime_portability::ContentId;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn runtime(max_content_bytes: u64) -> LocalizationIoRuntime {

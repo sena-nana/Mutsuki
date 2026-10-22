@@ -5,9 +5,11 @@ use mutsuki_distributed_contracts::{
     ExecutedUncommittedResult, GlobalTaskId, GlobalTaskState, MemberHealth, MemberPulseSummary,
     NodeId, ReconciliationDecision,
 };
-use mutsuki_runtime_contracts::{
-    ContentId, ExecutionMobility, PortabilityCapability, PortableTask, RequirementSet, RetrySafety,
-    SchemaIdentity, Task, TaskAcceptanceDurability,
+use mutsuki_runtime_contracts::Task;
+use mutsuki_runtime_execution_policy::RequirementSet;
+use mutsuki_runtime_portability::{
+    ContentId, ExecutionMobility, PortabilityCapability, PortableTask, RetrySafety, SchemaIdentity,
+    TaskAcceptanceDurability,
 };
 use serde_json::json;
 use std::collections::BTreeMap;

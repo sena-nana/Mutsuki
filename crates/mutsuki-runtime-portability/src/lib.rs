@@ -1,8 +1,32 @@
+//! Optional portable-task, checkpoint and content-addressing contracts. Kept out of
+//! `mutsuki-runtime-contracts` so the default Core path does not compile them; see
+//! `plans/portable-recovery-contracts.md`.
+// Pedantic lints below are inherited from the workspace and still fire in this
+// package. They are listed explicitly so the remaining debt stays auditable and
+// every other pedantic lint keeps failing the build.
+#![allow(
+    clippy::assigning_clones,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    clippy::default_trait_access,
+    clippy::doc_markdown,
+    clippy::match_same_arms,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value,
+    clippy::return_self_not_must_use,
+    clippy::struct_excessive_bools,
+    clippy::too_many_lines,
+    clippy::trivially_copy_pass_by_ref
+)]
+
 use std::io::{Read, Write};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
+use mutsuki_runtime_contracts::{
     ERR_CHECKPOINT_INCOMPATIBLE, ERR_PORTABLE_SCHEMA_UNSUPPORTED, ProtocolId, RefId, RuntimeError,
     ScalarValue, Task,
 };

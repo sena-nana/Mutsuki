@@ -25,11 +25,9 @@ mod common;
 mod domain;
 mod error;
 mod event;
-mod execution_policy;
 mod extension;
 mod observability;
 mod plugin;
-mod portability;
 pub mod resource;
 mod runner;
 mod task;
@@ -72,14 +70,6 @@ pub use error::{
     ERR_STATE_DELTA_DECODE_FAILED, ERR_STATE_ROLLBACK_DECODE_FAILED, ERR_TASK_PROTOCOL_MISMATCH,
 };
 pub use event::{RuntimeEvent, RuntimeEventKind};
-pub use execution_policy::{
-    CachePolicy, CapabilitySet, Criticality, DeadlinePolicy, EXECUTION_PROFILE_HISTOGRAM_BUCKETS,
-    EXECUTION_PROFILE_WINDOW_CAPACITY, ExecutionOutcomeMetadata, ExecutionPolicy, ExecutionProfile,
-    ExecutionProfileAccumulator, ExecutionSample, ExecutionVariant, ExecutionVariantCatalog,
-    FailureMode, FixedEwma, FixedHistogram, FixedSampleWindow, LatencyClass, LocalSchedulingHint,
-    NoPlacementPolicy, PartialResultPolicy, PressureLevel, ProfilingBudget, QualityPolicy,
-    RequirementSet, VariantSelection,
-};
 pub use extension::{
     BridgeDescriptor, CodecDescriptor, HostExtensionDescriptor, HostExtensionKind,
     PluginBackendDescriptor, SchedulerPolicyDescriptor, WorkflowDescriptor,
@@ -96,13 +86,6 @@ pub use plugin::{
     ProtocolDescriptor, RequirementBinding, RequirementKind, RuntimeCapabilityGraph,
     RuntimeLoadPlan, RuntimeLock, RuntimeProfile, RuntimeProfileMode, SurfaceCompatibility,
     SurfaceOccupancy, SurfaceOccupancyHandle, SurfaceOccupancyHandleKind, SurfaceRequirement,
-};
-pub use portability::{
-    ContentId, ExecutionMobility, PORTABLE_TASK_ENVELOPE_SCHEMA_ID,
-    PORTABLE_TASK_ENVELOPE_SCHEMA_VERSION, PortabilityCapability, PortabilityCatalog,
-    PortableResourceDescriptor, PortableTask, RecoveryMode, ResourcePersistence, RetrySafety,
-    SchemaIdentity, TASK_CHECKPOINT_ENVELOPE_SCHEMA_ID, TASK_CHECKPOINT_ENVELOPE_SCHEMA_VERSION,
-    TaskAcceptanceDurability, TaskCheckpoint, TaskPortabilityDescriptor,
 };
 pub use resource::{
     CommandPlan, ExclusiveWriteLease, ExportPlan, LeaseToken, PatchDescriptor, PlanReceipt,

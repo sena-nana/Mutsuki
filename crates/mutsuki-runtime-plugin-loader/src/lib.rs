@@ -58,6 +58,8 @@ pub enum PluginLoaderError {
     BuiltinUnavailable(PluginId),
     #[error("dynamic plugin {0} declares a native artifact that is not linked into this build")]
     DynamicNative(PluginId),
+    #[error("plugin {0} declares a wasm artifact; no Host has a WASM backend yet")]
+    WasmUnsupported(PluginId),
     #[error("duplicate plugin id {0} in builtin or dynamic catalogs")]
     DuplicatePlugin(PluginId),
     #[error("ABI artifact path for plugin {plugin_id} is invalid: {detail}")]
@@ -302,6 +304,17 @@ impl PluginInventory {
                         plugin_id: Some(plugin_id.clone()),
                         deployment: Some(deployment),
                         detail: PluginLoaderError::DynamicNative(plugin_id).to_string(),
+                    });
+                    continue;
+                }
+                // A wasm package would otherwise register a manifest whose runners nothing
+                // implements, failing only when a task is dispatched.
+                if matches!(record.manifest.artifact.artifact_type, ArtifactType::Wasm) {
+                    diagnostics.push(PluginDiagnostic {
+                        manifest_path,
+                        plugin_id: Some(plugin_id.clone()),
+                        deployment: Some(deployment),
+                        detail: PluginLoaderError::WasmUnsupported(plugin_id).to_string(),
                     });
                     continue;
                 }
@@ -751,6 +764,35 @@ mod tests {
             inventory.diagnostics[0]
                 .detail
                 .contains("not linked into this build")
+        );
+    }
+
+    #[test]
+    fn wasm_artifacts_are_rejected_until_a_host_has_a_wasm_backend() {
+        let root = tempdir().unwrap();
+        let installed = root.path().join("installed");
+        let wasm_dir = installed.join("wasm-test");
+        fs::create_dir_all(&wasm_dir).unwrap();
+        write_plugin(
+            &wasm_dir,
+            manifest(
+                "test.wasm",
+                ArtifactType::Wasm,
+                "plugin.wasm",
+                "sha256:wasm",
+            ),
+        );
+        let inventory = PluginInventory::scan(
+            &[installed],
+            &root.path().join("disabled"),
+            BuiltinSelection::default(),
+        )
+        .unwrap();
+        assert!(inventory.records.is_empty());
+        assert!(
+            inventory.diagnostics[0]
+                .detail
+                .contains("no Host has a WASM backend")
         );
     }
 

@@ -1,4 +1,4 @@
-use mutsuki_runtime_contracts::{PortableTask, TaskCheckpoint};
+use mutsuki_runtime_portability::{PortableTask, TaskCheckpoint};
 
 use crate::RuntimeResult;
 

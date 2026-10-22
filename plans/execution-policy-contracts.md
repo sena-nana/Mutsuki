@@ -5,6 +5,7 @@
 
 ## 可选接入与旧插件
 
+类型位于独立 crate `mutsuki-runtime-execution-policy`，插件与 Core 不编译它。
 `ExecutionVariantCatalog` 是独立可选 catalog，不增加 `Task`、`RunnerDescriptor`、
 `PluginManifest`、load plan 或 execute ABI 的必填字段。旧插件/旧 Host 不创建也不调用
 catalog，继续使用既有 runner binding 和本地 scheduler 行为。
