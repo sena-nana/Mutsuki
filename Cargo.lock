@@ -5037,13 +5037,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mutsuki-protocol-resource"
-version = "0.1.0"
-dependencies = [
- "serde_json",
-]
-
-[[package]]
 name = "mutsuki-protocol-workflow"
 version = "0.1.0"
 dependencies = [

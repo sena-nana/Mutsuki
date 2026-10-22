@@ -53,13 +53,15 @@ broadcast；fs / http / sqlite 插件通过 public facade task 派生 `effect.*`
 保持 Core 只调度协议事实。后续能力继续作为普通插件 / 协议包实现，不能回灌为 Core 内置业务协议、
 外部副作用或应用状态分支。
 
-`MutsukiStdPlugins` 当前包含 `mutsuki-protocol-workflow`、`mutsuki-protocol-resource`、
+`MutsukiStdPlugins` 当前包含 `mutsuki-protocol-workflow`、
 `mutsuki-protocol-fs`、`mutsuki-protocol-http`、`mutsuki-protocol-db`、
 `mutsuki-protocol-observe`、`mutsuki-protocol-config`、`mutsuki-protocol-dev`、
 `mutsuki-protocol-browser` 和 `mutsuki-protocol-image`。
 这些协议包只暴露 protocol id 常量、`VERSION`、`ABI_CODEC`、稳定 protocol id 列表和
 input / output / error schema 函数，不提供 runner、executor、资源后端或默认执行策略。
 SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 细化时继续补齐。
+资源能力经 Core `ResourceRef` 与 `ResourcePlanGateway` 表达，不再保留无实现的
+`mutsuki.resource.*` 协议包。
 
 ## 已完成基线
 
