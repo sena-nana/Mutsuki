@@ -199,6 +199,50 @@ fn one_thousand_delayed_io_tasks_share_two_executor_threads_without_repolling() 
 }
 
 #[test]
+fn idle_reentrant_async_runners_do_not_reserve_shared_executor_slots() {
+    // Two idle runners whose descriptor budgets together cover every executor slot must not
+    // starve a third async runner with ready work in the same scheduling pass.
+    let executor_slots = 4;
+    let mut idle_a = async_descriptor(executor_slots / 2);
+    idle_a.runner_id = "async.a.idle".into();
+    idle_a.accepted_protocol_ids = vec!["async.a.idle.work".into()];
+    let mut idle_b = async_descriptor(executor_slots / 2);
+    idle_b.runner_id = "async.b.idle".into();
+    idle_b.accepted_protocol_ids = vec!["async.b.idle.work".into()];
+    let mut busy = async_descriptor(1);
+    busy.runner_id = "async.z.busy".into();
+    let invocations = Arc::new(AtomicUsize::new(0));
+    let mut bootstrapper = RuntimeBootstrapper::new();
+    bootstrapper.register_manifest(runner_manifest(
+        "plugin-a",
+        vec![idle_a.clone(), idle_b.clone(), busy.clone()],
+    ));
+    for descriptor in [idle_a, idle_b, busy] {
+        bootstrapper.register_async_handler(Arc::new(DelayedAsyncHandler {
+            descriptor,
+            delay: Duration::ZERO,
+            invocations: invocations.clone(),
+            active: Arc::new(AtomicUsize::new(0)),
+            max_active: Arc::new(AtomicUsize::new(0)),
+        }));
+    }
+    let config = HostRuntimeConfig {
+        event_driven: true,
+        ..HostRuntimeConfig::default()
+    }
+    .with_async_executor(Arc::new(
+        TokioAsyncExecutor::new(1, executor_slots, executor_slots, 1024 * 1024).unwrap(),
+    ));
+    let runtime = bootstrapper
+        .into_host_runtime_with_config(runtime_profile(), config)
+        .unwrap();
+
+    let handles = submit_tasks(&runtime, 1);
+    wait_for_all(&runtime, &handles, TaskStatus::Completed);
+    assert_eq!(invocations.load(Ordering::SeqCst), 1);
+}
+
+#[test]
 fn async_runner_without_host_executor_fails_structurally() {
     let (runtime, invocations, _) = async_host(1, Duration::ZERO, false);
     let handles = submit_tasks(&runtime, 1);

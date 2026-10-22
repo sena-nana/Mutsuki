@@ -304,8 +304,15 @@ pub(super) fn schedule_ready_at(
                     .actor_metrics
                     .record_reserved_capacity_use(reserved_uses);
             }
-            if decision.dispatch_limit > 0 && decision.budget.max_batches > 0 {
-                *reservations = (*reservations).saturating_add(decision.budget.max_batches);
+            // Reserve only the batches this runner's ready backlog can fill. Runners share one
+            // async executor (or one class pool); reserving an idle runner's whole descriptor
+            // budget would leave later runners in the same pass with no slots at all.
+            let claimable_batches = load
+                .queued_count
+                .div_ceil(descriptor.batch.max_batch_entries.max(1));
+            let reserved_batches = decision.budget.max_batches.min(claimable_batches);
+            if decision.dispatch_limit > 0 && reserved_batches > 0 {
+                *reservations = (*reservations).saturating_add(reserved_batches);
             }
             Ok(decision)
         },
