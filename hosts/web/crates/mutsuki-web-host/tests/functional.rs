@@ -38,6 +38,7 @@ impl ExampleExtension {
             id: "mutsuki.example.web".into(),
             version: "0.1.0".into(),
             entry: "index.js".into(),
+            styles: Vec::new(),
             capabilities: vec!["example.read".into()],
             permissions: vec!["pages".into(), "navigation".into()],
             assets: vec![mutsuki_web_protocol::AssetEntry {
@@ -70,6 +71,7 @@ impl ExampleExtension {
                 id: "mutsuki.failing.web".into(),
                 version: "0.1.0".into(),
                 entry: "missing.js".into(),
+                styles: Vec::new(),
                 capabilities: vec![],
                 permissions: vec![],
                 assets: vec![],

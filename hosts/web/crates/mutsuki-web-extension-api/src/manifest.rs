@@ -31,6 +31,8 @@ pub enum ManifestError {
     },
     #[error("missing entry asset: {0}")]
     MissingEntry(String),
+    #[error("stylesheet is not a hashed asset: {0}")]
+    UndeclaredStyle(String),
     #[error("untrusted extension source: {0}")]
     UntrustedSource(String),
 }
@@ -57,12 +59,26 @@ impl BundledManifest<'_> {
             id: self.id.into(),
             version: self.version.into(),
             entry: self.entry.into(),
+            styles: stylesheet_assets(&assets),
             capabilities: self.capabilities,
             permissions: vec!["pages".into(), "navigation".into()],
             assets,
             protocol_version: WEB_PROTOCOL_VERSION.into(),
         }
     }
+}
+
+/// Bundled stylesheets are every `.css` asset; the shell links them before the entry.
+fn stylesheet_assets(assets: &[AssetEntry]) -> Vec<String> {
+    assets
+        .iter()
+        .filter(|asset| {
+            Path::new(&asset.path)
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("css"))
+        })
+        .map(|asset| asset.path.clone())
+        .collect()
 }
 
 /// Writes an extension's embedded assets and their content-addressed manifest.
@@ -182,6 +198,15 @@ pub fn validate_manifest(
         return Err(ManifestError::MissingEntry(manifest.entry.clone()));
     }
 
+    // Styles are linked by the shell, so each must be covered by the hash check below.
+    if let Some(style) = manifest
+        .styles
+        .iter()
+        .find(|style| !manifest.assets.iter().any(|asset| &asset.path == *style))
+    {
+        return Err(ManifestError::UndeclaredStyle(style.clone()));
+    }
+
     for asset in &manifest.assets {
         let asset_path = root_dir.join(&asset.path);
         let bytes = fs::read(&asset_path).map_err(|err| ManifestError::Io(err.to_string()))?;
@@ -257,6 +282,7 @@ mod tests {
             id: "example".into(),
             version: "0.1.0".into(),
             entry: "index.js".into(),
+            styles: Vec::new(),
             capabilities: vec![],
             permissions: vec![],
             assets: vec![],
@@ -280,6 +306,7 @@ mod tests {
             id: "example".into(),
             version: "0.1.0".into(),
             entry: BUNDLED_ENTRY_ASSET.into(),
+            styles: Vec::new(),
             capabilities: vec![],
             permissions: vec![],
             assets,
@@ -325,6 +352,7 @@ mod tests {
             id: "example".into(),
             version: "0.1.0".into(),
             entry: "index.js".into(),
+            styles: Vec::new(),
             capabilities: vec!["example.read".into()],
             permissions: vec![],
             assets: vec![AssetEntry {
@@ -335,5 +363,31 @@ mod tests {
             protocol_version: WEB_PROTOCOL_VERSION.into(),
         };
         validate_manifest(&manifest, dir.path()).unwrap();
+
+        let unhashed_style = ExtensionManifest {
+            styles: vec!["index.css".into()],
+            ..manifest
+        };
+        assert_eq!(
+            validate_manifest(&unhashed_style, dir.path()),
+            Err(ManifestError::UndeclaredStyle("index.css".into()))
+        );
+    }
+
+    #[test]
+    fn bundled_manifest_declares_css_assets_as_styles() {
+        let asset = |path: &str| AssetEntry {
+            path: path.into(),
+            content_hash: content_hash(path.as_bytes()),
+            bytes: 1,
+        };
+        let manifest = BundledManifest {
+            id: "mutsuki.example",
+            version: "0.1.0",
+            entry: BUNDLED_ENTRY_ASSET,
+            capabilities: vec![],
+        }
+        .build(vec![asset("index.js"), asset("index.css")]);
+        assert_eq!(manifest.styles, vec!["index.css".to_string()]);
     }
 }

@@ -1,0 +1,13 @@
+[package]
+name = "mutsuki-web-shared-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Embedded shared browser runtime (vue, vue-router, pinia, web-sdk, ui, web-shell) with content-addressed names and an import map"
+
+[dependencies]
+serde_json.workspace = true
+sha2.workspace = true
+
+[lints]
+workspace = true

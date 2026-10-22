@@ -70,6 +70,7 @@ impl WebExtension for SecretStatusWebExtension {
             id: PLUGIN_ID.into(),
             version: PLUGIN_VERSION.into(),
             entry: String::new(),
+            styles: Vec::new(),
             capabilities: vec![CAPABILITY_RUNTIME_READ.into()],
             permissions: vec![],
             assets: vec![],

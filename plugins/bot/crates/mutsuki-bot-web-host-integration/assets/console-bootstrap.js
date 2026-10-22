@@ -2,7 +2,7 @@ import {
   createWebShellRuntime,
   createWebUiThemeController,
   mountWebShell,
-} from "./shared/web-shell.js";
+} from "@mutsuki/web-shell";
 
 const theme = createWebUiThemeController();
 const protocol = location.protocol === "https:" ? "wss" : "ws";

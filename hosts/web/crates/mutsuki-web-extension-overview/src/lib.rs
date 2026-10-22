@@ -145,14 +145,7 @@ fn manifest_for(assets: Vec<AssetEntry>) -> ExtensionManifest {
 }
 
 pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::Error> {
+    // The design-system stylesheet is part of the shared runtime the shell links once.
     let js = include_str!("../assets/index.js");
-    let css = include_str!("../assets/mutsuki-ui.css");
-    materialize_bundled_assets(
-        out_dir,
-        manifest_for,
-        &[
-            ("index.js", js.as_bytes()),
-            ("mutsuki-ui.css", css.as_bytes()),
-        ],
-    )
+    materialize_bundled_assets(out_dir, manifest_for, &[("index.js", js.as_bytes())])
 }

@@ -104,6 +104,10 @@ pub struct ExtensionManifest {
     pub id: String,
     pub version: String,
     pub entry: String,
+    /// Stylesheets (asset paths) the shell links before importing `entry`. Shared design
+    /// system CSS is not listed here: the shell links it once for every page.
+    #[serde(default)]
+    pub styles: Vec<String>,
     #[serde(default)]
     pub capabilities: Vec<String>,
     #[serde(default)]

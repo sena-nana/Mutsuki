@@ -4286,6 +4286,7 @@ dependencies = [
  "mutsuki-web-extension-upgrade",
  "mutsuki-web-host",
  "mutsuki-web-protocol",
+ "mutsuki-web-shared-runtime",
  "serde",
  "serde_json",
  "tempfile",
@@ -5728,6 +5729,14 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "mutsuki-web-shared-runtime"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "sha2 0.11.0",
 ]
 
 [[package]]

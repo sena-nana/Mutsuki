@@ -26,6 +26,19 @@ Use for `packages/web-{build,sdk,shell}` and the root pnpm workspace files.
 - `check_workspace.py::check_web_packages` enforces all of the above and freezes the hand-written
   `assets/*.js` allowlist (`HANDWRITTEN_WEB_ASSETS`); a Vue migration removes its entry.
 
+## Shared Runtime
+
+- `packages/web-runtime` builds one module per import-map specifier into the committed
+  `browser/shared/`: `vue` (runtime-only, production), `vue-router`, `pinia` (both with `vue`
+  external), `@mutsuki/web-sdk`, `@mutsuki/ui`, `@mutsuki/web-shell`, plus `ui.css`. Each module
+  imports the others only by bare specifier; `checkBundle` runs on the output.
+- `crates/mutsuki-web-shared-runtime` embeds exactly that directory (a test fails on drift),
+  serves files as `shared/<name>.<sha256:16>.<ext>`, and owns `import_map_json()` (relative URLs),
+  `import_map_script()` and `csp_script_hash()`. Consoles inline the import map and put its hash
+  in `script-src`; no `'unsafe-inline'` scripts.
+- `ExtensionManifest.styles` lists extension stylesheets (hashed assets); the shell links them
+  before importing the entry. The design-system CSS is never copied into an extension.
+
 ## Rules
 
 - `buildExtension` runs Vite library mode with `@vitejs/plugin-vue`: one `index.js`, at most one

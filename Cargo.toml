@@ -152,6 +152,7 @@ mutsuki-web-extension = { path = "hosts/web/crates/mutsuki-web-extension" }
 mutsuki-web-host = { path = "hosts/web/crates/mutsuki-web-host" }
 mutsuki-web-protocol = { path = "hosts/web/crates/mutsuki-web-protocol" }
 mutsuki-web-recovery = { path = "hosts/web/crates/mutsuki-web-recovery" }
+mutsuki-web-shared-runtime = { path = "hosts/web/crates/mutsuki-web-shared-runtime" }
 
 mutsuki-distributed-contracts = { path = "hosts/distributed/crates/mutsuki-distributed-contracts" }
 mutsuki-distributed-control-client = { path = "hosts/distributed/crates/mutsuki-distributed-control-client" }

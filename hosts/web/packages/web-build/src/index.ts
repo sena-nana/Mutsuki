@@ -73,9 +73,6 @@ export function extensionViteConfig(options: {
     plugins: [vue()],
     define: {
       "process.env.NODE_ENV": JSON.stringify("production"),
-      __VUE_OPTIONS_API__: "false",
-      __VUE_PROD_DEVTOOLS__: "false",
-      __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: "false",
     },
     build: {
       outDir: options.outDir,
@@ -92,6 +89,8 @@ export function extensionViteConfig(options: {
       },
       rolldownOptions: {
         external: (id) => externals.has(id) || id.startsWith("node:"),
+        // Vite keeps whitespace in ES library builds; shipped extensions are minified.
+        output: { minify: true },
       },
     },
   };

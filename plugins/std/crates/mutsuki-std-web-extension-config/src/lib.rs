@@ -125,6 +125,7 @@ impl WebExtension for ConfigWebExtension {
             id: PLUGIN_ID.into(),
             version: PLUGIN_VERSION.into(),
             entry: "index.js".into(),
+            styles: Vec::new(),
             capabilities: self.capabilities.clone(),
             permissions: vec!["pages".into(), "navigation".into()],
             assets: self
@@ -415,6 +416,7 @@ fn load_or_synthesize_manifest(root: &Path) -> Result<ExtensionManifest, Extensi
         id: PLUGIN_ID.into(),
         version: PLUGIN_VERSION.into(),
         entry: "index.js".into(),
+        styles: Vec::new(),
         capabilities: vec![
             mutsuki_config_service::capability::SCHEMA_READ.into(),
             mutsuki_config_service::capability::VALUE_READ.into(),
@@ -433,41 +435,16 @@ fn load_or_synthesize_manifest(root: &Path) -> Result<ExtensionManifest, Extensi
 }
 
 /// Write bundled frontend assets for the default config web plugin.
+///
+/// The design-system stylesheet is part of the shared runtime the shell links once.
 pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::Error> {
     std::fs::create_dir_all(out_dir)?;
     let js = include_str!("../assets/index.js");
-    let css = include_str!("../assets/mutsuki-ui.css");
+    // Rematerializing into the same directory must not reuse a stale manifest.
+    let _ = std::fs::remove_file(out_dir.join("manifest.json"));
     std::fs::write(out_dir.join("index.js"), js)?;
-    std::fs::write(out_dir.join("mutsuki-ui.css"), css)?;
-    let entry_bytes = js.as_bytes();
-    let css_bytes = css.as_bytes();
-    let manifest = ExtensionManifest {
-        manifest_version: EXTENSION_MANIFEST_VERSION,
-        id: PLUGIN_ID.into(),
-        version: PLUGIN_VERSION.into(),
-        entry: "index.js".into(),
-        capabilities: vec![
-            mutsuki_config_service::capability::SCHEMA_READ.into(),
-            mutsuki_config_service::capability::VALUE_READ.into(),
-            mutsuki_config_service::capability::VALUE_WRITE.into(),
-            mutsuki_config_service::capability::SECRET_WRITE.into(),
-            mutsuki_config_service::capability::APPLY.into(),
-        ],
-        permissions: vec!["pages".into(), "navigation".into()],
-        assets: vec![
-            AssetEntry {
-                path: "index.js".into(),
-                content_hash: content_hash(entry_bytes),
-                bytes: entry_bytes.len() as u64,
-            },
-            AssetEntry {
-                path: "mutsuki-ui.css".into(),
-                content_hash: content_hash(css_bytes),
-                bytes: css_bytes.len() as u64,
-            },
-        ],
-        protocol_version: WEB_PROTOCOL_VERSION.into(),
-    };
+    let manifest = load_or_synthesize_manifest(out_dir)
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
     std::fs::write(
         out_dir.join("manifest.json"),
         serde_json::to_vec_pretty(&manifest).expect("manifest"),

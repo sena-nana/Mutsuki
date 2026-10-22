@@ -1,0 +1,9 @@
+{
+  "extends": "../../../../tsconfig.web.base.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["src", "tests"]
+}

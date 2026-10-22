@@ -21,39 +21,8 @@ use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use uuid::Uuid;
 
-#[test]
-fn console_css_declares_two_column_workspace() {
-    let css = include_str!("../assets/mutsuki-ui.css");
-    assert!(
-        !css.contains("@import"),
-        "mutsuki-ui.css must fully inline @import for static include_str serving"
-    );
-    assert!(css.contains(".mutsuki-console.lilia-workspace"));
-    assert!(css.contains("--mutsuki-nav-width: 232px"));
-    assert!(css.contains("grid-template-columns: var(--mutsuki-nav-width) minmax(0, 1fr)"));
-    assert!(css.contains("display: grid"));
-    assert!(css.contains(".lilia-workspace"));
-    assert!(css.contains(".secondary-panel"));
-    assert!(css.contains(".page-header"));
-    assert!(css.contains(".page-scroll"));
-    assert!(css.contains(".card"));
-    assert!(css.contains(".kv"));
-    assert!(css.contains(".mutsuki-console .trajectory"));
-    assert!(css.contains(".mutsuki-console .trajectory-row"));
-    assert!(css.contains(".lilia-node-editor"));
-    assert!(css.contains(".lilia-node-editor__viewport"));
-    assert!(css.contains(".lilia-node-editor__wire"));
-    assert!(css.contains(".ctx-menu"));
-    assert!(css.contains(".console-page-header__actions"));
-    assert!(css.contains(".mutsuki-console .overview-cards"));
-    assert!(css.contains("--overview-card-row-height: 168px"));
-    assert!(css.contains("--overview-card-columns: 4"));
-    assert!(css.contains(".mutsuki-console .overview-dashboard .overview-cards"));
-    assert!(css.contains(".is-context-hidden"));
-}
-
 #[tokio::test]
-async fn embedded_console_serves_workspace_css_and_shell_markup() {
+async fn embedded_console_document_resolves_through_its_import_map() {
     let config = WebConsoleConfig {
         enabled: true,
         listen: "127.0.0.1:0".into(),
@@ -79,110 +48,41 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
     host.start().await.unwrap();
     let addr = host.listen_addr().unwrap().to_string();
 
-    let css = http_get_body(&addr, "/mutsuki-ui.css").await;
-    assert!(css.contains(".mutsuki-console--activity-shell"));
-    assert!(css.contains(".console-activity__item.is-active"));
-    assert!(!css.contains("@import"));
-
-    let shell_js = http_get_body(&addr, "/shared/web-shell.js").await;
-    assert!(shell_js.contains("console-activity"));
-    assert!(shell_js.contains("console-context"));
-    assert!(shell_js.contains("console-page-header__actions"));
-    assert!(shell_js.contains("is-context-hidden"));
-    assert!(shell_js.contains("finalizePluginActivity"));
-    assert!(shell_js.contains("sandbox:"));
-    let options: serde_json::Value =
-        serde_json::from_str(&http_get_body(&addr, "/console-options.json").await).unwrap();
-    let activities = options["activities"].as_array().unwrap();
-    assert!(!activities.iter().any(|item| item["id"] == "config"));
-    assert!(!activities.iter().any(|item| item["id"] == "plugins"));
-    assert!(!activities.iter().any(|item| item["id"] == "bot"));
-    assert!(!activities.iter().any(|item| item["id"] == "automation"));
-    assert!(!activities.iter().any(|item| item["id"] == "sandbox"));
+    let document = ConsoleDocument::fetch(&addr).await;
+    document.assert_complete(&addr).await;
     assert!(
-        activities
-            .iter()
-            .any(|item| item["id"] == "settings" && item["position"] == "bottom")
+        document.csp.contains("img-src 'self' data: blob:") && !document.csp.contains("qlogo"),
+        "console document CSP must stay at baseline when QQ/sandbox WebExtensions are not selected"
     );
-    assert!(
-        activities
-            .iter()
-            .any(|item| item["id"] == "system" && item["position"] == "top")
-    );
-    let extensions = options["extensions"].as_array().unwrap();
-    for id in ["overview", "control", "database"] {
-        let url = extensions
-            .iter()
-            .find(|item| item["id"] == id)
-            .and_then(|item| item["url"].as_str())
-            .expect("enabled extension must have a module URL");
-        let path = url.trim_start_matches('.');
-        assert!(!http_get_body(&addr, path).await.is_empty());
-    }
-    let overview_js = http_get_body(&addr, "/extensions/overview/index.js").await;
-    assert!(overview_js.contains("overview-dashboard"));
-    assert!(overview_js.contains("metric-grid"));
-    assert!(overview_js.contains("overview.cards"));
-    assert!(overview_js.contains("overview-cards"));
-    assert!(overview_js.contains("overviewCardSpan"));
-    assert!(overview_js.contains("--overview-card-col-span"));
-    assert!(overview_js.contains(r#"aria-label", "刷新""#));
-    assert!(!overview_js.contains("mountQqAccountCards"));
-    assert!(!overview_js.contains("qq-bot/index.js"));
-    let control_js = http_get_body(&addr, "/extensions/control/index.js").await;
-    assert!(control_js.contains("mountTrajectoryView"));
-    assert!(control_js.contains("./trajectory-view.js"));
-    assert!(!control_js.contains("id=\"task-event-seq\""));
-    assert!(css.contains(".mutsuki-console .trajectory"));
-    assert!(css.contains(".mutsuki-console .trajectory-row"));
-    assert!(css.contains(".mutsuki-console .overview-dashboard"));
-    assert!(css.contains(".mutsuki-console .metric-grid"));
-    assert!(css.contains(".mutsuki-console .overview-cards"));
-    assert!(css.contains("--overview-card-row-height: 168px"));
-    assert!(css.contains("--overview-card-columns: 4"));
-    assert!(css.contains(".mutsuki-console .overview-dashboard .overview-cards"));
-    assert!(css.contains(".console-page-header__actions"));
-    assert!(
-        http_get_body(&addr, "/trajectory-model.js")
-            .await
-            .contains("projectAgentEvents")
-    );
-    assert!(
-        http_get_body(&addr, "/trajectory-view.js")
-            .await
-            .contains("mountTrajectoryView")
-    );
-
-    let html = http_get_body(&addr, "/").await;
-    assert!(html.contains("mutsuki-ui.css?v="));
-    assert!(html.contains("console-bootstrap.js?v="));
-    let (headers, shell) = http_get_parts(&addr, "/index.html").await;
+    let (headers, _) = http_get_parts(&addr, "/index.html").await;
     let header_csp = headers.to_ascii_lowercase();
     assert!(
         header_csp.contains("img-src 'self' data: blob:") && !header_csp.contains("qlogo"),
         "Host CSP header must stay at baseline when QQ/sandbox WebExtensions are not selected"
     );
+
+    let activities = document.options["activities"].as_array().unwrap();
+    let activity_ids = activities
+        .iter()
+        .map(|item| item["id"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(activity_ids, ["home", "system", "settings"]);
     assert!(
-        shell.contains("img-src 'self' data: blob:") && !shell.contains("qlogo"),
-        "console document CSP must stay at baseline when QQ/sandbox WebExtensions are not selected"
+        activities
+            .iter()
+            .any(|item| item["id"] == "settings" && item["position"] == "bottom")
+    );
+    assert_eq!(
+        document.extension_ids(),
+        ["overview", "control", "database"]
     );
 
-    let bootstrap = http_get_body(&addr, "/console-bootstrap.js").await;
-    assert!(bootstrap.contains("createWebShellRuntime"));
-    assert!(bootstrap.contains("createWebUiThemeController"));
-    assert!(!bootstrap.contains("new WebSocket"));
-    assert!(!bootstrap.contains("JSON.stringify"));
-    assert!(
-        http_get_body(&addr, "/shared/web-sdk.js")
-            .await
-            .contains("WebBridgeClient")
-    );
-    assert!(
-        http_get_body(&addr, "/shared/web-shell.js")
-            .await
-            .contains("createWebShellRuntime")
-    );
+    // Agent trajectory modules stay importable from the document root and the control page.
+    for path in ["/trajectory-model.js", "/trajectory-view.js"] {
+        assert!(!http_get_body(&addr, path).await.is_empty());
+    }
 
+    // Fonts are host-served next to the document.
     for weight in ["400", "500", "600", "700"] {
         let path = format!("/fonts/noto-sans-sc-chinese-simplified-{weight}-normal.woff2");
         let (headers, body) = http_get_bytes(&addr, &path).await;
@@ -342,10 +242,13 @@ async fn embedded_console_with_config_shell() {
     assert_eq!(providers.as_array().unwrap().len(), 0);
 
     let addr = host.listen_addr().unwrap().to_string();
-    let bootstrap = http_get_body(&addr, "/console-bootstrap.js").await;
-    assert!(bootstrap.contains("mountWebShell"));
-    let options = http_get_body(&addr, "/console-options.json").await;
-    let parsed: serde_json::Value = serde_json::from_str(&options).unwrap();
+    let document = ConsoleDocument::fetch(&addr).await;
+    document.assert_complete(&addr).await;
+    assert_eq!(
+        document.extension_ids().last().map(String::as_str),
+        Some("config")
+    );
+    let parsed = &document.options;
     assert!(
         parsed["activities"]
             .as_array()
@@ -367,12 +270,6 @@ async fn embedded_console_with_config_shell() {
             .iter()
             .any(|item| item["id"] == "settings")
     );
-    let config_path = versioned_module_path(&options, "./extensions/config/index.js");
-    let config_js = http_get_body(&addr, &format!("/{config_path}")).await;
-    assert!(config_js.contains("export function mountConfigPanel"));
-    assert!(config_js.contains("activityId: \"plugins\""));
-    assert!(config_js.contains("plugin.home"));
-
     host.stop().await.unwrap();
 }
 
@@ -601,21 +498,15 @@ async fn embedded_console_mounts_qq_management_extension() {
         shell.contains("https://*.qlogo.cn") && shell.contains("https://*.nt.qq.com.cn"),
         "qq WebExtension must declare QQ image hosts in the document CSP"
     );
-    let options = http_get_body(&addr, "/console-options.json").await;
-    let qq_path = versioned_module_path(&options, "./extensions/qq-bot/index.js");
-    let qq_js = http_get_body(&addr, &format!("/{qq_path}")).await;
-    // The console owns which extension point the QQ module attaches to; its rendered copy belongs
-    // to the plugin and is asserted against the plugin's own manifest.
-    assert!(qq_js.contains("mountQqAccountCards"));
-    assert!(qq_js.contains("overview.cards"));
-    assert!(qq_js.contains("pluginId: QQ_PROVIDER_ID"));
-    assert!(!qq_js.contains("qq-bot.page"));
+    let document = ConsoleDocument::fetch(&addr).await;
+    document.assert_complete(&addr).await;
+    assert!(document.extension_ids().contains(&"qq-bot".to_string()));
     let snap = ws_rpc_params(&addr, "qq-bot", "snapshot", json!({}))
         .await
         .unwrap();
     assert_eq!(snap["accounts"][0]["account_id"], "main");
     assert_eq!(snap["accounts"][0]["credential_status"], "configured");
-    assert!(!dirs.qq_assets.as_os_str().is_empty());
+    assert!(dirs.page_assets("qq-bot").is_some());
     host.stop().await.unwrap();
 }
 
@@ -657,26 +548,22 @@ async fn embedded_console_serves_sandbox_panel() {
         shell.contains("https://*.qlogo.cn"),
         "sandbox WebExtension must declare QQ image hosts in the document CSP"
     );
-    let options = http_get_body(&addr, "/console-options.json").await;
-    let parsed: serde_json::Value = serde_json::from_str(&options).unwrap();
+    let document = ConsoleDocument::fetch(&addr).await;
+    document.assert_complete(&addr).await;
     assert!(
-        !parsed["activities"]
+        !document.options["activities"]
             .as_array()
             .unwrap()
             .iter()
             .any(|item| item["id"] == "sandbox")
     );
-    let path = versioned_module_path(&options, "./extensions/sandbox/index.js");
-    let js = http_get_body(&addr, &format!("/{path}")).await;
-    assert!(js.contains("mountSandboxPanel"));
-    assert!(js.contains("activityId: \"sandbox\""));
-    assert!(js.contains("ctx.activities.register"));
+    assert!(document.extension_ids().contains(&"sandbox".to_string()));
     let snap = ws_rpc_params(&addr, "sandbox", "snapshot", json!({}))
         .await
         .unwrap();
     assert_eq!(snap["mode"], "simulate");
     assert!(!snap["conversations"].as_array().unwrap().is_empty());
-    assert!(!dirs.sandbox_assets.as_os_str().is_empty());
+    assert!(dirs.page_assets("sandbox").is_some());
     host.stop().await.unwrap();
 }
 
@@ -723,18 +610,15 @@ async fn embedded_console_serves_lilia_flow_node_editor() {
     .unwrap();
     host.start().await.unwrap();
     let addr = host.listen_addr().unwrap().to_string();
-    let options = http_get_body(&addr, "/console-options.json").await;
-    let flow_path = versioned_module_path(&options, "./extensions/bot-flow/index.js");
-    let flow_js = http_get_body(&addr, &format!("/{flow_path}")).await;
-    assert!(flow_js.contains("lilia-node-editor"));
-    assert!(flow_js.contains("ctx-menu"));
-    let editor_js = http_get_body(&addr, "/extensions/bot-flow/lilia-node-editor.js").await;
-    assert!(editor_js.contains("export function mountLiliaNodeEditor"));
-    assert!(editor_js.contains("contextmenu"));
-    let css = http_get_body(&addr, "/mutsuki-ui.css").await;
-    assert!(css.contains(".lilia-node-editor__viewport"));
-    assert!(css.contains(".ctx-menu"));
-    assert!(!dirs.bot_flow_assets.as_os_str().is_empty());
+    let document = ConsoleDocument::fetch(&addr).await;
+    // Crawling the flow module also proves its relative editor/context-menu imports are staged.
+    document.assert_complete(&addr).await;
+    assert!(
+        document
+            .extension_ids()
+            .contains(&"bot-flow-editor".to_string())
+    );
+    assert!(dirs.page_assets("bot-flow-editor").is_some());
     host.stop().await.unwrap();
 }
 
@@ -796,17 +680,202 @@ fn embedded_console_rejects_explicit_sandbox_extension_without_service() {
     );
 }
 
-fn versioned_module_path(options: &str, module_path: &str) -> String {
-    let start = options
-        .find(module_path)
-        .unwrap_or_else(|| panic!("console options do not reference {module_path}"));
-    let path = &options[start + 2..];
-    let end = path
-        .find('"')
-        .unwrap_or_else(|| panic!("unterminated module specifier for {module_path}"));
-    let path = &path[..end];
-    assert!(path.contains("?v="), "module path is not versioned: {path}");
-    path.to_string()
+/// The console document as a browser sees it: CSP, import map, stylesheet and module list.
+struct ConsoleDocument {
+    csp: String,
+    import_map_body: String,
+    imports: serde_json::Map<String, serde_json::Value>,
+    stylesheets: Vec<String>,
+    module_scripts: Vec<String>,
+    options: serde_json::Value,
+}
+
+impl ConsoleDocument {
+    async fn fetch(addr: &str) -> Self {
+        let html = http_get_body(addr, "/").await;
+        let csp = between(
+            &html,
+            "content=\"",
+            "\"",
+            "http-equiv=\"Content-Security-Policy\"",
+        );
+        let import_map_body = between(&html, ">", "</script>", "<script type=\"importmap\"");
+        let map: serde_json::Value = serde_json::from_str(&import_map_body).unwrap();
+        let imports = map["imports"].as_object().unwrap().clone();
+        let stylesheets = attribute_values(&html, "<link rel=\"stylesheet\" href=\"");
+        let module_scripts = attribute_values(&html, "<script type=\"module\" src=\"");
+        let options =
+            serde_json::from_str(&http_get_body(addr, "/console-options.json").await).unwrap();
+        Self {
+            csp,
+            import_map_body,
+            imports,
+            stylesheets,
+            module_scripts,
+            options,
+        }
+    }
+
+    fn extension_ids(&self) -> Vec<String> {
+        self.options["extensions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["id"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    /// Every module the console can import resolves: bare specifiers through the import map,
+    /// relative ones to served files. Every extension's manifest hashes match what is served,
+    /// and the CSP admits exactly the inline import map.
+    async fn assert_complete(&self, addr: &str) {
+        assert!(
+            self.csp.contains(&mutsuki_web_shared_runtime::csp_hash(
+                self.import_map_body.as_bytes()
+            )),
+            "document CSP must carry the hash of the inline import map"
+        );
+        let script_src = self
+            .csp
+            .split(';')
+            .map(str::trim)
+            .find(|directive| directive.starts_with("script-src"))
+            .unwrap();
+        assert!(!script_src.contains("'unsafe-inline'"), "{script_src}");
+        assert!(!self.stylesheets.is_empty());
+        for href in &self.stylesheets {
+            let (headers, _) = http_get_parts(addr, &absolute("/", href)).await;
+            assert!(headers.to_ascii_lowercase().contains("text/css"), "{href}");
+        }
+
+        let mut pending = self
+            .module_scripts
+            .iter()
+            .map(|src| absolute("/", src))
+            .collect::<Vec<_>>();
+        for target in self.imports.values() {
+            pending.push(absolute("/", target.as_str().unwrap()));
+        }
+        for extension in self.options["extensions"].as_array().unwrap() {
+            pending.push(absolute("/", extension["url"].as_str().unwrap()));
+            for style in extension["styles"].as_array().unwrap() {
+                let style = absolute("/", style.as_str().unwrap());
+                assert!(!http_get_body(addr, &style).await.is_empty());
+            }
+            self.assert_manifest_matches(addr, extension).await;
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        while let Some(path) = pending.pop() {
+            let path = path.split('?').next().unwrap().to_string();
+            if !seen.insert(path.clone()) {
+                continue;
+            }
+            let source = http_get_body(addr, &path).await;
+            for specifier in import_specifiers(&source) {
+                if specifier.starts_with("./")
+                    || specifier.starts_with("../")
+                    || specifier.starts_with('/')
+                {
+                    pending.push(absolute(&path, &specifier));
+                } else {
+                    assert!(
+                        self.imports.contains_key(&specifier),
+                        "{path} imports bare `{specifier}`, which the import map does not resolve"
+                    );
+                }
+            }
+        }
+    }
+
+    async fn assert_manifest_matches(&self, addr: &str, extension: &serde_json::Value) {
+        let url = absolute("/", extension["url"].as_str().unwrap());
+        let (module, stamp) = url.split_once("?v=").expect("extension URL is versioned");
+        let base = &module[..=module.rfind('/').unwrap()];
+        let manifest: mutsuki_web_protocol::ExtensionManifest =
+            serde_json::from_str(&http_get_body(addr, &format!("{base}manifest.json")).await)
+                .unwrap();
+        assert_eq!(format!("{base}{}", manifest.entry), module);
+        for asset in &manifest.assets {
+            let (_, bytes) = http_get_bytes(addr, &format!("{base}{}", asset.path)).await;
+            assert_eq!(
+                mutsuki_web_extension::content_hash(&bytes),
+                asset.content_hash,
+                "{base}{} differs from its manifest",
+                asset.path
+            );
+            if asset.path == manifest.entry {
+                assert!(asset.content_hash["sha256:".len()..].starts_with(stamp));
+            }
+        }
+    }
+}
+
+fn between(text: &str, open: &str, close: &str, anchor: &str) -> String {
+    let start = text
+        .find(anchor)
+        .unwrap_or_else(|| panic!("missing {anchor}"))
+        + anchor.len();
+    let rest = &text[start..];
+    let rest = &rest[rest.find(open).unwrap() + open.len()..];
+    rest[..rest.find(close).unwrap()].to_string()
+}
+
+fn attribute_values(text: &str, prefix: &str) -> Vec<String> {
+    text.match_indices(prefix)
+        .map(|(index, _)| {
+            let rest = &text[index + prefix.len()..];
+            rest[..rest.find('"').unwrap()].to_string()
+        })
+        .collect()
+}
+
+/// Resolves `reference` against the served path `base` the way a browser would.
+fn absolute(base: &str, reference: &str) -> String {
+    if let Some(path) = reference.strip_prefix('/') {
+        return format!("/{path}");
+    }
+    let mut parts = base.split('/').collect::<Vec<_>>();
+    parts.pop();
+    for part in reference.split('/') {
+        match part {
+            "." => {}
+            ".." => {
+                parts.pop();
+            }
+            other => parts.push(other),
+        }
+    }
+    let joined = parts.join("/");
+    if joined.starts_with('/') {
+        joined
+    } else {
+        format!("/{joined}")
+    }
+}
+
+/// Literal static and dynamic import specifiers of an ES module.
+fn import_specifiers(source: &str) -> Vec<String> {
+    let mut specifiers = Vec::new();
+    for keyword in ["from", "import", "import("] {
+        for (index, _) in source.match_indices(keyword) {
+            let before = source[..index].chars().next_back();
+            if before.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '$' || c == '.') {
+                continue;
+            }
+            let rest = source[index + keyword.len()..].trim_start();
+            let Some(quote) = rest.chars().next().filter(|c| *c == '"' || *c == '\'') else {
+                continue;
+            };
+            let body = &rest[1..];
+            if let Some(end) = body.find(quote) {
+                let specifier = &body[..end];
+                if !specifier.is_empty() && !specifier.contains(char::is_whitespace) {
+                    specifiers.push(specifier.to_string());
+                }
+            }
+        }
+    }
+    specifiers
 }
 
 async fn http_get_body(addr: &str, path: &str) -> String {

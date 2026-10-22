@@ -14,8 +14,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "build": "tsc && pnpm build:browser",
-    "build:browser": "esbuild src/runtime.ts --bundle --format=esm --platform=browser --target=es2022 --alias:@mutsuki/web-sdk=./web-sdk.js --external:./web-sdk.js --alias:@mutsuki/ui=../ui/dist/theme.js --outfile=browser/web-shell.js",
+    "build": "tsc",
     "test": "vitest run"
   },
   "dependencies": {
@@ -28,7 +27,6 @@
     "vue-router": "catalog:"
   },
   "devDependencies": {
-    "esbuild": "catalog:",
     "pinia": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:",

@@ -123,6 +123,13 @@ forbidden_target_roots = [
 ]
 
 [[rules]]
+name = "web-shared-runtime-is-a-leaf-asset-package"
+# Embedded prebuilt browser modules only: any first-party dependency would let a shell
+# asset package pull Host, Link or domain code into every console.
+source_packages = ["mutsuki-web-shared-runtime"]
+forbidden_target_roots = ["crates", "hosts", "kits", "plugins", "products"]
+
+[[rules]]
 name = "plugin-implementations-do-not-depend-on-plugin-implementations"
 source_package_prefixes = ["mutsuki-plugin-"]
 forbidden_target_package_prefixes = ["mutsuki-plugin-"]

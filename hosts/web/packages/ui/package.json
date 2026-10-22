@@ -12,7 +12,8 @@
       "import": "./dist/index.js"
     },
     "./styles.css": "./src/styles/index.css",
-    "./styles/console.css": "./src/styles/console.css"
+    "./styles/console.css": "./src/styles/console.css",
+    "./ui.css": "./dist/mutsuki-ui.css"
   },
   "sideEffects": [
     "**/*.css"

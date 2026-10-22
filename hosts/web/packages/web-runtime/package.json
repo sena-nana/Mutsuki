@@ -1,0 +1,27 @@
+{
+  "name": "@mutsuki/web-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared browser runtime served by the shell through an import map.",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "node ./scripts/build.mjs",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@mutsuki/ui": "workspace:*",
+    "@mutsuki/web-sdk": "workspace:*",
+    "@mutsuki/web-shell": "workspace:*",
+    "pinia": "catalog:",
+    "vue": "catalog:",
+    "vue-router": "catalog:"
+  },
+  "devDependencies": {
+    "@mutsuki/web-build": "workspace:*",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:"
+  }
+}

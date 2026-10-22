@@ -115,16 +115,43 @@ export function createShellState(): ShellState {
   };
 }
 
+/** One extension module and the stylesheets its manifest declares. */
+export interface ExtensionModuleRef {
+  id: string;
+  url: string;
+  styles?: string[];
+}
+
+/** Links one stylesheet once per document and waits until it applies. */
+function linkStylesheet(href: string): Promise<void> {
+  if (typeof document === "undefined") return Promise.resolve();
+  const absolute = new URL(href, globalThis.location?.href).href;
+  for (const existing of document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]')) {
+    if (existing.href === absolute) return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = absolute;
+    link.addEventListener("load", () => resolve(), { once: true });
+    link.addEventListener("error", () => reject(new Error(`stylesheet failed: ${href}`)), {
+      once: true,
+    });
+    document.head.append(link);
+  });
+}
+
 /** Load precompiled ESM extensions through import maps. No runtime Vue SFC compile. */
 export async function loadExtensions(
   state: ShellState,
-  urls: Array<{ id: string; url: string }>,
+  urls: ExtensionModuleRef[],
   ctxFactory: (state: ShellState) => ExtensionContext,
 ): Promise<Disposable[]> {
   const disposables: Disposable[] = [];
   for (const item of urls) {
     const scope = new DisposableScope();
     try {
+      await Promise.all((item.styles ?? []).map(linkStylesheet));
       const extensionUrl = new URL(item.url, globalThis.location?.href).href;
       const mod = (await import(/* @vite-ignore */ extensionUrl)) as {
         default: WebExtension;
@@ -240,7 +267,7 @@ export class WebShellRuntime implements Disposable {
     });
   }
 
-  async load(urls: Array<{ id: string; url: string }>): Promise<void> {
+  async load(urls: ExtensionModuleRef[]): Promise<void> {
     const loaded = await loadExtensions(this.state, urls, () =>
       createExtensionContext(this.state, this.bridge, this.bridge),
     );
@@ -678,11 +705,3 @@ function iconMarkup(icon: string, label: string): string {
 function escapeMarkup(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
-
-export const SHARED_IMPORT_MAP = {
-  vue: "/shared/vue.js",
-  "vue-router": "/shared/vue-router.js",
-  pinia: "/shared/pinia.js",
-  "@mutsuki/web-sdk": "/shared/web-sdk.js",
-  "@mutsuki/ui": "/shared/ui.js",
-} as const;

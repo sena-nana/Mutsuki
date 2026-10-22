@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import subprocess
@@ -438,53 +437,6 @@ def check_manifest_urls() -> None:
                 )
 
 
-def check_materialized_assets() -> None:
-    """Every embedded copy of a built asset must be byte-identical.
-
-    `plugins/bot/scripts/sync-mutsuki-ui-css.sh` copies one `@mutsuki/ui` build into
-    three crates that `include_str!` it. Nothing ran that script in CI, so the copies
-    could drift silently and ship three different stylesheets in one binary. This does
-    not rebuild the asset -- it only asserts the copies still agree.
-    """
-    copies = sorted(
-        path
-        for path in ROOT.rglob("assets/mutsuki-ui.css")
-        if "target" not in path.parts and "node_modules" not in path.parts
-    )
-    if len(copies) < 2:
-        fail(f"expected several materialized mutsuki-ui.css copies, found {len(copies)}")
-    digests = {}
-    for path in copies:
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        digests.setdefault(digest, []).append(path.relative_to(ROOT).as_posix())
-    if len(digests) > 1:
-        groups = "; ".join(
-            f"{digest[:12]}: {', '.join(paths)}" for digest, paths in sorted(digests.items())
-        )
-        fail(
-            "materialized mutsuki-ui.css copies have drifted; re-run "
-            f"plugins/bot/scripts/sync-mutsuki-ui-css.sh -- {groups}"
-        )
-
-    # Equal contents are not enough: the sync script writes to hard-coded paths, so a
-    # crate that moves leaves the copies consistent while the script silently targets a
-    # directory that no longer exists. Check the script still addresses what is here.
-    script = ROOT / "plugins/bot/scripts/sync-mutsuki-ui-css.sh"
-    if script.exists():
-        text = script.read_text(encoding="utf-8")
-        targets = {
-            path.replace("$ROOT", "plugins/bot").replace("$WORKSPACE_ROOT", "").lstrip("/")
-            for path in re.findall(r'"(\$(?:WORKSPACE_)?ROOT[^"]*mutsuki-ui\.css)"', text)
-        }
-        actual = {path.relative_to(ROOT).as_posix() for path in copies}
-        if targets != actual:
-            fail(
-                "sync-mutsuki-ui-css.sh destinations no longer match the embedded copies:\n"
-                f"  script writes: {sorted(targets)}\n"
-                f"  copies found : {sorted(actual)}"
-            )
-
-
 # Browser packages share one pnpm workspace at the repository root. hosts/tauri predates it and
 # keeps its own lockfile until TauriHost moves its client onto the root catalog.
 PNPM_WORKSPACE_EXCEPTIONS = frozenset({"hosts/tauri"})
@@ -649,7 +601,6 @@ def main() -> None:
     check_workspace_lints(metadata)
     check_unsafe_code_exceptions()
     check_manifest_urls()
-    check_materialized_assets()
     check_web_packages()
     check_nested_workflows()
     print(
