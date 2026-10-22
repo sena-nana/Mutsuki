@@ -215,11 +215,11 @@ describe("tasks and logs", () => {
 });
 
 describe("extension", () => {
-  test("registers seven system pages under the diagnostics id", async () => {
+  test("registers the plugin list under plugins and six system pages", async () => {
     const ctx = createTestExtensionContext();
     await extension.setup(ctx);
     expect(extension.id).toBe("mutsuki.web.diagnostics");
-    expect(ctx.navigation.list().map((item) => item.activityId)).toEqual(Array(7).fill("system"));
+    expect(ctx.navigation.list().map((item) => item.activityId)).toEqual(["plugins", ...Array(6).fill("system")]);
     expect(ctx.pages.list().map((page) => page.id)).toEqual([
       "control.plugins",
       "control.runners",

@@ -19,6 +19,7 @@ import {
   type WebExtension,
 } from "@mutsuki/web-sdk";
 import { applyTheme } from "@mutsuki/ui";
+import { defineComponent, h, markRaw, type Component } from "vue";
 
 import type { ConsoleLayout, ShellFailure } from "./layout.js";
 
@@ -341,19 +342,13 @@ export function createExtensionContext(
 export const PLUGIN_ACTIVITY_ID = "plugins";
 export const PLUGIN_HOME_SLOT = "plugin.home";
 
-type PluginHomeFactory = {
-  mount?(
-    element: HTMLElement,
-    options?: { pluginId: string },
-  ): void | Disposable | Promise<void | Disposable>;
-};
-
 /** Fill `#/plugins/{pluginId}` for owners that only registered extra pages or cards. */
 export function finalizePluginActivity(state: ShellState): Disposable | null {
   if (!state.activities.list().some((item) => item.id === PLUGIN_ACTIVITY_ID)) return null;
-  const home = state.slots.list().find((item) => item.slot === PLUGIN_HOME_SLOT);
-  const factory = home?.component as PluginHomeFactory | undefined;
-  if (typeof factory?.mount !== "function") return null;
+  const home = state.slots.list().find((item) => item.slot === PLUGIN_HOME_SLOT)?.component as
+    | Component
+    | undefined;
+  if (!home) return null;
 
   const pages = new Map(state.pages.list().map((page) => [page.id, page]));
   const covered = new Set<string>();
@@ -398,11 +393,12 @@ export function finalizePluginActivity(state: ShellState): Disposable | null {
       title: meta.label,
       pluginId,
       requiredCapability: meta.requiredCapability,
-      component: {
-        mount(element) {
-          return factory.mount?.(element, { pluginId });
-        },
-      },
+      component: markRaw(
+        defineComponent({
+          name: "PluginHomePage",
+          setup: () => () => h(home, { pluginId }),
+        }),
+      ),
     };
     scope.own(state.pages.register(page));
     scope.own(

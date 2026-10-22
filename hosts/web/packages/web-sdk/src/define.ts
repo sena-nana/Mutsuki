@@ -15,7 +15,12 @@ export interface MountableComponent {
  */
 export interface ExtensionSlots {
   "overview.cards": MountableComponent | Component;
-  "plugin.home": MountableComponent;
+  /** Plugin hub for `#/plugins/<id>` routes the shell creates; rendered with `{ pluginId }`. */
+  "plugin.home": Component;
+  /** Replaces the generated config form on the owner's plugin hub; rendered with `{ providerId }`. */
+  "config.form": Component;
+  /** SchemaForm renderer for `presentation.format = <format>`; receives the field renderer props. */
+  [field: `config.field:${string}`]: Component;
   /**
    * Extra panel in the platforms account detail, named by the adapter descriptor's
    * `detail_panels` (e.g. `platform.detail:bilibili`). Rendered with `{ adapter, account }` props.

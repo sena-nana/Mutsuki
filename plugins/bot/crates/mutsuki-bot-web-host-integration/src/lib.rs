@@ -377,7 +377,7 @@ const PLATFORMS_PAGE: &str = mutsuki_bot_web_extension_platforms::PLUGIN_ID;
 const SANDBOX_PAGE: &str = "sandbox";
 const AGENT_PAGE: &str = mutsuki_agent_web_extension::PLUGIN_ID;
 const FLOW_PAGE: &str = "bot-flow-editor";
-const CONFIG_PAGE: &str = "config";
+const CONFIG_PAGE: &str = mutsuki_std_web_extension_config::PLUGIN_ID;
 
 /// One console page module: how the product selects it and where the shell loads it from.
 struct ConsolePage {

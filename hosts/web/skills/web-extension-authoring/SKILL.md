@@ -44,6 +44,12 @@ package and is built by `@mutsuki/web-build`.
 - Platform adapters that declare `detail_panels` get their extension's slot
   `platform.detail:<platform>` rendered under each account on the platforms page, with
   `{ adapter, account }` props; account-wide actions belong in the adapter's `account_actions`.
+- Configuration belongs to the owner's `ConfigProvider`; the config extension renders it as a
+  SchemaForm on `#/plugins/<provider_id>`. Add a renderer for a `presentation.format` with the
+  slot `config.field:<format>` (field renderer props: `node`, `type`, `modelValue`, `disabled`,
+  `scope`, `path`, `issues`, `label`; emit `update:modelValue`), or replace the whole form with
+  `config.form` (`pluginId` = provider id, rendered with `{ providerId }`). Apply always validates
+  first and sends `expected_revision`; `config.revision_conflict` is shown, never retried.
 - Header actions teleport into `#mk-page-actions`; the shell owns title, skip link, landmarks and
   the connection live region.
 

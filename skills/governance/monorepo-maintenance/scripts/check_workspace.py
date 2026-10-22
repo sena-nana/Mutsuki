@@ -448,7 +448,6 @@ HANDWRITTEN_WEB_ASSETS = frozenset(
         "plugins/bot/crates/mutsuki-bot-web-extension-flow/assets/lilia-context-menu.js",
         "plugins/bot/crates/mutsuki-bot-web-extension-flow/assets/lilia-node-editor.js",
         "plugins/bot/crates/mutsuki-bot-web-extension-sandbox/assets/index.js",
-        "plugins/std/crates/mutsuki-std-web-extension-config/assets/index.js",
     }
 )
 WEB_DEPENDENCY_FIELDS = ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies")

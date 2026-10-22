@@ -238,7 +238,7 @@ async fn embedded_console_with_config_shell() {
     document.assert_complete(&addr).await;
     assert_eq!(
         document.extension_ids().last().map(String::as_str),
-        Some("config")
+        Some("mutsuki.std.config")
     );
     // Selecting the config extension does not change the product layout.
     assert_eq!(

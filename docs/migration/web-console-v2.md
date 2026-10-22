@@ -141,3 +141,25 @@
   「B 站推送」页（`bilibili.subscriptions`）。清除凭据由平台账号操作 `credential_clear` 提供。
 - 产品布局的 `placements` 清空；所有内置扩展直接登记到布局 activity。手写资产白名单删除 Agent 与
   B 站条目。
+
+## W9 配置与插件 hub
+
+- 配置扩展改为 `@mutsuki/std-config`（`plugins/std/crates/mutsuki-std-web-extension-config/web`），
+  扩展 id `mutsuki.std.config`，RPC 命名空间与 `config.revision_changed` 话题不变。`assets/index.js`
+  删除，crate 以 `BundledManifest` 生成 manifest（含 `index.css`）。
+- 表单由 `ConfigDescriptor` 生成（`SchemaForm`）：按 `presentation.format` 再按值类型选择字段渲染器，
+  支持枚举（单选可留空、多选）、嵌套对象（可选分段可「配置此部分/移除此部分」，未配置时候选值省略该键）、
+  数组、映射、密钥（只写，读回状态不再回传，改为 `keep`）与无子节点对象的 JSON 编辑。隐藏字段的值保留。
+  内置 `persona-card` 与 `cron-expression` 渲染器；其他扩展用 slot `config.field:<format>` 增加渲染器，
+  用 `config.form` 替换整张表单。旧的 `config.editor` slot 与 `ctx.config.renderers` 删除。
+- 应用前先验证；问题按路径显示在字段上并阻止应用。应用携带读取时的 `expected_revision`；
+  `config.revision_conflict` 保留草稿并提示重新加载，其他错误以 code 与 message 显示，不再吞掉。
+  他处修改（`revision_changed`）时，无本地修改则自动重载，有修改则提示冲突。
+- 后端错误改为 `ExtensionError::Rpc`：`config.<kind>`（如 `config.revision_conflict`、
+  `config.validation_failed`）、`config.provider_hidden`、参数错误 `invalid_params`；不再返回 JSON 文本。
+- 插件 hub 显示插件版本与部署、该插件的概览卡片与页面、密钥状态、`config.metrics` 摘要与表单。
+  `plugin.home` slot 改为 Vue 组件（`{ pluginId }` props），shell 为只有页面/卡片的插件补出 hub。
+- 插件列表（部署偏好、重载）从 `system` 移到 `plugins` activity（页面 id `control.plugins` 不变，
+  路由为 `#/plugins/control.plugins`）。
+- 产品 `config_navigation_groups` 删除列出旧扩展 id（`overview`、`control`、`upgrade` 等）的「扩展」组，
+  保留工作区、接入、助手、服务组，以及只含无 schema 运行插件的「运行插件」组。

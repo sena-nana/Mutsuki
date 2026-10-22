@@ -307,21 +307,16 @@ fn config_navigation_groups() -> Vec<ConfigNavigationGroup> {
             label: Some("服务".into()),
             items: vec![item(crate::SERVICE_CONFIG_PROVIDER_ID, "服务运行时")],
         },
+        // Runtime plugins without a config schema: named here so their hubs (pages, cards)
+        // carry a label once the plugin is loaded. Console pages are not plugins and never
+        // appear in this navigation.
         ConfigNavigationGroup {
-            label: Some("扩展".into()),
+            label: Some("运行插件".into()),
             items: vec![
-                item("overview", "总览"),
-                item("qq-bot", "QQ 机器人"),
-                item("bot-agent", "连接管理"),
-                item("bilibili", "B 站管理"),
                 item(BOT_FLOW_ROUTER_PLUGIN_ID, "流程编辑器"),
-                item("control", "运行控制"),
-                item("database", "数据库"),
                 item(SANDBOX_SERVICE_ID, "沙盒"),
                 item(BOT_COMMAND_PLUGIN_ID, "命令"),
                 item(BOT_INTERACTION_PLUGIN_ID, "交互"),
-                item("secret", "密钥"),
-                item("upgrade", "升级"),
             ],
         },
     ]
@@ -342,16 +337,6 @@ mod tests {
         BOT_AGENT_BRIDGE_PLUGIN_ID,
         BOT_FLOW_CONFIG_PROVIDER_ID,
         crate::SERVICE_CONFIG_PROVIDER_ID,
-    ];
-    const WEB_EXTENSION_PAGE_IDS: &[&str] = &[
-        "overview",
-        "qq-bot",
-        "bot-agent",
-        "bilibili",
-        "control",
-        "database",
-        "secret",
-        "upgrade",
     ];
     const SCHEMA_LESS_PLUGIN_IDS: &[&str] = &[
         BOT_FLOW_ROUTER_PLUGIN_ID,
@@ -390,16 +375,14 @@ mod tests {
     }
 
     #[test]
-    fn non_extension_config_navigation_uses_product_providers() {
+    fn config_navigation_names_only_providers_and_runtime_plugins() {
         for group in config_navigation_groups() {
             assert!(
                 !group.items.is_empty(),
                 "config navigation must not keep an empty group"
             );
             for item in group.items {
-                if WEB_EXTENSION_PAGE_IDS.contains(&item.provider_id.as_str())
-                    || SCHEMA_LESS_PLUGIN_IDS.contains(&item.provider_id.as_str())
-                {
+                if SCHEMA_LESS_PLUGIN_IDS.contains(&item.provider_id.as_str()) {
                     continue;
                 }
                 assert!(

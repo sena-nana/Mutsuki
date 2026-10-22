@@ -90,6 +90,20 @@ test("platform accounts come from the adapter descriptors", async ({ page }) => 
   await expect(page.locator(".qq-card")).toContainText("main");
 });
 
+test("a config hub validates and applies the generated form", async ({ page }) => {
+  await login(page);
+  await page.goto("/#/plugins/product");
+  const content = page.locator(".console-page-content");
+  const name = content.getByLabel("显示名称");
+  await expect(name).toBeVisible();
+  await expect(content.getByLabel("Owner Token")).toBeVisible();
+  await name.fill("睦月 e2e");
+  await content.getByRole("button", { name: "应用" }).click();
+  await expect(page.locator(".mk-toast")).toContainText("配置已生效");
+  await page.reload();
+  await expect(page.locator(".console-page-content").getByLabel("显示名称")).toHaveValue("睦月 e2e");
+});
+
 test("theme switches between light and dark", async ({ page }) => {
   await login(page);
   await page.goto("/#/settings/webui.settings");
@@ -111,7 +125,8 @@ for (const colorScheme of ["light", "dark"] as const) {
     for (const route of [
       "#/home/overview.page",
       "#/settings/webui.settings",
-      "#/system/control.plugins",
+      "#/plugins/control.plugins",
+      "#/plugins/product",
       "#/platforms/platforms.accounts",
       "#/platforms/qq-bot.deliveries",
       "#/data/database.page",

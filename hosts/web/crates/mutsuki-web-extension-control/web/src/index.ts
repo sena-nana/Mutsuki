@@ -23,20 +23,21 @@ export default defineExtension({
       name: "DiagnosticsPlugins",
       setup: () => () => h(PluginsPage, { registries }),
     });
-    const pages: Array<[id: string, path: string, title: string, order: number, component: Component]> = [
-      ["control.plugins", "/plugins", "插件", 10, Plugins],
-      ["control.runners", "/runners", "运行器", 20, RunnersPage],
-      ["control.events", "/events", "事件源", 30, EventSourcesPage],
-      ["control.topology", "/topology", "拓扑", 40, TopologyPage],
-      ["control.tasks", "/tasks", "任务", 50, TasksPage],
-      ["control.lifecycle", "/lifecycle", "生命周期", 70, LifecyclePage],
-      ["control.logs", "/logs", "日志", 80, LogsPage],
+    // The plugin list (deployments, reload) heads the `plugins` activity above the plugin hubs.
+    const pages: Array<[id: string, activity: string, path: string, title: string, order: number, component: Component]> = [
+      ["control.plugins", "plugins", "/plugins", "插件列表", -10, Plugins],
+      ["control.runners", "system", "/runners", "运行器", 20, RunnersPage],
+      ["control.events", "system", "/events", "事件源", 30, EventSourcesPage],
+      ["control.topology", "system", "/topology", "拓扑", 40, TopologyPage],
+      ["control.tasks", "system", "/tasks", "任务", 50, TasksPage],
+      ["control.lifecycle", "system", "/lifecycle", "生命周期", 70, LifecyclePage],
+      ["control.logs", "system", "/logs", "日志", 80, LogsPage],
     ];
-    for (const [id, path, title, order, component] of pages) {
+    for (const [id, activityId, path, title, order, component] of pages) {
       ctx.pages.register({ id, path, title, component, requiredCapability: "runtime.read" });
       ctx.navigation.register({
         id: `${id}.nav`,
-        activityId: "system",
+        activityId,
         pageId: id,
         label: title,
         order,

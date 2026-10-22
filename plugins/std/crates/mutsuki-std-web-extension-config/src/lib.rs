@@ -9,7 +9,8 @@
 //! - config / apply
 //! - config / metrics
 //!
-//! Frontend assets generate forms from ConfigDescriptor (Koishi-like shell + LiliaUI tokens).
+//! The Vue frontend (`web/`) renders plugin hubs and a SchemaForm generated from each
+//! `ConfigDescriptor`. Failures are `ExtensionError::Rpc` with `config.<kind>` codes.
 // Pedantic lints below are inherited from the workspace and still fire in this
 // package. They are listed explicitly so the remaining debt stays auditable and
 // every other pedantic lint keeps failing the build.
@@ -33,14 +34,14 @@ use mutsuki_config_service::{
     ConfigApplyRequest, ConfigContext, ConfigProviderId, ConfigService, ConfigValue,
 };
 use mutsuki_web_extension_api::{
-    ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, content_hash,
+    BUNDLED_ENTRY_ASSET, BundledAssets, BundledManifest, ExtensionError, RpcRegistry, WebExtension,
+    WebExtensionDescriptor, materialize_bundled_assets,
 };
-use mutsuki_web_protocol::{
-    AssetEntry, EXTENSION_MANIFEST_VERSION, ExtensionManifest, JsonValue, WEB_PROTOCOL_VERSION,
-    WebFrontendAssets,
-};
+use mutsuki_web_protocol::{AssetEntry, ExtensionManifest, JsonValue, WebFrontendAssets};
 
-pub const PLUGIN_ID: &str = "config";
+pub const PLUGIN_ID: &str = "mutsuki.std.config";
+/// RPC namespace and `config.revision_changed` topic prefix, unchanged for existing callers.
+pub const RPC_NAMESPACE: &str = "config";
 pub const PLUGIN_VERSION: &str = "0.1.0";
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
@@ -60,8 +61,7 @@ pub struct ConfigNavigationGroup {
 /// Backend WebExtension that fronts a shared ConfigService.
 pub struct ConfigWebExtension {
     service: Arc<ConfigService>,
-    assets_root: Option<PathBuf>,
-    capabilities: Vec<String>,
+    assets_root: BundledAssets,
     visible_providers: Option<BTreeSet<String>>,
     navigation_groups: Vec<ConfigNavigationGroup>,
 }
@@ -70,22 +70,14 @@ impl ConfigWebExtension {
     pub fn new(service: Arc<ConfigService>) -> Self {
         Self {
             service,
-            assets_root: None,
-            capabilities: vec![
-                mutsuki_config_service::capability::SCHEMA_READ.into(),
-                mutsuki_config_service::capability::VALUE_READ.into(),
-                mutsuki_config_service::capability::VALUE_WRITE.into(),
-                mutsuki_config_service::capability::SECRET_WRITE.into(),
-                mutsuki_config_service::capability::APPLY.into(),
-                mutsuki_config_service::capability::RELOAD.into(),
-            ],
+            assets_root: BundledAssets::default(),
             visible_providers: None,
             navigation_groups: Vec::new(),
         }
     }
 
     pub fn with_frontend_assets(mut self, root: impl Into<PathBuf>) -> Self {
-        self.assets_root = Some(root.into());
+        self.assets_root.set(root);
         self
     }
 
@@ -120,29 +112,19 @@ impl ConfigWebExtension {
 
 impl WebExtension for ConfigWebExtension {
     fn descriptor(&self) -> WebExtensionDescriptor {
-        ExtensionManifest {
-            manifest_version: EXTENSION_MANIFEST_VERSION,
-            id: PLUGIN_ID.into(),
-            version: PLUGIN_VERSION.into(),
-            entry: "index.js".into(),
-            styles: Vec::new(),
-            capabilities: self.capabilities.clone(),
-            permissions: vec!["pages".into(), "navigation".into()],
-            assets: self
-                .frontend_assets()
+        manifest(
+            self.frontend_assets()
                 .map(|assets| assets.manifest.assets)
                 .unwrap_or_default(),
-            protocol_version: WEB_PROTOCOL_VERSION.into(),
-        }
+        )
+    }
+
+    fn namespace(&self) -> String {
+        RPC_NAMESPACE.into()
     }
 
     fn frontend_assets(&self) -> Option<WebFrontendAssets> {
-        let root = self.assets_root.as_ref()?;
-        let manifest = load_or_synthesize_manifest(root).ok()?;
-        Some(WebFrontendAssets {
-            manifest,
-            root_dir: root.clone(),
-        })
+        self.assets_root.resolve(manifest)
     }
 
     fn register_rpc(&self, ctx: &mut RpcRegistry) -> Result<(), ExtensionError> {
@@ -333,15 +315,36 @@ fn require_visible_provider(
         .as_ref()
         .is_some_and(|providers| !providers.contains(provider_id))
     {
-        return Err(ExtensionError::Registration(
-            "configuration provider is not exposed by this application".into(),
-        ));
+        return Err(ExtensionError::Rpc {
+            code: "config.provider_hidden".into(),
+            message: "configuration provider is not exposed by this application".into(),
+        });
     }
     Ok(())
 }
 
+/// `config.<kind>` (`config.revision_conflict`, `config.validation_failed`, …) plus the error text.
 fn map_config_error(err: mutsuki_config_service::ConfigError) -> ExtensionError {
-    ExtensionError::Registration(serde_json::to_string(&err).unwrap_or_else(|_| err.to_string()))
+    let kind = serde_json::to_value(&err)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("kind")
+                .and_then(JsonValue::as_str)
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| "error".into());
+    ExtensionError::Rpc {
+        code: format!("config.{kind}"),
+        message: err.to_string(),
+    }
+}
+
+fn invalid_params(message: impl Into<String>) -> ExtensionError {
+    ExtensionError::Rpc {
+        code: "invalid_params".into(),
+        message: message.into(),
+    }
 }
 
 fn required_str(params: &JsonValue, key: &str) -> Result<String, ExtensionError> {
@@ -349,16 +352,13 @@ fn required_str(params: &JsonValue, key: &str) -> Result<String, ExtensionError>
         .get(key)
         .and_then(|v| v.as_str())
         .map(str::to_string)
-        .ok_or_else(|| ExtensionError::Registration(format!("missing {key}")))
+        .ok_or_else(|| invalid_params(format!("missing {key}")))
 }
 
 fn context_from_params(params: &JsonValue) -> Result<ConfigContext, ExtensionError> {
     params.get("context").cloned().map_or_else(
         || Ok(ConfigContext::global()),
-        |value| {
-            serde_json::from_value(value)
-                .map_err(|error| ExtensionError::Registration(error.to_string()))
-        },
+        |value| serde_json::from_value(value).map_err(|error| invalid_params(error.to_string())),
     )
 }
 
@@ -366,7 +366,7 @@ fn candidate_from_params(params: &JsonValue) -> Result<ConfigValue, ExtensionErr
     let raw = params
         .get("candidate")
         .cloned()
-        .ok_or_else(|| ExtensionError::Registration("missing candidate".into()))?;
+        .ok_or_else(|| invalid_params("missing candidate"))?;
     config_value_from_json(raw)
 }
 
@@ -374,11 +374,11 @@ fn apply_request_from_params(params: &JsonValue) -> Result<ConfigApplyRequest, E
     let request_value = params
         .get("request")
         .cloned()
-        .ok_or_else(|| ExtensionError::Registration("missing request".into()))?;
+        .ok_or_else(|| invalid_params("missing request"))?;
     let candidate = request_value
         .get("candidate")
         .cloned()
-        .ok_or_else(|| ExtensionError::Registration("missing candidate".into()))?;
+        .ok_or_else(|| invalid_params("missing candidate"))?;
     let expected = request_value
         .get("expected_revision")
         .and_then(|v| v.as_u64())
@@ -396,60 +396,44 @@ fn apply_request_from_params(params: &JsonValue) -> Result<ConfigApplyRequest, E
 
 fn config_value_from_json(raw: JsonValue) -> Result<ConfigValue, ExtensionError> {
     if raw.get("type").is_some() {
-        serde_json::from_value(raw).map_err(|e| ExtensionError::Registration(e.to_string()))
+        serde_json::from_value(raw).map_err(|e| invalid_params(e.to_string()))
     } else {
         Ok(ConfigValue::from_json(&raw))
     }
 }
 
-fn load_or_synthesize_manifest(root: &Path) -> Result<ExtensionManifest, ExtensionError> {
-    let manifest_path = root.join("manifest.json");
-    if manifest_path.exists() {
-        let bytes =
-            std::fs::read(&manifest_path).map_err(|e| ExtensionError::Manifest(e.to_string()))?;
-        return serde_json::from_slice(&bytes).map_err(|e| ExtensionError::Manifest(e.to_string()));
+fn manifest(assets: Vec<AssetEntry>) -> ExtensionManifest {
+    use mutsuki_config_service::capability;
+    BundledManifest {
+        id: PLUGIN_ID,
+        version: PLUGIN_VERSION,
+        entry: BUNDLED_ENTRY_ASSET,
+        capabilities: [
+            capability::SCHEMA_READ,
+            capability::VALUE_READ,
+            capability::VALUE_WRITE,
+            capability::SECRET_WRITE,
+            capability::APPLY,
+            capability::RELOAD,
+        ]
+        .map(Into::into)
+        .into(),
     }
-    let entry = root.join("index.js");
-    let bytes = std::fs::read(&entry).map_err(|e| ExtensionError::Manifest(e.to_string()))?;
-    Ok(ExtensionManifest {
-        manifest_version: EXTENSION_MANIFEST_VERSION,
-        id: PLUGIN_ID.into(),
-        version: PLUGIN_VERSION.into(),
-        entry: "index.js".into(),
-        styles: Vec::new(),
-        capabilities: vec![
-            mutsuki_config_service::capability::SCHEMA_READ.into(),
-            mutsuki_config_service::capability::VALUE_READ.into(),
-            mutsuki_config_service::capability::VALUE_WRITE.into(),
-            mutsuki_config_service::capability::SECRET_WRITE.into(),
-            mutsuki_config_service::capability::APPLY.into(),
-        ],
-        permissions: vec!["pages".into(), "navigation".into()],
-        assets: vec![AssetEntry {
-            path: "index.js".into(),
-            content_hash: content_hash(&bytes),
-            bytes: bytes.len() as u64,
-        }],
-        protocol_version: WEB_PROTOCOL_VERSION.into(),
-    })
+    .build(assets)
 }
 
-/// Write bundled frontend assets for the default config web plugin.
-///
-/// The design-system stylesheet is part of the shared runtime the shell links once.
+/// Writes the plugin hub / SchemaForm bundle and its content-addressed manifest.
 pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::Error> {
-    std::fs::create_dir_all(out_dir)?;
-    let js = include_str!("../assets/index.js");
-    // Rematerializing into the same directory must not reuse a stale manifest.
-    let _ = std::fs::remove_file(out_dir.join("manifest.json"));
-    std::fs::write(out_dir.join("index.js"), js)?;
-    let manifest = load_or_synthesize_manifest(out_dir)
-        .map_err(|error| std::io::Error::other(error.to_string()))?;
-    std::fs::write(
-        out_dir.join("manifest.json"),
-        serde_json::to_vec_pretty(&manifest).expect("manifest"),
-    )?;
-    Ok(out_dir.to_path_buf())
+    let js = include_str!("../web/browser/index.js");
+    let css = include_str!("../web/browser/index.css");
+    materialize_bundled_assets(
+        out_dir,
+        manifest,
+        &[
+            (BUNDLED_ENTRY_ASSET, js.as_bytes()),
+            ("index.css", css.as_bytes()),
+        ],
+    )
 }
 
 #[cfg(test)]
@@ -489,6 +473,39 @@ mod tests {
         // plugins; the frontend gates them on control.plugin_list.
         assert_eq!(visible[1].items[0].provider_id, "plugin.missing");
         assert_eq!(visible[1].items[1].provider_id, "plugin.qq");
+    }
+
+    #[test]
+    fn config_errors_become_coded_rpc_errors() {
+        let error = map_config_error(mutsuki_config_service::ConfigError::RevisionConflict {
+            expected: 3,
+            current: 5,
+            diff: None,
+        });
+        assert_eq!(error.rpc_code(), "config.revision_conflict");
+        assert!(error.to_string().contains("expected 3, current 5"));
+        assert_eq!(
+            map_config_error(mutsuki_config_service::ConfigError::ProviderUnavailable).rpc_code(),
+            "config.provider_unavailable"
+        );
+    }
+
+    #[test]
+    fn bundle_is_materialized_with_its_stylesheet() {
+        let root = tempfile::tempdir().unwrap();
+        materialize_frontend_assets(root.path()).unwrap();
+        let extension = ConfigWebExtension::new(Arc::new(
+            ConfigService::new(
+                Arc::new(mutsuki_config_service::ConfigProviderRegistry::default()),
+                Arc::new(mutsuki_config_service::InMemoryConfigRepository::default()),
+            )
+            .unwrap(),
+        ))
+        .with_frontend_assets(root.path());
+        let descriptor = extension.descriptor();
+        assert_eq!(descriptor.id, PLUGIN_ID);
+        assert_eq!(descriptor.styles, ["index.css"]);
+        assert_eq!(extension.namespace(), RPC_NAMESPACE);
     }
 
     #[test]
