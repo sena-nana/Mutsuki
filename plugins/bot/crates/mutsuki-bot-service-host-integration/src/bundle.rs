@@ -39,7 +39,7 @@ use mutsuki_plugin_bot_adapter_qqbot::{
     QQBOT_ADAPTER_PLUGIN_ID, QqAuthManager, QqBotClients, QqBotConfig, QqGatewayMapRunner,
     QqGatewayMediaHandler, QqIdSource, QqMediaProvider, QqOpenApiError, QqOpenApiRunner,
     ReqwestQqHttpClient, ResourceGatewayQqMediaProvider, SharedQqCredentials,
-    qqbot_adapter_manifest,
+    qqbot_adapter_manifest, qqbot_adapter_manifest_for_accounts,
 };
 use mutsuki_plugin_bot_delivery::{bot_delivery_manifest_for, delivery_runner_for};
 use mutsuki_runtime_sdk::{LoadedPlugin, RuntimeBootstrapperService};
@@ -190,7 +190,11 @@ impl QqBotPluginBundle {
         };
         let repository_for_factory = repository.clone();
         let repository_for_delivery = repository.clone();
-        let mut manifest = merge_qq_active_delivery(qqbot_adapter_manifest(1, media_enabled));
+        let mut manifest = merge_qq_active_delivery(qqbot_adapter_manifest_for_accounts(
+            1,
+            media_enabled,
+            vec![self.config.account_id.clone()],
+        ));
         manifest
             .provides
             .services

@@ -37,3 +37,22 @@ order the changes land on `main`.
 - The legacy `mutsuki.bot.router.event` configured plugin (which only rejected old configuration)
   is removed; an instance still selecting it fails with "configured plugin factory is not
   registered".
+
+## Adapter contract and QQ protocol split
+
+- New `mutsuki-bot-qq-protocol` crate. Moved out of `mutsuki-bot-protocol`:
+  `QQBOT_{RAW_CALL,ACCOUNT_GET,GATEWAY_STATUS,CAPABILITY_GET}_PROTOCOL_ID`,
+  `QQBOT_OPENAPI_*_ERROR`, `QqBotCapabilityMatrix`, `QqPermissionRequirement`,
+  `QqBotCapabilityGetRequest`, `QqBotAccountGetRequest`, `QqBotGatewayStatusRequest`, and
+  `BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID` (now `QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID`). Protocol id
+  and error code strings are unchanged.
+- Renamed to platform-neutral types in `mutsuki-bot-protocol`: `QqStreamingStrategy` →
+  `BotStreamingStrategy`, `QqUploadConstraints` → `BotUploadConstraints`, `QqRateLimitPolicy` →
+  `BotRateLimitPolicy`, `QqMessageSegmentKind` → `BotSegmentKind`.
+- `QqBotCapabilityMatrix` now nests the neutral part as `capabilities: BotAdapterCapabilities`
+  (`#[serde(flatten)]`), so `capability/get@1` keeps its wire shape; Rust callers read
+  `matrix.capabilities.outbound_segments` instead of `matrix.outbound_segments`.
+- Adapters declare `BotAdapterDescriptor` as the `mutsuki.bot.adapter@1` manifest extension;
+  `qqbot_adapter_manifest_for_accounts` declares the configured QQ account.
+- Still pending: `message/send@1` carries no account. Account routing via
+  `BotAdapterDirectory` and `runner_hint` arrives with the simulated sandbox adapter.

@@ -106,6 +106,7 @@ source_package_prefixes = ["mutsuki-protocol-"]
 source_packages = [
   "mutsuki-agent-contracts",
   "mutsuki-bot-protocol",
+  "mutsuki-bot-qq-protocol",
   "mutsuki-distributed-contracts",
   "mutsuki-service-control",
   "mutsuki-web-protocol",

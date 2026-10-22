@@ -280,28 +280,32 @@ async fn rpc(address: &str, method: &str, params: Value) -> Result<Value, String
     }
 }
 
-fn capability() -> mutsuki_bot_protocol::QqBotCapabilityMatrix {
-    mutsuki_bot_protocol::QqBotCapabilityMatrix {
+fn capability() -> mutsuki_bot_qq_protocol::QqBotCapabilityMatrix {
+    mutsuki_bot_qq_protocol::QqBotCapabilityMatrix {
         account_id: "main".into(),
-        conversation_kinds: vec![mutsuki_bot_protocol::BotConversationKind::Private],
-        outbound_conversation_kinds: vec![mutsuki_bot_protocol::BotConversationKind::Private],
-        active_message_kinds: vec![mutsuki_bot_protocol::BotConversationKind::Private],
-        inbound_segments: vec![mutsuki_bot_protocol::QqMessageSegmentKind::Text],
-        outbound_segments: vec![mutsuki_bot_protocol::QqMessageSegmentKind::Text],
-        inbound_media: Vec::new(),
-        outbound_media: Vec::new(),
-        active_message: true,
-        message_edit: false,
-        message_recall: true,
-        reply: true,
-        quote: true,
-        mention: true,
-        upload: mutsuki_bot_protocol::QqUploadConstraints::default(),
-        rate_limit: mutsuki_bot_protocol::QqRateLimitPolicy::default(),
-        streaming: vec![mutsuki_bot_protocol::QqStreamingStrategy::FinalOnly],
         configured_intents: 1 << 25,
         shard: [0, 1],
         required_intents: vec!["group_and_c2c_event".into()],
-        required_permissions: vec![mutsuki_bot_protocol::QqPermissionRequirement::ReadC2cMessages],
+        required_permissions: vec![
+            mutsuki_bot_qq_protocol::QqPermissionRequirement::ReadC2cMessages,
+        ],
+        capabilities: mutsuki_bot_protocol::BotAdapterCapabilities {
+            conversation_kinds: vec![mutsuki_bot_protocol::BotConversationKind::Private],
+            outbound_conversation_kinds: vec![mutsuki_bot_protocol::BotConversationKind::Private],
+            active_message_kinds: vec![mutsuki_bot_protocol::BotConversationKind::Private],
+            inbound_segments: vec![mutsuki_bot_protocol::BotSegmentKind::Text],
+            outbound_segments: vec![mutsuki_bot_protocol::BotSegmentKind::Text],
+            inbound_media: Vec::new(),
+            outbound_media: Vec::new(),
+            active_message: true,
+            message_edit: false,
+            message_recall: true,
+            reply: true,
+            quote: true,
+            mention: true,
+            upload: mutsuki_bot_protocol::BotUploadConstraints::default(),
+            rate_limit: mutsuki_bot_protocol::BotRateLimitPolicy::default(),
+            streaming: vec![mutsuki_bot_protocol::BotStreamingStrategy::FinalOnly],
+        },
     }
 }

@@ -39,7 +39,8 @@ pub use tasks::{
     QQ_NODE_BOT_CONNECTED, QQ_NODE_BOT_DISCONNECTED, QQ_NODE_MEMBER_JOINED, QQ_NODE_MEMBER_LEFT,
     QQ_NODE_MESSAGE_CREATED, QQ_NODE_MESSAGE_DELETED, QQ_NODE_MESSAGE_UPDATED, QQ_NODE_PLATFORM,
     QQ_NODE_REACTION_ADDED, QQ_NODE_REACTION_REMOVED, QQBOT_ADAPTER_PLUGIN_ID, QqGatewayMapRunner,
-    QqOpenApiRunner, flow_envelope, openapi_descriptor, qqbot_adapter_manifest, qqbot_runners,
+    QqOpenApiRunner, flow_envelope, openapi_descriptor, qqbot_adapter_descriptor,
+    qqbot_adapter_manifest, qqbot_adapter_manifest_for_accounts, qqbot_runners,
 };
 
 #[cfg(test)]

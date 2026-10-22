@@ -81,9 +81,3 @@ pub struct BotChannel {
     pub guild_id: Option<String>,
     pub name: Option<String>,
 }
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QqBotAccountGetRequest {}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QqBotGatewayStatusRequest {}

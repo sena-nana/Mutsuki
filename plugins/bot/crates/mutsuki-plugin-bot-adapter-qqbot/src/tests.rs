@@ -4,14 +4,16 @@ use std::sync::{Arc, Mutex};
 use mutsuki_bot_protocol::{
     BOT_CONVERSATION_REF_VERSION, BOT_FLOW_BOT_EVENT_TYPE, BOT_FLOW_DELIVERY_REPLY_TYPE,
     BOT_FLOW_INGRESS_PROTOCOL_ID, BOT_MEDIA_UPLOAD_PROTOCOL_ID, BOT_MESSAGE_RECALL_PROTOCOL_ID,
-    BOT_MESSAGE_SEND_PROTOCOL_ID, BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID, BotConversationKind,
-    BotConversationRef, BotDeliveryContent, BotEvent, BotEventKind, BotFlowContext,
-    BotFlowEventEnvelope, BotFlowPayload, BotFlowTypeRef, BotMediaKind, BotMessage,
-    BotMessageRecallRequest, BotNodeInvocation, BotNodeResult, BotNodeWiring, BotReplyDeliveryPart,
-    BotReplyDeliveryRequest, BotTarget, BotUser, DeliveryPolicy, MessageSegment,
-    QQBOT_ACCOUNT_GET_PROTOCOL_ID, QQBOT_GATEWAY_STATUS_PROTOCOL_ID, QQBOT_OPENAPI_PERMANENT_ERROR,
-    QQBOT_OPENAPI_RATE_LIMITED_ERROR, QQBOT_RAW_CALL_PROTOCOL_ID, QqMessageSegmentKind,
-    QqPermissionRequirement,
+    BOT_MESSAGE_SEND_PROTOCOL_ID, BotConversationKind, BotConversationRef, BotDeliveryContent,
+    BotEvent, BotEventKind, BotFlowContext, BotFlowEventEnvelope, BotFlowPayload, BotFlowTypeRef,
+    BotMediaKind, BotMessage, BotMessageRecallRequest, BotNodeInvocation, BotNodeResult,
+    BotNodeWiring, BotReplyDeliveryPart, BotReplyDeliveryRequest, BotSegmentKind, BotTarget,
+    BotUser, DeliveryPolicy, MessageSegment,
+};
+use mutsuki_bot_qq_protocol::{
+    QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID, QQBOT_ACCOUNT_GET_PROTOCOL_ID,
+    QQBOT_GATEWAY_STATUS_PROTOCOL_ID, QQBOT_OPENAPI_PERMANENT_ERROR,
+    QQBOT_OPENAPI_RATE_LIMITED_ERROR, QQBOT_RAW_CALL_PROTOCOL_ID, QqPermissionRequirement,
 };
 use mutsuki_runtime_contracts::{
     BatchEntry, BatchKey, BatchPayload, CompletionBatch, DispatchLane, OrderingRequirement,
@@ -200,55 +202,68 @@ fn capability_matrix_follows_intents_and_resource_provider_configuration() {
     config.gateway_rate_limit_delay_ms = 30_000;
     let text_only = config.capability_matrix();
     assert_eq!(
-        text_only.conversation_kinds,
+        text_only.capabilities.conversation_kinds,
         vec![BotConversationKind::Private, BotConversationKind::Group]
     );
-    assert!(text_only.inbound_media.is_empty());
-    assert!(text_only.outbound_media.is_empty());
+    assert!(text_only.capabilities.inbound_media.is_empty());
+    assert!(text_only.capabilities.outbound_media.is_empty());
     assert_eq!(text_only.configured_intents, 1 << 25);
     assert_eq!(text_only.shard, [0, 1]);
     assert!(
         text_only
+            .capabilities
             .inbound_segments
-            .contains(&QqMessageSegmentKind::Reply)
+            .contains(&BotSegmentKind::Reply)
     );
     assert!(
         text_only
+            .capabilities
             .outbound_segments
-            .contains(&QqMessageSegmentKind::MentionUser)
+            .contains(&BotSegmentKind::MentionUser)
     );
     assert!(
         text_only
+            .capabilities
             .outbound_segments
-            .contains(&QqMessageSegmentKind::Reply)
+            .contains(&BotSegmentKind::Reply)
     );
     assert!(
         text_only
+            .capabilities
             .outbound_segments
-            .contains(&QqMessageSegmentKind::Quote)
+            .contains(&BotSegmentKind::Quote)
     );
     assert!(
         text_only
+            .capabilities
             .outbound_segments
-            .contains(&QqMessageSegmentKind::Markdown)
+            .contains(&BotSegmentKind::Markdown)
     );
     assert!(
         text_only
+            .capabilities
             .outbound_segments
-            .contains(&QqMessageSegmentKind::Keyboard)
+            .contains(&BotSegmentKind::Keyboard)
     );
     assert!(
         text_only
+            .capabilities
             .inbound_segments
-            .contains(&QqMessageSegmentKind::Markdown)
+            .contains(&BotSegmentKind::Markdown)
     );
-    assert!(text_only.quote);
-    assert!(text_only.rate_limit.server_driven);
-    assert!(text_only.rate_limit.honors_retry_after);
-    assert_eq!(text_only.rate_limit.max_retry_attempts, 4);
-    assert_eq!(text_only.rate_limit.retry_base_delay_ms, 125);
-    assert_eq!(text_only.rate_limit.retry_max_delay_ms, 2_000);
-    assert_eq!(text_only.rate_limit.gateway_rate_limit_delay_ms, 30_000);
+    assert!(text_only.capabilities.quote);
+    assert!(text_only.capabilities.rate_limit.server_driven);
+    assert!(text_only.capabilities.rate_limit.honors_retry_after);
+    assert_eq!(text_only.capabilities.rate_limit.max_retry_attempts, 4);
+    assert_eq!(text_only.capabilities.rate_limit.retry_base_delay_ms, 125);
+    assert_eq!(text_only.capabilities.rate_limit.retry_max_delay_ms, 2_000);
+    assert_eq!(
+        text_only
+            .capabilities
+            .rate_limit
+            .gateway_rate_limit_delay_ms,
+        30_000
+    );
     assert!(
         text_only
             .required_permissions
@@ -260,24 +275,33 @@ fn capability_matrix_follows_intents_and_resource_provider_configuration() {
     let media = config.capability_matrix();
     assert!(
         media
+            .capabilities
             .conversation_kinds
             .contains(&BotConversationKind::Channel)
     );
     assert!(
         !media
+            .capabilities
             .outbound_conversation_kinds
             .contains(&BotConversationKind::Channel)
     );
-    assert!(media.inbound_media.contains(&BotMediaKind::Image));
     assert!(
         media
-            .inbound_segments
-            .contains(&QqMessageSegmentKind::Audio)
+            .capabilities
+            .inbound_media
+            .contains(&BotMediaKind::Image)
     );
     assert!(
         media
+            .capabilities
+            .inbound_segments
+            .contains(&BotSegmentKind::Audio)
+    );
+    assert!(
+        media
+            .capabilities
             .outbound_segments
-            .contains(&QqMessageSegmentKind::File)
+            .contains(&BotSegmentKind::File)
     );
     assert!(
         media
@@ -285,7 +309,7 @@ fn capability_matrix_follows_intents_and_resource_provider_configuration() {
             .contains(&QqPermissionRequirement::ReadGuildAtMessages)
     );
     assert_eq!(
-        media.upload.max_bytes_by_kind[&BotMediaKind::File],
+        media.capabilities.upload.max_bytes_by_kind[&BotMediaKind::File],
         100 * 1024 * 1024
     );
 }
@@ -1128,7 +1152,7 @@ fn openapi_runner_rejects_conflicting_reply_and_quote_ids_before_network() {
 
     assert_eq!(
         error.code,
-        mutsuki_bot_protocol::QQBOT_OPENAPI_INVALID_REQUEST_ERROR
+        mutsuki_bot_qq_protocol::QQBOT_OPENAPI_INVALID_REQUEST_ERROR
     );
     assert!(requests.lock().unwrap().is_empty());
 }
@@ -1520,7 +1544,7 @@ fn qq_forward_fold_binds_openapi_runner() {
     assert!(
         descriptor
             .accepted_protocol_ids
-            .contains(&BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID.into())
+            .contains(&QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID.into())
     );
 
     let manifest = qqbot_adapter_manifest(1, false);
@@ -1529,13 +1553,13 @@ fn qq_forward_fold_binds_openapi_runner() {
             .provides
             .protocols
             .iter()
-            .any(|protocol| protocol.protocol_id == BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID)
+            .any(|protocol| protocol.protocol_id == QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID)
     );
     let binding = manifest
         .provides
         .handler_bindings
         .iter()
-        .find(|binding| binding.protocol_id == BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID)
+        .find(|binding| binding.protocol_id == QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID)
         .expect("forward-fold handler binding");
     assert_eq!(
         binding.target_runner_hint.as_deref(),
@@ -1561,7 +1585,7 @@ fn qq_forward_fold_binds_openapi_runner() {
     let catalog_binding = node.binding.as_ref().expect("catalog binding");
     assert_eq!(
         catalog_binding.protocol_id,
-        BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID
+        QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID
     );
     assert_eq!(
         catalog_binding.runner_hint.as_deref(),
@@ -1627,7 +1651,7 @@ fn openapi_runner_applies_forward_fold_without_http() {
     };
     let task = Task::new(
         "fold-task",
-        BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID,
+        QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID,
         serde_json::to_value(&invocation).unwrap(),
     );
     let result = run_one(&mut runner, task).unwrap();
@@ -2552,4 +2576,48 @@ fn run_tasks(runner: &mut impl Runner, tasks: Vec<Task>) -> CompletionBatch {
     runner
         .run_batch(test_context(1).with_batch("batch:test", tasks.len()), batch)
         .unwrap()
+}
+
+#[test]
+fn qqbot_manifest_declares_the_adapter_contract_for_its_accounts() {
+    let manifest = crate::qqbot_adapter_manifest_for_accounts(1, true, vec!["qq-main".into()]);
+    let directory = mutsuki_bot_protocol::BotAdapterDirectory::from_manifests([&manifest]).unwrap();
+    let account = mutsuki_bot_protocol::BotAccountRef {
+        account_id: "qq-main".into(),
+        platform: mutsuki_bot_protocol::BotPlatform::QqBot,
+    };
+    let entry = directory.resolve(&account).unwrap();
+    assert_eq!(entry.plugin_id, crate::QQBOT_ADAPTER_PLUGIN_ID);
+    assert_eq!(
+        entry.descriptor.operations.upload_runner_id.as_deref(),
+        Some(crate::tasks::QQBOT_OPENAPI_RUNNER_ID)
+    );
+    // Every runner the descriptor names is declared by the same manifest.
+    for runner_id in [
+        Some(&entry.descriptor.operations.send_runner_id),
+        entry.descriptor.operations.recall_runner_id.as_ref(),
+        entry.descriptor.operations.upload_runner_id.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        assert!(
+            manifest
+                .provides
+                .runners
+                .iter()
+                .any(|runner| &runner.runner_id == runner_id)
+        );
+    }
+
+    let unknown = mutsuki_bot_protocol::BotAccountRef {
+        account_id: "other".into(),
+        platform: mutsuki_bot_protocol::BotPlatform::QqBot,
+    };
+    assert!(
+        directory
+            .resolve(&unknown)
+            .unwrap_err()
+            .starts_with("bot.adapter.account_unknown")
+    );
 }

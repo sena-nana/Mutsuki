@@ -22,8 +22,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use mutsuki_bot_protocol::{
     BotConversationRef, BotDeliveryAttempt, BotDeliveryReceipt, BotInteractionSession, BotUser,
-    DeliveryStatus, InteractionStatus, QqBotCapabilityMatrix,
+    DeliveryStatus, InteractionStatus,
 };
+use mutsuki_bot_qq_protocol::QqBotCapabilityMatrix;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::{broadcast, watch};
@@ -1124,33 +1125,36 @@ fn operation_conflict(operation_id: &str) -> QqManagementError {
 mod tests {
     use super::*;
     use mutsuki_bot_protocol::{
-        BotConversationKind, InteractionScope, InteractionWaitSpec, QqMessageSegmentKind,
-        QqPermissionRequirement, QqRateLimitPolicy, QqStreamingStrategy, QqUploadConstraints,
+        BotConversationKind, BotRateLimitPolicy, BotSegmentKind, BotStreamingStrategy,
+        BotUploadConstraints, InteractionScope, InteractionWaitSpec,
     };
+    use mutsuki_bot_qq_protocol::QqPermissionRequirement;
 
     fn capability(account_id: &str) -> QqBotCapabilityMatrix {
         QqBotCapabilityMatrix {
             account_id: account_id.into(),
-            conversation_kinds: vec![BotConversationKind::Private],
-            outbound_conversation_kinds: vec![BotConversationKind::Private],
-            active_message_kinds: vec![BotConversationKind::Private],
-            inbound_segments: vec![QqMessageSegmentKind::Text],
-            outbound_segments: vec![QqMessageSegmentKind::Text],
-            inbound_media: Vec::new(),
-            outbound_media: Vec::new(),
-            active_message: true,
-            message_edit: false,
-            message_recall: true,
-            reply: true,
-            quote: true,
-            mention: true,
-            upload: QqUploadConstraints::default(),
-            rate_limit: QqRateLimitPolicy::default(),
-            streaming: vec![QqStreamingStrategy::FinalOnly],
             configured_intents: 1,
             shard: [0, 1],
             required_intents: vec!["group_and_c2c_event".into()],
             required_permissions: vec![QqPermissionRequirement::ReadC2cMessages],
+            capabilities: mutsuki_bot_protocol::BotAdapterCapabilities {
+                conversation_kinds: vec![BotConversationKind::Private],
+                outbound_conversation_kinds: vec![BotConversationKind::Private],
+                active_message_kinds: vec![BotConversationKind::Private],
+                inbound_segments: vec![BotSegmentKind::Text],
+                outbound_segments: vec![BotSegmentKind::Text],
+                inbound_media: Vec::new(),
+                outbound_media: Vec::new(),
+                active_message: true,
+                message_edit: false,
+                message_recall: true,
+                reply: true,
+                quote: true,
+                mention: true,
+                upload: BotUploadConstraints::default(),
+                rate_limit: BotRateLimitPolicy::default(),
+                streaming: vec![BotStreamingStrategy::FinalOnly],
+            },
         }
     }
 

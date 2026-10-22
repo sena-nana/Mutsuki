@@ -45,8 +45,8 @@ use mutsuki_bot_protocol::{
     BotNodeBinding, BotNodeCatalogFragment, BotNodeDescriptor, BotNodeInvocation, BotNodeOutput,
     BotNodePortDescriptor, BotNodePortDirection, BotNodeResult, BotNodeRole,
     BotReplyDeliveryCommand, BotReplyDeliveryPart, BotReplyDeliveryReceipt,
-    BotReplyDeliveryRequest, BotSpeechReplyPolicy, BotTarget, ConversationIclEntry,
-    ConversationIdentifiers, DeliveryPolicy, MessageSegment, QqStreamingStrategy,
+    BotReplyDeliveryRequest, BotSpeechReplyPolicy, BotStreamingStrategy, BotTarget,
+    ConversationIclEntry, ConversationIdentifiers, DeliveryPolicy, MessageSegment,
     ResolvedConversationPolicy, format_icl_summary,
 };
 use mutsuki_runtime_contracts::{

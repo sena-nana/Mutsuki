@@ -2,7 +2,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use mutsuki_agent_client::{AgentConnectionId, AgentConnectionIdError};
-use mutsuki_bot_protocol::{AgentSessionScope, BotSpeechReplyPolicy, QqStreamingStrategy};
+use mutsuki_bot_protocol::{AgentSessionScope, BotSpeechReplyPolicy, BotStreamingStrategy};
 use mutsuki_config_service::{
     ConfigDescriptor, ConfigValueType, EnumOption, LocalizedText, MutsukiConfigSchema,
 };
@@ -233,10 +233,10 @@ impl BotAgentConfig {
     /// # Errors
     ///
     /// Returns an error when the persisted streaming name is unsupported.
-    pub fn streaming_strategy(&self) -> Result<QqStreamingStrategy, BotAgentConfigError> {
+    pub fn streaming_strategy(&self) -> Result<BotStreamingStrategy, BotAgentConfigError> {
         match self.streaming.trim() {
-            "final_only" => Ok(QqStreamingStrategy::FinalOnly),
-            "segment_messages" => Ok(QqStreamingStrategy::SegmentMessages),
+            "final_only" => Ok(BotStreamingStrategy::FinalOnly),
+            "segment_messages" => Ok(BotStreamingStrategy::SegmentMessages),
             other => Err(BotAgentConfigError::InvalidStreaming(other.into())),
         }
     }

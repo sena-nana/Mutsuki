@@ -45,6 +45,7 @@ tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+mutsuki-bot-qq-protocol.workspace = true
 mutsuki-std-service-host-integration.workspace = true
 mutsuki-bot-web-host-integration.workspace = true
 mutsuki-bot-web-extension-qq.workspace = true

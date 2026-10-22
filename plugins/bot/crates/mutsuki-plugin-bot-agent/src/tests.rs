@@ -322,7 +322,7 @@ fn private_and_group_two_turns_reuse_their_stable_sessions() {
         let bridge = BotAgentBridge::new(
             ConversationService::new(repository, policy()),
             Box::new(FakeAgentClient::default()),
-            &QqStreamingStrategy::FinalOnly,
+            &BotStreamingStrategy::FinalOnly,
         );
         let first = block_on(bridge.submit_event(&event("one", target.clone()))).unwrap();
         let second = block_on(bridge.submit_event(&event("two", target))).unwrap();
@@ -568,7 +568,7 @@ fn final_response_keeps_non_resource_artifact_summary() {
     let outgoing = outgoing_messages_with_limit(
         &source,
         &page,
-        &QqStreamingStrategy::FinalOnly,
+        &BotStreamingStrategy::FinalOnly,
         BOT_AGENT_DEFAULT_MAX_MESSAGE_BYTES,
     );
 
@@ -599,7 +599,8 @@ fn final_only_reply_is_segmented_at_the_configured_transport_boundary() {
         truncated: false,
     };
 
-    let outgoing = outgoing_messages_with_limit(&source, &page, &QqStreamingStrategy::FinalOnly, 4);
+    let outgoing =
+        outgoing_messages_with_limit(&source, &page, &BotStreamingStrategy::FinalOnly, 4);
     assert_eq!(
         outgoing
             .iter()
@@ -656,13 +657,13 @@ fn segmented_streaming_uses_model_deltas_while_final_only_uses_final_response() 
     let final_only = outgoing_messages_with_limit(
         &source,
         &page,
-        &QqStreamingStrategy::FinalOnly,
+        &BotStreamingStrategy::FinalOnly,
         BOT_AGENT_DEFAULT_MAX_MESSAGE_BYTES,
     );
     let segmented = outgoing_messages_with_limit(
         &source,
         &page,
-        &QqStreamingStrategy::SegmentMessages,
+        &BotStreamingStrategy::SegmentMessages,
         BOT_AGENT_DEFAULT_MAX_MESSAGE_BYTES,
     );
     assert_eq!(final_only[0].plain_text(), "final reply");
@@ -681,14 +682,14 @@ fn completed_event_is_suppressed_before_agent_submit_after_bridge_reload() {
     let first_bridge = BotAgentBridge::new(
         ConversationService::new(repository.clone(), policy()),
         Box::new(FakeAgentClient::default()),
-        &QqStreamingStrategy::FinalOnly,
+        &BotStreamingStrategy::FinalOnly,
     );
     let first = block_on(first_bridge.submit_event(&event)).unwrap();
     assert_eq!(first.binding.session_version, 1);
     let reloaded_bridge = BotAgentBridge::new(
         ConversationService::new(repository, policy()),
         Box::new(FakeAgentClient::default()),
-        &QqStreamingStrategy::FinalOnly,
+        &BotStreamingStrategy::FinalOnly,
     );
     let duplicate = block_on(reloaded_bridge.submit_event(&event)).unwrap();
     assert_eq!(duplicate.binding.session_version, 1);
@@ -713,7 +714,7 @@ fn pending_event_resumes_after_bridge_reload_without_duplicate_submit() {
         Box::new(ReplayableAgentClient {
             state: state.clone(),
         }),
-        &QqStreamingStrategy::FinalOnly,
+        &BotStreamingStrategy::FinalOnly,
     );
     assert!(matches!(
         block_on(first_bridge.submit_event(&event)),
@@ -726,7 +727,7 @@ fn pending_event_resumes_after_bridge_reload_without_duplicate_submit() {
         Box::new(ReplayableAgentClient {
             state: state.clone(),
         }),
-        &QqStreamingStrategy::FinalOnly,
+        &BotStreamingStrategy::FinalOnly,
     );
     let recovered = block_on(reloaded_bridge.submit_event(&event)).unwrap();
     assert_eq!(recovered.outgoing[0].plain_text(), "recovered reply");
@@ -741,7 +742,7 @@ fn cancel_fork_reset_and_regenerate_have_fenced_session_transitions() {
     let bridge = BotAgentBridge::new(
         ConversationService::new(repository, policy()),
         Box::new(FakeAgentClient::default()),
-        &QqStreamingStrategy::FinalOnly,
+        &BotStreamingStrategy::FinalOnly,
     );
     let event = event(
         "actions",

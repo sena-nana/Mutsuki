@@ -13,6 +13,7 @@ name = "bot-runtime-domain-bench"
 path = "src/bin/bot_runtime_domain_bench.rs"
 
 [dependencies]
+mutsuki-bot-qq-protocol.workspace = true
 mutsuki-agent-contracts.workspace = true
 mutsuki-bot-protocol.workspace = true
 mutsuki-runtime-contracts.workspace = true

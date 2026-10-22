@@ -69,7 +69,8 @@ Adapter/Gateway。它不拥有 Core 调度、Host 生命周期、Agent 能力或
 
 | crate | 职责 |
 | --- | --- |
-| `mutsuki-bot-protocol` | 纯契约。`event/ingest`、`command/handle` 是 envelope ID，不是 runner |
+| `mutsuki-bot-protocol` | 纯契约。`event/ingest`、`command/handle` 是 envelope ID，不是 runner；平台中立的 `BotConversationRef`、`BotAdapterDescriptor`/`BotAdapterDirectory` 与 `BotAdapterCapabilities` |
+| `mutsuki-bot-qq-protocol` | QQ 平台契约：`mutsuki.bot.qqbot.*` 协议 ID、`qqbot.openapi.*` 错误码、`QqBotCapabilityMatrix`；业务插件不得依赖 |
 | `mutsuki-bot-conversation` | 会话、ICL 与 persona 的 store trait；plugin 包只做 Runner |
 | `mutsuki-bot-interaction` / `mutsuki-bot-delivery` | waiter / delivery 服务与 repository；`DeliveryGateway` 用 `BotTarget` |
 | `mutsuki-plugin-bot-interaction` / `mutsuki-plugin-bot-delivery` | 对应 PluginBuilder manifest 与节点 catalog |

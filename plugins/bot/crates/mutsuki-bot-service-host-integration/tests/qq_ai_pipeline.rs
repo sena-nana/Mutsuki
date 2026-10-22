@@ -24,16 +24,16 @@ use mutsuki_bot_interaction::{InteractionConditionMatcher, InteractionError};
 use mutsuki_bot_protocol::{
     AgentSessionScope, BOT_AGENT_SUBMIT_PROTOCOL_ID, BOT_EVENT_INGEST_PROTOCOL_ID,
     BOT_FLOW_BOT_EVENT_TYPE, BOT_FLOW_INGRESS_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID,
-    BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID, BOT_REPLY_DELIVERY_PROTOCOL_ID, BotAccountRef,
-    BotConversationRef, BotDeliveryContent, BotEvent, BotEventKind, BotFlowContext,
-    BotFlowDocument, BotFlowEdge, BotFlowEdgeKind, BotFlowEventEnvelope, BotFlowNode,
-    BotFlowNodePosition, BotFlowPayload, BotFlowSourceSelector, BotFlowTypeRef, BotMessage,
-    BotNodeCatalogFragment, BotNodeDescriptor, BotNodeInvocation, BotNodeOutput,
-    BotNodePortDescriptor, BotNodePortDirection, BotNodeResult, BotNodeRole, BotNodeWiring,
-    BotPlatform, BotReplyDeliveryCommand, BotReplyDeliveryPart, BotReplyDeliveryRequest,
-    BotSpeechReplyPolicy, BotTarget, BotUser, ConversationPolicy, DeliveryPolicy, DeliveryStatus,
-    MessageSegment,
+    BOT_REPLY_DELIVERY_PROTOCOL_ID, BotAccountRef, BotConversationRef, BotDeliveryContent,
+    BotEvent, BotEventKind, BotFlowContext, BotFlowDocument, BotFlowEdge, BotFlowEdgeKind,
+    BotFlowEventEnvelope, BotFlowNode, BotFlowNodePosition, BotFlowPayload, BotFlowSourceSelector,
+    BotFlowTypeRef, BotMessage, BotNodeCatalogFragment, BotNodeDescriptor, BotNodeInvocation,
+    BotNodeOutput, BotNodePortDescriptor, BotNodePortDirection, BotNodeResult, BotNodeRole,
+    BotNodeWiring, BotPlatform, BotReplyDeliveryCommand, BotReplyDeliveryPart,
+    BotReplyDeliveryRequest, BotSpeechReplyPolicy, BotTarget, BotUser, ConversationPolicy,
+    DeliveryPolicy, DeliveryStatus, MessageSegment,
 };
+use mutsuki_bot_qq_protocol::QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID;
 use mutsuki_bot_service_host_integration::{
     QqAiBotPluginBundle, qq_ai_orchestrated_flow_with_source,
 };
@@ -1136,7 +1136,7 @@ fn forward_fold_runner_descriptor() -> mutsuki_runtime_contracts::RunnerDescript
         "mutsuki.bot.adapter.qqbot.openapi",
         TEST_FORWARD_FOLD_PLUGIN_ID,
     )
-    .accepted_protocol(BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID)
+    .accepted_protocol(QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID)
     .execution_class(ExecutionClass::Orchestration)
     .build()
 }
@@ -1159,7 +1159,7 @@ fn qq_forward_fold_catalog_manifest() -> mutsuki_runtime_contracts::PluginManife
     PluginBuilder::new(TEST_FORWARD_FOLD_PLUGIN_ID)
         .runner_descriptor(forward_fold_runner_descriptor())
         .protocol_handler(
-            ProtocolDescriptorBuilder::new(BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID)
+            ProtocolDescriptorBuilder::new(QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID)
                 .input_schema(json!({"type": "object"}))
                 .output_schema(json!({
                     "type": "object",

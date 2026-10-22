@@ -3,9 +3,10 @@ use thiserror::Error;
 use url::Url;
 
 use mutsuki_bot_protocol::{
-    BotConversationKind, BotMediaKind, QqBotCapabilityMatrix, QqMessageSegmentKind,
-    QqPermissionRequirement, QqRateLimitPolicy, QqStreamingStrategy, QqUploadConstraints,
+    BotConversationKind, BotMediaKind, BotRateLimitPolicy, BotSegmentKind, BotStreamingStrategy,
+    BotUploadConstraints,
 };
+use mutsuki_bot_qq_protocol::{QqBotCapabilityMatrix, QqPermissionRequirement};
 use mutsuki_config_service::document::{
     DocumentObject, bool_field, optional_bool_field, optional_string_field, rejected,
     runtime_config_or_current, unsigned_field,
@@ -238,12 +239,12 @@ impl QqBotConfig {
             Vec::new()
         } else {
             vec![
-                QqMessageSegmentKind::Text,
-                QqMessageSegmentKind::MentionUser,
-                QqMessageSegmentKind::Reply,
-                QqMessageSegmentKind::Quote,
-                QqMessageSegmentKind::Markdown,
-                QqMessageSegmentKind::Keyboard,
+                BotSegmentKind::Text,
+                BotSegmentKind::MentionUser,
+                BotSegmentKind::Reply,
+                BotSegmentKind::Quote,
+                BotSegmentKind::Markdown,
+                BotSegmentKind::Keyboard,
             ]
         };
         inbound_segments.extend(inbound_media.iter().map(media_segment_kind));
@@ -251,68 +252,71 @@ impl QqBotConfig {
             Vec::new()
         } else {
             vec![
-                QqMessageSegmentKind::Text,
-                QqMessageSegmentKind::MentionUser,
-                QqMessageSegmentKind::MentionAll,
-                QqMessageSegmentKind::Reply,
-                QqMessageSegmentKind::Quote,
-                QqMessageSegmentKind::Markdown,
-                QqMessageSegmentKind::Keyboard,
+                BotSegmentKind::Text,
+                BotSegmentKind::MentionUser,
+                BotSegmentKind::MentionAll,
+                BotSegmentKind::Reply,
+                BotSegmentKind::Quote,
+                BotSegmentKind::Markdown,
+                BotSegmentKind::Keyboard,
             ]
         };
         outbound_segments.extend(outbound_media.iter().map(media_segment_kind));
+        let receives_messages = !required_intents.is_empty();
         QqBotCapabilityMatrix {
             account_id: self.account_id.clone(),
-            conversation_kinds,
-            outbound_conversation_kinds,
-            active_message: !active_message_kinds.is_empty(),
-            active_message_kinds,
-            inbound_segments,
-            outbound_segments,
-            inbound_media,
-            outbound_media,
-            message_edit: false,
-            message_recall: group_c2c_enabled,
-            reply: !required_intents.is_empty(),
-            quote: !required_intents.is_empty(),
-            mention: !required_intents.is_empty(),
-            upload: QqUploadConstraints {
-                max_bytes: Some(100 * 1024 * 1024),
-                max_bytes_by_kind: [
-                    (BotMediaKind::Image, 20 * 1024 * 1024),
-                    (BotMediaKind::Video, 30 * 1024 * 1024),
-                    (BotMediaKind::Audio, 20 * 1024 * 1024),
-                    (BotMediaKind::File, 100 * 1024 * 1024),
-                ]
-                .into(),
-                allowed_mime_types: vec![
-                    "image/jpeg".into(),
-                    "image/png".into(),
-                    "image/gif".into(),
-                    "image/webp".into(),
-                    "audio/mpeg".into(),
-                    "audio/wav".into(),
-                    "audio/ogg".into(),
-                    "video/mp4".into(),
-                    "application/octet-stream".into(),
-                ],
-            },
-            rate_limit: QqRateLimitPolicy {
-                server_driven: true,
-                honors_retry_after: true,
-                max_retry_attempts: self.max_retry_attempts,
-                retry_base_delay_ms: self.retry_base_delay_ms,
-                retry_max_delay_ms: self.retry_max_delay_ms,
-                gateway_rate_limit_delay_ms: self.gateway_rate_limit_delay_ms,
-            },
-            streaming: vec![
-                QqStreamingStrategy::FinalOnly,
-                QqStreamingStrategy::SegmentMessages,
-            ],
             configured_intents: self.gateway_intents,
             shard: self.shard,
             required_intents,
             required_permissions,
+            capabilities: mutsuki_bot_protocol::BotAdapterCapabilities {
+                conversation_kinds,
+                outbound_conversation_kinds,
+                active_message: !active_message_kinds.is_empty(),
+                active_message_kinds,
+                inbound_segments,
+                outbound_segments,
+                inbound_media,
+                outbound_media,
+                message_edit: false,
+                message_recall: group_c2c_enabled,
+                reply: receives_messages,
+                quote: receives_messages,
+                mention: receives_messages,
+                upload: BotUploadConstraints {
+                    max_bytes: Some(100 * 1024 * 1024),
+                    max_bytes_by_kind: [
+                        (BotMediaKind::Image, 20 * 1024 * 1024),
+                        (BotMediaKind::Video, 30 * 1024 * 1024),
+                        (BotMediaKind::Audio, 20 * 1024 * 1024),
+                        (BotMediaKind::File, 100 * 1024 * 1024),
+                    ]
+                    .into(),
+                    allowed_mime_types: vec![
+                        "image/jpeg".into(),
+                        "image/png".into(),
+                        "image/gif".into(),
+                        "image/webp".into(),
+                        "audio/mpeg".into(),
+                        "audio/wav".into(),
+                        "audio/ogg".into(),
+                        "video/mp4".into(),
+                        "application/octet-stream".into(),
+                    ],
+                },
+                rate_limit: BotRateLimitPolicy {
+                    server_driven: true,
+                    honors_retry_after: true,
+                    max_retry_attempts: self.max_retry_attempts,
+                    retry_base_delay_ms: self.retry_base_delay_ms,
+                    retry_max_delay_ms: self.retry_max_delay_ms,
+                    gateway_rate_limit_delay_ms: self.gateway_rate_limit_delay_ms,
+                },
+                streaming: vec![
+                    BotStreamingStrategy::FinalOnly,
+                    BotStreamingStrategy::SegmentMessages,
+                ],
+            },
         }
     }
 }
@@ -544,12 +548,12 @@ fn field_node(
     }
 }
 
-fn media_segment_kind(kind: &BotMediaKind) -> QqMessageSegmentKind {
+fn media_segment_kind(kind: &BotMediaKind) -> BotSegmentKind {
     match kind {
-        BotMediaKind::Image => QqMessageSegmentKind::Image,
-        BotMediaKind::Audio => QqMessageSegmentKind::Audio,
-        BotMediaKind::Video => QqMessageSegmentKind::Video,
-        BotMediaKind::File => QqMessageSegmentKind::File,
+        BotMediaKind::Image => BotSegmentKind::Image,
+        BotMediaKind::Audio => BotSegmentKind::Audio,
+        BotMediaKind::Video => BotSegmentKind::Video,
+        BotMediaKind::File => BotSegmentKind::File,
     }
 }
 

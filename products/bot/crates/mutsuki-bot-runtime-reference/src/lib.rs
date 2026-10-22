@@ -16,7 +16,7 @@ use mutsuki_agent_contracts::{
     AGENT_CONTEXT_BUILD_PROTOCOL, AGENT_SESSION_APPEND_PROTOCOL, AgentContextBuildRequest,
     AgentSessionAppendRequest,
 };
-use mutsuki_bot_protocol::{QQBOT_GATEWAY_STATUS_PROTOCOL_ID, QqBotGatewayStatusRequest};
+use mutsuki_bot_qq_protocol::{QQBOT_GATEWAY_STATUS_PROTOCOL_ID, QqBotGatewayStatusRequest};
 use mutsuki_runtime_contracts::{
     CrossDomainTaskRequest, DispatchLane, DomainTaskHandle, ExecutionClass, ObservabilityProfile,
     RunnerDescriptor, RunnerPurity, RunnerResult, RuntimeDomainId, RuntimeError, RuntimeProfile,

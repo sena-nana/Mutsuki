@@ -10,11 +10,11 @@
 )]
 
 mod account;
+mod adapter;
 mod capability;
 mod command;
 mod conversation;
 mod delivery;
-mod error;
 mod event;
 mod flow;
 mod flow_tool;
@@ -28,11 +28,11 @@ mod segment;
 mod target;
 
 pub use account::*;
+pub use adapter::*;
 pub use capability::*;
 pub use command::*;
 pub use conversation::*;
 pub use delivery::*;
-pub use error::*;
 pub use event::*;
 pub use flow::*;
 pub use flow_tool::*;
@@ -77,7 +77,6 @@ pub const BOT_CONVERSATION_ATTACH_IDENTIFIERS_PROTOCOL_ID: &str =
 pub const BOT_REPLY_QUOTE_PROTOCOL_ID: &str = "mutsuki.bot.reply/quote@1";
 pub const BOT_REPLY_MENTION_PROTOCOL_ID: &str = "mutsuki.bot.reply/mention@1";
 pub const BOT_REPLY_SEGMENT_PROTOCOL_ID: &str = "mutsuki.bot.reply/segment@1";
-pub const BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID: &str = "mutsuki.bot.qq.reply/forward-fold@1";
 pub const BOT_FLOW_INGRESS_PROTOCOL_ID: &str = "mutsuki.bot.flow/ingress@1";
 pub const BOT_FLOW_NODE_EXECUTE_PROTOCOL_ID: &str = "mutsuki.bot.flow.node/execute@1";
 pub const BOT_FLOW_CONVERSATION_PROTOCOL_ID: &str = "mutsuki.bot.flow.match/conversation@1";
@@ -99,10 +98,5 @@ pub const BOT_EXT_CONVERSATION_IDENTIFIERS: &str = "bot.conversation.identifiers
 pub const BOT_EXT_REPLY_SOURCE_MESSAGE_ID: &str = "bot.reply.source_message_id";
 pub const BOT_EXT_REPLY_SOURCE_USER_ID: &str = "bot.reply.source_user_id";
 pub const BOT_EXT_LINK_URL: &str = "bot.link.url";
-
-pub const QQBOT_RAW_CALL_PROTOCOL_ID: &str = "mutsuki.bot.qqbot.raw/call@1";
-pub const QQBOT_ACCOUNT_GET_PROTOCOL_ID: &str = "mutsuki.bot.qqbot.account/get@1";
-pub const QQBOT_GATEWAY_STATUS_PROTOCOL_ID: &str = "mutsuki.bot.qqbot.gateway/status@1";
-pub const QQBOT_CAPABILITY_GET_PROTOCOL_ID: &str = "mutsuki.bot.qqbot.capability/get@1";
 
 pub type BotExtMap = std::collections::BTreeMap<String, serde_json::Value>;

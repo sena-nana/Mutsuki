@@ -84,7 +84,13 @@ Messages the bot itself sends are projected as bot bubbles and never start Flow 
 Libraries (not host-loadable plugins):
 
 - `mutsuki-bot-protocol`: pure Bot data contracts. Envelope IDs (`event/ingest`, `command/handle`)
-  are not runner protocols.
+  are not runner protocols. It owns the platform-neutral conversation identity
+  (`BotConversationRef`), the adapter contract (`BotAdapterDescriptor`, published as the
+  `mutsuki.bot.adapter@1` manifest extension and collected by `BotAdapterDirectory`) and neutral
+  adapter capabilities.
+- `mutsuki-bot-qq-protocol`: the QQ platform contract (QQ-only protocol ids, OpenAPI error codes,
+  `QqBotCapabilityMatrix` with intents and permissions). Only the QQ adapter, its integration and
+  QQ console pages depend on it.
 - `mutsuki-bot-sdk`: author helpers over Bot protocol tasks.
 - `mutsuki-bot-flow`: Bot-owned catalog validation and atomic active snapshot provider.
 - `mutsuki-bot-conversation`: conversation/session repository traits, binding keys,

@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+mutsuki-bot-qq-protocol.workspace = true
 mutsuki-bot-sdk.workspace = true
 fastrand.workspace = true
 mutsuki-runtime-contracts.workspace = true

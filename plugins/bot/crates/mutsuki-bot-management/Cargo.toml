@@ -6,6 +6,7 @@ license.workspace = true
 description = "Headless Bot operations management contracts and services."
 
 [dependencies]
+mutsuki-bot-qq-protocol.workspace = true
 async-trait.workspace = true
 mutsuki-bot-protocol.workspace = true
 serde.workspace = true

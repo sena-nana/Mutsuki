@@ -2,11 +2,14 @@ use std::collections::BTreeMap;
 
 use mutsuki_bot_protocol::{
     BOT_FLOW_INGRESS_PROTOCOL_ID, BOT_MEDIA_UPLOAD_PROTOCOL_ID, BOT_MESSAGE_RECALL_PROTOCOL_ID,
-    BOT_MESSAGE_SEND_PROTOCOL_ID, BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID, BotEvent,
+    BOT_MESSAGE_SEND_PROTOCOL_ID, BotAdapterDescriptor, BotAdapterOperations, BotEvent,
     BotFlowEventEnvelope, BotFlowTypeRef, BotMediaUploadRequest, BotMessage,
     BotMessageRecallRequest, BotNodeBinding, BotNodeCatalogFragment, BotNodeDescriptor,
     BotNodeInvocation, BotNodeOutput, BotNodePortDescriptor, BotNodePortDirection, BotNodeResult,
-    BotNodeRole, BotReplyDeliveryRequest, MessageSegment, QQBOT_ACCOUNT_GET_PROTOCOL_ID,
+    BotNodeRole, BotPlatform, BotReplyDeliveryRequest, MessageSegment,
+};
+use mutsuki_bot_qq_protocol::{
+    QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID, QQBOT_ACCOUNT_GET_PROTOCOL_ID,
     QQBOT_CAPABILITY_GET_PROTOCOL_ID, QQBOT_GATEWAY_STATUS_PROTOCOL_ID, QQBOT_RAW_CALL_PROTOCOL_ID,
     QqBotAccountGetRequest, QqBotCapabilityGetRequest, QqBotGatewayStatusRequest,
 };
@@ -43,6 +46,32 @@ pub const QQBOT_OPENAPI_RUNNER_ID: &str = "mutsuki.bot.adapter.qqbot.openapi";
 pub const QQBOT_OPENAPI_RESULT_EVENT: &str = "mutsuki.bot.qqbot.openapi.result";
 
 pub fn qqbot_adapter_manifest(plugin_generation: u64, media_enabled: bool) -> PluginManifest {
+    qqbot_adapter_manifest_for_accounts(plugin_generation, media_enabled, Vec::new())
+}
+
+/// The adapter contract this plugin generation serves; `accounts` are the configured QQ accounts.
+pub fn qqbot_adapter_descriptor(
+    media_enabled: bool,
+    accounts: Vec<String>,
+) -> BotAdapterDescriptor {
+    BotAdapterDescriptor {
+        platform: BotPlatform::QqBot,
+        display_name: "QQ".into(),
+        accounts,
+        operations: BotAdapterOperations {
+            send_runner_id: QQBOT_OPENAPI_RUNNER_ID.into(),
+            recall_runner_id: Some(QQBOT_OPENAPI_RUNNER_ID.into()),
+            upload_runner_id: media_enabled.then(|| QQBOT_OPENAPI_RUNNER_ID.into()),
+        },
+        config_provider_id: Some(QQBOT_ADAPTER_PLUGIN_ID.into()),
+    }
+}
+
+pub fn qqbot_adapter_manifest_for_accounts(
+    plugin_generation: u64,
+    media_enabled: bool,
+    accounts: Vec<String>,
+) -> PluginManifest {
     let gateway = if media_enabled {
         gateway_media_descriptor(plugin_generation)
     } else {
@@ -72,7 +101,7 @@ pub fn qqbot_adapter_manifest(plugin_generation: u64, media_enabled: bool) -> Pl
             "qqbot-message-recall",
         )
         .protocol_handler(
-            ProtocolDescriptorBuilder::new(BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID)
+            ProtocolDescriptorBuilder::new(QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID)
                 .input_schema(json!({"type": "object"}))
                 .output_schema(json!({"type": "object", "required": ["outputs", "metadata"]}))
                 .error_schema(json!({"type": "object", "required": ["code", "source", "route"]}))
@@ -96,6 +125,11 @@ pub fn qqbot_adapter_manifest(plugin_generation: u64, media_enabled: bool) -> Pl
             qqbot_node_catalog(media_enabled)
                 .into_plugin_extension()
                 .expect("QQBot node catalog serializes"),
+        )
+        .extension(
+            qqbot_adapter_descriptor(media_enabled, accounts)
+                .into_plugin_extension()
+                .expect("QQBot adapter descriptor serializes"),
         )
         .build()
         .manifest
@@ -245,8 +279,8 @@ fn qqbot_node_catalog(media_enabled: bool) -> BotNodeCatalogFragment {
         category: "QQ".into(),
         role: BotNodeRole::Processor,
         binding: Some(BotNodeBinding {
-            binding_id: format!("binding:{BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID}"),
-            protocol_id: BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID.into(),
+            binding_id: format!("binding:{QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID}"),
+            protocol_id: QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID.into(),
             runner_hint: Some(QQBOT_OPENAPI_RUNNER_ID.into()),
         }),
         ports: vec![
@@ -465,7 +499,7 @@ impl Runner for QqOpenApiRunner {
             &batch,
             self.descriptor.batch.max_entry_concurrency,
             |task| {
-                if task.protocol_id.as_str() == BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID {
+                if task.protocol_id.as_str() == QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID {
                     return complete_forward_fold(task);
                 }
                 let (payload, invocation) = node_payload(task)?;
@@ -721,7 +755,7 @@ pub fn openapi_descriptor(plugin_generation: u64, media_enabled: bool) -> Runner
     let mut accepted_protocol_ids = vec![
         BOT_MESSAGE_SEND_PROTOCOL_ID.into(),
         BOT_MESSAGE_RECALL_PROTOCOL_ID.into(),
-        BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID.into(),
+        QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID.into(),
         QQBOT_ACCOUNT_GET_PROTOCOL_ID.into(),
         QQBOT_GATEWAY_STATUS_PROTOCOL_ID.into(),
         QQBOT_CAPABILITY_GET_PROTOCOL_ID.into(),

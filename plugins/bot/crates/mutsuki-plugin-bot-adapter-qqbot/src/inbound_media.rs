@@ -58,7 +58,11 @@ impl QqGatewayMediaHandler {
                 .collect(),
             client,
             resources,
-            max_bytes_by_kind: config.capability_matrix().upload.max_bytes_by_kind,
+            max_bytes_by_kind: config
+                .capability_matrix()
+                .capabilities
+                .upload
+                .max_bytes_by_kind,
         })
     }
 }

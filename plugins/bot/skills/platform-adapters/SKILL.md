@@ -6,6 +6,15 @@ description: Implement or change QQBot or other platform gateway connections, au
 # Platform Adapters
 
 - Translate platform events into generic Bot protocols and generic operations back into platform requests.
+- Declare the adapter contract: every adapter manifest carries a `BotAdapterDescriptor` as the
+  `mutsuki.bot.adapter@1` extension (platform, served accounts, the runners for send/recall/upload,
+  its config provider). Hosts, delivery and the console discover adapters through
+  `BotAdapterDirectory::from_manifests`, never through hard-coded plugin ids; every runner the
+  descriptor names must be declared by the same manifest.
+- Neutral capabilities (`BotAdapterCapabilities`, `BotSegmentKind`, `BotStreamingStrategy`,
+  `BotUploadConstraints`, `BotRateLimitPolicy`) live in `mutsuki-bot-protocol`. Platform-only
+  contract (QQ protocol ids, `qqbot.openapi.*` error codes, intents/permissions in
+  `QqBotCapabilityMatrix`) lives in `mutsuki-bot-qq-protocol`, which business plugins never import.
 - Keep platform-only fields under the platform namespace or adapter internals.
 - Obtain credentials from Host secret injection; redact tokens and platform-sensitive payloads.
 - Keep transport clients and sockets inside Gateway objects; wrap them as Host EventSources only in the integration crate. The QQ socket loop is `gateway::QqGatewayClient` (driven by `QqGatewayHost`: submitter, shutdown flag, log); change reconnect, heartbeat or close handling there, not in the wrapper. Use ResourceRef for large media.

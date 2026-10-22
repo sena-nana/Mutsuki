@@ -52,7 +52,7 @@ impl BotAgentBridge {
     pub fn new(
         conversations: ConversationService,
         client: Box<dyn AgentBridgeClient>,
-        streaming: &QqStreamingStrategy,
+        streaming: &BotStreamingStrategy,
     ) -> Self {
         let config = BotAgentConfigHandle::default();
         let mut settings = config.snapshot();
@@ -583,7 +583,7 @@ pub(crate) fn validate_agent_media(
 pub(crate) fn outgoing_messages_with_limit(
     source: &BotEvent,
     page: &AgentEventPage,
-    strategy: &QqStreamingStrategy,
+    strategy: &BotStreamingStrategy,
     max_message_bytes: usize,
 ) -> Vec<BotMessage> {
     let mut deltas = String::new();
@@ -638,8 +638,8 @@ pub(crate) fn outgoing_messages_with_limit(
         }
     }
     let mut text = match strategy {
-        QqStreamingStrategy::FinalOnly => final_text.unwrap_or(deltas),
-        QqStreamingStrategy::SegmentMessages => {
+        BotStreamingStrategy::FinalOnly => final_text.unwrap_or(deltas),
+        BotStreamingStrategy::SegmentMessages => {
             if deltas.is_empty() {
                 final_text.unwrap_or_default()
             } else {
@@ -688,9 +688,9 @@ pub(crate) fn split_text(text: &str, max_bytes: usize) -> Vec<String> {
     chunks
 }
 
-pub(crate) fn streaming_name(strategy: &QqStreamingStrategy) -> &'static str {
+pub(crate) fn streaming_name(strategy: &BotStreamingStrategy) -> &'static str {
     match strategy {
-        QqStreamingStrategy::FinalOnly => "final_only",
-        QqStreamingStrategy::SegmentMessages => "segment_messages",
+        BotStreamingStrategy::FinalOnly => "final_only",
+        BotStreamingStrategy::SegmentMessages => "segment_messages",
     }
 }
