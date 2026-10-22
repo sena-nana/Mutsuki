@@ -2,5 +2,6 @@
 @import "@lilia/theme/styles/workspace.css";
 @import "@lilia/theme/styles/sidebar.css";
 @import "@lilia/theme/styles/page.css";
+@import "./tokens.css";
 @import "./console.css";
 @import "./node-editor.css";

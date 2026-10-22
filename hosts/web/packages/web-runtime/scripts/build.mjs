@@ -24,13 +24,17 @@ for (const module of SHARED_MODULES) {
   const entry = path.join(entries, module.file);
   await writeFile(entry, `export * from ${JSON.stringify(module.specifier)};\n`);
   const isVue = module.specifier === "vue";
+  // @mutsuki/ui ships Vue SFCs; its own Vite build (dist) is the compiled form.
+  const fromDist = module.specifier === "@mutsuki/ui";
   await build({
     configFile: false,
     root,
     logLevel: "warn",
     resolve: {
       // Workspace packages build from TypeScript sources.
-      conditions: ["source", "module", "browser", "production"],
+      conditions: fromDist
+        ? ["module", "browser", "production"]
+        : ["source", "module", "browser", "production"],
       alias: isVue
         ? [{ find: /^vue$/, replacement: require.resolve("vue/dist/vue.runtime.esm-bundler.js") }]
         : [],

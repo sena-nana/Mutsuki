@@ -32,6 +32,15 @@ package and is built by `@mutsuki/web-build`.
 - `useSession().can(capability)` only hides UI; the host enforces every call.
 - `useSubscription(topic, handler)`; a denied subscription sets `error` once and is dropped.
 
+## UI
+
+- Build pages from `@mutsuki/ui` `Mk*` components; style only with `--mk-*` tokens (hex colors
+  fail the build). `MkAsync` renders a `useRpc` result's loading/error/empty/data states.
+- Confirm destructive actions with `useConfirm({ danger: true, requireText })`, ask with
+  `usePrompt`, report with `useToast`; never `window.confirm/prompt/alert` or `innerHTML`.
+- Icon-only controls need a label (`MkIconButton label`); inputs live in `MkField` or carry
+  `label`; secrets use `MkSecretInput` and are never read back.
+
 ## Text and formatting
 
 - All copy goes through `defineMessages({ "zh-CN": { … } })` + `useI18n().t("key", params)`;

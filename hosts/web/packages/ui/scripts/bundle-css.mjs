@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Bundle @lilia/theme + console.css → dist/mutsuki-ui.css (single-file, include_str!-safe). */
+/** Bundle @lilia/theme + tokens + console chrome + Mk components → dist/mutsuki-ui.css. */
 import { createRequire } from "node:module";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -35,8 +35,11 @@ const entries = [
   require.resolve("@lilia/theme/styles/workspace.css"),
   require.resolve("@lilia/theme/styles/sidebar.css"),
   require.resolve("@lilia/theme/styles/page.css"),
+  path.join(stylesDir, "tokens.css"),
   path.join(stylesDir, "console.css"),
   path.join(stylesDir, "node-editor.css"),
+  // `Mk*` component styles extracted by `vite build`; global `mk-` classes, loaded once.
+  path.join(outDir, "components.css"),
 ];
 
 const bundled = entries

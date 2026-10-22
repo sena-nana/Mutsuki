@@ -58,6 +58,8 @@ function interpolate(template: string, params?: Record<string, string | number>)
 export interface I18n<T extends MessageTree = MessageTree> {
   readonly locale: Ref<Locale>;
   t(key: MessageKey<T>, params?: Record<string, string | number>): string;
+  /** Whether the current locale defines `key`. */
+  has(key: string): boolean;
   /** Adds an owner's namespace (`extension id` or short name) to the catalog. */
   extend<N extends string, U extends MessageTree>(
     namespace: N,
@@ -85,6 +87,9 @@ export function createI18n<T extends MessageTree>(
         return key;
       }
       return interpolate(template, params);
+    },
+    has(key) {
+      return catalogs.get(locale.value)?.has(key) ?? false;
     },
     extend(namespace, messages) {
       const problems = checkMessageKeys(messages);

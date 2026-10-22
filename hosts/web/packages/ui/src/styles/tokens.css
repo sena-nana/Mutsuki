@@ -1,0 +1,89 @@
+/*
+ * Product tokens for `Mk*` components, layered on Lilia. Components read only `--mk-*`, so a
+ * Lilia re-pin or a product re-skin changes this file and nothing else.
+ *
+ * Container breakpoints: compact <= 640px, medium <= 1024px. Custom properties cannot appear
+ * in @container conditions, so components repeat these two literals.
+ */
+:root {
+  --mk-color-text: var(--text);
+  --mk-color-text-muted: var(--text-muted);
+  --mk-color-text-faint: var(--text-faint);
+  --mk-color-bg: var(--bg);
+  --mk-color-surface: var(--surface);
+  --mk-color-surface-raised: var(--surface-raised);
+  --mk-color-subtle: var(--bg-subtle);
+  --mk-color-border: var(--border);
+  --mk-color-border-soft: var(--border-soft);
+  --mk-color-border-strong: var(--border-strong);
+  --mk-color-accent: var(--accent);
+  --mk-color-accent-strong: var(--accent-strong);
+  --mk-color-accent-soft: var(--accent-soft);
+  --mk-color-accent-on-soft: var(--accent-on-soft);
+  --mk-color-on-accent: var(--accent-text);
+  --mk-color-ok: var(--ok);
+  --mk-color-ok-soft: var(--ok-soft);
+  --mk-color-warn: var(--warn);
+  --mk-color-warn-soft: var(--warn-soft);
+  --mk-color-err: var(--err);
+  --mk-color-err-soft: var(--err-soft);
+  --mk-color-danger: var(--err-solid);
+  --mk-color-danger-hover: var(--err-solid-hover);
+  --mk-color-on-danger: var(--err-solid-text);
+  --mk-color-scrim: var(--scrim);
+  --mk-state-hover: var(--lilia-state-layer-hover);
+  --mk-state-pressed: var(--lilia-state-layer-pressed);
+  --mk-state-selected: var(--lilia-state-layer-selected);
+  --mk-focus-ring: var(--lilia-state-focus-ring);
+
+  --mk-radius-sm: var(--radius-sm);
+  --mk-radius: var(--radius-md);
+  --mk-radius-lg: var(--radius-lg);
+  --mk-radius-pill: var(--radius-pill);
+  --mk-shadow-menu: var(--shadow-menu);
+  --mk-shadow-dialog: var(--shadow-dialog);
+
+  --mk-font-mono: var(--font-mono);
+  --mk-font-size-sm: 12px;
+  --mk-font-size: 14px;
+  --mk-font-size-lg: 16px;
+  --mk-font-size-xl: 20px;
+
+  --mk-space-1: 4px;
+  --mk-space-2: 8px;
+  --mk-space-3: 12px;
+  --mk-space-4: 16px;
+  --mk-space-5: 24px;
+  --mk-space-6: 32px;
+  --mk-control-height: 32px;
+  --mk-control-height-sm: 26px;
+
+  --mk-z-drawer: calc(var(--z-dialog) - 2);
+  --mk-z-menu: calc(var(--z-dialog) - 1);
+  --mk-z-dialog: var(--z-dialog);
+  --mk-z-toast: calc(var(--z-dialog) + 1);
+}
+
+/* Opt-in container for compact/medium component layouts. */
+.mk-container {
+  container-type: inline-size;
+}
+
+.mk-visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.mk-focusable:focus-visible,
+.mk-button:focus-visible,
+.mk-icon-button:focus-visible {
+  outline: 2px solid var(--mk-focus-ring);
+  outline-offset: 2px;
+}

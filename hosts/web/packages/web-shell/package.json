@@ -13,8 +13,8 @@
     }
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
-    "build": "tsc",
+    "typecheck": "vue-tsc --noEmit",
+    "build": "vue-tsc",
     "test": "vitest run"
   },
   "dependencies": {
@@ -27,10 +27,12 @@
     "vue-router": "catalog:"
   },
   "devDependencies": {
+    "@vitejs/plugin-vue": "catalog:",
     "pinia": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:",
     "vue": "catalog:",
-    "vue-router": "catalog:"
+    "vue-router": "catalog:",
+    "vue-tsc": "catalog:"
   }
 }

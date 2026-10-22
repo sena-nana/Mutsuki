@@ -50,3 +50,13 @@
   `usePolling`/`useSession`/`useConnectionState`、`createI18n`/`defineMessages`/`useI18n`、
   格式化函数、`defineExtension` 与 `MAX_EXTENSIONS`（Shell 超出即记失败）。测试替身在
   `@mutsuki/web-sdk/testing`（不进入共享运行时）。
+
+## W4 设计系统
+
+- `@mutsuki/ui` 改为 Vue 组件库：`ConsoleShell`、`createConsoleShellElement`、`ConsoleNavItem`
+  与 `consoleShell.ts` 删除（`@mutsuki/web-shell` 不再转出它们）；新 Shell 在 W5 用 `Mk*` 组件
+  组装。
+- 新增 `--mk-*` 产品 token（`tokens.css`）与 `Mk*` 组件；组件样式进入同一份
+  `shared/ui.<hash>.css`。确认/输入/提示改用 `useConfirm`/`usePrompt`/`useToast`
+  （需 `installMutsukiUi(app)` 与一个 `<MkOverlayHost />`）。
+- `I18n` 新增 `has(key)`；`@mutsuki/web-shell` 的类型检查与构建改用 `vue-tsc`。
