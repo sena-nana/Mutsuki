@@ -18,7 +18,7 @@ use serde_json::Value;
 
 use crate::{
     AsyncResourcePlanGateway, AsyncResourceRegistryGateway, ResourcePlanGateway,
-    ResourceRegistryGateway, RuntimeClient, RuntimeClientRef,
+    ResourceRegistryGateway, RuntimeClientRef,
 };
 
 pub trait TaskSubmitter: Send + Sync {
@@ -72,7 +72,7 @@ impl TaskSubmitterRuntimeClient {
     }
 }
 
-impl RuntimeClient for TaskSubmitterRuntimeClient {
+impl TaskSubmitter for TaskSubmitterRuntimeClient {
     fn submit_batch(&self, batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
         self.submitter.submit_batch(batch)
     }
@@ -88,7 +88,13 @@ impl RuntimeClient for TaskSubmitterRuntimeClient {
     ) -> RuntimeResult<Option<TaskOutcome>> {
         self.submitter.wait_outcome(handle, timeout)
     }
+
+    fn cancel_task(&self, handle: &TaskHandle) -> RuntimeResult<()> {
+        self.submitter.cancel_task(handle)
+    }
 }
+
+impl crate::RuntimeClient for TaskSubmitterRuntimeClient {}
 
 pub trait ConfigProvider: Send + Sync {
     fn get_config(&self, scope: &str, key: &str) -> RuntimeResult<Option<Value>>;

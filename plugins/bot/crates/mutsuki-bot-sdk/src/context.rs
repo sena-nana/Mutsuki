@@ -384,7 +384,7 @@ mod tests {
         ResourceAccess, ResourceId, ResourceLifetime, ResourceRef, ResourceSealState,
         ResourceSemantic,
     };
-    use mutsuki_runtime_sdk::{RuntimeClient, RuntimeResult};
+    use mutsuki_runtime_sdk::RuntimeResult;
     use serde_json::json;
 
     use super::*;
@@ -395,7 +395,7 @@ mod tests {
         outcomes: Mutex<BTreeMap<TaskId, TaskOutcome>>,
     }
 
-    impl RuntimeClient for RecordingRuntimeClient {
+    impl mutsuki_runtime_sdk::TaskSubmitter for RecordingRuntimeClient {
         fn submit_batch(&self, batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
             let handles = batch
                 .tasks
@@ -416,7 +416,14 @@ mod tests {
         fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
             Ok(self.outcomes.lock().unwrap().get(&handle.task_id).cloned())
         }
+
+        // A fake without cancellation state: accepting the request is all it can do.
+        fn cancel_task(&self, _handle: &TaskHandle) -> mutsuki_runtime_sdk::RuntimeResult<()> {
+            Ok(())
+        }
     }
+
+    impl mutsuki_runtime_sdk::RuntimeClient for RecordingRuntimeClient {}
 
     #[test]
     fn single_operation_returns_runtime_handle_and_propagates_metadata() {

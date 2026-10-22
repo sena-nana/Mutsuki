@@ -40,7 +40,7 @@ use mutsuki_runtime_contracts::{
     TaskLeaseId, TaskOutcome, WorkBatch, WorkResourcePlan,
 };
 use mutsuki_runtime_sdk::Runner;
-use mutsuki_runtime_sdk::{RuntimeClient, RuntimeResult};
+use mutsuki_runtime_sdk::RuntimeResult;
 use serde_json::{Value, json};
 
 use crate::measurement::{Sample, allocation_delta, allocation_snapshot, canonical_hash};
@@ -66,7 +66,7 @@ impl OutcomeClient {
     }
 }
 
-impl RuntimeClient for OutcomeClient {
+impl mutsuki_runtime_sdk::TaskSubmitter for OutcomeClient {
     fn submit_batch(&self, _batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
         Ok(Vec::new())
     }
@@ -79,7 +79,14 @@ impl RuntimeClient for OutcomeClient {
             .get(&handle.task_id)
             .cloned())
     }
+
+    // A fake without cancellation state: accepting the request is all it can do.
+    fn cancel_task(&self, _handle: &TaskHandle) -> mutsuki_runtime_sdk::RuntimeResult<()> {
+        Ok(())
+    }
 }
+
+impl mutsuki_runtime_sdk::RuntimeClient for OutcomeClient {}
 
 #[derive(Default)]
 struct RouteCounts {

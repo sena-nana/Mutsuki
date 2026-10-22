@@ -2,6 +2,7 @@ use super::*;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
+use mutsuki_runtime_contracts::TaskBatch;
 use mutsuki_runtime_contracts::{
     ArtifactType, BridgeDescriptor, CodecDescriptor, ContractSurface, ContractSurfaceKind,
     DomainEvent, HostExtensionDescriptor, HostExtensionKind, LifecyclePolicy, PermissionGrant,
@@ -148,7 +149,7 @@ struct ManualClient {
     outcomes: Mutex<HashMap<TaskId, TaskOutcome>>,
 }
 
-impl RuntimeClient for ManualClient {
+impl crate::TaskSubmitter for ManualClient {
     fn submit_batch(&self, batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
         Ok(batch
             .tasks
@@ -172,7 +173,14 @@ impl RuntimeClient for ManualClient {
             .get(&handle.task_id)
             .cloned())
     }
+
+    // A fake without cancellation state: accepting the request is all it can do.
+    fn cancel_task(&self, _handle: &TaskHandle) -> crate::RuntimeResult<()> {
+        Ok(())
+    }
 }
+
+impl crate::RuntimeClient for ManualClient {}
 
 #[test]
 fn task_handle_future_polls_until_outcome() {

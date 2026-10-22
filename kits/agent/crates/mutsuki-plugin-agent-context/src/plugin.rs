@@ -411,13 +411,13 @@ async fn collect_providers(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mutsuki_runtime_sdk::RuntimeClient;
+
     use mutsuki_runtime_sdk::contracts::{TaskBatch, TaskHandle, TaskOutcome};
     use std::sync::Arc;
 
     struct NoopClient;
 
-    impl RuntimeClient for NoopClient {
+    impl mutsuki_runtime_sdk::TaskSubmitter for NoopClient {
         fn submit_batch(&self, _batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
             Ok(Vec::new())
         }
@@ -425,7 +425,14 @@ mod tests {
         fn task_outcome(&self, _handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
             Ok(None)
         }
+
+        // A fake without cancellation state: accepting the request is all it can do.
+        fn cancel_task(&self, _handle: &TaskHandle) -> mutsuki_runtime_sdk::RuntimeResult<()> {
+            Ok(())
+        }
     }
+
+    impl mutsuki_runtime_sdk::RuntimeClient for NoopClient {}
 
     #[test]
     fn plugin_requires_collect_protocol() {

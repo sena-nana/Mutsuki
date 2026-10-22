@@ -44,7 +44,7 @@ use mutsuki_runtime_contracts::{
     ResourceSealState, ResourceSemantic, SnapshotDescriptor, StreamPlan, TaskBatch, TaskHandle,
     WorkResourcePlan, WritePlan,
 };
-use mutsuki_runtime_sdk::{ResourcePlanGateway, RuntimeClient};
+use mutsuki_runtime_sdk::ResourcePlanGateway;
 
 #[derive(Default)]
 struct FakeTransportState {
@@ -260,7 +260,7 @@ fn snapshot_resource() -> ResourceRef {
 
 struct CompletedChildClient;
 
-impl RuntimeClient for CompletedChildClient {
+impl mutsuki_runtime_sdk::TaskSubmitter for CompletedChildClient {
     fn submit_batch(&self, _: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
         unreachable!()
     }
@@ -272,11 +272,18 @@ impl RuntimeClient for CompletedChildClient {
             output_ref: None,
         }))
     }
+
+    // A fake without cancellation state: accepting the request is all it can do.
+    fn cancel_task(&self, _handle: &TaskHandle) -> mutsuki_runtime_sdk::RuntimeResult<()> {
+        Ok(())
+    }
 }
+
+impl mutsuki_runtime_sdk::RuntimeClient for CompletedChildClient {}
 
 struct RenderedChildClient;
 
-impl RuntimeClient for RenderedChildClient {
+impl mutsuki_runtime_sdk::TaskSubmitter for RenderedChildClient {
     fn submit_batch(&self, _: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
         unreachable!()
     }
@@ -296,7 +303,14 @@ impl RuntimeClient for RenderedChildClient {
             output_ref: None,
         }))
     }
+
+    // A fake without cancellation state: accepting the request is all it can do.
+    fn cancel_task(&self, _handle: &TaskHandle) -> mutsuki_runtime_sdk::RuntimeResult<()> {
+        Ok(())
+    }
 }
+
+impl mutsuki_runtime_sdk::RuntimeClient for RenderedChildClient {}
 
 fn rendered_image_resource() -> ResourceRef {
     let mut resource = snapshot_resource();

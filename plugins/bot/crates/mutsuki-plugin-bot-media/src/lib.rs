@@ -366,7 +366,6 @@ mod tests {
         WorkBatch, WorkResourcePlan,
     };
     use mutsuki_runtime_sdk::RunnerContext;
-    use mutsuki_runtime_sdk::RuntimeClient;
 
     use super::*;
 
@@ -375,7 +374,7 @@ mod tests {
         outcomes: Mutex<BTreeMap<mutsuki_runtime_contracts::TaskId, TaskOutcome>>,
     }
 
-    impl RuntimeClient for OutcomeClient {
+    impl mutsuki_runtime_sdk::TaskSubmitter for OutcomeClient {
         fn submit_batch(&self, _batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
             Ok(Vec::new())
         }
@@ -383,7 +382,14 @@ mod tests {
         fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
             Ok(self.outcomes.lock().unwrap().get(&handle.task_id).cloned())
         }
+
+        // A fake without cancellation state: accepting the request is all it can do.
+        fn cancel_task(&self, _handle: &TaskHandle) -> mutsuki_runtime_sdk::RuntimeResult<()> {
+            Ok(())
+        }
     }
+
+    impl mutsuki_runtime_sdk::RuntimeClient for OutcomeClient {}
 
     #[derive(Default)]
     struct FakeMedia {

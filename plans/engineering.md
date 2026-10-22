@@ -45,7 +45,7 @@ Mutsuki/
   Host shell 整体做成插件。
 - `mutsuki-runtime-sdk`：插件、Kit、Host 与产品访问内核类型（`Runner`、`RunnerContext`、
   `AsyncBatchHandler`、`RuntimeResult` 等）的唯一入口；除 `mutsuki-runtime-host` 外不得直接依赖
-  `mutsuki-runtime-core`，由 `package-boundaries.toml` 强制。实现 Rust 插件作者侧 `RuntimeClient`、`TaskHandleFuture`、
+  `mutsuki-runtime-core`，由 `package-boundaries.toml` 强制。实现 Rust 插件作者侧 `RuntimeClient`（`TaskSubmitter` 的子 trait，只增加 waker 钩子）、`TaskHandleFuture`、
   `AsyncRunnerContext` 和 `TaskAwaitRunnerAdapter`；同时定义 host/plugin 扩展基础 trait：
   `PluginBuilder` / `PluginLoader`、`HostContext`、`HostServiceRegistry`、
   `CapabilityBroker`、`TaskSubmitter`、同步/异步 ResourcePlan gateway、`EventBridge`、

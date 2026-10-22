@@ -1097,7 +1097,7 @@ mod tests {
         submitted: Arc<Mutex<Vec<Task>>>,
     }
 
-    impl mutsuki_runtime_sdk::RuntimeClient for CompletedRuntime {
+    impl mutsuki_runtime_sdk::TaskSubmitter for CompletedRuntime {
         fn submit_batch(
             &self,
             batch: TaskBatch,
@@ -1128,7 +1128,14 @@ mod tests {
                 output_ref: None,
             }))
         }
+
+        // A fake without cancellation state: accepting the request is all it can do.
+        fn cancel_task(&self, _handle: &TaskHandle) -> mutsuki_runtime_sdk::RuntimeResult<()> {
+            Ok(())
+        }
     }
+
+    impl mutsuki_runtime_sdk::RuntimeClient for CompletedRuntime {}
 
     #[test]
     fn system_message_sequence_stays_within_qq_unsigned_16_bit_range() {

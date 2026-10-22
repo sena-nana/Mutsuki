@@ -30,7 +30,7 @@ pub use mutsuki_plugin_agent_model_gateway::{
 use mutsuki_plugin_agent_proactive::ProactiveScheduleService;
 use mutsuki_runtime_contracts::{PluginManifest, TaskBatch, TaskHandle, TaskOutcome};
 use mutsuki_runtime_sdk::{AsyncBatchHandler, Runner};
-use mutsuki_runtime_sdk::{RuntimeClient, RuntimeClientRef, RuntimeResult};
+use mutsuki_runtime_sdk::{RuntimeClientRef, RuntimeResult};
 pub use native_coding::{
     LSP_PLUGIN_ID, NATIVE_CODING_BUNDLE_ID, NATIVE_CODING_TOOL_PLUGIN_ID,
     NATIVE_CODING_TOOL_PROTOCOL, NATIVE_CODING_TOOL_RUNNER_ID, NativeCodingAgentBundle,
@@ -235,7 +235,7 @@ fn noop_client() -> RuntimeClientRef {
 
 struct NoopClient;
 
-impl RuntimeClient for NoopClient {
+impl mutsuki_runtime_sdk::TaskSubmitter for NoopClient {
     fn submit_batch(&self, _batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
         Ok(Vec::new())
     }
@@ -243,7 +243,14 @@ impl RuntimeClient for NoopClient {
     fn task_outcome(&self, _handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
         Ok(None)
     }
+
+    // A fake without cancellation state: accepting the request is all it can do.
+    fn cancel_task(&self, _handle: &TaskHandle) -> mutsuki_runtime_sdk::RuntimeResult<()> {
+        Ok(())
+    }
 }
+
+impl mutsuki_runtime_sdk::RuntimeClient for NoopClient {}
 
 #[cfg(test)]
 mod tests {
@@ -335,7 +342,7 @@ mod tests {
         }
     }
 
-    impl RuntimeClient for DeferredClient {
+    impl mutsuki_runtime_sdk::TaskSubmitter for DeferredClient {
         fn submit_batch(&self, batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
             self.client()?.submit_batch(batch)
         }
@@ -343,7 +350,13 @@ mod tests {
         fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
             self.client()?.task_outcome(handle)
         }
+
+        fn cancel_task(&self, handle: &TaskHandle) -> mutsuki_runtime_sdk::RuntimeResult<()> {
+            self.client()?.cancel_task(handle)
+        }
     }
+
+    impl mutsuki_runtime_sdk::RuntimeClient for DeferredClient {}
 
     struct StaticCredential;
 

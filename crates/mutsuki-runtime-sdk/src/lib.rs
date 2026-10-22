@@ -32,7 +32,7 @@ use mutsuki_runtime_contracts::{
     BindingId, CancelPolicy, CompletionBatch, EntryCompletion, ProtocolId, RefId, ResourceAccess,
     ResourceId, ResourceLifetime, ResourceRef, ResourceSealState, ResourceSemantic,
     RunnerDescriptor, RunnerId, RunnerResult, RunnerStatus, RuntimeError, Task, TaskAwait,
-    TaskBatch, TaskHandle, TaskId, TaskOutcome, TaskStepContinuation, WorkBatch,
+    TaskHandle, TaskId, TaskOutcome, TaskStepContinuation, WorkBatch,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -97,36 +97,11 @@ pub trait SdkProtocol {
     const PROTOCOL_ID: &'static str;
 }
 
-pub trait RuntimeClient: Send + Sync {
-    fn submit_batch(&self, batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>>;
-    fn submit_one(&self, task: Task) -> RuntimeResult<TaskHandle> {
-        let batch_id = format!("sdk.submit.{}", task.task_id);
-        self.submit_batch(TaskBatch::one(batch_id, task))?
-            .into_iter()
-            .next()
-            .ok_or_else(|| {
-                mutsuki_runtime_core::RuntimeFailure::new(
-                    mutsuki_runtime_contracts::RuntimeError::new(
-                        mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
-                        "runtime.sdk",
-                        "task.submit_one.empty",
-                    ),
-                )
-            })
-    }
-    fn submit_task(&self, task: Task) -> RuntimeResult<TaskHandle> {
-        self.submit_one(task)
-    }
-    fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>>;
+/// The task client SDK futures and runners hold (`RuntimeClientRef`): a [`TaskSubmitter`] plus a
+/// hook for clients that can wake a future when its task completes. Submission, cancellation and
+/// outcomes all come from `TaskSubmitter`; there is one task interface.
+pub trait RuntimeClient: TaskSubmitter {
     fn register_waker(&self, _handle: &TaskHandle, _waker: &Waker) {}
-    /// Blocking wait for an outcome; see [`TaskSubmitter::wait_outcome`].
-    fn wait_outcome(
-        &self,
-        handle: &TaskHandle,
-        timeout: Option<std::time::Duration>,
-    ) -> RuntimeResult<Option<TaskOutcome>> {
-        poll_outcome_with_backoff(timeout, || self.task_outcome(handle))
-    }
 }
 
 /// Bounded-backoff outcome polling for clients without a notification path:

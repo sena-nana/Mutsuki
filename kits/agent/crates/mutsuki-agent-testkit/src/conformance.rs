@@ -11,14 +11,14 @@ use mutsuki_plugin_agent_loop::{
     PLUGIN_ID as LOOP_PLUGIN_ID, RUNNER_ID as LOOP_RUNNER_ID, plugin as loop_plugin,
 };
 use mutsuki_plugin_agent_model_gateway::ModelGateway;
+use mutsuki_runtime_sdk::RuntimeResult;
 use mutsuki_runtime_sdk::contracts::{RunnerMode, TaskBatch, TaskHandle, TaskOutcome};
-use mutsuki_runtime_sdk::{RuntimeClient, RuntimeResult};
 
 use crate::{MockModelProvider, echo_tool_descriptor, execute_echo_tool};
 
 struct NoopClient;
 
-impl RuntimeClient for NoopClient {
+impl mutsuki_runtime_sdk::TaskSubmitter for NoopClient {
     fn submit_batch(&self, _batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
         Ok(Vec::new())
     }
@@ -26,7 +26,14 @@ impl RuntimeClient for NoopClient {
     fn task_outcome(&self, _handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
         Ok(None)
     }
+
+    // A fake without cancellation state: accepting the request is all it can do.
+    fn cancel_task(&self, _handle: &TaskHandle) -> mutsuki_runtime_sdk::RuntimeResult<()> {
+        Ok(())
+    }
 }
+
+impl mutsuki_runtime_sdk::RuntimeClient for NoopClient {}
 
 pub fn run_basic_conformance() {
     session_round_trip();

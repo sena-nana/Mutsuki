@@ -64,23 +64,7 @@ impl DeferredHostClient {
     }
 }
 
-impl RuntimeClient for DeferredHostClient {
-    fn submit_batch(&self, batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
-        self.services()?.tasks.submit_batch(batch)
-    }
-
-    fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
-        self.services()?.tasks.task_outcome(handle)
-    }
-
-    fn wait_outcome(
-        &self,
-        handle: &TaskHandle,
-        timeout: Option<Duration>,
-    ) -> RuntimeResult<Option<TaskOutcome>> {
-        self.services()?.tasks.wait_outcome(handle, timeout)
-    }
-}
+impl RuntimeClient for DeferredHostClient {}
 
 impl TaskSubmitter for DeferredHostClient {
     fn submit_batch(&self, batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
