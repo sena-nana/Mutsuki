@@ -19,7 +19,7 @@ impl ServiceRuntimeInner {
         candidates: &[ConfiguredPluginSelection],
     ) -> ServiceRuntimeResult<PluginReconfigureReport> {
         let _reload = self.reload_lock.lock().await;
-        let affected = candidates
+        let mut affected = candidates
             .iter()
             .map(|selection| selection.id.trim().to_string())
             .collect::<BTreeSet<_>>();
@@ -36,6 +36,15 @@ impl ServiceRuntimeInner {
             .plugins
             .configured
             .extend(candidates.iter().cloned());
+        // Consumers of a replaced application service are rebuilt against the new provider.
+        let current_services = self.application_services.snapshot();
+        loop {
+            let dependents = current_services.dependents_of(&affected);
+            if dependents.is_subset(&affected) {
+                break;
+            }
+            affected.extend(dependents);
+        }
 
         let mut candidate_components = PreparedComponentRegistry::default();
         for plugin_id in &affected {
@@ -67,6 +76,7 @@ impl ServiceRuntimeInner {
                 configured_plugins: self.configured_plugins.clone(),
                 components: PreparedComponentRegistry::default(),
                 runtime_client: self.runtime_client.clone(),
+                application_services: self.application_services.clone(),
                 current_component: Some(plugin_id.clone()),
             };
             let prepared = factory
@@ -111,6 +121,10 @@ impl ServiceRuntimeInner {
             );
         }
 
+        let staged_services = StagedApplicationServices::stage(
+            &self.application_services,
+            ApplicationServiceTable::from_components(&combined_components)?,
+        );
         let state = self
             .deployment_state
             .lock()
@@ -175,6 +189,9 @@ impl ServiceRuntimeInner {
             let drain_timeout = reload_drain_timeout(&candidate_config, &new_catalog);
             run_blocking_on_worker(|| runtime.reload(prepared, drain_timeout))
         };
+        if decision.is_ok() {
+            staged_services.commit();
+        }
         if let Err(error) = decision {
             let restore_lock = restore_runtime_lock(&runtime_lock_path, previous_runtime_lock);
             return match restore_lock {
@@ -630,5 +647,33 @@ impl ServiceRuntimeInner {
             runner_errors: lifecycle_errors,
             event_sources: "kept".into(),
         }))
+    }
+}
+
+/// Candidate application services visible to factories while a reconfigure is prepared; dropping
+/// without `commit` restores the previous generation.
+struct StagedApplicationServices<'a> {
+    directory: &'a ApplicationServiceDirectory,
+    previous: Option<Arc<ApplicationServiceTable>>,
+}
+
+impl<'a> StagedApplicationServices<'a> {
+    fn stage(directory: &'a ApplicationServiceDirectory, table: ApplicationServiceTable) -> Self {
+        Self {
+            directory,
+            previous: Some(directory.replace(table)),
+        }
+    }
+
+    fn commit(mut self) {
+        self.previous = None;
+    }
+}
+
+impl Drop for StagedApplicationServices<'_> {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous.take() {
+            self.directory.restore(previous);
+        }
     }
 }

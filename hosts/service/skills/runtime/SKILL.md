@@ -10,5 +10,11 @@ description: Change ServiceHost Core bootstrap, ServiceRuntimeBuilder, HostServi
 - Make bootstrap failure unavailable/fatal; never report a service healthy without a real Core runtime.
 - Stop IPC, EventSources and runners before releasing HostRuntime.
 - Keep standard protocol wrappers in StdPlugins and product selection in product/template repositories.
+- Components share state only through application services: the provider calls
+  `register_application_service`, each consumer calls `require_application_service` and resolves
+  lazily through `RunnerFactoryContext::require_service` (`register_scoped_*` or
+  `factory_context()`). Never share owner state through `OnceLock`/static slots or rely on
+  selection order. Reconfiguring a provider stages its table, co-reloads declared consumers and
+  restores the previous table on failure; a missing provider fails boot/reload loudly.
 
-Test startup failure, real builder assembly, event-source stop and graceful shutdown ordering.
+Test startup failure, real builder assembly, application-service co-reload/rollback, event-source stop and graceful shutdown ordering.

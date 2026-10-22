@@ -2363,6 +2363,7 @@ async fn test_started_runtime_inner_with_core(
         component_generations: Mutex::new(BTreeMap::new()),
         reload_lock: tokio::sync::Mutex::new(()),
         runtime_client,
+        application_services: ApplicationServiceDirectory::default(),
         deployment_state: Mutex::new(PluginDeploymentState {
             version: deployment_state_version(),
             plugins: BTreeMap::new(),
@@ -2398,4 +2399,205 @@ fn minimal_manifest(plugin_id: &str) -> PluginManifest {
         },
         metadata: BTreeMap::new(),
     }
+}
+
+struct SharedProviderFactory;
+
+impl ConfiguredPluginFactory for SharedProviderFactory {
+    fn plugin_id(&self) -> &str {
+        "test.provider"
+    }
+
+    fn prepare(
+        &self,
+        config: &Value,
+        builder: ServiceRuntimeBuilder,
+    ) -> Result<ServiceRuntimeBuilder, String> {
+        if config.get("fail").and_then(Value::as_bool) == Some(true) {
+            return Err("candidate rejected".into());
+        }
+        let generation = config
+            .get("generation")
+            .and_then(Value::as_u64)
+            .unwrap_or(1);
+        Ok(builder
+            .register_builtin_plugin(minimal_manifest("test.provider"))
+            .register_application_service("svc.shared", Arc::new(GenerationService(generation))))
+    }
+}
+
+/// Publishes `service.consumer` carrying the provider generation it resolved at factory time.
+struct SharedConsumerFactory {
+    declare: bool,
+}
+
+impl ConfiguredPluginFactory for SharedConsumerFactory {
+    fn plugin_id(&self) -> &str {
+        "test.consumer"
+    }
+
+    fn prepare(
+        &self,
+        _config: &Value,
+        builder: ServiceRuntimeBuilder,
+    ) -> Result<ServiceRuntimeBuilder, String> {
+        let mut manifest = minimal_manifest("test.consumer");
+        manifest.provides.services.push("service.consumer".into());
+        manifest
+            .provides
+            .capabilities
+            .push("test.consumer.service".into());
+        let loaded_manifest = manifest.clone();
+        let builder = if self.declare {
+            builder.require_application_service("svc.shared")
+        } else {
+            builder
+        };
+        Ok(
+            builder.register_scoped_loaded_plugin_factory(manifest, move |context| {
+                let shared = context.require_service::<GenerationService>("svc.shared")?;
+                Ok::<LoadedPlugin, String>(LoadedPlugin {
+                    manifest: loaded_manifest.clone(),
+                    runners: Vec::new(),
+                    async_handlers: Vec::new(),
+                    host_services: vec![RuntimeBootstrapperService::new(
+                        "service.consumer",
+                        Arc::new(GenerationService(shared.0)),
+                        "test.consumer.service",
+                    )],
+                    resource_providers: Vec::new(),
+                    async_resource_providers: Vec::new(),
+                    host_effects: Vec::new(),
+                })
+            }),
+        )
+    }
+}
+
+fn shared_service_config(root: &std::path::Path, consumer_enabled: bool) -> ServiceConfig {
+    let config_dir = root.join("config");
+    std::fs::create_dir_all(&config_dir).expect("config dir");
+    let config_path = config_dir.join("local.toml");
+    // The consumer is selected first: resolution must not depend on preparation order.
+    std::fs::write(
+        &config_path,
+        format!(
+            r#"
+[[plugins.configured]]
+id = "test.consumer"
+enabled = {consumer_enabled}
+
+[[plugins.configured]]
+id = "test.provider"
+enabled = true
+[plugins.configured.config]
+generation = 1
+"#
+        ),
+    )
+    .expect("config file");
+    let mut config = ServiceConfig::load(mutsuki_service_config::ConfigOverrides {
+        config_file: Some(config_path),
+        home_dir: Some(root.to_path_buf()),
+        ..Default::default()
+    })
+    .expect("loaded config");
+    config.ipc.enabled = false;
+    config.observe.console = false;
+    config.plugins.dynamic_dirs.clear();
+    config.plugins.disabled_dir = root.join("disabled");
+    config
+}
+
+fn shared_service_catalog(declare: bool) -> ConfiguredPluginCatalog {
+    let mut catalog = ConfiguredPluginCatalog::new();
+    catalog.register(SharedProviderFactory).unwrap();
+    catalog.register(SharedConsumerFactory { declare }).unwrap();
+    catalog
+}
+
+#[tokio::test]
+async fn application_service_consumers_follow_provider_generations() {
+    let root = tempdir().expect("temp dir");
+    let runtime = ServiceRuntimeBuilder::new(shared_service_config(root.path(), true))
+        .with_configured_plugin_catalog(shared_service_catalog(true))
+        .start()
+        .await
+        .expect("runtime starts with the consumer selected first");
+    let consumer_generation = |runtime: &ServiceRuntime| {
+        runtime
+            .host_service::<GenerationService>("service.consumer")
+            .unwrap()
+            .0
+    };
+    assert_eq!(consumer_generation(&runtime), 1);
+
+    let report = runtime
+        .reconfigure_plugins(&[ConfiguredPluginSelection {
+            id: "test.provider".into(),
+            enabled: true,
+            config: json!({"generation": 2}),
+        }])
+        .await
+        .expect("provider reconfigured");
+
+    let reloaded = report
+        .components
+        .iter()
+        .map(|component| component.plugin_id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(reloaded, ["test.consumer", "test.provider"]);
+    assert_eq!(consumer_generation(&runtime), 2);
+
+    let rejected = runtime
+        .reconfigure_plugins(&[ConfiguredPluginSelection {
+            id: "test.provider".into(),
+            enabled: true,
+            config: json!({"generation": 3, "fail": true}),
+        }])
+        .await;
+    assert!(rejected.is_err());
+    assert_eq!(
+        runtime
+            .handle()
+            .application_services()
+            .current::<GenerationService>("svc.shared")
+            .unwrap()
+            .0,
+        2
+    );
+    assert_eq!(consumer_generation(&runtime), 2);
+
+    // Disabling the provider while a consumer still requires it fails loud and keeps the old
+    // generation authoritative.
+    let orphaned = runtime
+        .reconfigure_plugins(&[ConfiguredPluginSelection {
+            id: "test.provider".into(),
+            enabled: false,
+            config: json!({}),
+        }])
+        .await;
+    assert!(matches!(
+        orphaned,
+        Err(ServiceRuntimeError::MissingApplicationService { ref component_id, ref service_id })
+            if component_id == "test.consumer" && service_id == "svc.shared"
+    ));
+    assert_eq!(consumer_generation(&runtime), 2);
+}
+
+#[tokio::test]
+async fn undeclared_application_service_resolution_fails_boot() {
+    let root = tempdir().expect("temp dir");
+    let error = ServiceRuntimeBuilder::new(shared_service_config(root.path(), true))
+        .with_configured_plugin_catalog(shared_service_catalog(false))
+        .start()
+        .await
+        .err()
+        .expect("undeclared resolution is rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("host_service.undeclared.svc.shared"),
+        "{error}"
+    );
 }

@@ -66,6 +66,14 @@ runner in the ordinary `PluginBuilder`; its service ID is the task protocol and 
 drains, then disposes, the implementation. Do not register the same service in an Agent-only
 registry or keep a parallel cleanup list.
 
+ServiceHost configured components that share in-process state (one database actor, one simulator)
+use application services instead of factory-level `OnceLock` slots: the owner component calls
+`ServiceRuntimeBuilder::register_application_service`, consumers call
+`require_application_service` and build runners through `register_scoped_runner`,
+`register_scoped_async_handler` or `register_scoped_loaded_plugin_factory`, resolving with
+`RunnerFactoryContext::require_service`. Resolution happens after every component is prepared, so
+selection order is irrelevant; reconfiguring the owner co-reloads every declared consumer.
+
 ## 4. Let reload own ordering
 
 Prepare the complete candidate first. Candidate effects activate while their scope is staged. A

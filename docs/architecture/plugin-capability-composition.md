@@ -66,6 +66,7 @@ switch/drain. Service availability must never mutate Core registries directly.
 | WebExtension RPC/event registration | Web `DisposableScope` owned by one extension setup | Host-local effect | reverse-order retryable cleanup; setup failure rolls back every registration |
 | Agent portable services | generation-bound `AgentServiceRunner` | runner/backend lifetime | service drain/dispose is invoked by Runner disposal; no Agent-specific lifecycle |
 | Agent/Bot configured Host services | loaded-plugin or load-plan effect | backend/service effect | domain-specific drain remains in the service; registration lifetime is scope-owned |
+| ServiceHost application services | owner component of `register_application_service` | Host-local effect | consumers declare `require_application_service` and resolve lazily via `RunnerFactoryContext`; provider reconfigure co-reloads consumers and restores the previous table on failure |
 | stream/subscription/timer occupancy handles | Core `SurfaceOccupancyHandle` | generation-bound fact | keep in Core; scope waits for zero occupancy, never removes by Drop |
 
 The inventory intentionally excludes business Task side effects. Scope cleanup manages long-lived

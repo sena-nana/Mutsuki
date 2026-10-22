@@ -89,6 +89,7 @@ use tokio::sync::oneshot;
 const SERVICE_RUNTIME_SOURCE: &str = "mutsuki.service.runtime";
 
 mod abi_plugin;
+mod application_services;
 mod boot;
 mod catalog;
 mod components;
@@ -102,6 +103,8 @@ mod status_control;
 mod sync_bridge;
 mod task_control;
 
+pub use application_services::{ApplicationServiceDirectory, RunnerFactoryContext};
+use application_services::{ApplicationServiceTable, BUILTIN_COMPONENT};
 #[allow(clippy::wildcard_imports)]
 use boot::*;
 #[allow(clippy::wildcard_imports)]
@@ -201,6 +204,19 @@ pub enum ServiceRuntimeError {
     PluginBusinessSurfaceMismatch { plugin_id: PluginId },
     #[error("failed to read or write plugin deployment state {path}: {detail}")]
     PluginDeploymentState { path: String, detail: String },
+    #[error(
+        "application service {service_id} is provided by both {first_owner} and {second_owner}"
+    )]
+    DuplicateApplicationService {
+        service_id: String,
+        first_owner: String,
+        second_owner: String,
+    },
+    #[error("component {component_id} requires unavailable application service {service_id}")]
+    MissingApplicationService {
+        component_id: String,
+        service_id: String,
+    },
 }
 
 pub type ServiceRuntimeResult<T> = Result<T, ServiceRuntimeError>;
@@ -239,6 +255,7 @@ pub struct ServiceRuntimeBuilder {
     configured_plugins: ConfiguredPluginCatalog,
     components: PreparedComponentRegistry,
     runtime_client: Arc<DeferredHostClient>,
+    application_services: ApplicationServiceDirectory,
     current_component: Option<String>,
 }
 
@@ -319,6 +336,7 @@ struct ServiceRuntimeInner {
     component_generations: Mutex<BTreeMap<String, u64>>,
     reload_lock: tokio::sync::Mutex<()>,
     runtime_client: Arc<DeferredHostClient>,
+    application_services: ApplicationServiceDirectory,
     deployment_state: Mutex<PluginDeploymentState>,
     shutdown_tx: Mutex<Option<oneshot::Sender<String>>>,
     control_changes: Arc<ControlChangeHub>,
@@ -465,6 +483,11 @@ impl ServiceRuntimeHandle {
             .cloned()
     }
 
+    /// Live view of application services; every call observes the committed generation.
+    pub fn application_services(&self) -> ApplicationServiceDirectory {
+        self.inner.application_services.clone()
+    }
+
     /// Returns the complete configured selection snapshot for product-owned diff compilation.
     #[must_use]
     pub fn configured_plugin_selections(&self) -> Vec<ConfiguredPluginSelection> {
@@ -503,8 +526,110 @@ impl ServiceRuntimeBuilder {
             configured_plugins: ConfiguredPluginCatalog::new(),
             components: PreparedComponentRegistry::default(),
             runtime_client: Arc::new(DeferredHostClient::new(SERVICE_RUNTIME_SOURCE)),
+            application_services: ApplicationServiceDirectory::default(),
             current_component: None,
         }
+    }
+
+    fn owner_component(&mut self) -> &mut PreparedComponent {
+        let component_id = self
+            .current_component
+            .clone()
+            .unwrap_or_else(|| BUILTIN_COMPONENT.to_string());
+        self.components.record(component_id)
+    }
+
+    /// Publishes an application-scoped service owned by the current component.
+    ///
+    /// The service lives until its owner component is reconfigured or removed; consumers in other
+    /// components declare it with [`Self::require_application_service`] and resolve it lazily.
+    pub fn register_application_service<T>(
+        mut self,
+        service_id: impl Into<String>,
+        service: Arc<T>,
+    ) -> Self
+    where
+        T: HostService,
+    {
+        self.owner_component().application_services.insert(
+            service_id.into(),
+            mutsuki_runtime_sdk::HostServiceValue::new(service),
+        );
+        self
+    }
+
+    /// Declares that the current component consumes an application service. Boot fails when it
+    /// is missing, and reconfiguring its provider co-reloads this component.
+    pub fn require_application_service(mut self, service_id: impl Into<String>) -> Self {
+        self.owner_component()
+            .required_application_services
+            .insert(service_id.into());
+        self
+    }
+
+    /// Context for owner objects (event sources, health probes) that resolve services at start.
+    pub fn factory_context(&self) -> RunnerFactoryContext {
+        RunnerFactoryContext::new(
+            self.current_component
+                .clone()
+                .unwrap_or_else(|| BUILTIN_COMPONENT.to_string()),
+            self.runtime_client.clone(),
+            self.application_services.clone(),
+        )
+    }
+
+    /// Registers a recreatable runner built from the scoped factory context.
+    pub fn register_scoped_runner<F, E>(mut self, factory: F) -> Self
+    where
+        F: Fn(&RunnerFactoryContext) -> Result<Box<dyn Runner>, E> + Send + Sync + 'static,
+        E: std::fmt::Display,
+    {
+        let context = self.factory_context();
+        self.active_component("native-runner")
+            .native_runner_factories
+            .push(Arc::new(move || {
+                factory(&context).map_err(|error| error.to_string())
+            }));
+        self
+    }
+
+    /// Registers a recreatable Host-driven async handler built from the scoped factory context.
+    pub fn register_scoped_async_handler<F, E>(mut self, factory: F) -> Self
+    where
+        F: Fn(&RunnerFactoryContext) -> Result<Arc<dyn AsyncBatchHandler>, E>
+            + Send
+            + Sync
+            + 'static,
+        E: std::fmt::Display,
+    {
+        let context = self.factory_context();
+        self.active_component("async-handler")
+            .async_handler_factories
+            .push(Arc::new(move || {
+                factory(&context).map_err(|error| error.to_string())
+            }));
+        self
+    }
+
+    /// Registers a recreatable loaded plugin built from the scoped factory context.
+    pub fn register_scoped_loaded_plugin_factory<F, E>(
+        mut self,
+        manifest: mutsuki_runtime_contracts::PluginManifest,
+        factory: F,
+    ) -> Self
+    where
+        F: Fn(&RunnerFactoryContext) -> Result<LoadedPlugin, E> + Send + Sync + 'static,
+        E: std::fmt::Display,
+    {
+        let plugin_id = manifest.plugin_id.clone();
+        let context = self.factory_context();
+        let component = self.active_component("loaded-plugin");
+        component.manifests.insert(plugin_id.clone(), manifest);
+        component.loaded_plugin_factories.insert(
+            plugin_id,
+            Arc::new(move || factory(&context).map_err(|error| error.to_string())),
+        );
+        self
     }
 
     fn active_component(&mut self, kind: &str) -> &mut PreparedComponent {
@@ -857,8 +982,10 @@ impl ServiceRuntimeBuilder {
             configured_plugins,
             components,
             runtime_client,
+            application_services,
             current_component: _,
         } = self_;
+        application_services.replace(ApplicationServiceTable::from_components(&components)?);
         let builtin_registry = components.builtin_registry();
         let native_runner_factories = components.native_runner_factories();
         let async_handler_factories = components.async_handler_factories();
@@ -935,6 +1062,7 @@ impl ServiceRuntimeBuilder {
             components: Mutex::new(components),
             reload_lock: tokio::sync::Mutex::new(()),
             runtime_client,
+            application_services,
             deployment_state: Mutex::new(deployment_state),
             shutdown_tx: Mutex::new(Some(shutdown_tx)),
             control_changes,

@@ -25,6 +25,8 @@ pub(crate) struct PreparedComponent {
     pub(crate) runner_limit_factories: Vec<RunnerLimitFactory>,
     pub(crate) load_plan_hooks: Vec<Arc<dyn LoadPlanLifecycleHook>>,
     pub(crate) load_plan_observers: Vec<Arc<dyn LoadPlanObserver>>,
+    pub(crate) application_services: BTreeMap<String, mutsuki_runtime_sdk::HostServiceValue>,
+    pub(crate) required_application_services: BTreeSet<String>,
 }
 
 impl Clone for PreparedComponent {
@@ -40,6 +42,8 @@ impl Clone for PreparedComponent {
             runner_limit_factories: self.runner_limit_factories.clone(),
             load_plan_hooks: self.load_plan_hooks.clone(),
             load_plan_observers: self.load_plan_observers.clone(),
+            application_services: self.application_services.clone(),
+            required_application_services: self.required_application_services.clone(),
         }
     }
 }
