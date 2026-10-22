@@ -1,4 +1,4 @@
-//! `mutsuki.bot.platforms` WebExtension: one console surface for every platform adapter.
+//! `mutsuki.bot.platforms` `WebExtension`: one console surface for every platform adapter.
 //!
 //! Providers are resolved on every call, so an adapter enabled or reloaded after the console
 //! started appears (or disappears) without restarting the console.

@@ -10,7 +10,7 @@ pub const QQBOT_RAW_CALL_PROTOCOL_ID: &str = "mutsuki.bot.qqbot.raw/call@1";
 pub const QQBOT_ACCOUNT_GET_PROTOCOL_ID: &str = "mutsuki.bot.qqbot.account/get@1";
 pub const QQBOT_GATEWAY_STATUS_PROTOCOL_ID: &str = "mutsuki.bot.qqbot.gateway/status@1";
 pub const QQBOT_CAPABILITY_GET_PROTOCOL_ID: &str = "mutsuki.bot.qqbot.capability/get@1";
-/// Folds a long reply into a QQ forward card; owned by the QQ adapter's OpenAPI runner.
+/// Folds a long reply into a QQ forward card; owned by the QQ adapter's `OpenAPI` runner.
 pub const QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID: &str = "mutsuki.bot.qq.reply/forward-fold@1";
 
 pub const QQBOT_OPENAPI_RATE_LIMITED_ERROR: &str = "qqbot.openapi.rate_limited";
@@ -84,8 +84,8 @@ mod tests {
                 reply: true,
                 quote: false,
                 mention: true,
-                upload: Default::default(),
-                rate_limit: Default::default(),
+                upload: mutsuki_bot_protocol::BotUploadConstraints::default(),
+                rate_limit: mutsuki_bot_protocol::BotRateLimitPolicy::default(),
                 streaming: vec![BotStreamingStrategy::FinalOnly],
             },
             configured_intents: 1,

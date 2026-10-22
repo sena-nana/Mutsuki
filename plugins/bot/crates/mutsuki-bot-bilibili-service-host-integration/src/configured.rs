@@ -357,16 +357,15 @@ mod tests {
                 "self_binding_outbound_binding": "qq-main"
             }
         });
-        let error = match BilibiliConfiguredPlugin::new(
+        let Err(error) = BilibiliConfiguredPlugin::new(
             None,
             mutsuki_bot_service_host_integration::DEFAULT_MEDIA_PROVIDER_ID.to_string(),
         )
         .prepare(
             &config,
             ServiceRuntimeBuilder::new(ServiceConfig::default()),
-        ) {
-            Ok(_) => panic!("Bilibili management unexpectedly accepted missing Host stores"),
-            Err(error) => error,
+        ) else {
+            panic!("Bilibili management unexpectedly accepted missing Host stores");
         };
         assert!(error.contains("security.secret_file"));
     }

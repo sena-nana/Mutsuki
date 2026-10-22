@@ -1,4 +1,4 @@
-//! ServiceHost event source for Bilibili polling: secret requirement, descriptor and health.
+//! `ServiceHost` event source for Bilibili polling: secret requirement, descriptor and health.
 //! The poll loop itself is `mutsuki_plugin_bot_bilibili::run_bilibili_polling`; the cookie is
 //! resolved by the HTTP effect per request, never loaded here.
 
@@ -39,6 +39,7 @@ impl BilibiliPollingCredentials {
 }
 
 impl BilibiliPollingEventSource {
+    #[must_use]
     pub fn new(config: SharedBilibiliConfig, credentials: BilibiliPollingCredentials) -> Self {
         let descriptor = credentials.descriptor(HostEventSourceDescriptor::new(
             "mutsuki.bot.bilibili.polling.source",

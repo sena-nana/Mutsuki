@@ -5,6 +5,8 @@
 //! same markers by [`ts_contract_module`], so namespace, method name, operation and capability
 //! cannot drift between Rust and TypeScript.
 
+use std::fmt::Write as _;
+
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -122,27 +124,28 @@ pub fn ts_contract_module(
     .filter(|name| !name.is_empty())
     .collect::<Vec<_>>()
     .join(", ");
-    out.push_str(&format!(
-        "import {{ {sdk_imports} }} from \"@mutsuki/web-sdk\";\n"
-    ));
+    let _ = writeln!(out, "import {{ {sdk_imports} }} from \"@mutsuki/web-sdk\";");
     if !types.is_empty() {
-        out.push_str(&format!(
-            "import type {{ {} }} from \"{types_module}\";\n",
+        let _ = writeln!(
+            out,
+            "import type {{ {} }} from \"{types_module}\";",
             types.join(", ")
-        ));
+        );
     }
-    out.push_str(&format!(
+    let _ = write!(
+        out,
         "\nexport const {api_name} = defineRpc({{\n  namespace: \"{namespace}\",\n  methods: {{\n"
-    ));
+    );
     for method in methods {
         let builder = match method.operation {
             RpcOperation::Read => "query",
             RpcOperation::Write => "mutation",
         };
-        out.push_str(&format!(
-            "    \"{}\": {builder}<{}, {}>({{ capability: \"{}\" }}),\n",
+        let _ = writeln!(
+            out,
+            "    \"{}\": {builder}<{}, {}>({{ capability: \"{}\" }}),",
             method.method, method.ts_params, method.ts_result, method.capability
-        ));
+        );
     }
     out.push_str("  },\n});\n");
     for topic in topics {
@@ -163,10 +166,11 @@ pub fn ts_contract_module(
                 }
             })
             .collect::<String>();
-        out.push_str(&format!(
+        let _ = write!(
+            out,
             "\nexport const {constant}Topic = topic<{}>(\"{namespace}.{}\", \"{}\");\n",
             topic.ts_payload, topic.topic, topic.capability
-        ));
+        );
     }
     out
 }

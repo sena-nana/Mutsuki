@@ -332,7 +332,7 @@ fn write_config_document(
     repository: &dyn ConfigRepository,
     request: ConfigCompareAndSetRequest,
 ) -> Result<(), String> {
-    let provider_id = request.key.provider_id.to_string();
+    let provider_id = request.key.provider_id.clone();
     let failure = |error: ConfigError| {
         format!("product.config.migration_write_failed: {provider_id}: {error}")
     };
@@ -488,7 +488,10 @@ fn install_lilia_fonts(root: &Path) -> Result<Vec<PathBuf>, String> {
                 )
             })?;
         }
-        if name.ends_with(".woff2") {
+        if Path::new(name)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("woff2"))
+        {
             files.push(target);
         }
     }
