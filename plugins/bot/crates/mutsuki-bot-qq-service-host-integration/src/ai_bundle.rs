@@ -34,7 +34,7 @@ use mutsuki_plugin_bot_reply::{BotReplyRunner, bot_reply_manifest};
 use mutsuki_runtime_sdk::{LoadedPlugin, RuntimeBootstrapperService};
 use mutsuki_service_runtime::ServiceRuntimeBuilder;
 
-use crate::BotTaskRecoveryEventSource;
+use mutsuki_bot_service_host_integration::BotTaskRecoveryEventSource;
 
 /// Fully-injected assembly of the QQ AI pipeline, for deterministic end-to-end tests.
 ///
@@ -145,8 +145,8 @@ impl QqAiBotPluginBundle {
         // Same list the production factory registers, so the E2E cannot pass against
         // a node catalog that production would never build.
         let mut builder = builder;
-        for manifest in
-            crate::configured::bot_agent_chain_manifests().expect("chain manifests are in-surface")
+        for manifest in mutsuki_bot_service_host_integration::bot_agent_chain_manifests()
+            .expect("chain manifests are in-surface")
         {
             builder = builder.register_builtin_plugin(manifest);
         }

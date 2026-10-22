@@ -45,15 +45,15 @@ use mutsuki_plugin_bot_delivery::{bot_delivery_manifest_for, delivery_runner_for
 use mutsuki_runtime_sdk::{LoadedPlugin, RuntimeBootstrapperService};
 use serde_json::Value;
 
-use crate::console_bridge::{
-    BOT_STATE_DB_SERVICE_ID, QQ_MANAGEMENT_SERVICE_ID, bot_state_db_host_service,
-};
-use crate::delivery_recovery::BotTaskRecoveryEventSource;
 use crate::event_source::QqGatewayEventSource;
-use crate::{QqGatewayControlHandle, QqGatewayHealthHandle};
 use mutsuki_bot_sandbox::{
     SandboxAwareDeliveryGateway, SandboxAwareOpenApiRunner, SandboxInterceptHandle,
 };
+use mutsuki_bot_service_host_integration::BotTaskRecoveryEventSource;
+use mutsuki_bot_service_host_integration::{
+    BOT_STATE_DB_SERVICE_ID, QQ_MANAGEMENT_SERVICE_ID, bot_state_db_host_service,
+};
+use mutsuki_plugin_bot_adapter_qqbot::gateway::{QqGatewayControlHandle, QqGatewayHealthHandle};
 
 type MediaFactory = Arc<
     dyn Fn(Arc<dyn ResourceRegistryGateway>) -> Result<Box<dyn QqMediaProvider>, String>

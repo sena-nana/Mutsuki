@@ -21,6 +21,7 @@ mutsuki-service-runtime.workspace = true
 mutsuki-std-service-host-integration.workspace = true
 mutsuki-plugin-bot-adapter-qqbot.workspace = true
 mutsuki-bot-service-host-integration.workspace = true
+mutsuki-bot-qq-service-host-integration.workspace = true
 mutsuki-plugin-bot-command.workspace = true
 mutsuki-plugin-bot-event-router.workspace = true
 tokio.workspace = true

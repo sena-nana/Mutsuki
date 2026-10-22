@@ -1,11 +1,10 @@
+mod support;
+
 use std::time::{Duration, Instant};
 
 use mutsuki_bot_protocol::BotConversationKind;
 use mutsuki_bot_sandbox::{
     SANDBOX_SERVICE_ID, SandboxAction, SandboxApi, SandboxMode, SandboxService, SandboxWriteRequest,
-};
-use mutsuki_bot_service_host_integration::{
-    DEFAULT_MEDIA_PROVIDER_ID, configured_bot_plugin_catalog,
 };
 use mutsuki_bot_testkit::{FakeQqGatewayScript, FakeQqServer};
 use mutsuki_plugin_bot_adapter_qqbot::QQBOT_ADAPTER_PLUGIN_ID;
@@ -24,9 +23,7 @@ async fn qq_only_catalog_still_self_registers_sandbox() {
     let runtime = {
         let mut catalog =
             mutsuki_std_service_host_integration::configured_std_plugin_catalog().unwrap();
-        catalog
-            .merge(configured_bot_plugin_catalog(DEFAULT_MEDIA_PROVIDER_ID.to_string()).unwrap())
-            .unwrap();
+        catalog.merge(support::bot_catalog_with_qq()).unwrap();
         ServiceRuntimeBuilder::new(config)
             .with_configured_plugin_catalog(catalog)
             .start()
@@ -70,9 +67,7 @@ async fn workspace_sandbox_and_qq_share_one_host_service() {
     let runtime = {
         let mut catalog =
             mutsuki_std_service_host_integration::configured_std_plugin_catalog().unwrap();
-        catalog
-            .merge(configured_bot_plugin_catalog(DEFAULT_MEDIA_PROVIDER_ID.to_string()).unwrap())
-            .unwrap();
+        catalog.merge(support::bot_catalog_with_qq()).unwrap();
         ServiceRuntimeBuilder::new(config)
             .with_configured_plugin_catalog(catalog)
             .start()
@@ -248,9 +243,7 @@ async fn sandbox_selected_after_qq_shares_the_simulator_and_reconfigures_repeate
     let runtime = {
         let mut catalog =
             mutsuki_std_service_host_integration::configured_std_plugin_catalog().unwrap();
-        catalog
-            .merge(configured_bot_plugin_catalog(DEFAULT_MEDIA_PROVIDER_ID.to_string()).unwrap())
-            .unwrap();
+        catalog.merge(support::bot_catalog_with_qq()).unwrap();
         ServiceRuntimeBuilder::new(config)
             .with_configured_plugin_catalog(catalog)
             .start()

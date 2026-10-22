@@ -67,3 +67,25 @@ order the changes land on `main`.
   sandbox reconfigures because it is application-lifetime state.
 - Embedders that build factories themselves get the same behavior without extra wiring; nothing
   needs to register the state database explicitly.
+
+## Platform integration crates
+
+- `mutsuki-bot-service-host-integration` no longer assembles QQ or Bilibili. Their factories moved
+  to `mutsuki-bot-qq-service-host-integration` (`QqBotConfiguredPlugin`,
+  `configured_qq_plugin_catalog`, `QqBotPluginBundle`, `QqAiBotPluginBundle`,
+  `QqGatewayEventSource`, `QQBOT_GATEWAY_SOURCE_ID`) and
+  `mutsuki-bot-bilibili-service-host-integration` (`BilibiliConfiguredPlugin`,
+  `configured_bilibili_plugin_catalog`, `BilibiliPollingEventSource`,
+  `BilibiliPollingCredentials`).
+- `configured_bot_plugin_catalog*` now return only platform-neutral owners. A product that runs QQ
+  or Bilibili merges their catalogs:
+
+  ```rust
+  catalog.merge(configured_bot_plugin_catalog_with_agent_and_flow(config.clone(), connections,
+      flow_registry.clone(), seed, media.into())?)?;
+  catalog.merge(configured_qq_plugin_catalog(media)?)?;
+  catalog.merge(configured_bilibili_plugin_catalog(Some(config), Some(flow_registry), media)?)?;
+  ```
+- The re-exports of `QqGatewayControlHandle`/`QqGatewayHealthHandle`/`QqGatewayHealthSnapshot`/
+  `QqInboundObserveHandle` from the core integration crate are removed; import them from
+  `mutsuki_plugin_bot_adapter_qqbot::gateway`.

@@ -3805,8 +3805,10 @@ dependencies = [
  "mutsuki-agent-contracts",
  "mutsuki-agent-sdk",
  "mutsuki-agent-service-host-integration",
+ "mutsuki-bot-bilibili-service-host-integration",
  "mutsuki-bot-flow",
  "mutsuki-bot-protocol",
+ "mutsuki-bot-qq-service-host-integration",
  "mutsuki-bot-service-host-integration",
  "mutsuki-bot-testkit",
  "mutsuki-bot-web-host-integration",
@@ -3865,6 +3867,7 @@ dependencies = [
  "mutsuki-bot-interaction",
  "mutsuki-bot-link-parser",
  "mutsuki-bot-protocol",
+ "mutsuki-bot-qq-service-host-integration",
  "mutsuki-bot-sandbox",
  "mutsuki-bot-service-host-integration",
  "mutsuki-bot-state-db",
@@ -3885,6 +3888,25 @@ dependencies = [
  "tempfile",
  "tokio",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "mutsuki-bot-bilibili-service-host-integration"
+version = "0.1.0"
+dependencies = [
+ "mutsuki-bot-flow",
+ "mutsuki-bot-management",
+ "mutsuki-bot-sdk",
+ "mutsuki-bot-service-host-integration",
+ "mutsuki-config-service",
+ "mutsuki-plugin-bot-bilibili",
+ "mutsuki-runtime-contracts",
+ "mutsuki-runtime-sdk",
+ "mutsuki-service-config",
+ "mutsuki-service-runtime",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -3982,6 +4004,52 @@ dependencies = [
 ]
 
 [[package]]
+name = "mutsuki-bot-qq-service-host-integration"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "fastrand",
+ "futures-executor",
+ "mutsuki-agent-contracts",
+ "mutsuki-bot-conversation",
+ "mutsuki-bot-delivery",
+ "mutsuki-bot-flow",
+ "mutsuki-bot-interaction",
+ "mutsuki-bot-management",
+ "mutsuki-bot-protocol",
+ "mutsuki-bot-qq-protocol",
+ "mutsuki-bot-sandbox",
+ "mutsuki-bot-sdk",
+ "mutsuki-bot-service-host-integration",
+ "mutsuki-bot-state-db",
+ "mutsuki-bot-testkit",
+ "mutsuki-bot-web-extension-qq",
+ "mutsuki-bot-web-host-integration",
+ "mutsuki-config-service",
+ "mutsuki-config-sqlite",
+ "mutsuki-plugin-bot-adapter-qqbot",
+ "mutsuki-plugin-bot-agent",
+ "mutsuki-plugin-bot-command",
+ "mutsuki-plugin-bot-conversation-context",
+ "mutsuki-plugin-bot-delivery",
+ "mutsuki-plugin-bot-event-router",
+ "mutsuki-plugin-bot-interaction",
+ "mutsuki-plugin-bot-media",
+ "mutsuki-plugin-bot-persona",
+ "mutsuki-plugin-bot-reply",
+ "mutsuki-runtime-contracts",
+ "mutsuki-runtime-sdk",
+ "mutsuki-service-config",
+ "mutsuki-service-runtime",
+ "mutsuki-std-service-host-integration",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "mutsuki-bot-runtime-reference"
 version = "0.1.0"
 dependencies = [
@@ -4031,13 +4099,10 @@ name = "mutsuki-bot-service-host-integration"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "fastrand",
- "futures-executor",
  "mutsuki-agent-client",
  "mutsuki-agent-contracts",
  "mutsuki-agent-service-host-integration",
  "mutsuki-bot-conversation",
- "mutsuki-bot-delivery",
  "mutsuki-bot-flow",
  "mutsuki-bot-interaction",
  "mutsuki-bot-management",
@@ -4060,7 +4125,6 @@ dependencies = [
  "mutsuki-plugin-bot-delivery",
  "mutsuki-plugin-bot-event-router",
  "mutsuki-plugin-bot-interaction",
- "mutsuki-plugin-bot-media",
  "mutsuki-plugin-bot-mihuashi",
  "mutsuki-plugin-bot-persona",
  "mutsuki-plugin-bot-reply",
@@ -7594,6 +7658,7 @@ dependencies = [
  "bot-echo",
  "mutsuki-bot-flow",
  "mutsuki-bot-protocol",
+ "mutsuki-bot-qq-service-host-integration",
  "mutsuki-bot-service-host-integration",
  "mutsuki-bot-testkit",
  "mutsuki-config-service",

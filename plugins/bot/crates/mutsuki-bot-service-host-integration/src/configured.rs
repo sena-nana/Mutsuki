@@ -9,18 +9,15 @@ use mutsuki_bot_flow::{
 };
 use mutsuki_bot_interaction::{InteractionService, UnavailableInteractionMatcher};
 
-use mutsuki_bot_management::{BilibiliCredentialSecretState, BilibiliManagementApi};
 use mutsuki_bot_protocol::{BotFlowDocument, ConversationPolicy};
 use mutsuki_bot_sandbox::{SANDBOX_SERVICE_ID, SandboxService};
 use mutsuki_bot_sdk::{BotManifestSurface, BotSubmissionGate};
 use mutsuki_bot_state_db::BotStateDbRepository;
 use mutsuki_config_service::{
-    ConfigApplyMode, ConfigApplyRequest, ConfigConstraints, ConfigContext, ConfigDescriptor,
-    ConfigDocumentKey, ConfigKey, ConfigMutability, ConfigNode, ConfigPresentation,
-    ConfigProviderId, ConfigProviderRegistration, ConfigScope, ConfigService, ConfigValue,
-    ConfigValueType, LocalizedText, MemoryConfigProvider, RestartPolicy, capability,
+    ConfigConstraints, ConfigContext, ConfigDescriptor, ConfigDocumentKey, ConfigKey,
+    ConfigMutability, ConfigNode, ConfigPresentation, ConfigProviderId, ConfigProviderRegistration,
+    ConfigScope, ConfigService, ConfigValue, ConfigValueType, LocalizedText, RestartPolicy,
 };
-use mutsuki_plugin_bot_adapter_qqbot::{QQBOT_ADAPTER_PLUGIN_ID, QqBotConfig};
 use mutsuki_plugin_bot_agent::{
     BOT_AGENT_BRIDGE_PLUGIN_ID, BOT_AGENT_BRIDGE_RUNNER_ID, BOT_AGENT_CONFIG_SERVICE_ID,
     BotAgentBridge, BotAgentConfig, BotAgentConfigHandle, agent_bridge_runner,
@@ -51,24 +48,13 @@ use mutsuki_runtime_sdk::{
     HostEffect, HostEffectFuture, HostEffectKind, LoadedPlugin, PluginBuilder,
     RuntimeBootstrapperEffect, RuntimeBootstrapperService,
 };
-use mutsuki_service_config::HostSecretStore;
 use mutsuki_service_runtime::{
     ConfiguredPluginCatalog, ConfiguredPluginFactory, LoadPlanObserver, ServiceRuntimeBuilder,
     ServiceRuntimeResult,
 };
 use serde_json::Value;
 
-use crate::{
-    BILIBILI_MANAGEMENT_SERVICE_ID, BilibiliPollingCredentials, BilibiliPollingEventSource,
-    BotTaskRecoveryEventSource, QqBotPluginBundle,
-};
-use mutsuki_plugin_bot_bilibili::{
-    BilibiliBackendConfig, BilibiliConfig, BilibiliConfigStore, BilibiliCredentialStore,
-    BilibiliManagementService, BilibiliRunner, BilibiliSecretPresence, BilibiliTransport,
-    HttpBilibiliTransport, PLUGIN_ID as BILIBILI_PLUGIN_ID, RuntimeBilibiliHttp,
-    RuntimeBilibiliQrRenderer, SharedBilibiliConfig, SqliteBilibiliRepository,
-    bilibili_config_descriptor, bilibili_config_value,
-};
+use crate::BotTaskRecoveryEventSource;
 use mutsuki_plugin_bot_bilibili_workshop::PLUGIN_ID as WORKSHOP_PLUGIN_ID;
 use mutsuki_plugin_bot_mihuashi::PLUGIN_ID as MIHUASHI_PLUGIN_ID;
 
@@ -78,7 +64,8 @@ use mutsuki_plugin_bot_mihuashi::PLUGIN_ID as MIHUASHI_PLUGIN_ID;
 pub const DEFAULT_MEDIA_PROVIDER_ID: &str = mutsuki_plugin_resource_sqlite::PROVIDER_ID;
 use std::sync::Arc;
 
-struct ConfigProviderEffect(ConfigProviderRegistration);
+/// Owns a staged config provider registration as a reversible Host effect.
+pub struct ConfigProviderEffect(pub ConfigProviderRegistration);
 
 impl HostEffect for ConfigProviderEffect {
     fn dispose(&mut self) -> HostEffectFuture<'_> {
@@ -384,7 +371,7 @@ impl BotFlowSeedStatus {
 /// reference graph uses cannot lose its registration without a test failing.
 /// Manifests whose registration also carries runner-specific wiring (the merged
 /// Agent + reply-delivery manifest) stay outside the list.
-pub(crate) fn bot_agent_chain_manifests() -> Result<Vec<PluginManifest>, String> {
+pub fn bot_agent_chain_manifests() -> Result<Vec<PluginManifest>, String> {
     [
         bot_conversation_context_manifest(),
         bot_reply_manifest(),
@@ -616,7 +603,7 @@ pub const BOT_STATE_SERVICE_ID: &str = "mutsuki.bot.state";
 const BOT_SANDBOX_STATE_SERVICE_ID: &str = "mutsuki.bot.sandbox.state";
 
 /// Opens `data/bot/state.sqlite3` once per Host; every consumer shares the same actor.
-fn bot_state_db(
+pub fn bot_state_db(
     builder: ServiceRuntimeBuilder,
 ) -> Result<(ServiceRuntimeBuilder, Arc<BotStateDbRepository>), String> {
     let state_dir = builder.data_dir().join("bot");
@@ -633,7 +620,7 @@ fn bot_state_db(
     })
 }
 
-fn bot_sandbox(
+pub fn bot_sandbox(
     builder: ServiceRuntimeBuilder,
 ) -> Result<(ServiceRuntimeBuilder, Arc<SandboxService>), String> {
     let (builder, repository) = bot_state_db(builder)?;
@@ -683,333 +670,6 @@ impl ConfiguredPluginFactory for SandboxConfiguredPlugin {
                     host_effects: Vec::new(),
                 })
             }),
-        )
-    }
-}
-
-pub struct QqBotConfiguredPlugin {
-    media_provider_id: String,
-}
-
-impl ConfiguredPluginFactory for QqBotConfiguredPlugin {
-    fn plugin_id(&self) -> &str {
-        QQBOT_ADAPTER_PLUGIN_ID
-    }
-
-    fn prepare(
-        &self,
-        config: &Value,
-        builder: ServiceRuntimeBuilder,
-    ) -> Result<ServiceRuntimeBuilder, String> {
-        let mut config: QqBotConfig =
-            serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
-        // The product assembly owns the media resource provider binding; inbound
-        // media validation reads it back from the adapter config.
-        config.media_provider_id = Some(self.media_provider_id.clone());
-        let (mut builder, repository) = bot_state_db(builder)?;
-        let mut bundle =
-            QqBotPluginBundle::new(config).map_err(|error| error.redacted_message())?;
-        bundle = bundle
-            .with_resource_media_provider(self.media_provider_id.clone())
-            .with_state_repository(repository);
-        if builder
-            .configured_plugin_selection(SANDBOX_SERVICE_ID)
-            .is_some()
-        {
-            // Whichever of the sandbox plugin and this adapter prepares first creates the
-            // simulator; selection order does not matter.
-            let (with_sandbox, sandbox) = bot_sandbox(builder)?;
-            builder = with_sandbox;
-            bundle = bundle.with_workspace_sandbox(sandbox);
-        }
-        bundle
-            .install(builder)
-            .map_err(|error| error.redacted_message())
-    }
-}
-
-pub struct BilibiliConfiguredPlugin {
-    config_service: Option<Arc<ConfigService>>,
-    flow_registry: Option<Arc<BotFlowRegistry>>,
-    media_provider_id: String,
-}
-
-impl BilibiliConfiguredPlugin {
-    fn new(config_service: Option<Arc<ConfigService>>, media_provider_id: String) -> Self {
-        Self {
-            config_service,
-            flow_registry: None,
-            media_provider_id,
-        }
-    }
-
-    /// Shares the Flow registry so the push poll path and the management
-    /// status observe the same active graph the router activates.
-    fn with_flow_registry(mut self, registry: Arc<BotFlowRegistry>) -> Self {
-        self.flow_registry = Some(registry);
-        self
-    }
-}
-
-struct HostBilibiliCredentialStore(HostSecretStore);
-
-impl BilibiliCredentialStore for HostBilibiliCredentialStore {
-    fn rotate(&self, key: &str, credential: String) -> Result<(), String> {
-        self.0
-            .rotate(key, credential)
-            .map_err(|error| error.to_string())
-    }
-}
-
-struct ConfigServiceBilibiliConfigStore(Arc<ConfigService>);
-
-impl BilibiliConfigStore for ConfigServiceBilibiliConfigStore {
-    fn replace(&self, config: &BilibiliConfig) -> Result<(), String> {
-        let service = self.0.clone();
-        let config = config.clone();
-        mutsuki_service_runtime::block_on_host_future(async move {
-            let snapshot = service
-                .read(
-                    BILIBILI_PLUGIN_ID,
-                    ConfigContext::global(),
-                    &[capability::VALUE_READ.into()],
-                )
-                .await?;
-            let stored = snapshot.value.to_json();
-            // The product-owned document wraps the runtime config with the
-            // enable switch and projected UI fields; legacy documents hold the
-            // bare runtime config.
-            let candidate = match stored.get("enabled").and_then(Value::as_bool) {
-                Some(enabled) => bilibili_config_value(enabled, &config),
-                None => ConfigValue::from_json(
-                    &serde_json::to_value(&config).expect("Bilibili config serializes"),
-                ),
-            };
-            service
-                .apply(
-                    BILIBILI_PLUGIN_ID,
-                    ConfigApplyRequest {
-                        candidate,
-                        expected_revision: snapshot.revision,
-                        dry_run: false,
-                    },
-                    ConfigContext::global(),
-                    &[capability::VALUE_WRITE.into(), capability::APPLY.into()],
-                )
-                .await
-        })
-        .map(|_| ())
-        .map_err(|error| error.to_string())
-    }
-}
-
-struct HostSecretPresence(HostSecretStore);
-
-impl BilibiliSecretPresence for HostSecretPresence {
-    fn inspect(&self, key: &str) -> BilibiliCredentialSecretState {
-        match self.0.resolve(key) {
-            None => BilibiliCredentialSecretState::Absent,
-            Some(value) if value.trim().is_empty() => BilibiliCredentialSecretState::Invalid,
-            Some(_) => BilibiliCredentialSecretState::Present,
-        }
-    }
-}
-
-impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
-    fn plugin_id(&self) -> &str {
-        BILIBILI_PLUGIN_ID
-    }
-
-    fn prepare(
-        &self,
-        config: &Value,
-        builder: ServiceRuntimeBuilder,
-    ) -> Result<ServiceRuntimeBuilder, String> {
-        let mut config: BilibiliConfig =
-            serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
-        // The product assembly owns the media resource provider binding; the
-        // owner document no longer carries a provider id.
-        config.media_provider_id.clone_from(&self.media_provider_id);
-        // The product pre-registers the owner config provider before plugins
-        // install; only fall back to a plugin-owned provider when no product
-        // owns this provider id yet.
-        let config_provider = self.config_service.as_ref().and_then(|service| {
-            service
-                .registry()
-                .get(BILIBILI_PLUGIN_ID)
-                .is_err()
-                .then(|| {
-                    Arc::new(MemoryConfigProvider::new(
-                        bilibili_config_descriptor(),
-                        ConfigValue::from_json(
-                            &serde_json::to_value(&config).expect("Bilibili config serializes"),
-                        ),
-                        ConfigApplyMode::HotReload,
-                    ))
-                })
-                .map(|provider| (service.clone(), provider))
-        });
-        if let Some((service, provider)) = &config_provider {
-            let service = service.clone();
-            let provider = provider.clone();
-            let seed = ConfigValue::from_json(
-                &serde_json::to_value(&config).expect("Bilibili config serializes"),
-            );
-            let snapshot = mutsuki_service_runtime::block_on_host_future(async move {
-                service
-                    .prepare_provider_candidate(provider, Some(seed), ConfigContext::global())
-                    .await
-            })
-            .map_err(|error| error.to_string())?;
-            config = serde_json::from_value(snapshot.value.to_json())
-                .map_err(|error| error.to_string())?;
-        }
-        config.validate()?;
-        let host_secret_store = builder.host_secret_store();
-        if config.management.enabled && !host_secret_store.rotation_available() {
-            return Err("Bilibili management requires a Host security.secret_file".into());
-        }
-        let config_service = if config.management.enabled {
-            Some(
-                self.config_service
-                    .clone()
-                    .ok_or_else(|| "Bilibili management requires ConfigService".to_string())?,
-            )
-        } else {
-            None
-        };
-        let repository = Arc::new(
-            SqliteBilibiliRepository::open(builder.data_dir().join("bilibili/state.sqlite3"))
-                .map_err(|error| error.to_string())?,
-        );
-        let shared_config = SharedBilibiliConfig::new(config);
-        let runner_config = shared_config.clone();
-        let runner_repository = repository.clone();
-        // One transport for the runner and the Web Console so they share the WBI key cache.
-        let transport: Arc<dyn BilibiliTransport> =
-            Arc::new(HttpBilibiliTransport::new(shared_config.clone()));
-        let runner_transport = transport.clone();
-        let source_credentials = match &shared_config.snapshot().backend {
-            BilibiliBackendConfig::WebCookie { cookie_secret_key } => {
-                BilibiliPollingCredentials::WebCookie {
-                    secret_key: cookie_secret_key.clone(),
-                    required: !shared_config.snapshot().management.enabled,
-                }
-            }
-        };
-        let source = BilibiliPollingEventSource::new(shared_config.clone(), source_credentials);
-        let manifest_config = runner_config.snapshot();
-        let mut manifest = mutsuki_plugin_bot_bilibili::manifest_for_config(&manifest_config);
-        manifest.requires.push(SurfaceRequirement::new(
-            ContractSurfaceKind::ResourceProvider,
-            runner_config.snapshot().media_provider_id,
-        ));
-        BotSubmissionGate::ensure_manifest_business_surface(&manifest)
-            .map_err(|error| error.to_string())?;
-
-        let management_service = if let Some(config_service) = config_service {
-            let mut service = BilibiliManagementService::new(
-                runner_config.clone(),
-                transport,
-                repository.clone(),
-                Arc::new(HostBilibiliCredentialStore(host_secret_store.clone())),
-                Arc::new(ConfigServiceBilibiliConfigStore(config_service)),
-                Arc::new(HostSecretPresence(host_secret_store.clone())),
-            );
-            if let Some(registry) = self.flow_registry.clone() {
-                service = service.with_flow_registry(registry);
-            }
-            Some(Arc::new(service))
-        } else {
-            None
-        };
-
-        if management_service.is_some() {
-            manifest
-                .provides
-                .services
-                .push(BILIBILI_MANAGEMENT_SERVICE_ID.into());
-            manifest
-                .provides
-                .capabilities
-                .push("bot.bilibili.management".into());
-        }
-        let loaded_manifest = manifest.clone();
-        let management_api = management_service
-            .clone()
-            .map(|service| service as Arc<dyn BilibiliManagementApi>);
-        let runner_flow_registry = self.flow_registry.clone();
-        let builder = builder.register_builtin_loaded_plugin_factory(manifest, move || {
-            let host_services = management_api
-                .as_ref()
-                .map(|management_api| {
-                    RuntimeBootstrapperService::new(
-                        BILIBILI_MANAGEMENT_SERVICE_ID,
-                        Arc::new(management_api.clone()),
-                        "bot.bilibili.management",
-                    )
-                })
-                .into_iter()
-                .collect();
-            let host_effects = config_provider
-                .as_ref()
-                .map(|(service, provider)| {
-                    service
-                        .register_provider_staged(provider.clone())
-                        .map(|registration| RuntimeBootstrapperEffect {
-                            kind: HostEffectKind::HostLocal,
-                            effect: Box::new(ConfigProviderEffect(registration)),
-                        })
-                        .map_err(|error| error.to_string())
-                })
-                .transpose()?
-                .into_iter()
-                .collect();
-            Ok::<LoadedPlugin, String>(LoadedPlugin {
-                manifest: loaded_manifest.clone(),
-                runners: Vec::new(),
-                async_handlers: Vec::new(),
-                host_services,
-                resource_providers: Vec::new(),
-                async_resource_providers: Vec::new(),
-                host_effects,
-            })
-        });
-
-        Ok(
-            builder
-                .register_fallible_runtime_services_runner(move |client, resources| {
-                    let snapshot = runner_config.snapshot();
-                    let mut runner = BilibiliRunner::new(
-                        runner_transport.clone(),
-                        runner_repository.clone(),
-                        resources.clone(),
-                        snapshot.media_provider_id.clone(),
-                    );
-                    if snapshot.management.enabled {
-                        let management = management_service.clone().ok_or_else(|| {
-                            mutsuki_plugin_bot_bilibili::BilibiliError::ManagementUnavailable(
-                                "Bilibili management service is unavailable".into(),
-                            )
-                        })?;
-                        management.bind_qr_renderer(Arc::new(RuntimeBilibiliQrRenderer::new(
-                            client.clone(),
-                            resources,
-                        )));
-                        management.bind_http(Arc::new(RuntimeBilibiliHttp::new(client.clone())));
-                        runner = runner.with_management(runner_config.clone(), management);
-                    }
-                    if let Some(registry) = runner_flow_registry.clone() {
-                        runner = runner.with_flow_registry(registry);
-                    }
-                    Ok::<
-                        Box<dyn mutsuki_runtime_sdk::Runner>,
-                        mutsuki_plugin_bot_bilibili::BilibiliError,
-                    >(
-                        runner.into_runtime_runner(client, snapshot.risk_control.clone())
-                    )
-                })
-                .register_event_source(Box::new(source)),
         )
     }
 }
@@ -1166,27 +826,16 @@ fn field_node(
 pub fn configured_bot_plugin_catalog(
     media_provider_id: String,
 ) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
-    configured_bot_plugin_catalog_inner(None, None, media_provider_id)
+    configured_bot_plugin_catalog_inner(media_provider_id)
 }
 
 fn configured_bot_plugin_catalog_inner(
-    config: Option<Arc<ConfigService>>,
-    flow_registry: Option<Arc<BotFlowRegistry>>,
     media_provider_id: String,
 ) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
     let mut catalog = ConfiguredPluginCatalog::new();
     catalog.register(BotCommandConfiguredPlugin)?;
     catalog.register(BotInteractionConfiguredPlugin)?;
     catalog.register(SandboxConfiguredPlugin)?;
-    catalog.register(QqBotConfiguredPlugin {
-        media_provider_id: media_provider_id.clone(),
-    })?;
-    let bilibili = match flow_registry.clone() {
-        Some(registry) => BilibiliConfiguredPlugin::new(config, media_provider_id.clone())
-            .with_flow_registry(registry),
-        None => BilibiliConfiguredPlugin::new(config, media_provider_id.clone()),
-    };
-    catalog.register(bilibili)?;
     catalog.register(WorkshopConfiguredPlugin {
         media_provider_id: media_provider_id.clone(),
     })?;
@@ -1200,11 +849,7 @@ pub fn configured_bot_plugin_catalog_with_config(
     media_provider_id: String,
 ) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
     let flow_registry = Arc::new(BotFlowRegistry::new(BotNodeCatalog::default()));
-    let mut catalog = configured_bot_plugin_catalog_inner(
-        Some(config.clone()),
-        Some(flow_registry.clone()),
-        media_provider_id,
-    )?;
+    let mut catalog = configured_bot_plugin_catalog_inner(media_provider_id)?;
     catalog.register(BotFlowRouterConfiguredPlugin::with_registry(
         config,
         flow_registry,
@@ -1223,11 +868,7 @@ pub fn configured_bot_plugin_catalog_with_agent_and_flow(
     seed_flow: Option<BotFlowDocument>,
     media_provider_id: String,
 ) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
-    let mut catalog = configured_bot_plugin_catalog_inner(
-        Some(config.clone()),
-        Some(flow_registry.clone()),
-        media_provider_id,
-    )?;
+    let mut catalog = configured_bot_plugin_catalog_inner(media_provider_id)?;
     catalog.register(BotFlowRouterConfiguredPlugin {
         config,
         registry: Some(flow_registry),
@@ -1452,46 +1093,6 @@ pub(crate) mod tests {
         write.finish().unwrap();
     }
 
-    #[tokio::test]
-    async fn configured_qq_plugin_fails_preflight_without_host_secret() {
-        let root = tempfile::tempdir().unwrap();
-        let mut service = ServiceConfig::default();
-        service.ipc.enabled = false;
-        service.observe.console = false;
-        service.plugins.dynamic_dirs.clear();
-        service.service.home_dir = root.path().into();
-        service.service.data_dir = root.path().join("data");
-        service.service.log_dir = root.path().join("logs");
-        service.service.run_dir = root.path().join("run");
-        std::fs::create_dir_all(&service.service.data_dir).unwrap();
-        std::fs::create_dir_all(&service.service.log_dir).unwrap();
-        std::fs::create_dir_all(&service.service.run_dir).unwrap();
-        service.plugins.configured = vec![ConfiguredPluginSelection {
-            id: QQBOT_ADAPTER_PLUGIN_ID.into(),
-            enabled: true,
-            config: json!({
-                "account_id": "configured",
-                "app_id": "APP_ID",
-                "client_secret_key": "MISSING_CONFIGURED_QQ_SECRET"
-            }),
-        }];
-
-        let error = match ServiceRuntimeBuilder::new(service)
-            .with_configured_plugin_catalog(
-                configured_bot_plugin_catalog(DEFAULT_MEDIA_PROVIDER_ID.to_string()).unwrap(),
-            )
-            .start()
-            .await
-        {
-            Ok(runtime) => {
-                runtime.shutdown().await;
-                panic!("configured QQBot unexpectedly started")
-            }
-            Err(error) => error,
-        };
-        assert!(error.to_string().contains("MISSING_CONFIGURED_QQ_SECRET"));
-    }
-
     #[test]
     fn graph_only_plugins_accept_omitted_empty_config() {
         let root = tempfile::tempdir().unwrap();
@@ -1592,36 +1193,6 @@ pub(crate) mod tests {
         assert_eq!(snapshot.revision, 0);
         assert!(snapshot.flow.nodes.is_empty());
         runtime.shutdown().await;
-    }
-
-    #[test]
-    fn configured_bilibili_management_requires_host_persistence_boundaries() {
-        let config = json!({
-            "backend": {"type": "web_cookie", "cookie_secret_key": "BILIBILI_COOKIE"},
-            "live_interval_ms": 1000,
-            "dynamic_interval_ms": 1000,
-            "video_interval_ms": 1000,
-            "retry": {"max_attempts": 3, "initial_backoff_ms": 10, "max_backoff_ms": 100},
-            "subscriptions": [],
-            "link_resolver": {"enabled": false, "cooldown_ms": 1000, "account_to_binding": {}},
-            "media_provider_id": "memory",
-            "management": {
-                "enabled": true,
-                "allow_self_binding": true,
-                "admin_user_ids": ["admin"],
-                "self_binding_notifications": ["dynamic"],
-                "self_binding_outbound_binding": "qq-main"
-            }
-        });
-        let error = match BilibiliConfiguredPlugin::new(None, DEFAULT_MEDIA_PROVIDER_ID.to_string())
-            .prepare(
-                &config,
-                ServiceRuntimeBuilder::new(ServiceConfig::default()),
-            ) {
-            Ok(_) => panic!("Bilibili management unexpectedly accepted missing Host stores"),
-            Err(error) => error,
-        };
-        assert!(error.contains("security.secret_file"));
     }
 
     #[test]

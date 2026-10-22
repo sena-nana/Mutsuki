@@ -34,9 +34,8 @@ use mutsuki_bot_protocol::{
     DeliveryPolicy, DeliveryStatus, MessageSegment,
 };
 use mutsuki_bot_qq_protocol::QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID;
-use mutsuki_bot_service_host_integration::{
-    QqAiBotPluginBundle, qq_ai_orchestrated_flow_with_source,
-};
+use mutsuki_bot_qq_service_host_integration::QqAiBotPluginBundle;
+use mutsuki_bot_service_host_integration::qq_ai_orchestrated_flow_with_source;
 use mutsuki_bot_state_db::BotStateDbRepository;
 use mutsuki_bot_testkit::MemoryConversationContextStore;
 use mutsuki_config_service::{ConfigContext, ConfigProviderRegistry, ConfigService, ConfigValue};

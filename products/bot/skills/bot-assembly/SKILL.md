@@ -32,7 +32,7 @@ description: Assemble the first-party Mutsuki Bot product from external configur
 
 1. 打开产品固定的 SQLite 配置仓库，空仓库以 CAS 写一次工作区种子；已有文档不覆盖。
 2. 将配置文档解析为 capability、plugin、deployment、binding 和 Host 资源需求；Bot 匹配与顺序只来自 active Flow provider snapshot。
-3. 只聚合 owner 公开 factory catalog；产品不得注册自有业务 manifest 或 Runner。
+3. 只聚合 owner 公开 factory catalog；产品不得注册自有业务 manifest 或 Runner。Bot 平台无关 owner 来自 `configured_bot_plugin_catalog_with_agent_and_flow`，QQ 与 B 站分别合并 `configured_qq_plugin_catalog`、`configured_bilibili_plugin_catalog`。
 4. 启动前生成并校验 RuntimeProfile/RuntimeLoadPlan；registry freeze 后不得越权注册。
 5. 通过 `ServiceRuntimeBuilder` 或当前等价 API 启动真实 `ServiceRuntime`，不创建 BotHost。
 

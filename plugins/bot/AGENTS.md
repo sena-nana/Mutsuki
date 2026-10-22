@@ -76,7 +76,8 @@ Adapter/Gateway。它不拥有 Core 调度、Host 生命周期、Agent 能力或
 | `mutsuki-plugin-bot-interaction` / `mutsuki-plugin-bot-delivery` | 对应 PluginBuilder manifest 与节点 catalog |
 | `mutsuki-bot-state-db` | SQLite 实现上述库面 store；产品装配对同一 `state.sqlite3` 只打开一个 actor |
 
-| `mutsuki-bot-service-host-integration` | 显式 Host 装配面；禁止再往里加业务 Runner |
+| `mutsuki-bot-service-host-integration` | 平台中立的显式 Host 装配面（Flow Router、Command、Interaction、Sandbox、Agent 链、恢复源、控制台桥）；不依赖任何聊天适配器或 B 站包，禁止再往里加业务 Runner |
+| `mutsuki-bot-qq-service-host-integration` / `mutsuki-bot-bilibili-service-host-integration` | 各平台 owner 的 Host 装配（configured catalog、EventSource、健康映射、凭据存储）；产品合并 `configured_qq_plugin_catalog` / `configured_bilibili_plugin_catalog` |
 | `mutsuki-bot-web-host-integration` | Bot 包提供的 WebHost 装配 helper，产品可选启用 |
 
 ## 验证

@@ -1,8 +1,7 @@
+mod support;
+
 use std::time::Duration;
 
-use mutsuki_bot_service_host_integration::{
-    DEFAULT_MEDIA_PROVIDER_ID, configured_bot_plugin_catalog,
-};
 use mutsuki_bot_testkit::{FakeQqGatewayScript, FakeQqIdentifyOutcome, FakeQqServer};
 use mutsuki_service_config::{ConfigOverrides, ServiceConfig};
 use mutsuki_service_runtime::ServiceRuntimeBuilder;
@@ -40,11 +39,7 @@ async fn gateway_recovery_chooses_identify_or_resume() {
         let runtime = {
             let mut catalog =
                 mutsuki_std_service_host_integration::configured_std_plugin_catalog().unwrap();
-            catalog
-                .merge(
-                    configured_bot_plugin_catalog(DEFAULT_MEDIA_PROVIDER_ID.to_string()).unwrap(),
-                )
-                .unwrap();
+            catalog.merge(support::bot_catalog_with_qq()).unwrap();
             ServiceRuntimeBuilder::new(config)
                 .with_configured_plugin_catalog(catalog)
                 .start()

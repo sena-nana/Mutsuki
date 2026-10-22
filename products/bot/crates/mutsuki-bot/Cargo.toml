@@ -24,6 +24,8 @@ mutsuki-service-runtime.workspace = true
 mutsuki-agent-service-host-integration.workspace = true
 mutsuki-bot-flow.workspace = true
 mutsuki-bot-service-host-integration.workspace = true
+mutsuki-bot-qq-service-host-integration.workspace = true
+mutsuki-bot-bilibili-service-host-integration.workspace = true
 mutsuki-bot-web-host-integration = { workspace = true, optional = true }
 mutsuki-config-service.workspace = true
 mutsuki-plugin-bot-adapter-qqbot.workspace = true

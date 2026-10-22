@@ -33,9 +33,7 @@ async fn configured_qqbot_requires_host_secret_during_service_preflight() {
     let mut service = test_service_config().await.0;
     service.plugins.configured = vec![configured_qq("MISSING_QQBOT_SECRET", json!({}))];
     let error = match ServiceRuntimeBuilder::new(service)
-        .with_configured_plugin_catalog(
-            configured_bot_plugin_catalog(DEFAULT_MEDIA_PROVIDER_ID.to_string()).unwrap(),
-        )
+        .with_configured_plugin_catalog(bot_catalog_with_qq())
         .start()
         .await
     {
@@ -77,7 +75,7 @@ async fn configured_service_runtime_runs_resume_echo_ping_and_clean_shutdown() {
         )
         .unwrap(),
     );
-    let mut catalog = configured_bot_plugin_catalog(DEFAULT_MEDIA_PROVIDER_ID.to_string()).unwrap();
+    let mut catalog = bot_catalog_with_qq();
     catalog
         .merge(mutsuki_std_service_host_integration::configured_std_plugin_catalog().unwrap())
         .unwrap();
@@ -312,4 +310,18 @@ async fn control(config: &ServiceConfig, command: ControlCommand) -> ControlResu
         ControlResponse::Ok(result) => result,
         response => panic!("control failed: {response:?}"),
     }
+}
+
+/// Core Bot owners plus the QQ adapter, as a QQ product assembles them.
+fn bot_catalog_with_qq() -> mutsuki_service_runtime::ConfiguredPluginCatalog {
+    let mut catalog = configured_bot_plugin_catalog(DEFAULT_MEDIA_PROVIDER_ID.to_string()).unwrap();
+    catalog
+        .merge(
+            mutsuki_bot_qq_service_host_integration::configured_qq_plugin_catalog(
+                DEFAULT_MEDIA_PROVIDER_ID,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    catalog
 }

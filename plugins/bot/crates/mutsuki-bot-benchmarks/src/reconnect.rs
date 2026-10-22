@@ -117,7 +117,7 @@ async fn run_connection_workload(idle_window: Option<Duration>) -> ConnectionRun
         )
         .unwrap(),
     );
-    let mut catalog = configured_bot_plugin_catalog(DEFAULT_MEDIA_PROVIDER_ID.to_string()).unwrap();
+    let mut catalog = bot_catalog_with_qq();
     catalog
         .register(BotFlowRouterConfiguredPlugin::with_registry(
             config,
@@ -374,4 +374,18 @@ fn flow_edge(
         to_port_id: to_port_id.into(),
         kind: BotFlowEdgeKind::Event,
     }
+}
+
+/// Core Bot owners plus the QQ adapter, as a QQ product assembles them.
+fn bot_catalog_with_qq() -> mutsuki_service_runtime::ConfiguredPluginCatalog {
+    let mut catalog = configured_bot_plugin_catalog(DEFAULT_MEDIA_PROVIDER_ID.to_string()).unwrap();
+    catalog
+        .merge(
+            mutsuki_bot_qq_service_host_integration::configured_qq_plugin_catalog(
+                DEFAULT_MEDIA_PROVIDER_ID,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    catalog
 }

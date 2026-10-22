@@ -51,7 +51,7 @@ because automatic resend could duplicate an externally accepted message.
 
 Core still sees only tasks, runner descriptors, results, events, resource refs, and effect requests. It does not know Bot, QQBot, commands, sessions, or permissions.
 
-`QqBotPluginBundle` lives in `mutsuki-bot-service-host-integration`, the explicit bridge between
+`QqBotPluginBundle` lives in `mutsuki-bot-qq-service-host-integration`, the explicit bridge between
 the platform adapter and ServiceHost. It registers the adapter
 manifest and recreatable native batch runners with `ServiceRuntimeBuilder`, and
 registers `QqGatewayEventSource` as a Host-managed long-lived source. The source
@@ -227,8 +227,10 @@ Pages with no Bot content live with their owners, and the console composes them:
 - `kits/agent/crates/mutsuki-agent-web-extension`: Agent connection management.
 - `mutsuki-bot-web-host-integration`: Bot-package WebHost assembly helper that embeds the admin
   WebExtensions. Products may opt in; this crate is not a Host and not a product entry.
-- `mutsuki-bot-service-host-integration`: explicit ServiceHost assembly (EventSource, health,
-  catalog factories, sandbox outbound intercept). Command and interaction are selectable
+- `mutsuki-bot-service-host-integration`: platform-neutral ServiceHost assembly (Flow Router,
+  command, interaction, sandbox, Agent chain, Workshop/Mihuashi factories, recovery sources,
+  console bridges, shared state helpers `bot_state_db`/`bot_sandbox`). It depends on no chat
+  adapter or Bilibili crate; products merge the platform catalogs below. Command and interaction are selectable
   workspace factories against the shared `BotStateDb` actor; conversation-context, reply and
   persona stay Agent-owned. Reply recovery is owned by the Agent plugin id; active-delivery
   `ResumeDue` is merged into the QQ adapter plugin so the product load plan keeps the runner.
@@ -238,11 +240,18 @@ Pages with no Bot content live with their owners, and the console composes them:
   ConfigService, and first-party products seed `qq_full_business_flow` into stores without a
   flow record while never overwriting existing ones. Do not add business runners
   here. QQ Adapter still only translates official protocol.
+- `mutsuki-bot-qq-service-host-integration`: the QQ adapter's Host assembly
+  (`configured_qq_plugin_catalog`, `QqBotPluginBundle`, `QqGatewayEventSource`, health mapping,
+  management provider, sandbox outbound intercept, the `QqAiBotPluginBundle` test assembly).
+- `mutsuki-bot-bilibili-service-host-integration`: the Bilibili owner's Host assembly
+  (`configured_bilibili_plugin_catalog`, polling EventSource, Host-backed credential/config
+  stores).
 - `examples/bot-echo`: platform-neutral example business plugin over `mutsuki.bot.*` only.
 
-`QqAiBotPluginBundle` (in `mutsuki-bot-service-host-integration`) is the fully-injected
+`QqAiBotPluginBundle` (in `mutsuki-bot-qq-service-host-integration`) is the fully-injected
 assembly used by the `qq_ai_pipeline` end-to-end test, not a production entry. Products assemble
-through `configured_bot_plugin_catalog_with_agent_and_flow`, whose factories build their own
+through `configured_bot_plugin_catalog_with_agent_and_flow` merged with
+`configured_qq_plugin_catalog` and `configured_bilibili_plugin_catalog`, whose factories build their own
 SQLite handle, Agent client and delivery gateway from saved configuration; the bundle exists
 because an E2E has to substitute those three and the configured factories deliberately expose no
 injection point. Both register the same `bot_agent_chain_manifests` list, so the test cannot pass

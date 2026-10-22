@@ -7,6 +7,8 @@
     clippy::too_many_lines
 )]
 
+mod support;
+
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -17,9 +19,6 @@ use mutsuki_bot_protocol::{
     BotFlowSourceSelector, BotFlowTypeRef, BotNodeBinding, BotNodeCatalogFragment,
     BotNodeDescriptor, BotNodeInvocation, BotNodePortDescriptor, BotNodePortDirection,
     BotNodeResult, BotNodeRole, BotTarget, MessageSegment,
-};
-use mutsuki_bot_service_host_integration::{
-    DEFAULT_MEDIA_PROVIDER_ID, configured_bot_plugin_catalog,
 };
 use mutsuki_bot_testkit::{FakeQqGatewayScript, FakeQqServer};
 use mutsuki_plugin_bot_adapter_qqbot::tasks::{
@@ -245,9 +244,7 @@ async fn fake_gateway_delivers_private_group_channel_and_distinct_delete_once() 
     let runner_notify = notify.clone();
     let mut catalog =
         mutsuki_std_service_host_integration::configured_std_plugin_catalog().unwrap();
-    catalog
-        .merge(configured_bot_plugin_catalog(DEFAULT_MEDIA_PROVIDER_ID.to_string()).unwrap())
-        .unwrap();
+    catalog.merge(support::bot_catalog_with_qq()).unwrap();
     let runtime = ServiceRuntimeBuilder::new(config)
         .with_configured_plugin_catalog(catalog)
         .register_builtin_loaded_plugin_factory(flow_manifest, move || {

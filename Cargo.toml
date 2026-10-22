@@ -204,6 +204,8 @@ mutsuki-bot-qq-protocol = { path = "plugins/bot/crates/mutsuki-bot-qq-protocol" 
 mutsuki-bot-sandbox = { path = "plugins/bot/crates/mutsuki-bot-sandbox" }
 mutsuki-bot-sdk = { path = "plugins/bot/crates/mutsuki-bot-sdk" }
 mutsuki-bot-service-host-integration = { path = "plugins/bot/crates/mutsuki-bot-service-host-integration" }
+mutsuki-bot-qq-service-host-integration = { path = "plugins/bot/crates/mutsuki-bot-qq-service-host-integration" }
+mutsuki-bot-bilibili-service-host-integration = { path = "plugins/bot/crates/mutsuki-bot-bilibili-service-host-integration" }
 mutsuki-bot-testkit = { path = "plugins/bot/crates/mutsuki-bot-testkit" }
 mutsuki-bot-web-host-integration = { path = "plugins/bot/crates/mutsuki-bot-web-host-integration" }
 mutsuki-plugin-bot-adapter-qqbot = { path = "plugins/bot/crates/mutsuki-plugin-bot-adapter-qqbot" }

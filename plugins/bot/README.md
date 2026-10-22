@@ -106,7 +106,9 @@ Console 的库依赖。
   other plugins query the same tables through `BotStateDbRepository`.
 - `mutsuki-bot-web-extension-sandbox`: WebExtension for the shared simulate/live Stapxs-style QQ conversation client.
 - `mutsuki-plugin-bot-adapter-qqbot`: QQBot platform adapter for gateway events and message/media OpenAPI tasks.
-- `mutsuki-bot-service-host-integration`: configured native factories, QQ EventSource bundle, sandbox outbound intercept, shared `BotStateDb` actor, and reply/active-delivery/interaction recovery sources.
+- `mutsuki-bot-service-host-integration`: platform-neutral configured factories, shared `BotStateDb` actor and sandbox application services, console bridges, and reply/active-delivery/interaction recovery sources.
+- `mutsuki-bot-qq-service-host-integration`: QQ configured factory, Gateway EventSource bundle and sandbox outbound intercept.
+- `mutsuki-bot-bilibili-service-host-integration`: Bilibili configured factory and polling EventSource.
 - `mutsuki-bot-testkit`: reusable fake QQ HTTP/WebSocket boundary for downstream product E2E.
 - `examples/bot-echo`: platform-neutral example business plugin that depends only on Bot protocols and SDK helpers.
 
@@ -144,7 +146,7 @@ All native runners implement the current MutsukiCore `Runner::run_batch` contrac
 
 ## QQBot Production Bundle
 
-`mutsuki-bot-service-host-integration::QqBotPluginBundle` assembles the QQBot manifest,
+`mutsuki-bot-qq-service-host-integration::QqBotPluginBundle` assembles the QQBot manifest,
 batch runners and the ServiceHost-managed Gateway EventSource. The adapter crate itself has no
 ServiceHost dependency. The production HTTP transport uses
 `reqwest` with the Rustls TLS backend; Gateway WebSocket uses

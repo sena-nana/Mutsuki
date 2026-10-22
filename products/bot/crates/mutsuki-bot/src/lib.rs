@@ -23,7 +23,9 @@ use mutsuki_agent_service_host_integration::{
     AgentConnectionRegistry, LocalAgentRuntimeExtension,
     configured_standard_agent_plugin_catalog_with_extensions,
 };
+use mutsuki_bot_bilibili_service_host_integration::configured_bilibili_plugin_catalog;
 use mutsuki_bot_flow::{BotFlowRegistry, BotNodeCatalog};
+use mutsuki_bot_qq_service_host_integration::configured_qq_plugin_catalog;
 use mutsuki_bot_service_host_integration::configured_bot_plugin_catalog_with_agent_and_flow;
 use mutsuki_bot_service_host_integration::qq_full_business_flow;
 use mutsuki_plugin_bot_flow_agent_tool::{
@@ -118,11 +120,17 @@ pub fn assemble_service_with_flow_registry(
         vec![flow_tool_extension(config.clone(), flow_registry.clone())],
     )?)?;
     catalog.merge(configured_bot_plugin_catalog_with_agent_and_flow(
-        config,
+        config.clone(),
         agent_connections,
-        flow_registry,
+        flow_registry.clone(),
         Some(qq_full_business_flow()),
         MEDIA_RESOURCE_PROVIDER_ID.to_string(),
+    )?)?;
+    catalog.merge(configured_qq_plugin_catalog(MEDIA_RESOURCE_PROVIDER_ID)?)?;
+    catalog.merge(configured_bilibili_plugin_catalog(
+        Some(config),
+        Some(flow_registry),
+        MEDIA_RESOURCE_PROVIDER_ID,
     )?)?;
     Ok(ServiceRuntimeBuilder::new(service).with_configured_plugin_catalog(catalog))
 }
