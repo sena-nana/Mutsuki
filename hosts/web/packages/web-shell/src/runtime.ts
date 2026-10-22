@@ -1,4 +1,5 @@
 import {
+  WEB_PROTOCOL_VERSION,
   WebBridgeClient,
   DisposableScope,
   createRegistry,
@@ -224,7 +225,7 @@ export class WebShellRuntime implements Disposable {
   private helloAck: BridgeHelloAck | null = null;
 
   constructor(options: WebShellRuntimeOptions) {
-    const { bridgeUrl, protocolVersion = "1.0.0", ...bridgeOptions } = options;
+    const { bridgeUrl, protocolVersion = WEB_PROTOCOL_VERSION, ...bridgeOptions } = options;
     this.bridge = new WebBridgeClient(bridgeUrl, bridgeOptions);
     this.protocolVersion = protocolVersion;
   }

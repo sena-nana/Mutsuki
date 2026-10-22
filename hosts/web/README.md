@@ -57,7 +57,7 @@ budgets, while `mutsuki-web-host` only drains encoded events without an idle pol
 
 ## Versions
 
-- Web protocol: `1.0.0`
+- Web protocol: `1.1.0`
 - Extension manifest: `1`
 
 ## Validate

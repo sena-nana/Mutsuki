@@ -13,9 +13,13 @@
     clippy::return_self_not_must_use
 )]
 
+mod cookie;
 mod metrics;
 mod session;
 
+pub use cookie::{
+    CookieSessionPolicy, CookieSessions, IssuedCookie, SESSION_COOKIE, session_cookie_value,
+};
 pub use metrics::{BridgeMetrics, BridgeMetricsSnapshot};
 pub use session::{AuthGrant, AuthPolicy, BridgeSession, SessionManager};
 
@@ -42,6 +46,7 @@ struct WebBridgeInner {
     metrics: BridgeMetrics,
     safe_mode: RwLock<bool>,
     auth: AuthPolicy,
+    cookies: CookieSessions,
 }
 
 impl WebBridge {
@@ -59,6 +64,7 @@ impl WebBridge {
                 metrics: BridgeMetrics::default(),
                 safe_mode: RwLock::new(safe_mode),
                 auth,
+                cookies: CookieSessions::new(CookieSessionPolicy::default()),
             }),
         }
     }
@@ -115,6 +121,31 @@ impl WebBridge {
         self.inner.extensions.write().unwrap()
     }
 
+    /// Exchanges the console token for a cookie session (`POST /auth/session`).
+    ///
+    /// # Errors
+    ///
+    /// [`ProtocolError::AuthFailed`] when the token is rejected; policy failures (such as
+    /// remote auth without TLS) keep their own error.
+    pub fn open_cookie_session(&self, token: &str) -> ProtocolResult<IssuedCookie> {
+        let grant = authentication_failure(self.inner.auth.authenticate(Some(token)))?;
+        Ok(self.inner.cookies.issue(grant))
+    }
+
+    /// The grant behind a live session cookie, renewing it.
+    pub fn cookie_grant(&self, value: &str) -> Option<AuthGrant> {
+        self.inner.cookies.resolve(value)
+    }
+
+    /// Ends a cookie session (`POST /auth/logout`).
+    pub fn close_cookie_session(&self, value: &str) {
+        self.inner.cookies.revoke(value);
+    }
+
+    pub fn cookie_policy(&self) -> CookieSessionPolicy {
+        self.inner.cookies.policy()
+    }
+
     pub fn active_sessions(&self) -> u64 {
         self.inner.sessions.active_count() as u64
     }
@@ -123,6 +154,18 @@ impl WebBridge {
         &self,
         session_id: Option<Uuid>,
         message: WireMessage,
+    ) -> ProtocolResult<HandleOutcome> {
+        self.handle_message_with_cookie(session_id, message, None)
+    }
+
+    /// Like [`Self::handle_message`], for a connection that presented a session cookie. A
+    /// Hello without a token then authenticates with the cookie's grant; an explicit token
+    /// still wins.
+    pub fn handle_message_with_cookie(
+        &self,
+        session_id: Option<Uuid>,
+        message: WireMessage,
+        cookie: Option<&AuthGrant>,
     ) -> ProtocolResult<HandleOutcome> {
         let size = message.payload_size();
         if size > self.inner.budgets.max_payload_bytes {
@@ -140,7 +183,10 @@ impl WebBridge {
             } => {
                 ensure_protocol_compatible(&protocol_version)?;
                 // Capabilities are server-granted only. Client Hello must not escalate.
-                let mut grant = self.inner.auth.authenticate(auth_token.as_deref())?;
+                let mut grant = match (auth_token.as_deref(), cookie) {
+                    (None, Some(grant)) => grant.clone(),
+                    (token, _) => authentication_failure(self.inner.auth.authenticate(token))?,
+                };
                 if self.safe_mode() {
                     grant
                         .capabilities
@@ -204,6 +250,16 @@ impl WebBridge {
         session_id: Option<Uuid>,
         message: WireMessage,
     ) -> ProtocolResult<HandleOutcome> {
+        self.handle_message_async_with_cookie(session_id, message, None)
+            .await
+    }
+
+    pub async fn handle_message_async_with_cookie(
+        &self,
+        session_id: Option<Uuid>,
+        message: WireMessage,
+        cookie: Option<&AuthGrant>,
+    ) -> ProtocolResult<HandleOutcome> {
         let size = message.payload_size();
         if size > self.inner.budgets.max_payload_bytes {
             return Err(ProtocolError::PayloadTooLarge {
@@ -216,7 +272,7 @@ impl WebBridge {
             let response = self.dispatch_rpc_async(&session, request).await;
             return Ok(HandleOutcome::Reply(WireMessage::RpcResult(response)));
         }
-        self.handle_message(session_id, message)
+        self.handle_message_with_cookie(session_id, message, cookie)
     }
 
     pub fn publish_event(
@@ -447,6 +503,15 @@ pub enum HandleOutcome {
     Unsubscribed(Uuid),
 }
 
+/// A rejected or missing credential at hello is `auth_failed`, distinct from using a
+/// connection that never completed hello (`unauthenticated`).
+fn authentication_failure(result: ProtocolResult<AuthGrant>) -> ProtocolResult<AuthGrant> {
+    result.map_err(|error| match error {
+        ProtocolError::Unauthenticated => ProtocolError::AuthFailed,
+        other => other,
+    })
+}
+
 fn ensure_protocol_compatible(client: &str) -> ProtocolResult<()> {
     let major = client
         .split('.')
@@ -583,6 +648,55 @@ mod tests {
             }
             _ => panic!("expected hello ack"),
         }
+    }
+
+    #[test]
+    fn hello_rejection_is_auth_failed_and_cookie_grants_authenticate() {
+        let bridge = WebBridge::new(
+            DEFAULT_BUDGETS,
+            ExtensionRegistry::new(DEFAULT_BUDGETS),
+            AuthPolicy::allow_local(vec!["host.read".into()]),
+            false,
+        );
+        let hello = |token: Option<&str>| WireMessage::Hello {
+            protocol_version: WEB_PROTOCOL_VERSION.into(),
+            capabilities: vec![],
+            auth_token: token.map(Into::into),
+        };
+        let error = bridge
+            .handle_message(None, hello(Some("wrong")))
+            .unwrap_err();
+        assert_eq!(error, ProtocolError::AuthFailed);
+        assert_eq!(error.code(), "auth_failed");
+        assert_eq!(
+            bridge.handle_message(None, hello(None)).unwrap_err().code(),
+            "auth_failed"
+        );
+        assert_eq!(
+            bridge.open_cookie_session("wrong").unwrap_err(),
+            ProtocolError::AuthFailed
+        );
+
+        let cookie = bridge.open_cookie_session("local-dev").unwrap();
+        let grant = bridge.cookie_grant(&cookie.value).expect("live cookie");
+        match bridge
+            .handle_message_with_cookie(None, hello(None), Some(&grant))
+            .unwrap()
+        {
+            HandleOutcome::Reply(WireMessage::HelloAck { session, .. }) => {
+                assert_eq!(session.capabilities, vec!["host.read".to_string()]);
+            }
+            other => panic!("expected hello ack, got {other:?}"),
+        }
+        // An explicit token is still checked even when a cookie is present.
+        assert_eq!(
+            bridge
+                .handle_message_with_cookie(None, hello(Some("wrong")), Some(&grant))
+                .unwrap_err(),
+            ProtocolError::AuthFailed
+        );
+        bridge.close_cookie_session(&cookie.value);
+        assert!(bridge.cookie_grant(&cookie.value).is_none());
     }
 
     #[test]

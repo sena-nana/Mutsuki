@@ -4,14 +4,17 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::Router;
+use axum::body::Bytes;
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use futures::{SinkExt, StreamExt};
-use mutsuki_web_bridge::{HandleOutcome, WebBridge};
-use mutsuki_web_protocol::{WebShellAssets, WireMessage};
+use mutsuki_web_bridge::{
+    AuthGrant, HandleOutcome, SESSION_COOKIE, WebBridge, session_cookie_value,
+};
+use mutsuki_web_protocol::{ProtocolError, WebShellAssets, WireMessage};
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
@@ -28,6 +31,8 @@ struct AppState {
     connections: Arc<AtomicU64>,
     budgets_max_connections: usize,
     content_security_policy: String,
+    /// Cookies carry `Secure` exactly when this host terminates TLS.
+    secure_cookies: bool,
 }
 
 pub struct HostServer {
@@ -67,11 +72,14 @@ impl HostServer {
             connections: connections.clone(),
             budgets_max_connections: self.config.budgets.max_connections,
             content_security_policy: self.content_security_policy,
+            secure_cookies: self.config.tls.is_some(),
         };
 
         let app = Router::new()
             .route("/health", get(health_handler))
             .route("/ws", get(ws_handler))
+            .route("/auth/session", post(session_handler))
+            .route("/auth/logout", post(logout_handler))
             .route("/", get(index_handler))
             .route("/{*path}", get(static_handler))
             .with_state(state);
@@ -218,7 +226,115 @@ fn is_content_addressed_asset(path: &std::path::Path) -> bool {
     hash.len() >= 8 && hash.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
+/// Largest accepted login body; a token never needs more.
+const MAX_LOGIN_BODY_BYTES: usize = 4 * 1024;
+
+#[derive(serde::Deserialize)]
+struct LoginRequest {
+    token: String,
+}
+
+/// Browsers send `Origin` on WebSocket upgrades and cross-site POSTs. A present Origin must
+/// name this host; an absent one is a non-browser client, which a cookie cannot ride along.
+fn same_origin(headers: &HeaderMap) -> bool {
+    let Some(origin) = headers.get(header::ORIGIN) else {
+        return true;
+    };
+    let (Ok(origin), Some(host)) = (
+        origin.to_str(),
+        headers
+            .get(header::HOST)
+            .and_then(|host| host.to_str().ok()),
+    ) else {
+        return false;
+    };
+    origin
+        .strip_prefix("http://")
+        .or_else(|| origin.strip_prefix("https://"))
+        .is_some_and(|authority| authority.eq_ignore_ascii_case(host))
+}
+
+fn cookie_value(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .find_map(session_cookie_value)
+        .map(str::to_owned)
+}
+
+fn session_cookie(state: &AppState, value: &str, max_age_secs: u64) -> String {
+    let secure = if state.secure_cookies { "; Secure" } else { "" };
+    format!(
+        "{SESSION_COOKIE}={value}; Path=/; HttpOnly; SameSite=Strict; Max-Age={max_age_secs}{secure}"
+    )
+}
+
+fn json_error(status: StatusCode, code: &str) -> Response {
+    (
+        status,
+        [(header::CONTENT_TYPE, "application/json")],
+        serde_json::json!({ "code": code }).to_string(),
+    )
+        .into_response()
+}
+
+async fn session_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if !same_origin(&headers) {
+        return json_error(StatusCode::FORBIDDEN, "origin_denied");
+    }
+    if body.len() > MAX_LOGIN_BODY_BYTES {
+        return json_error(StatusCode::PAYLOAD_TOO_LARGE, "payload_too_large");
+    }
+    let Ok(login) = serde_json::from_slice::<LoginRequest>(&body) else {
+        return json_error(StatusCode::BAD_REQUEST, "invalid_message");
+    };
+    match state.bridge.open_cookie_session(&login.token) {
+        Ok(cookie) => (
+            StatusCode::NO_CONTENT,
+            [
+                (
+                    header::SET_COOKIE,
+                    session_cookie(&state, &cookie.value, cookie.max_age.as_secs()),
+                ),
+                (header::CACHE_CONTROL, "no-store".into()),
+            ],
+        )
+            .into_response(),
+        Err(error @ ProtocolError::AuthFailed) => {
+            json_error(StatusCode::UNAUTHORIZED, error.code())
+        }
+        Err(error) => json_error(StatusCode::FORBIDDEN, error.code()),
+    }
+}
+
+async fn logout_handler(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if !same_origin(&headers) {
+        return json_error(StatusCode::FORBIDDEN, "origin_denied");
+    }
+    if let Some(value) = cookie_value(&headers) {
+        state.bridge.close_cookie_session(&value);
+    }
+    (
+        StatusCode::NO_CONTENT,
+        [(header::SET_COOKIE, session_cookie(&state, "", 0))],
+    )
+        .into_response()
+}
+
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> Response {
+    if !same_origin(&headers) {
+        return (StatusCode::FORBIDDEN, "origin denied").into_response();
+    }
+    let cookie = cookie_value(&headers).and_then(|value| state.bridge.cookie_grant(&value));
     let current = state.connections.load(Ordering::Relaxed) as usize;
     if current >= state.budgets_max_connections {
         return (StatusCode::TOO_MANY_REQUESTS, "connection budget exceeded").into_response();
@@ -227,10 +343,10 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Resp
     state
         .bridge
         .set_connections(state.connections.load(Ordering::Relaxed));
-    ws.on_upgrade(move |socket| handle_socket(socket, state))
+    ws.on_upgrade(move |socket| handle_socket(socket, state, cookie))
 }
 
-async fn handle_socket(socket: WebSocket, state: AppState) {
+async fn handle_socket(socket: WebSocket, state: AppState, cookie: Option<AuthGrant>) {
     let (mut sender, mut receiver) = socket.split();
     let mut session_id: Option<Uuid> = None;
     let mut event_ready: Option<Arc<tokio::sync::Notify>> = None;
@@ -282,7 +398,12 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             continue;
         };
 
-        match state.bridge.handle_message_async(session_id, wire).await {
+        let (request_id, subscription_id) = wire.correlation();
+        match state
+            .bridge
+            .handle_message_async_with_cookie(session_id, wire, cookie.as_ref())
+            .await
+        {
             Ok(HandleOutcome::Reply(reply)) => {
                 if let WireMessage::HelloAck { session, .. } = &reply {
                     session_id = Some(session.session_id);
@@ -296,9 +417,20 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             }
             Ok(HandleOutcome::Subscribed(_)) | Ok(HandleOutcome::Unsubscribed(_)) => {}
             Err(err) => {
-                let _ = sender
-                    .send(binary_error("bridge_error", &err.to_string()))
-                    .await;
+                let frame = WireMessage::Error {
+                    code: err.code().into(),
+                    message: err.to_string(),
+                    request_id,
+                    subscription_id,
+                };
+                let sent = match frame.encode() {
+                    Ok(bytes) => sender.send(Message::Binary(bytes.into())).await.is_ok(),
+                    Err(_) => false,
+                };
+                // A connection whose hello was refused has nothing left to do.
+                if !sent || session_id.is_none() {
+                    break;
+                }
             }
         }
 
@@ -336,12 +468,7 @@ async fn send_queued_events(
 }
 
 fn binary_error(code: &str, message: &str) -> Message {
-    match (WireMessage::Error {
-        code: code.into(),
-        message: message.into(),
-    })
-    .encode()
-    {
+    match WireMessage::error(code, message).encode() {
         Ok(bytes) => Message::Binary(bytes.into()),
         Err(_) => Message::Close(None),
     }
@@ -351,9 +478,10 @@ fn binary_error(code: &str, message: &str) -> Message {
 mod tests {
     use super::{
         DEFAULT_CONTENT_SECURITY_POLICY, binary_error, content_security_policy,
-        is_allowed_extra_img_src, is_content_addressed_asset,
+        is_allowed_extra_img_src, is_content_addressed_asset, same_origin,
     };
     use axum::extract::ws::Message;
+    use axum::http::{HeaderMap, HeaderValue, header};
     use mutsuki_web_protocol::WireMessage;
     use std::path::Path;
 
@@ -392,6 +520,24 @@ mod tests {
         assert!(!is_allowed_extra_img_src("data:"));
         assert!(is_allowed_extra_img_src("https://*.qlogo.cn"));
         assert!(is_allowed_extra_img_src("https://*.nt.qq.com.cn"));
+    }
+
+    #[test]
+    fn origin_must_name_the_requested_host() {
+        let headers = |origin: Option<&'static str>| {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::HOST, HeaderValue::from_static("127.0.0.1:8080"));
+            if let Some(origin) = origin {
+                headers.insert(header::ORIGIN, HeaderValue::from_static(origin));
+            }
+            headers
+        };
+        assert!(same_origin(&headers(None)));
+        assert!(same_origin(&headers(Some("http://127.0.0.1:8080"))));
+        assert!(same_origin(&headers(Some("https://127.0.0.1:8080"))));
+        assert!(!same_origin(&headers(Some("http://127.0.0.1:9090"))));
+        assert!(!same_origin(&headers(Some("https://evil.example"))));
+        assert!(!same_origin(&headers(Some("null"))));
     }
 
     #[test]

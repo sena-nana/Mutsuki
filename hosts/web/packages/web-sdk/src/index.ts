@@ -169,6 +169,9 @@ export interface BridgeHelloAck {
   };
 }
 
+/** Web bridge protocol this SDK speaks; the host accepts any client of the same major. */
+export const WEB_PROTOCOL_VERSION = "1.1.0";
+
 type WireRecord = Record<string, unknown>;
 
 export type BridgeConnectionState =
@@ -272,7 +275,7 @@ export class WebBridgeClient implements RpcClient, EventClient {
     this.webSocketFactory = options.webSocketFactory ?? ((url) => new WebSocket(url));
   }
 
-  async connect(protocolVersion = "1.0.0"): Promise<BridgeHelloAck> {
+  async connect(protocolVersion = WEB_PROTOCOL_VERSION): Promise<BridgeHelloAck> {
     if (this.connectionState === "open" && this.helloAck) return this.helloAck;
     if (this.connectPromise) return this.connectPromise;
     if (this.connectionState === "closed" || this.connectionState === "unauthorized") {

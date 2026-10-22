@@ -22,6 +22,10 @@ pub enum ProtocolError {
     #[error("session not authenticated")]
     Unauthenticated,
 
+    /// Hello (or a cookie login) presented credentials the host rejected.
+    #[error("authentication failed")]
+    AuthFailed,
+
     #[error("invalid message: {0}")]
     InvalidMessage(String),
 
@@ -36,4 +40,25 @@ pub enum ProtocolError {
 
     #[error("internal protocol error: {0}")]
     Internal(String),
+}
+
+impl ProtocolError {
+    /// Stable wire code for `WireMessage::Error`. Clients branch on this, never on the
+    /// human-readable message.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::VersionMismatch { .. } => "version_mismatch",
+            Self::UnsupportedManifestVersion(_) => "unsupported_manifest_version",
+            Self::CapabilityDenied(_) => "capability_denied",
+            Self::PayloadTooLarge { .. } => "payload_too_large",
+            Self::QueueFull(_) => "queue_full",
+            Self::Unauthenticated => "unauthenticated",
+            Self::AuthFailed => "auth_failed",
+            Self::InvalidMessage(_) => "invalid_message",
+            Self::ExtensionNotFound(_) => "extension_not_found",
+            Self::MethodNotFound { .. } => "method_not_found",
+            Self::BudgetExceeded(_) => "budget_exceeded",
+            Self::Internal(_) => "internal",
+        }
+    }
 }

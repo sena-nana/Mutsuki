@@ -648,3 +648,219 @@ async fn slow_client_budget_does_not_block_stop() {
     host.stop().await.unwrap();
     assert!(started.elapsed() < Duration::from_secs(2));
 }
+
+async fn http_post(addr: &str, path: &str, headers: &[(&str, &str)], body: &str) -> (u16, String) {
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let extra = headers
+        .iter()
+        .fold(String::new(), |mut extra, (name, value)| {
+            use std::fmt::Write;
+            let _ = write!(extra, "{name}: {value}\r\n");
+            extra
+        });
+    let request = format!(
+        "POST {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{extra}Connection: close\r\n\r\n{body}",
+        body.len()
+    );
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut buf = Vec::new();
+    stream.read_to_end(&mut buf).await.unwrap();
+    let text = String::from_utf8_lossy(&buf).into_owned();
+    let status = text
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|code| code.parse().ok())
+        .unwrap_or(0);
+    (status, text)
+}
+
+fn header_value<'a>(response: &'a str, name: &str) -> Option<&'a str> {
+    response
+        .lines()
+        .take_while(|line| !line.is_empty())
+        .find_map(|line| {
+            let (key, value) = line.split_once(':')?;
+            key.eq_ignore_ascii_case(name).then(|| value.trim())
+        })
+}
+
+type Socket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+async fn ws_connect(
+    addr: &str,
+    headers: &[(&'static str, String)],
+) -> Result<Socket, tokio_tungstenite::tungstenite::Error> {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let mut request = format!("ws://{addr}/ws").into_client_request().unwrap();
+    for (name, value) in headers {
+        request.headers_mut().insert(*name, value.parse().unwrap());
+    }
+    tokio_tungstenite::connect_async(request)
+        .await
+        .map(|(socket, _)| socket)
+}
+
+async fn send_wire(socket: &mut Socket, message: mutsuki_web_protocol::WireMessage) {
+    socket
+        .send(WsMessage::Binary(message.encode().unwrap().into()))
+        .await
+        .unwrap();
+}
+
+async fn next_wire(socket: &mut Socket) -> Option<mutsuki_web_protocol::WireMessage> {
+    loop {
+        match tokio::time::timeout(Duration::from_secs(2), socket.next())
+            .await
+            .expect("frame")?
+            .ok()?
+        {
+            WsMessage::Binary(bytes) => {
+                return Some(mutsuki_web_protocol::WireMessage::decode(&bytes).unwrap());
+            }
+            WsMessage::Close(_) => return None,
+            _ => {}
+        }
+    }
+}
+
+fn hello(token: Option<&str>) -> mutsuki_web_protocol::WireMessage {
+    mutsuki_web_protocol::WireMessage::Hello {
+        protocol_version: WEB_PROTOCOL_VERSION.into(),
+        capabilities: vec![],
+        auth_token: token.map(Into::into),
+    }
+}
+
+#[tokio::test]
+async fn cookie_session_survives_reconnect_and_logout_ends_it() {
+    use mutsuki_web_protocol::WireMessage;
+    let mut host = start_host(false, None).await;
+    let addr = host.listen_addr().unwrap().to_string();
+
+    let (status, body) = http_post(&addr, "/auth/session", &[], r#"{"token":"wrong"}"#).await;
+    assert_eq!(status, 401);
+    assert!(body.contains(r#""code":"auth_failed""#));
+    assert!(header_value(&body, "set-cookie").is_none());
+
+    let (status, response) =
+        http_post(&addr, "/auth/session", &[], r#"{"token":"test-token"}"#).await;
+    assert_eq!(status, 204);
+    let set_cookie = header_value(&response, "set-cookie").expect("session cookie");
+    for attribute in ["HttpOnly", "SameSite=Strict", "Path=/", "Max-Age="] {
+        assert!(
+            set_cookie.contains(attribute),
+            "{set_cookie} lacks {attribute}"
+        );
+    }
+    assert!(
+        !set_cookie.contains("Secure"),
+        "loopback HTTP must not mark Secure"
+    );
+    assert!(!set_cookie.contains("test-token"));
+    let cookie = set_cookie.split(';').next().unwrap().to_string();
+
+    // A reload reconnects with the cookie alone.
+    for _ in 0..2 {
+        let mut socket = ws_connect(&addr, &[("cookie", cookie.clone())])
+            .await
+            .unwrap();
+        send_wire(&mut socket, hello(None)).await;
+        assert!(matches!(
+            next_wire(&mut socket).await,
+            Some(WireMessage::HelloAck { .. })
+        ));
+    }
+
+    let (status, response) =
+        http_post(&addr, "/auth/logout", &[("Cookie", cookie.as_str())], "").await;
+    assert_eq!(status, 204);
+    assert!(
+        header_value(&response, "set-cookie")
+            .unwrap()
+            .contains("Max-Age=0")
+    );
+
+    let mut socket = ws_connect(&addr, &[("cookie", cookie.clone())])
+        .await
+        .unwrap();
+    send_wire(&mut socket, hello(None)).await;
+    match next_wire(&mut socket).await {
+        Some(WireMessage::Error { code, .. }) => assert_eq!(code, "auth_failed"),
+        other => panic!("expected auth_failed, got {other:?}"),
+    }
+    assert!(
+        next_wire(&mut socket).await.is_none(),
+        "refused hello closes the socket"
+    );
+    host.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn cross_origin_browsers_are_refused() {
+    let mut host = start_host(false, None).await;
+    let addr = host.listen_addr().unwrap().to_string();
+    assert!(
+        ws_connect(&addr, &[("origin", "https://evil.example".into())])
+            .await
+            .is_err()
+    );
+    let (status, _) = http_post(
+        &addr,
+        "/auth/session",
+        &[("Origin", "https://evil.example")],
+        r#"{"token":"test-token"}"#,
+    )
+    .await;
+    assert_eq!(status, 403);
+    let mut socket = ws_connect(&addr, &[("origin", format!("http://{addr}"))])
+        .await
+        .unwrap();
+    send_wire(&mut socket, hello(Some("test-token"))).await;
+    assert!(matches!(
+        next_wire(&mut socket).await,
+        Some(mutsuki_web_protocol::WireMessage::HelloAck { .. })
+    ));
+    host.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn failures_name_the_subscription_they_refuse() {
+    use mutsuki_web_protocol::{EventSubscription, WireMessage};
+    let mut host = start_host(false, None).await;
+    let addr = host.listen_addr().unwrap().to_string();
+    let mut socket = ws_connect(&addr, &[]).await.unwrap();
+    send_wire(&mut socket, hello(Some("test-token"))).await;
+    assert!(matches!(
+        next_wire(&mut socket).await,
+        Some(WireMessage::HelloAck { .. })
+    ));
+    let subscription_id = Uuid::new_v4();
+    send_wire(
+        &mut socket,
+        WireMessage::Subscribe(EventSubscription {
+            subscription_id,
+            topic: "secret.changed".into(),
+            required_capability: Some("secret.admin".into()),
+        }),
+    )
+    .await;
+    match next_wire(&mut socket).await {
+        Some(WireMessage::Error {
+            code,
+            subscription_id: denied,
+            request_id,
+            ..
+        }) => {
+            assert_eq!(code, "capability_denied");
+            assert_eq!(denied, Some(subscription_id));
+            assert_eq!(request_id, None);
+        }
+        other => panic!("expected subscription denial, got {other:?}"),
+    }
+    // A refused subscription does not end an authenticated connection.
+    send_wire(&mut socket, WireMessage::Ping).await;
+    assert_eq!(next_wire(&mut socket).await, Some(WireMessage::Pong));
+    host.stop().await.unwrap();
+}

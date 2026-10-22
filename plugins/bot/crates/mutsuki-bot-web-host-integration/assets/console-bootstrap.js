@@ -16,16 +16,30 @@ async function loadConsoleOptions() {
   return response.json();
 }
 
-async function authenticate(authToken) {
+/** Trades the console token for an HttpOnly session cookie; the token is not kept. */
+async function login(token) {
+  const response = await fetch("./auth/session", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token }),
+    credentials: "same-origin",
+  });
+  if (response.status === 401) throw new Error("auth_failed");
+  if (!response.ok) throw new Error(`login_failed_${response.status}`);
+}
+
+/** Connects with the session cookie alone, so a reload resumes without the token. */
+async function authenticate() {
   const shell = createWebShellRuntime({
     bridgeUrl: `${protocol}://${location.host}/ws`,
-    authToken,
   });
   try {
     await shell.connect();
   } catch (error) {
     shell.dispose();
-    throw new Error("auth_failed", { cause: error });
+    throw new Error(error?.code === "auth_failed" ? "auth_failed" : "connect_failed", {
+      cause: error,
+    });
   }
   try {
     const options = await loadConsoleOptions();
@@ -90,14 +104,18 @@ function mountLogin(message = "") {
     button.disabled = true;
     button.textContent = "正在登录…";
     try {
-      await authenticate(token);
+      await login(token);
+      await authenticate();
     } catch (error) {
       mountLogin(error?.message === "auth_failed" ? "口令不正确，请重试。" : "控制台加载失败，请重试。");
     }
   });
 }
 
-mountLogin();
+authenticate().catch((error) => {
+  // No live session cookie is the normal first visit, not an error worth showing.
+  mountLogin(error?.message === "auth_failed" ? "" : "控制台加载失败，请重试。");
+});
 window.addEventListener("pagehide", () => {
   activeMount?.dispose();
   activeShell?.dispose();

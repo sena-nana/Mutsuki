@@ -27,9 +27,16 @@ pub enum WireMessage {
         subscription_id: Uuid,
     },
     Event(EventEnvelope),
+    /// Server-side failure. `code` is a stable [`crate::ProtocolError::code`]; clients branch on
+    /// it, never on `message`. A failure caused by one RPC or subscription names it, so the
+    /// client fails exactly that request instead of waiting for its timeout.
     Error {
         code: String,
         message: String,
+        #[serde(default)]
+        request_id: Option<Uuid>,
+        #[serde(default)]
+        subscription_id: Option<Uuid>,
     },
     Ping,
     Pong,
@@ -83,6 +90,26 @@ pub struct EventEnvelope {
 }
 
 impl WireMessage {
+    /// An uncorrelated error frame.
+    pub fn error(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::Error {
+            code: code.into(),
+            message: message.into(),
+            request_id: None,
+            subscription_id: None,
+        }
+    }
+
+    /// The RPC id or subscription id a client message carries, for correlating its failure.
+    pub fn correlation(&self) -> (Option<Uuid>, Option<Uuid>) {
+        match self {
+            Self::Rpc(request) => (Some(request.id), None),
+            Self::Subscribe(subscription) => (None, Some(subscription.subscription_id)),
+            Self::Unsubscribe { subscription_id } => (None, Some(*subscription_id)),
+            _ => (None, None),
+        }
+    }
+
     pub fn encode(&self) -> ProtocolResult<Vec<u8>> {
         rmp_serde::to_vec_named(self).map_err(|err| ProtocolError::InvalidMessage(err.to_string()))
     }
@@ -105,11 +132,50 @@ mod tests {
         let message = WireMessage::Error {
             code: "capability_denied".into(),
             message: "missing extension.read".into(),
+            request_id: None,
+            subscription_id: Some(Uuid::new_v4()),
         };
         let encoded = message.encode().expect("encode");
         assert_ne!(encoded.first().copied(), Some(b'{'));
         let decoded = WireMessage::decode(&encoded).expect("decode");
         assert_eq!(decoded, message);
+    }
+
+    #[test]
+    fn error_frames_from_older_hosts_decode_without_correlation() {
+        #[derive(Serialize)]
+        #[serde(tag = "type", rename_all = "snake_case")]
+        enum Legacy {
+            Error { code: String, message: String },
+        }
+        let bytes = rmp_serde::to_vec_named(&Legacy::Error {
+            code: "invalid_message".into(),
+            message: "bad".into(),
+        })
+        .unwrap();
+        assert_eq!(
+            WireMessage::decode(&bytes).unwrap(),
+            WireMessage::error("invalid_message", "bad")
+        );
+    }
+
+    #[test]
+    fn correlation_names_the_failed_request_or_subscription() {
+        let id = Uuid::new_v4();
+        let rpc = WireMessage::Rpc(RpcRequest {
+            id,
+            namespace: "host".into(),
+            method: "status".into(),
+            params: JsonValue::Null,
+        });
+        assert_eq!(rpc.correlation(), (Some(id), None));
+        let subscribe = WireMessage::Subscribe(EventSubscription {
+            subscription_id: id,
+            topic: "t".into(),
+            required_capability: None,
+        });
+        assert_eq!(subscribe.correlation(), (None, Some(id)));
+        assert_eq!(WireMessage::Ping.correlation(), (None, None));
     }
 
     #[test]

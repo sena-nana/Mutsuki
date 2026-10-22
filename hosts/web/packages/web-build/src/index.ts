@@ -129,7 +129,7 @@ export async function buildExtension(options: BuildOptions): Promise<BuildResult
     capabilities: options.capabilities ?? [],
     permissions: options.permissions ?? [],
     assets,
-    protocol_version: options.protocolVersion ?? "1.0.0",
+    protocol_version: options.protocolVersion ?? "1.1.0",
   };
   const manifestPath = path.join(options.outDir, "manifest.json");
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
