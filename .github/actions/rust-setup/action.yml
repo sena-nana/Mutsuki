@@ -1,0 +1,29 @@
+name: Rust workspace setup
+description: Stable toolchain with rustfmt/clippy, sccache and the Linux desktop libraries the Tauri crates link against.
+runs:
+  using: composite
+  steps:
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy, rust-analyzer
+
+    - name: Install sccache
+      uses: mozilla-actions/sccache-action@v0.0.10
+
+    - name: Install Linux desktop dependencies
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libwebkit2gtk-4.1-dev \
+          libappindicator3-dev \
+          librsvg2-dev \
+          patchelf \
+          xdg-utils
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        # check_workspace.py and the MSRV step need tomllib.
+        python-version: "3.11"

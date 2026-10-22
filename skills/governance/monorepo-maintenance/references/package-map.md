@@ -45,6 +45,9 @@ owns reference aggregation, comparison and approval. These paths use root AGENTS
 package has a closer scoped file. Detailed gates and evidence boundaries: `docs/core-performance-model-v1.md`.
 
 Monorepo-maintenance owns `scripts/check_ci.py`; the root checker runs it and `performance/tests`.
+CI runs the Rust workspace as two parallel jobs sharing `.github/actions/rust-setup`: `rust`
+(static checks and every test) and `rust-gates` (clippy, bench-smoke, fuzz/template/feature builds,
+MSRV). `check_ci.py` requires the independent gates in `rust-gates` with `if: ${{ !cancelled() }}`.
 Preserve CI success/failure/cancellation behavior and reference failure propagation. Current cases and
 comparable metrics are mandatory; failed reports cannot be approved. Local coverage does not prove hosted
 Actions scheduling. The standalone fuzz lock must satisfy root dependency minimums and pass clone validation.

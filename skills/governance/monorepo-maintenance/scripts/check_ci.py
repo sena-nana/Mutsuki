@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Check the independent Rust gates in the repository's block-style CI YAML.
 
+The gates live in the `rust-gates` job, parallel to the `rust` test job.
+
 This deliberately reads only top-level job/step scalar fields, not shell bodies
 or arbitrary YAML. Unsupported condition syntax fails closed. No YAML package
 is needed by the Python 3.11 workspace gate.
@@ -16,10 +18,13 @@ ROOT = Path(__file__).resolve().parents[4]
 GATES = ("Lint", "Performance smoke gate", "Check fuzz targets")
 
 
+GATES_JOB = "rust-gates"
+
+
 def rust_steps(workflow: str) -> dict[str, dict[str, str]]:
-    job = re.search(r"^  rust:\s*\n(.*?)(?=^  \S|\Z)", workflow, re.M | re.S)
+    job = re.search(rf"^  {GATES_JOB}:\s*\n(.*?)(?=^  \S|\Z)", workflow, re.M | re.S)
     if job is None:
-        raise ValueError("CI must contain the rust job")
+        raise ValueError(f"CI must contain the {GATES_JOB} job")
     steps: dict[str, dict[str, str]] = {}
     for block in re.split(r"^      - ", job[1], flags=re.M)[1:]:
         fields: dict[str, str] = {}
