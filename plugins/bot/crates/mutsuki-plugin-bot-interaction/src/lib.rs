@@ -517,8 +517,7 @@ fn runtime_error(
     task: &Task,
     error: impl std::fmt::Display,
 ) -> mutsuki_runtime_contracts::RuntimeError {
-    mutsuki_runtime_contracts::RuntimeError::new(
-        mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
+    mutsuki_bot_sdk::failure::runtime_error(
         BOT_INTERACTION_PLUGIN_ID,
         format!("{}.{}", task.task_id, error),
     )
@@ -531,8 +530,8 @@ mod tests {
 
     use mutsuki_bot_interaction::{InteractionRepository, InteractionService};
     use mutsuki_bot_protocol::{
-        BotAccountRef, BotConversationKind, BotEventKind, BotFlowContext, BotPlatform, BotTarget,
-        BotUser, InteractionWaitSpec, QQ_CONVERSATION_REF_VERSION, QqConversationRef,
+        BOT_CONVERSATION_REF_VERSION, BotAccountRef, BotConversationKind, BotConversationRef,
+        BotEventKind, BotFlowContext, BotPlatform, BotTarget, BotUser, InteractionWaitSpec,
     };
     use mutsuki_runtime_contracts::Task;
 
@@ -644,9 +643,10 @@ mod tests {
         }
     }
 
-    fn conversation() -> QqConversationRef {
-        QqConversationRef {
-            version: QQ_CONVERSATION_REF_VERSION,
+    fn conversation() -> BotConversationRef {
+        BotConversationRef {
+            version: BOT_CONVERSATION_REF_VERSION,
+            platform: mutsuki_bot_protocol::BotPlatform::QqBot,
             account_id: "main".into(),
             kind: BotConversationKind::Group,
             user_id: None,

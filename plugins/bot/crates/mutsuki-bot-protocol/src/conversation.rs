@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{BotSpeechReplyPolicy, BotTarget};
+use crate::{BotPlatform, BotSpeechReplyPolicy, BotTarget};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -11,11 +11,16 @@ pub enum BotConversationKind {
     Channel,
 }
 
-pub const QQ_CONVERSATION_REF_VERSION: u16 = 1;
+pub const BOT_CONVERSATION_REF_VERSION: u16 = 1;
 
+/// Platform-neutral, versioned identity of one conversation on one bot account.
+///
+/// `origin_key` is the durable key every store uses; for QQ it keeps the historical `qq:v1:`
+/// prefix so persisted keys never need rewriting.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QqConversationRef {
+pub struct BotConversationRef {
     pub version: u16,
+    pub platform: BotPlatform,
     pub account_id: String,
     pub kind: BotConversationKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -30,14 +35,14 @@ pub struct QqConversationRef {
     pub thread_id: Option<String>,
 }
 
-impl QqConversationRef {
+impl BotConversationRef {
     /// Validates the versioned identity before it is persisted or used as a target.
-    pub fn validate(&self) -> Result<(), QqConversationRefError> {
-        if self.version != QQ_CONVERSATION_REF_VERSION {
-            return Err(QqConversationRefError::UnsupportedVersion(self.version));
+    pub fn validate(&self) -> Result<(), BotConversationRefError> {
+        if self.version != BOT_CONVERSATION_REF_VERSION {
+            return Err(BotConversationRefError::UnsupportedVersion(self.version));
         }
         if self.account_id.trim().is_empty() {
-            return Err(QqConversationRefError::MissingField("account_id"));
+            return Err(BotConversationRefError::MissingField("account_id"));
         }
         for (field, value) in [
             ("account_id", self.account_id.as_str()),
@@ -48,7 +53,7 @@ impl QqConversationRef {
             ("thread_id", self.thread_id.as_deref().unwrap_or_default()),
         ] {
             if value.contains('|') {
-                return Err(QqConversationRefError::InvalidIdentifier { field });
+                return Err(BotConversationRefError::InvalidIdentifier { field });
             }
         }
         if self
@@ -56,7 +61,7 @@ impl QqConversationRef {
             .as_deref()
             .is_some_and(|value| value.trim().is_empty())
         {
-            return Err(QqConversationRefError::MissingField("thread_id"));
+            return Err(BotConversationRefError::MissingField("thread_id"));
         }
         match self.kind {
             BotConversationKind::Private => {
@@ -85,32 +90,35 @@ impl QqConversationRef {
     ///
     /// The key format is intentionally kept identical to `origin_key`; callers can validate
     /// and re-emit it without interpreting platform-specific business data.
-    pub fn from_origin_key(origin_key: &str) -> Result<Self, QqConversationRefError> {
-        let rest = origin_key
-            .strip_prefix("qq:v")
-            .ok_or(QqConversationRefError::InvalidOriginKey)?;
+    pub fn from_origin_key(origin_key: &str) -> Result<Self, BotConversationRefError> {
+        let (prefix, rest) = origin_key
+            .split_once(":v")
+            .ok_or(BotConversationRefError::InvalidOriginKey)?;
+        let platform = BotPlatform::from_origin_prefix(prefix)
+            .ok_or(BotConversationRefError::InvalidOriginKey)?;
         let (version, encoded) = rest
             .split_once(':')
-            .ok_or(QqConversationRefError::InvalidOriginKey)?;
+            .ok_or(BotConversationRefError::InvalidOriginKey)?;
         let version = version
             .parse::<u16>()
-            .map_err(|_| QqConversationRefError::InvalidOriginKey)?;
+            .map_err(|_| BotConversationRefError::InvalidOriginKey)?;
         let parts = encoded
             .split('|')
             .map(parse_origin_part)
             .collect::<Result<Vec<_>, _>>()?;
         if parts.len() != 8 || parts[0] != version.to_string() {
-            return Err(QqConversationRefError::InvalidOriginKey);
+            return Err(BotConversationRefError::InvalidOriginKey);
         }
         let kind = match parts[2].as_str() {
             "private" => BotConversationKind::Private,
             "group" => BotConversationKind::Group,
             "channel" => BotConversationKind::Channel,
-            _ => return Err(QqConversationRefError::InvalidOriginKey),
+            _ => return Err(BotConversationRefError::InvalidOriginKey),
         };
         let optional = |value: &str| (!value.is_empty()).then(|| value.to_owned());
         let value = Self {
             version,
+            platform,
             account_id: parts[1].clone(),
             kind,
             user_id: optional(&parts[3]),
@@ -144,7 +152,11 @@ impl QqConversationRef {
             .map(|part| format!("{}:{part}", part.len()))
             .collect::<Vec<_>>()
             .join("|");
-        format!("qq:v{}:{encoded}", self.version)
+        format!(
+            "{}:v{}:{encoded}",
+            self.platform.origin_prefix(),
+            self.version
+        )
     }
 
     pub fn target(&self) -> Option<BotTarget> {
@@ -167,49 +179,49 @@ impl QqConversationRef {
 fn require_non_empty(
     value: Option<&str>,
     field: &'static str,
-) -> Result<(), QqConversationRefError> {
+) -> Result<(), BotConversationRefError> {
     if value.is_some_and(|value| !value.trim().is_empty()) {
         Ok(())
     } else {
-        Err(QqConversationRefError::MissingField(field))
+        Err(BotConversationRefError::MissingField(field))
     }
 }
 
 fn reject_present(
     value: &Option<String>,
     field: &'static str,
-) -> Result<(), QqConversationRefError> {
+) -> Result<(), BotConversationRefError> {
     if value.is_some() {
-        Err(QqConversationRefError::UnexpectedField(field))
+        Err(BotConversationRefError::UnexpectedField(field))
     } else {
         Ok(())
     }
 }
 
-fn parse_origin_part(part: &str) -> Result<String, QqConversationRefError> {
+fn parse_origin_part(part: &str) -> Result<String, BotConversationRefError> {
     let (length, value) = part
         .split_once(':')
-        .ok_or(QqConversationRefError::InvalidOriginKey)?;
+        .ok_or(BotConversationRefError::InvalidOriginKey)?;
     let length = length
         .parse::<usize>()
-        .map_err(|_| QqConversationRefError::InvalidOriginKey)?;
+        .map_err(|_| BotConversationRefError::InvalidOriginKey)?;
     if value.len() != length {
-        return Err(QqConversationRefError::InvalidOriginKey);
+        return Err(BotConversationRefError::InvalidOriginKey);
     }
     Ok(value.to_owned())
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
-pub enum QqConversationRefError {
-    #[error("unsupported QQ conversation ref version: {0}")]
+pub enum BotConversationRefError {
+    #[error("unsupported conversation ref version: {0}")]
     UnsupportedVersion(u16),
-    #[error("QQ conversation ref field is missing: {0}")]
+    #[error("conversation ref field is missing: {0}")]
     MissingField(&'static str),
-    #[error("QQ conversation ref field is not valid for this kind: {0}")]
+    #[error("conversation ref field is not valid for this kind: {0}")]
     UnexpectedField(&'static str),
-    #[error("QQ conversation ref identifier contains an origin-key separator: {field}")]
+    #[error("conversation ref identifier contains an origin-key separator: {field}")]
     InvalidIdentifier { field: &'static str },
-    #[error("QQ conversation origin key is invalid")]
+    #[error("conversation origin key is invalid")]
     InvalidOriginKey,
 }
 
@@ -242,7 +254,7 @@ pub struct ConversationPolicy {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResolvedConversationPolicy {
-    pub conversation: QqConversationRef,
+    pub conversation: BotConversationRef,
     pub policy: ConversationPolicy,
 }
 
@@ -278,4 +290,71 @@ pub enum BotAgentBridgeRequest {
     Regenerate {
         event: crate::BotEvent,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn group(platform: BotPlatform) -> BotConversationRef {
+        BotConversationRef {
+            version: BOT_CONVERSATION_REF_VERSION,
+            platform,
+            account_id: "account-1".into(),
+            kind: BotConversationKind::Group,
+            user_id: None,
+            group_id: Some("group-1".into()),
+            guild_id: None,
+            channel_id: None,
+            thread_id: None,
+        }
+    }
+
+    #[test]
+    fn qq_origin_keys_keep_the_persisted_prefix() {
+        let key = group(BotPlatform::QqBot).origin_key();
+        assert_eq!(key, "qq:v1:1:1|9:account-1|5:group|0:|7:group-1|0:|0:|0:");
+        assert_eq!(
+            BotConversationRef::from_origin_key(&key).unwrap(),
+            group(BotPlatform::QqBot)
+        );
+    }
+
+    #[test]
+    fn non_qq_platforms_round_trip_through_origin_keys_and_wire() {
+        for platform in [
+            BotPlatform::Sandbox,
+            BotPlatform::OneBot,
+            BotPlatform::Custom("matrix".into()),
+        ] {
+            let conversation = group(platform.clone());
+            let key = conversation.origin_key();
+            assert!(key.starts_with(&format!("{}:v1:", platform.origin_prefix())));
+            assert_eq!(
+                BotConversationRef::from_origin_key(&key).unwrap(),
+                conversation
+            );
+            let wire = serde_json::to_value(&conversation).unwrap();
+            assert_eq!(
+                serde_json::from_value::<BotConversationRef>(wire).unwrap(),
+                conversation
+            );
+        }
+    }
+
+    #[test]
+    fn platform_wire_tag_matches_its_name() {
+        for platform in [
+            BotPlatform::QqBot,
+            BotPlatform::OneBot,
+            BotPlatform::Discord,
+            BotPlatform::Telegram,
+            BotPlatform::Sandbox,
+        ] {
+            assert_eq!(
+                serde_json::to_value(&platform).unwrap(),
+                serde_json::Value::String(platform.as_str().into())
+            );
+        }
+    }
 }

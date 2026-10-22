@@ -10,11 +10,11 @@ use mutsuki_bot_conversation::{
 use mutsuki_bot_delivery::{DeliveryError, DeliveryRepository, ReplyDeliveryRepository};
 use mutsuki_bot_interaction::InteractionRepository;
 use mutsuki_bot_protocol::{
-    AgentSessionBinding, BotActiveDeliveryRequest, BotConversationKind, BotDeliveryAttempt,
-    BotDeliveryContent, BotDeliveryReceipt, BotInteractionSession, BotPersona,
-    BotReplyDeliveryPart, BotReplyDeliveryRequest, ConversationIclEntry, DeliveryPolicy,
-    DeliveryStatus, InteractionScope, InteractionStatus, InteractionWaitSpec, MessageSegment,
-    QQ_CONVERSATION_REF_VERSION, QqConversationRef,
+    AgentSessionBinding, BOT_CONVERSATION_REF_VERSION, BotActiveDeliveryRequest,
+    BotConversationKind, BotConversationRef, BotDeliveryAttempt, BotDeliveryContent,
+    BotDeliveryReceipt, BotInteractionSession, BotPersona, BotReplyDeliveryPart,
+    BotReplyDeliveryRequest, ConversationIclEntry, DeliveryPolicy, DeliveryStatus,
+    InteractionScope, InteractionStatus, InteractionWaitSpec, MessageSegment,
 };
 use rusqlite::Connection;
 use tokio::task::JoinSet;
@@ -145,7 +145,7 @@ fn unused_conversation_policy_tables_are_dropped_on_reopen() {
     let user_version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(user_version, 13);
+    assert_eq!(user_version, 14);
     let leftover: i64 = connection
         .query_row(
             "SELECT COUNT(*) FROM sqlite_master
@@ -1009,9 +1009,10 @@ fn assert_conversation_policy_tables_absent(snapshot: &BotDatabaseSnapshot) {
     }
 }
 
-fn conversation() -> QqConversationRef {
-    QqConversationRef {
-        version: QQ_CONVERSATION_REF_VERSION,
+fn conversation() -> BotConversationRef {
+    BotConversationRef {
+        version: BOT_CONVERSATION_REF_VERSION,
+        platform: mutsuki_bot_protocol::BotPlatform::QqBot,
         account_id: "main".into(),
         kind: BotConversationKind::Group,
         user_id: None,
@@ -1022,7 +1023,7 @@ fn conversation() -> QqConversationRef {
     }
 }
 
-fn binding(conversation: &QqConversationRef, generation: u64) -> AgentSessionBinding {
+fn binding(conversation: &BotConversationRef, generation: u64) -> AgentSessionBinding {
     AgentSessionBinding {
         origin_key: conversation.origin_key(),
         session_id: "session".into(),
@@ -1034,7 +1035,7 @@ fn binding(conversation: &QqConversationRef, generation: u64) -> AgentSessionBin
 }
 
 fn delivery(
-    conversation: &QqConversationRef,
+    conversation: &BotConversationRef,
     delivery_id: &str,
     idempotency_key: &str,
 ) -> BotActiveDeliveryRequest {
@@ -1062,7 +1063,7 @@ fn delivery(
 }
 
 fn reply_delivery(
-    conversation: &QqConversationRef,
+    conversation: &BotConversationRef,
     reply_id: &str,
     part_ids: &[&str],
 ) -> BotReplyDeliveryRequest {
@@ -1122,7 +1123,7 @@ fn retry_receipt(delivery_id: &str, idempotency_key: &str) -> BotDeliveryReceipt
     }
 }
 
-fn interaction(conversation: &QqConversationRef) -> BotInteractionSession {
+fn interaction(conversation: &BotConversationRef) -> BotInteractionSession {
     BotInteractionSession {
         session_id: "interaction".into(),
         conversation: conversation.clone(),
@@ -1142,4 +1143,55 @@ fn interaction(conversation: &QqConversationRef) -> BotInteractionSession {
         exclusive: true,
         retries_remaining: 2,
     }
+}
+
+#[test]
+fn v14_migration_makes_stored_conversation_refs_platform_neutral() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("v13.db");
+    {
+        let _repository = BotStateDbRepository::open(&path).unwrap();
+    }
+    {
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        let legacy_ref = serde_json::json!({
+            "version": 1,
+            "account_id": "qq-main",
+            "kind": "group",
+            "group_id": "group-1"
+        });
+        let body = serde_json::json!({
+            "session_id": "legacy-session",
+            "conversation": legacy_ref,
+            "account": {"account_id": "qq-main", "platform": "qq_bot"}
+        });
+        connection.execute_batch("PRAGMA user_version=13;").unwrap();
+        connection
+            .execute(
+                "INSERT INTO bot_interaction(session_id, origin_key, status, version, body)
+                 VALUES ('legacy-session', 'qq:v1:legacy', 'closed', 1, ?1)",
+                rusqlite::params![body.to_string()],
+            )
+            .unwrap();
+    }
+    drop(BotStateDbRepository::open(&path).unwrap());
+
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    let body: String = connection
+        .query_row(
+            "SELECT body FROM bot_interaction WHERE session_id = 'legacy-session'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(body["conversation"]["platform"], "qqbot");
+    assert_eq!(body["account"]["platform"], "qqbot");
+    let conversation: mutsuki_bot_protocol::BotConversationRef =
+        serde_json::from_value(body["conversation"].clone()).unwrap();
+    assert_eq!(
+        conversation.platform,
+        mutsuki_bot_protocol::BotPlatform::QqBot
+    );
+    assert!(conversation.origin_key().starts_with("qq:v1:"));
 }

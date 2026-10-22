@@ -56,7 +56,6 @@ use mutsuki_service_runtime::{
     ConfiguredPluginCatalog, ConfiguredPluginFactory, LoadPlanObserver, ServiceRuntimeBuilder,
     ServiceRuntimeResult,
 };
-use serde::Deserialize;
 use serde_json::Value;
 
 use crate::{
@@ -79,10 +78,6 @@ use mutsuki_plugin_bot_mihuashi::PLUGIN_ID as MIHUASHI_PLUGIN_ID;
 pub const DEFAULT_MEDIA_PROVIDER_ID: &str = mutsuki_plugin_resource_sqlite::PROVIDER_ID;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct FlowRouterConfig {}
 
 struct ConfigProviderEffect(ConfigProviderRegistration);
 
@@ -118,22 +113,6 @@ impl BotFlowRouterConfiguredPlugin {
             registry: Some(registry),
             seed: None,
         }
-    }
-}
-
-struct LegacyBotEventRouterConfiguredPlugin;
-
-impl ConfiguredPluginFactory for LegacyBotEventRouterConfiguredPlugin {
-    fn plugin_id(&self) -> &str {
-        "mutsuki.bot.router.event"
-    }
-
-    fn prepare(
-        &self,
-        _config: &Value,
-        _builder: ServiceRuntimeBuilder,
-    ) -> Result<ServiceRuntimeBuilder, String> {
-        Err("legacy Bot event subscriptions are unsupported; configure mutsuki.bot.router.flow and apply a graph".into())
     }
 }
 
@@ -212,8 +191,7 @@ impl ConfiguredPluginFactory for BotFlowRouterConfiguredPlugin {
         } else {
             config.clone()
         };
-        let _config: FlowRouterConfig =
-            serde_json::from_value(config).map_err(|error| error.to_string())?;
+        mutsuki_bot_sdk::config::decode_empty(self.plugin_id(), &config)?;
         let registry = self
             .registry
             .clone()
@@ -322,10 +300,9 @@ impl ConfiguredPluginFactory for BotCommandConfiguredPlugin {
         } else {
             config.clone()
         };
-        let _config: FlowRouterConfig =
-            serde_json::from_value(config).map_err(|error| error.to_string())?;
+        mutsuki_bot_sdk::config::decode_empty(self.plugin_id(), &config)?;
         Ok(builder
-            .register_builtin_plugin(checked_manifest(
+            .register_builtin_plugin(mutsuki_bot_sdk::manifest::checked(
                 bot_command_manifest(1),
                 BotManifestSurface::Business,
             )?)
@@ -352,13 +329,12 @@ impl ConfiguredPluginFactory for BotInteractionConfiguredPlugin {
         } else {
             config.clone()
         };
-        let _config: FlowRouterConfig =
-            serde_json::from_value(config).map_err(|error| error.to_string())?;
+        mutsuki_bot_sdk::config::decode_empty(self.plugin_id(), &config)?;
         let repository = shared_bot_state_db(&self.state_db, builder.data_dir())?;
         let interaction =
             InteractionService::new(repository, Arc::new(UnavailableInteractionMatcher));
         Ok(builder
-            .register_builtin_plugin(checked_manifest(
+            .register_builtin_plugin(mutsuki_bot_sdk::manifest::checked(
                 bot_interaction_manifest(),
                 BotManifestSurface::Business,
             )?)
@@ -404,23 +380,6 @@ impl BotFlowSeedStatus {
     }
 }
 
-/// Validates a manifest against the outbound surface its role is entitled to and
-/// returns it for registration.
-///
-/// Rule 13 is only an invariant if every registration passes through this check.
-/// Each call site names the tier explicitly, so widening a plugin's outbound
-/// surface is a visible edit here rather than a silently unchecked manifest.
-fn checked_manifest(
-    manifest: PluginManifest,
-    surface: BotManifestSurface,
-) -> Result<PluginManifest, String> {
-    BotSubmissionGate::ensure_manifest_surface(&manifest, surface).map_err(|error| {
-        let error = error.error();
-        format!("{}: {}", error.code, error.route)
-    })?;
-    Ok(manifest)
-}
-
 /// Plain manifests the first-party AI chain registers once the Bot Agent is enabled.
 ///
 /// Production registration iterates this list and the catalog tests validate the
@@ -438,7 +397,7 @@ pub(crate) fn bot_agent_chain_manifests() -> Result<Vec<PluginManifest>, String>
     .into_iter()
     // Every one of these is a plain graph-invoked business node: none may reach
     // the platform, the delivery service or the Agent on its own.
-    .map(|manifest| checked_manifest(manifest, BotManifestSurface::Business))
+    .map(|manifest| mutsuki_bot_sdk::manifest::checked(manifest, BotManifestSurface::Business))
     .collect()
 }
 
@@ -535,12 +494,12 @@ impl ConfiguredPluginFactory for BotAgentConfiguredPlugin {
         // bridge only hands an already-produced turn to the durable delivery
         // service (`mutsuki.bot.delivery/reply@1` on its node reply port); the
         // reply-delivery runner is the drain that performs the real platform send.
-        let mut manifest = crate::bundle::merge_plugin_manifests(
-            checked_manifest(
+        let mut manifest = mutsuki_bot_sdk::manifest::merge(
+            mutsuki_bot_sdk::manifest::checked(
                 bot_agent_bridge_manifest(),
                 BotManifestSurface::DurableReplyProducer,
             )?,
-            checked_manifest(
+            mutsuki_bot_sdk::manifest::checked(
                 bot_reply_delivery_manifest_for(
                     BOT_AGENT_BRIDGE_PLUGIN_ID,
                     BOT_AGENT_REPLY_DELIVERY_RUNNER_ID,
@@ -704,8 +663,7 @@ impl ConfiguredPluginFactory for SandboxConfiguredPlugin {
         } else {
             config.clone()
         };
-        let _config: FlowRouterConfig =
-            serde_json::from_value(config).map_err(|error| error.to_string())?;
+        mutsuki_bot_sdk::config::decode_empty(self.plugin_id(), &config)?;
         let repository = shared_bot_state_db(&self.state_db, builder.data_dir())?;
         let sandbox = Arc::new(
             SandboxService::with_history("local", repository).map_err(|error| error.to_string())?,
@@ -1228,7 +1186,6 @@ fn configured_bot_plugin_catalog_inner(
     let mut catalog = ConfiguredPluginCatalog::new();
     let slot: SharedSandboxSlot = Arc::new(OnceLock::new());
     let state_db: SharedStateDbSlot = Arc::new(OnceLock::new());
-    catalog.register(LegacyBotEventRouterConfiguredPlugin)?;
     catalog.register(BotCommandConfiguredPlugin)?;
     catalog.register(BotInteractionConfiguredPlugin {
         state_db: state_db.clone(),
@@ -1685,13 +1642,6 @@ pub(crate) mod tests {
 
     #[test]
     fn legacy_orchestration_configuration_is_rejected_at_the_owner_boundary() {
-        let builder = ServiceRuntimeBuilder::new(ServiceConfig::default());
-        let error = LegacyBotEventRouterConfiguredPlugin
-            .prepare(&json!({"subscriptions": []}), builder)
-            .err()
-            .expect("legacy event router must be rejected");
-        assert!(error.contains("apply a graph"));
-
         let error = BotCommandConfiguredPlugin
             .prepare(
                 &json!({"prefixes": ["/"], "commands": []}),

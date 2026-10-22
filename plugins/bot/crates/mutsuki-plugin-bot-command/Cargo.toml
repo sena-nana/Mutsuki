@@ -8,6 +8,7 @@ license.workspace = true
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
+mutsuki-bot-sdk.workspace = true
 mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-sdk.workspace = true
 mutsuki-bot-protocol.workspace = true

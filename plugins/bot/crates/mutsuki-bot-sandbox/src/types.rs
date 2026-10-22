@@ -1,6 +1,6 @@
 use mutsuki_bot_protocol::{
-    BotConversationKind, BotTarget, BotUser, MessageSegment, QQ_CONVERSATION_REF_VERSION,
-    QqConversationRef,
+    BOT_CONVERSATION_REF_VERSION, BotConversationKind, BotConversationRef, BotTarget, BotUser,
+    MessageSegment,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -110,7 +110,7 @@ pub struct SandboxConversationView {
     pub title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avatar_url: Option<String>,
-    pub conversation: QqConversationRef,
+    pub conversation: BotConversationRef,
     pub users: Vec<SandboxUserView>,
     pub last_preview: Option<String>,
     pub last_activity_unix_ms: u64,
@@ -322,7 +322,7 @@ pub fn is_sandbox_id(value: &str) -> bool {
 }
 
 #[must_use]
-pub fn is_sandbox_conversation(conversation: &QqConversationRef) -> bool {
+pub fn is_sandbox_conversation(conversation: &BotConversationRef) -> bool {
     conversation.user_id.as_deref().is_some_and(is_sandbox_id)
         || conversation.group_id.as_deref().is_some_and(is_sandbox_id)
         || conversation.guild_id.as_deref().is_some_and(is_sandbox_id)
@@ -350,7 +350,7 @@ pub fn is_sandbox_target(target: &BotTarget) -> bool {
 pub fn qq_conversation_from_target(
     account_id: impl Into<String>,
     target: &BotTarget,
-) -> Option<QqConversationRef> {
+) -> Option<BotConversationRef> {
     let (kind, user_id, group_id, guild_id, channel_id) = match target {
         BotTarget::User { user_id } => (
             BotConversationKind::Private,
@@ -378,8 +378,9 @@ pub fn qq_conversation_from_target(
         ),
         BotTarget::Conversation { .. } | BotTarget::PlatformSpecific { .. } => return None,
     };
-    let conversation = QqConversationRef {
-        version: QQ_CONVERSATION_REF_VERSION,
+    let conversation = BotConversationRef {
+        version: BOT_CONVERSATION_REF_VERSION,
+        platform: mutsuki_bot_protocol::BotPlatform::QqBot,
         account_id: account_id.into(),
         kind,
         user_id,

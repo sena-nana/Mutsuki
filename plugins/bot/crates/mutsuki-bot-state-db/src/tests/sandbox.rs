@@ -351,6 +351,7 @@ fn sandbox_history_backfills_official_face_ids() {
         let connection = rusqlite::Connection::open(&path).unwrap();
         let conversation = serde_json::json!({
             "version": 1,
+            "platform": "qqbot",
             "account_id": "qq-main",
             "kind": "group",
             "group_id": "sandbox:default"
@@ -455,7 +456,7 @@ impl mutsuki_bot_sandbox::SandboxRuntime for NoopSandboxRuntime {
     async fn deliver(
         &self,
         _operation_id: &str,
-        _conversation: &QqConversationRef,
+        _conversation: &BotConversationRef,
         _segments: &[MessageSegment],
         _reply_to: Option<&str>,
     ) -> Result<serde_json::Value, mutsuki_bot_sandbox::SandboxError> {

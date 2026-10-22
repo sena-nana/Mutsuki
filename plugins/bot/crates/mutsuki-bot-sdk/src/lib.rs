@@ -12,7 +12,10 @@
 )]
 
 mod command;
+pub mod config;
 mod context;
+pub mod failure;
+pub mod manifest;
 mod message_builder;
 pub mod prelude;
 mod submission;

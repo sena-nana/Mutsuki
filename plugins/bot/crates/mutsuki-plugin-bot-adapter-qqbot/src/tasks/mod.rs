@@ -11,9 +11,9 @@ use mutsuki_bot_protocol::{
     QqBotAccountGetRequest, QqBotCapabilityGetRequest, QqBotGatewayStatusRequest,
 };
 use mutsuki_runtime_contracts::{
-    CompletionBatch, ERR_RUNTIME_HOST_FAILED, ExecutionClass, InvocationMode, OrderingRequirement,
-    PluginManifest, RunnerBatchCapability, RunnerConcurrency, RunnerControlCapability,
-    RunnerDescriptor, RunnerMode, RunnerOrderingCapability, RunnerPayloadCapability, RunnerPurity,
+    CompletionBatch, ExecutionClass, InvocationMode, OrderingRequirement, PluginManifest,
+    RunnerBatchCapability, RunnerConcurrency, RunnerControlCapability, RunnerDescriptor,
+    RunnerMode, RunnerOrderingCapability, RunnerPayloadCapability, RunnerPurity,
     RunnerResourceCapability, RunnerResult, RunnerSideEffect, RuntimeError, ScalarValue, Task,
     WorkBatch,
 };
@@ -815,15 +815,7 @@ fn metadata(description: &str) -> BTreeMap<String, ScalarValue> {
 }
 
 fn failure(route: impl Into<String>, error: impl std::fmt::Display) -> RuntimeError {
-    let mut runtime_error = RuntimeError::new(
-        ERR_RUNTIME_HOST_FAILED,
-        QQBOT_ADAPTER_PLUGIN_ID,
-        route.into(),
-    );
-    runtime_error
-        .evidence
-        .insert("message".into(), ScalarValue::String(error.to_string()));
-    runtime_error
+    mutsuki_bot_sdk::failure::runtime_error_with_message(QQBOT_ADAPTER_PLUGIN_ID, route, error)
 }
 
 fn openapi_failure(route: &str, error: QqOpenApiError) -> RuntimeError {

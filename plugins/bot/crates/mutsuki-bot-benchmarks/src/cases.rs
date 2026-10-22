@@ -1008,7 +1008,7 @@ struct BenchmarkDeliveryPolicy;
 impl DeliveryPolicyResolver for BenchmarkDeliveryPolicy {
     fn active_delivery_allowed(
         &self,
-        _conversation: &QqConversationRef,
+        _conversation: &BotConversationRef,
     ) -> Result<bool, DeliveryError> {
         Ok(true)
     }

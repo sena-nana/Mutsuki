@@ -17,6 +17,12 @@ description: Change generic mutsuki.bot protocol DTOs, protocol identifiers, mes
   `mutsuki.bot.agent/*` fail loud there, because Flow initiates business behavior. Durable
   services (delivery, agent bridge) and control-plane callers are exempt and keep their own
   clients.
+- `BotContext` only prepares and submits operations (`prepare_*` + `submit_operation(s)`); it has no
+  convenience `send_*` path, so business code cannot bypass Flow by habit.
+- Shared helpers live in the SDK, never copied per plugin: `failure::{runtime_error,
+  runtime_error_with_message, runtime_failure}` for `runtime.host_failed` (detail in
+  `evidence.message`), `manifest::{checked, merge, object_protocol_descriptor}` for registration
+  and `config::decode_empty` for option-less plugins.
 - Preserve trace, correlation, target binding, cancel policy and registry generation.
 - Version breaking wire changes and update manifests, adapters and round-trip tests together.
 - Keep Bot Flow node/event/document DTOs in the Bot protocol owner. Plugin node catalogs are

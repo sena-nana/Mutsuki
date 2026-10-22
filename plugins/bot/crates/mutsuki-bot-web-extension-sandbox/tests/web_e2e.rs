@@ -27,7 +27,7 @@ impl SandboxRuntime for TestRuntime {
     async fn deliver(
         &self,
         _operation_id: &str,
-        _conversation: &mutsuki_bot_protocol::QqConversationRef,
+        _conversation: &mutsuki_bot_protocol::BotConversationRef,
         _segments: &[mutsuki_bot_protocol::MessageSegment],
         _reply_to: Option<&str>,
     ) -> Result<Value, SandboxError> {

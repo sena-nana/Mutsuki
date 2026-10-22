@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{BotEventKind, BotMessage, QqConversationRef};
+use crate::{BotConversationRef, BotEventKind, BotMessage};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -35,7 +35,7 @@ pub enum InteractionStatus {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BotInteractionSession {
     pub session_id: String,
-    pub conversation: QqConversationRef,
+    pub conversation: BotConversationRef,
     pub scope: InteractionScope,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor_id: Option<String>,

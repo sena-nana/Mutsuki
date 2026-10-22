@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use mutsuki_bot_protocol::{BotConversationKind, MessageSegment, QqConversationRef};
+use mutsuki_bot_protocol::{BotConversationKind, BotConversationRef, MessageSegment};
 use mutsuki_bot_sandbox::{
     SANDBOX_MAX_MESSAGES, SandboxAsset, SandboxContentRef, SandboxConversationView, SandboxError,
     SandboxFace, SandboxHistoryConversation, SandboxHistoryKind, SandboxHistorySnapshot,
@@ -235,7 +235,7 @@ fn load_conversations(
     ) in rows
     {
         let history_kind = parse_kind(&store)?;
-        let conversation: QqConversationRef = decode(&conversation_json)?;
+        let conversation: BotConversationRef = decode(&conversation_json)?;
         let kind: BotConversationKind = decode(&format!("\"{kind}\""))?;
         let users = load_users(connection, &store, &conversation_id)?;
         let messages = if include_messages {

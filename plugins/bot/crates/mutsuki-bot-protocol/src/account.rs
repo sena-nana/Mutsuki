@@ -8,17 +8,19 @@ pub struct BotAccountRef {
 
 /// Platforms the Bot contracts are shaped for.
 ///
-/// Only `QqBot` has an adapter today. The rest are declared so the wire encoding of
-/// a platform tag is fixed before a second adapter lands, the same way
-/// [`crate::reserved`] pins protocol IDs; adding a variant later would change the
-/// serialized form for every peer.
+/// `QqBot` has a production adapter and `Sandbox` is the simulated adapter. The rest are declared
+/// so the wire encoding of a platform tag is fixed before their adapters land, the same way
+/// [`crate::reserved`] pins protocol IDs. The serialized tag always equals [`Self::as_str`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BotPlatform {
+    #[serde(rename = "qqbot")]
     QqBot,
+    #[serde(rename = "onebot")]
     OneBot,
     Discord,
     Telegram,
+    Sandbox,
     Custom(String),
 }
 
@@ -29,8 +31,31 @@ impl BotPlatform {
             Self::OneBot => "onebot",
             Self::Discord => "discord",
             Self::Telegram => "telegram",
+            Self::Sandbox => "sandbox",
             Self::Custom(value) => value,
         }
+    }
+
+    /// Prefix of [`crate::BotConversationRef::origin_key`]. QQ keeps its historical `qq`.
+    pub fn origin_prefix(&self) -> &str {
+        match self {
+            Self::QqBot => "qq",
+            other => other.as_str(),
+        }
+    }
+
+    pub fn from_origin_prefix(prefix: &str) -> Option<Self> {
+        if prefix.is_empty() || prefix.contains(':') {
+            return None;
+        }
+        Some(match prefix {
+            "qq" => Self::QqBot,
+            "onebot" => Self::OneBot,
+            "discord" => Self::Discord,
+            "telegram" => Self::Telegram,
+            "sandbox" => Self::Sandbox,
+            other => Self::Custom(other.to_owned()),
+        })
     }
 }
 

@@ -9,8 +9,8 @@ use std::sync::{Arc, Mutex};
 use crate::{SandboxApi, SandboxService, is_sandbox_target, qq_conversation_from_target};
 use mutsuki_bot_delivery::{DeliveryFailure, DeliveryGateway, DeliverySuccess};
 use mutsuki_bot_protocol::{
-    BOT_MESSAGE_SEND_PROTOCOL_ID, BotDeliveryContent, BotDeliveryPartReceipt, BotEvent, BotMessage,
-    BotNodeInvocation, BotTarget, DeliveryPartStatus, QqConversationRef,
+    BOT_MESSAGE_SEND_PROTOCOL_ID, BotConversationRef, BotDeliveryContent, BotDeliveryPartReceipt,
+    BotEvent, BotMessage, BotNodeInvocation, BotTarget, DeliveryPartStatus,
 };
 use mutsuki_runtime_contracts::{
     BatchPayload, CompletionBatch, EntryCompletion, RunnerContext, RunnerDescriptor, RunnerResult,
@@ -36,7 +36,7 @@ impl SandboxInterceptHandle {
             .clone()
     }
 
-    fn record(&self, conversation: &QqConversationRef, content: &BotDeliveryContent) -> String {
+    fn record(&self, conversation: &BotConversationRef, content: &BotDeliveryContent) -> String {
         self.service()
             .and_then(|service| {
                 service.observe_outbound(
@@ -248,7 +248,7 @@ mod tests {
     use super::*;
     use crate::{SANDBOX_GROUP_ID, SandboxApi};
     use mutsuki_bot_protocol::{
-        BotConversationKind, BotTarget, MessageSegment, QQ_CONVERSATION_REF_VERSION,
+        BOT_CONVERSATION_REF_VERSION, BotConversationKind, BotTarget, MessageSegment,
     };
     use mutsuki_runtime_contracts::{
         BatchEntry, BatchKey, DispatchLane, OrderingRequirement, WorkResourcePlan,
@@ -303,9 +303,10 @@ mod tests {
         }
     }
 
-    fn conversation(group_id: &str) -> QqConversationRef {
-        QqConversationRef {
-            version: QQ_CONVERSATION_REF_VERSION,
+    fn conversation(group_id: &str) -> BotConversationRef {
+        BotConversationRef {
+            version: BOT_CONVERSATION_REF_VERSION,
+            platform: mutsuki_bot_protocol::BotPlatform::QqBot,
             account_id: "qq-main".into(),
             kind: BotConversationKind::Group,
             user_id: None,

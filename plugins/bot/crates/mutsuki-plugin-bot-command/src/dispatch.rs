@@ -12,8 +12,8 @@ use mutsuki_bot_protocol::{
     BotNodePortDirection, BotNodeResult, BotNodeRole, BotReplyDeliveryRequest, BotTarget,
 };
 use mutsuki_runtime_contracts::{
-    ArtifactType, CompletionBatch, ERR_RUNTIME_HOST_FAILED, ExecutionClass, InvocationMode,
-    OrderingRequirement, PluginArtifact, PluginManifest, RunnerBatchCapability, RunnerConcurrency,
+    ArtifactType, CompletionBatch, ExecutionClass, InvocationMode, OrderingRequirement,
+    PluginArtifact, PluginManifest, RunnerBatchCapability, RunnerConcurrency,
     RunnerControlCapability, RunnerDescriptor, RunnerMode, RunnerOrderingCapability,
     RunnerPayloadCapability, RunnerPurity, RunnerResourceCapability, RunnerResult,
     RunnerSideEffect, RuntimeError, ScalarValue, WorkBatch,
@@ -603,12 +603,7 @@ fn create_configured_abi_plugin(config: Value) -> RuntimeResult<LoadedPlugin> {
 }
 
 fn failure(route: impl Into<String>, error: impl std::fmt::Display) -> RuntimeError {
-    let mut runtime_error =
-        RuntimeError::new(ERR_RUNTIME_HOST_FAILED, BOT_COMMAND_PLUGIN_ID, route.into());
-    runtime_error
-        .evidence
-        .insert("message".into(), ScalarValue::String(error.to_string()));
-    runtime_error
+    mutsuki_bot_sdk::failure::runtime_error_with_message(BOT_COMMAND_PLUGIN_ID, route, error)
 }
 
 fn parse_failure(

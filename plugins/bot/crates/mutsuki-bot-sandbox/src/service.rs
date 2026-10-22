@@ -5,8 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use mutsuki_bot_conversation::qq_conversation_from_event;
 use mutsuki_bot_protocol::{
-    BotAccountRef, BotConversationKind, BotEvent, BotEventKind, BotExtMap, BotMessage, BotPlatform,
-    BotUser, MessageSegment, QQ_CONVERSATION_REF_VERSION, QqConversationRef,
+    BOT_CONVERSATION_REF_VERSION, BotAccountRef, BotConversationKind, BotConversationRef, BotEvent,
+    BotEventKind, BotExtMap, BotMessage, BotPlatform, BotUser, MessageSegment,
 };
 use mutsuki_runtime_contracts::{
     ResourceAccess, ResourceId, ResourceLifetime, ResourceRef, ResourceSealState, ResourceSemantic,
@@ -71,7 +71,7 @@ pub trait SandboxRuntime: Send + Sync {
     async fn deliver(
         &self,
         operation_id: &str,
-        conversation: &QqConversationRef,
+        conversation: &BotConversationRef,
         segments: &[MessageSegment],
         reply_to: Option<&str>,
     ) -> Result<Value, SandboxError>;
@@ -95,7 +95,7 @@ pub trait SandboxApi: Send + Sync {
     fn observe_event(&self, event: BotEvent);
     fn observe_outbound(
         &self,
-        conversation: &QqConversationRef,
+        conversation: &BotConversationRef,
         segments: &[MessageSegment],
         reply_to: Option<&str>,
     ) -> Option<SandboxMessageView>;
@@ -1046,7 +1046,7 @@ impl SandboxApi for SandboxService {
 
     fn observe_outbound(
         &self,
-        conversation: &QqConversationRef,
+        conversation: &BotConversationRef,
         segments: &[MessageSegment],
         reply_to: Option<&str>,
     ) -> Option<SandboxMessageView> {
@@ -1055,7 +1055,7 @@ impl SandboxApi for SandboxService {
         let mut inner = self.lock_inner();
         let (sender_id, sender_name) = bot_speaker(&inner);
         let message = {
-            let title: fn(&QqConversationRef) -> String =
+            let title: fn(&BotConversationRef) -> String =
                 if sandbox { sandbox_title } else { live_title };
             let Inner {
                 simulate,
@@ -1435,7 +1435,7 @@ fn seed_simulate(store: &mut Store, account_id: &str) {
 
 fn insert_conversation(
     store: &mut Store,
-    conversation: QqConversationRef,
+    conversation: BotConversationRef,
     title: &str,
     now: u64,
 ) -> Result<SandboxConversationView, SandboxError> {
@@ -1474,8 +1474,8 @@ fn insert_conversation(
 
 fn ensure_conversation<'a>(
     store: &'a mut Store,
-    conversation: QqConversationRef,
-    title: &dyn Fn(&QqConversationRef) -> String,
+    conversation: BotConversationRef,
+    title: &dyn Fn(&BotConversationRef) -> String,
     now: u64,
 ) -> &'a mut StoredConversation {
     let key = conversation.origin_key();
@@ -1848,7 +1848,7 @@ fn place_simulate_user(
     display_name: &str,
     avatar_url: Option<&str>,
     now: u64,
-) -> Result<(QqConversationRef, SandboxUserView), SandboxError> {
+) -> Result<(BotConversationRef, SandboxUserView), SandboxError> {
     let taken = group_user_ids(&inner.simulate);
     if taken.iter().any(|id| id == user_id) {
         return Err(SandboxError::new(
@@ -2083,7 +2083,7 @@ fn append_message(
 
 fn sandbox_event(
     account_id: &str,
-    conversation: &QqConversationRef,
+    conversation: &BotConversationRef,
     user: &SandboxUserView,
     kind: BotEventKind,
     message: Option<&SandboxMessageView>,
@@ -2194,9 +2194,10 @@ fn conversation_missing(conversation_id: &str) -> SandboxError {
     SandboxError::new("not_found", format!("会话 `{conversation_id}` 不存在"))
 }
 
-fn group_ref(account_id: &str) -> QqConversationRef {
-    QqConversationRef {
-        version: QQ_CONVERSATION_REF_VERSION,
+fn group_ref(account_id: &str) -> BotConversationRef {
+    BotConversationRef {
+        version: BOT_CONVERSATION_REF_VERSION,
+        platform: mutsuki_bot_protocol::BotPlatform::QqBot,
         account_id: account_id.into(),
         kind: BotConversationKind::Group,
         user_id: None,
@@ -2207,9 +2208,10 @@ fn group_ref(account_id: &str) -> QqConversationRef {
     }
 }
 
-fn private_ref(account_id: &str, user_id: &str) -> QqConversationRef {
-    QqConversationRef {
-        version: QQ_CONVERSATION_REF_VERSION,
+fn private_ref(account_id: &str, user_id: &str) -> BotConversationRef {
+    BotConversationRef {
+        version: BOT_CONVERSATION_REF_VERSION,
+        platform: mutsuki_bot_protocol::BotPlatform::QqBot,
         account_id: account_id.into(),
         kind: BotConversationKind::Private,
         user_id: Some(user_id.into()),
@@ -2220,7 +2222,7 @@ fn private_ref(account_id: &str, user_id: &str) -> QqConversationRef {
     }
 }
 
-fn live_title(conversation: &QqConversationRef) -> String {
+fn live_title(conversation: &BotConversationRef) -> String {
     match conversation.kind {
         BotConversationKind::Private => conversation
             .user_id
@@ -2234,7 +2236,7 @@ fn live_title(conversation: &QqConversationRef) -> String {
     }
 }
 
-fn sandbox_title(conversation: &QqConversationRef) -> String {
+fn sandbox_title(conversation: &BotConversationRef) -> String {
     match conversation.kind {
         BotConversationKind::Group => "沙盒体验群".into(),
         BotConversationKind::Private => {

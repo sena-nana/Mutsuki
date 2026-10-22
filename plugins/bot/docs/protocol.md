@@ -86,6 +86,11 @@ capability matrix is the account-scoped source of truth. First-class `MessageSeg
 is custom markdown content. QQ keyboard and template markdown stay `PlatformSpecific` under
 `platform: "qqbot"`.
 
+Conversations are addressed by `BotConversationRef { version, platform, account_id, kind, … }`.
+Its `origin_key()` (`{platform.origin_prefix()}:v{version}:{length-prefixed parts}`) is the durable
+key every store uses; QQ keeps the prefix `qq`. `BotPlatform` serializes as its `as_str()` tag
+(`qqbot`, `onebot`, `discord`, `telegram`, `sandbox`, or `custom`).
+
 `PluginProvides.extensions` carries versioned domain-neutral extension payloads. Bot plugins use
 `mutsuki.bot.flow.nodes@1` for their node catalog. `BotFlowEventEnvelope`, `BotNodeInvocation` and
 `BotNodeResult` preserve typed ports plus Bot/trace/correlation context across graph execution.

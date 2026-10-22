@@ -158,6 +158,11 @@ impl BotTask {
     }
 }
 
+/// Builds and submits Bot platform operations (`message/send`, `media/upload`, `message/recall`).
+///
+/// Only `EffectDrain` surfaces (adapters and the delivery service) may submit these directly; a
+/// Business plugin's client is wrapped by [`crate::BotSubmissionGate`], which rejects them, so
+/// business code reaches the platform only through Flow sink nodes or durable delivery.
 pub struct BotContext {
     client: RuntimeClientRef,
     task_id_prefix: String,
@@ -186,62 +191,6 @@ impl BotContext {
     pub fn with_default_options(mut self, options: BotTaskOptions) -> Self {
         self.defaults = options;
         self
-    }
-
-    pub fn send_message(&self, message: BotMessage) -> Result<TaskHandle, BotSdkError> {
-        self.send_message_with_options(message, BotTaskOptions::default())
-    }
-
-    pub fn send_message_with_options(
-        &self,
-        message: BotMessage,
-        options: BotTaskOptions,
-    ) -> Result<TaskHandle, BotSdkError> {
-        self.submit_operation(self.prepare_message(message, options)?)
-    }
-
-    pub fn send_text(
-        &self,
-        target: BotTarget,
-        text: impl Into<String>,
-    ) -> Result<TaskHandle, BotSdkError> {
-        self.send_message(MessageBuilder::new(target).text(text).build())
-    }
-
-    pub fn send_text_with_options(
-        &self,
-        target: BotTarget,
-        text: impl Into<String>,
-        options: BotTaskOptions,
-    ) -> Result<TaskHandle, BotSdkError> {
-        self.submit_operation(self.prepare_text(target, text, options)?)
-    }
-
-    pub fn upload_media(&self, payload: BotMediaUploadRequest) -> Result<TaskHandle, BotSdkError> {
-        self.upload_media_with_options(payload, BotTaskOptions::default())
-    }
-
-    pub fn upload_media_with_options(
-        &self,
-        payload: BotMediaUploadRequest,
-        options: BotTaskOptions,
-    ) -> Result<TaskHandle, BotSdkError> {
-        self.submit_operation(self.prepare_media_upload(payload, options)?)
-    }
-
-    pub fn recall_message(
-        &self,
-        payload: BotMessageRecallRequest,
-    ) -> Result<TaskHandle, BotSdkError> {
-        self.recall_message_with_options(payload, BotTaskOptions::default())
-    }
-
-    pub fn recall_message_with_options(
-        &self,
-        payload: BotMessageRecallRequest,
-        options: BotTaskOptions,
-    ) -> Result<TaskHandle, BotSdkError> {
-        self.submit_operation(self.prepare_recall(payload, options)?)
     }
 
     pub fn prepare_message(
@@ -433,8 +382,8 @@ mod tests {
                 .trace_id("trace-1")
                 .correlation_id("correlation-1"),
         );
-        let handle = context
-            .send_text_with_options(
+        let operation = context
+            .prepare_text(
                 user_target(),
                 "hello",
                 BotTaskOptions::new()
@@ -448,6 +397,7 @@ mod tests {
                     }),
             )
             .unwrap();
+        let handle = context.submit_operation(operation).unwrap();
 
         assert_eq!(handle.task_id, "bot-test:1");
         assert_eq!(handle.protocol_id, BOT_MESSAGE_SEND_PROTOCOL_ID);
@@ -531,7 +481,10 @@ mod tests {
     fn task_outcome_is_queried_through_runtime_client() {
         let client = Arc::new(RecordingRuntimeClient::default());
         let context = BotContext::new(client.clone(), "bot-outcome");
-        let handle = context.send_text(user_target(), "hello").unwrap();
+        let operation = context
+            .prepare_text(user_target(), "hello", BotTaskOptions::new())
+            .unwrap();
+        let handle = context.submit_operation(operation).unwrap();
         client.outcomes.lock().unwrap().insert(
             handle.task_id.clone(),
             TaskOutcome::Completed {

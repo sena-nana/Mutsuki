@@ -341,8 +341,7 @@ fn unix_ms() -> u64 {
 }
 
 fn runtime_error(task: &Task, error: impl std::fmt::Display) -> RuntimeFailure {
-    RuntimeFailure::new(mutsuki_runtime_contracts::RuntimeError::new(
-        mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
+    RuntimeFailure::new(mutsuki_bot_sdk::failure::runtime_error(
         BOT_DELIVERY_PLUGIN_ID,
         format!("{}.{}", task.task_id, error),
     ))

@@ -386,23 +386,18 @@ fn runtime_error(
     task: &Task,
     error: impl std::fmt::Display,
 ) -> mutsuki_runtime_contracts::RuntimeError {
-    let mut value = mutsuki_runtime_contracts::RuntimeError::new(
-        mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
+    mutsuki_bot_sdk::failure::runtime_error_with_message(
         BOT_REPLY_PLUGIN_ID,
         format!("{}.{}", task.task_id, task.protocol_id),
-    );
-    value.evidence.insert(
-        "message".into(),
-        mutsuki_runtime_contracts::ScalarValue::String(error.to_string()),
-    );
-    value
+        error,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use mutsuki_bot_protocol::{
-        BotConversationKind, BotFlowContext, BotFlowEventEnvelope, BotFlowPayload, DeliveryPolicy,
-        QQ_CONVERSATION_REF_VERSION, QqConversationRef,
+        BOT_CONVERSATION_REF_VERSION, BotConversationKind, BotConversationRef, BotFlowContext,
+        BotFlowEventEnvelope, BotFlowPayload, DeliveryPolicy,
     };
 
     use super::*;
@@ -411,8 +406,9 @@ mod tests {
         BotReplyDeliveryRequest {
             reply_id: "r1".into(),
             idempotency_key: "r1".into(),
-            conversation: QqConversationRef {
-                version: QQ_CONVERSATION_REF_VERSION,
+            conversation: BotConversationRef {
+                version: BOT_CONVERSATION_REF_VERSION,
+                platform: mutsuki_bot_protocol::BotPlatform::QqBot,
                 account_id: "bot".into(),
                 kind: BotConversationKind::Group,
                 user_id: None,

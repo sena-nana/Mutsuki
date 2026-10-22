@@ -13,8 +13,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use mutsuki_bot_protocol::{
-    AgentSessionBinding, AgentSessionScope, BotConversationKind, BotEvent, BotTarget,
-    ConversationPolicy, QQ_CONVERSATION_REF_VERSION, QqConversationRef, ResolvedConversationPolicy,
+    AgentSessionBinding, AgentSessionScope, BOT_CONVERSATION_REF_VERSION, BotConversationKind,
+    BotConversationRef, BotEvent, BotTarget, ConversationPolicy, ResolvedConversationPolicy,
 };
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -75,7 +75,7 @@ impl ConversationService {
     /// Matching, permission and wake-up decisions are owned by the published Flow graph.
     pub fn resolve_execution(
         &self,
-        conversation: QqConversationRef,
+        conversation: BotConversationRef,
     ) -> Result<ResolvedConversationPolicy, ConversationError> {
         conversation
             .validate()
@@ -427,7 +427,7 @@ impl ConversationService {
 /// Returns an error for unsupported targets or invalid QQ conversation fields.
 pub fn qq_conversation_from_event(
     event: &BotEvent,
-) -> Result<QqConversationRef, ConversationError> {
+) -> Result<BotConversationRef, ConversationError> {
     let (kind, user_id, group_id, guild_id, channel_id) = match &event.target {
         BotTarget::User { user_id } => (
             BotConversationKind::Private,
@@ -457,8 +457,9 @@ pub fn qq_conversation_from_event(
             return Err(ConversationError::UnsupportedTarget);
         }
     };
-    let conversation = QqConversationRef {
-        version: QQ_CONVERSATION_REF_VERSION,
+    let conversation = BotConversationRef {
+        version: BOT_CONVERSATION_REF_VERSION,
+        platform: mutsuki_bot_protocol::BotPlatform::QqBot,
         account_id: event.bot.account_id.clone(),
         kind,
         user_id,
@@ -484,7 +485,7 @@ pub fn qq_conversation_from_event(
 ///
 /// Returns an error for an invalid conversation or a missing actor in actor-scoped mode.
 pub fn session_binding_key(
-    conversation: &QqConversationRef,
+    conversation: &BotConversationRef,
     scope: AgentSessionScope,
     actor_id: Option<&str>,
 ) -> Result<String, ConversationError> {
@@ -533,7 +534,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::Mutex;
 
-    use mutsuki_bot_protocol::{BotConversationKind, QQ_CONVERSATION_REF_VERSION};
+    use mutsuki_bot_protocol::{BOT_CONVERSATION_REF_VERSION, BotConversationKind};
 
     use super::*;
 
@@ -605,8 +606,9 @@ mod tests {
     #[test]
     fn conversation_refs_round_trip_private_group_and_channel_targets() {
         let refs = [
-            QqConversationRef {
-                version: QQ_CONVERSATION_REF_VERSION,
+            BotConversationRef {
+                version: BOT_CONVERSATION_REF_VERSION,
+                platform: mutsuki_bot_protocol::BotPlatform::QqBot,
                 account_id: "main".into(),
                 kind: BotConversationKind::Private,
                 user_id: Some("user".into()),
@@ -616,8 +618,9 @@ mod tests {
                 thread_id: Some("topic".into()),
             },
             group_conversation(),
-            QqConversationRef {
-                version: QQ_CONVERSATION_REF_VERSION,
+            BotConversationRef {
+                version: BOT_CONVERSATION_REF_VERSION,
+                platform: mutsuki_bot_protocol::BotPlatform::QqBot,
                 account_id: "main".into(),
                 kind: BotConversationKind::Channel,
                 user_id: None,
@@ -631,13 +634,13 @@ mod tests {
         for conversation in refs {
             let key = conversation.origin_key();
             assert_eq!(
-                QqConversationRef::from_origin_key(&key).unwrap(),
+                BotConversationRef::from_origin_key(&key).unwrap(),
                 conversation
             );
             assert!(conversation.target().is_some());
             let encoded = serde_json::to_string(&conversation).unwrap();
             assert_eq!(
-                serde_json::from_str::<QqConversationRef>(&encoded).unwrap(),
+                serde_json::from_str::<BotConversationRef>(&encoded).unwrap(),
                 conversation
             );
         }
@@ -704,9 +707,10 @@ mod tests {
         assert!(expired.generation > refreshed.generation);
     }
 
-    fn group_conversation() -> QqConversationRef {
-        QqConversationRef {
-            version: QQ_CONVERSATION_REF_VERSION,
+    fn group_conversation() -> BotConversationRef {
+        BotConversationRef {
+            version: BOT_CONVERSATION_REF_VERSION,
+            platform: mutsuki_bot_protocol::BotPlatform::QqBot,
             account_id: "main".into(),
             kind: BotConversationKind::Group,
             user_id: None,

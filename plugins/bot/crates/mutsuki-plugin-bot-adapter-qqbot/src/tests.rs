@@ -2,16 +2,16 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use mutsuki_bot_protocol::{
-    BOT_FLOW_BOT_EVENT_TYPE, BOT_FLOW_DELIVERY_REPLY_TYPE, BOT_FLOW_INGRESS_PROTOCOL_ID,
-    BOT_MEDIA_UPLOAD_PROTOCOL_ID, BOT_MESSAGE_RECALL_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID,
-    BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID, BotConversationKind, BotDeliveryContent, BotEvent,
-    BotEventKind, BotFlowContext, BotFlowEventEnvelope, BotFlowPayload, BotFlowTypeRef,
-    BotMediaKind, BotMessage, BotMessageRecallRequest, BotNodeInvocation, BotNodeResult,
-    BotNodeWiring, BotReplyDeliveryPart, BotReplyDeliveryRequest, BotTarget, BotUser,
-    DeliveryPolicy, MessageSegment, QQ_CONVERSATION_REF_VERSION, QQBOT_ACCOUNT_GET_PROTOCOL_ID,
-    QQBOT_GATEWAY_STATUS_PROTOCOL_ID, QQBOT_OPENAPI_PERMANENT_ERROR,
-    QQBOT_OPENAPI_RATE_LIMITED_ERROR, QQBOT_RAW_CALL_PROTOCOL_ID, QqConversationRef,
-    QqMessageSegmentKind, QqPermissionRequirement,
+    BOT_CONVERSATION_REF_VERSION, BOT_FLOW_BOT_EVENT_TYPE, BOT_FLOW_DELIVERY_REPLY_TYPE,
+    BOT_FLOW_INGRESS_PROTOCOL_ID, BOT_MEDIA_UPLOAD_PROTOCOL_ID, BOT_MESSAGE_RECALL_PROTOCOL_ID,
+    BOT_MESSAGE_SEND_PROTOCOL_ID, BOT_QQ_REPLY_FORWARD_FOLD_PROTOCOL_ID, BotConversationKind,
+    BotConversationRef, BotDeliveryContent, BotEvent, BotEventKind, BotFlowContext,
+    BotFlowEventEnvelope, BotFlowPayload, BotFlowTypeRef, BotMediaKind, BotMessage,
+    BotMessageRecallRequest, BotNodeInvocation, BotNodeResult, BotNodeWiring, BotReplyDeliveryPart,
+    BotReplyDeliveryRequest, BotTarget, BotUser, DeliveryPolicy, MessageSegment,
+    QQBOT_ACCOUNT_GET_PROTOCOL_ID, QQBOT_GATEWAY_STATUS_PROTOCOL_ID, QQBOT_OPENAPI_PERMANENT_ERROR,
+    QQBOT_OPENAPI_RATE_LIMITED_ERROR, QQBOT_RAW_CALL_PROTOCOL_ID, QqMessageSegmentKind,
+    QqPermissionRequirement,
 };
 use mutsuki_runtime_contracts::{
     BatchEntry, BatchKey, BatchPayload, CompletionBatch, DispatchLane, OrderingRequirement,
@@ -1646,8 +1646,9 @@ fn reply_request(text: &str) -> BotReplyDeliveryRequest {
     BotReplyDeliveryRequest {
         reply_id: "r1".into(),
         idempotency_key: "r1".into(),
-        conversation: QqConversationRef {
-            version: QQ_CONVERSATION_REF_VERSION,
+        conversation: BotConversationRef {
+            version: BOT_CONVERSATION_REF_VERSION,
+            platform: mutsuki_bot_protocol::BotPlatform::QqBot,
             account_id: "bot".into(),
             kind: BotConversationKind::Group,
             user_id: None,

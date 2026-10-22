@@ -347,8 +347,7 @@ fn failure(task: &Task, route: &str) -> RuntimeFailure {
 }
 
 fn failure_raw(route: &str) -> RuntimeFailure {
-    RuntimeFailure::new(mutsuki_runtime_contracts::RuntimeError::new(
-        mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
+    RuntimeFailure::new(mutsuki_bot_sdk::failure::runtime_error(
         BOT_MEDIA_BRIDGE_PLUGIN_ID,
         route,
     ))

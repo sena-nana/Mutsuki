@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{MessageSegment, QqConversationRef};
+use crate::{BotConversationRef, MessageSegment};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BotDeliveryContent {
@@ -26,7 +26,7 @@ pub struct DeliveryPolicy {
 pub struct BotActiveDeliveryRequest {
     pub delivery_id: String,
     pub idempotency_key: String,
-    pub conversation: QqConversationRef,
+    pub conversation: BotConversationRef,
     pub content: BotDeliveryContent,
     pub policy: DeliveryPolicy,
     #[serde(default)]
@@ -112,7 +112,7 @@ pub struct BotReplyDeliveryPart {
 pub struct BotReplyDeliveryRequest {
     pub reply_id: String,
     pub idempotency_key: String,
-    pub conversation: QqConversationRef,
+    pub conversation: BotConversationRef,
     pub parts: Vec<BotReplyDeliveryPart>,
     pub policy: DeliveryPolicy,
     pub source_event_id: String,

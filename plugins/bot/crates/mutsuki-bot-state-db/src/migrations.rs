@@ -109,6 +109,10 @@ pub(crate) fn migrate_schema(connection: &Connection) -> Result<(), BotStateDbEr
         sandbox_history::SANDBOX_SCHEMA_SQL
     );
     connection.execute_batch(&sql)?;
+    // Runs before the sandbox migrations because they decode stored conversation refs.
+    if user_version < 14 {
+        migrate_platform_neutral_refs_v14(connection)?;
+    }
     sandbox_history::migrate_sandbox_v9(connection)?;
     sandbox_history::migrate_sandbox_v10(connection)?;
     if user_version < 11 {
@@ -155,6 +159,87 @@ pub(crate) fn migrate_schema(connection: &Connection) -> Result<(), BotStateDbEr
              DROP TABLE IF EXISTS bot_conversation_policy_audit;",
         )?;
     }
-    connection.pragma_update(None, "user_version", 13)?;
+    connection.pragma_update(None, "user_version", 14)?;
     Ok(())
+}
+
+/// v14: conversation refs became platform-neutral `BotConversationRef`s and the QQ platform tag
+/// is `qqbot` everywhere. Every stored JSON document gains `"platform": "qqbot"` on refs written
+/// before platforms existed (all of them QQ) and has the old `qq_bot` tag rewritten.
+fn migrate_platform_neutral_refs_v14(connection: &Connection) -> Result<(), BotStateDbError> {
+    let tables = {
+        let mut statement = connection.prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'bot\\_%' ESCAPE '\\'",
+        )?;
+        statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    for table in tables {
+        let text_columns = {
+            let mut statement = connection.prepare(&format!("PRAGMA table_info(\"{table}\")"))?;
+            statement
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .filter(|(_, column_type)| column_type.eq_ignore_ascii_case("TEXT"))
+                .map(|(name, _)| name)
+                .collect::<Vec<_>>()
+        };
+        for column in text_columns {
+            let rows = {
+                let mut statement = connection.prepare(&format!(
+                    "SELECT rowid, \"{column}\" FROM \"{table}\"
+                     WHERE \"{column}\" LIKE '%\"account\\_id\"%' ESCAPE '\\'
+                        OR \"{column}\" LIKE '%qq\\_bot%' ESCAPE '\\'"
+                ))?;
+                statement
+                    .query_map([], |row| {
+                        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?
+            };
+            for (rowid, text) in rows {
+                let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&text) else {
+                    continue;
+                };
+                if rewrite_platform_neutral_refs(&mut value) {
+                    connection.execute(
+                        &format!("UPDATE \"{table}\" SET \"{column}\" = ?1 WHERE rowid = ?2"),
+                        params![value.to_string(), rowid],
+                    )?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn rewrite_platform_neutral_refs(value: &mut serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(object) => {
+            let mut changed = false;
+            let is_conversation_ref = ["version", "account_id", "kind"]
+                .iter()
+                .all(|key| object.contains_key(*key));
+            if is_conversation_ref && !object.contains_key("platform") {
+                object.insert("platform".into(), "qqbot".into());
+                changed = true;
+            }
+            if object.get("platform").and_then(serde_json::Value::as_str) == Some("qq_bot") {
+                object.insert("platform".into(), "qqbot".into());
+                changed = true;
+            }
+            for child in object.values_mut() {
+                changed |= rewrite_platform_neutral_refs(child);
+            }
+            changed
+        }
+        serde_json::Value::Array(items) => items.iter_mut().fold(false, |changed, item| {
+            rewrite_platform_neutral_refs(item) | changed
+        }),
+        _ => false,
+    }
 }

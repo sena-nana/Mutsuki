@@ -7,7 +7,7 @@ QQ Source -> Event/Command Match -> Agent Processor -> reliable Delivery Sink
           \-> other explicit processor/sink branches
 ```
 
-`QqConversationRef` is the stable private/group/channel identity. Its v1 origin key is length
+`BotConversationRef` is the stable private/group/channel identity. Its v1 origin key is length
 delimited and can be parsed back during state migration; persisted keys are validated before they
 are used to rebuild a target. The active Bot Flow configuration owns mention/wake-word,
 account/role/rate-limit and command matching. Permission matching is deferred; there is no

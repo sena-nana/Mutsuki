@@ -319,16 +319,11 @@ fn runtime_error(
     task: &Task,
     error: impl std::fmt::Display,
 ) -> mutsuki_runtime_contracts::RuntimeError {
-    let mut value = mutsuki_runtime_contracts::RuntimeError::new(
-        mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
+    mutsuki_bot_sdk::failure::runtime_error_with_message(
         BOT_PERSONA_PLUGIN_ID,
         format!("{}.{}", task.task_id, task.protocol_id),
-    );
-    value.evidence.insert(
-        "message".into(),
-        mutsuki_runtime_contracts::ScalarValue::String(error.to_string()),
-    );
-    value
+        error,
+    )
 }
 
 #[cfg(test)]

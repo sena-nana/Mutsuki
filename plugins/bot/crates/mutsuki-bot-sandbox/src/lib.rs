@@ -40,9 +40,9 @@ mod tests {
 
     use async_trait::async_trait;
     use mutsuki_bot_protocol::{
-        BotAccountRef, BotConversationKind, BotEvent, BotEventKind, BotExtMap, BotMessage,
-        BotPlatform, BotTarget, BotUser, MessageSegment, QQ_CONVERSATION_REF_VERSION,
-        QqConversationRef,
+        BOT_CONVERSATION_REF_VERSION, BotAccountRef, BotConversationKind, BotConversationRef,
+        BotEvent, BotEventKind, BotExtMap, BotMessage, BotPlatform, BotTarget, BotUser,
+        MessageSegment,
     };
     use mutsuki_runtime_contracts::{
         ResourceAccess, ResourceId, ResourceLifetime, ResourceRef, ResourceSealState,
@@ -71,7 +71,7 @@ mod tests {
         async fn deliver(
             &self,
             _operation_id: &str,
-            _conversation: &QqConversationRef,
+            _conversation: &BotConversationRef,
             segments: &[MessageSegment],
             reply_to: Option<&str>,
         ) -> Result<serde_json::Value, SandboxError> {
@@ -503,8 +503,9 @@ mod tests {
         assert_eq!(live_messages[0].message_id, "qq-msg-1");
 
         service.observe_outbound(
-            &QqConversationRef {
-                version: QQ_CONVERSATION_REF_VERSION,
+            &BotConversationRef {
+                version: BOT_CONVERSATION_REF_VERSION,
+                platform: mutsuki_bot_protocol::BotPlatform::QqBot,
                 account_id: "qq-main".into(),
                 kind: BotConversationKind::Group,
                 user_id: None,
@@ -836,8 +837,9 @@ mod tests {
             .conversation_id
             .clone();
         service.observe_outbound(
-            &QqConversationRef {
-                version: QQ_CONVERSATION_REF_VERSION,
+            &BotConversationRef {
+                version: BOT_CONVERSATION_REF_VERSION,
+                platform: mutsuki_bot_protocol::BotPlatform::QqBot,
                 account_id: "qq-main".into(),
                 kind: BotConversationKind::Group,
                 user_id: None,
@@ -926,7 +928,7 @@ mod tests {
             async fn deliver(
                 &self,
                 _operation_id: &str,
-                _conversation: &QqConversationRef,
+                _conversation: &BotConversationRef,
                 _segments: &[MessageSegment],
                 _reply_to: Option<&str>,
             ) -> Result<serde_json::Value, SandboxError> {

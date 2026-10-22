@@ -10,17 +10,16 @@ use mutsuki_bot_protocol::{
 };
 use mutsuki_runtime_contracts::{
     ExecutionClass, InvocationMode, PluginManifest, RunnerBatchCapability, RunnerConcurrency,
-    RunnerControlCapability, RunnerMode, RunnerResult, RunnerSideEffect, RuntimeError, ScalarValue,
-    Task, TaskOutcome, TimeoutGranularity,
+    RunnerControlCapability, RunnerMode, RunnerResult, RunnerSideEffect, RuntimeError, Task,
+    TaskOutcome, TimeoutGranularity,
 };
 use mutsuki_runtime_sdk::Runner;
 use mutsuki_runtime_sdk::{
-    AsyncRunnerContext, BoxedTaskAwaitRunner, PluginBuilder, ProtocolDescriptorBuilder,
-    RunnerDescriptorBuilder, RuntimeClientRef, RuntimeFailure, RuntimeResult,
-    TaskAwaitRunnerAdapter, map_work_batch_entries,
+    AsyncRunnerContext, BoxedTaskAwaitRunner, PluginBuilder, RunnerDescriptorBuilder,
+    RuntimeClientRef, RuntimeFailure, RuntimeResult, TaskAwaitRunnerAdapter,
+    map_work_batch_entries,
 };
 use serde::{Deserialize, Serialize, Serializer};
-use serde_json::json;
 
 use crate::{
     BOT_FLOW_MATCH_RUNNER_ID, MATCH_PROTOCOL_IDS, event_matches_source_types, match_descriptor,
@@ -80,20 +79,7 @@ pub fn flow_router_manifest_for_catalog(
         .manifest
 }
 
-fn protocol_descriptor(
-    protocol_id: &str,
-    request_required: &[&str],
-    response_required: &[&str],
-) -> mutsuki_runtime_contracts::ProtocolDescriptor {
-    ProtocolDescriptorBuilder::new(protocol_id)
-        .input_schema(json!({"type": "object", "required": request_required}))
-        .output_schema(json!({"type": "object", "required": response_required}))
-        .error_schema(json!({
-            "type": "object",
-            "required": ["code", "source", "route"]
-        }))
-        .build()
-}
+use mutsuki_bot_sdk::manifest::object_protocol_descriptor as protocol_descriptor;
 
 pub fn flow_ingress_runner(registry: Arc<BotFlowRegistry>) -> Box<dyn Runner> {
     Box::new(BotFlowIngressRunner::new(registry))
@@ -675,15 +661,11 @@ fn failure(task: &Task, route: &str, error: impl std::fmt::Display) -> RuntimeFa
 }
 
 fn runtime_error(task: &Task, route: &str, error: impl std::fmt::Display) -> RuntimeError {
-    let mut error_value = RuntimeError::new(
-        mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
+    mutsuki_bot_sdk::failure::runtime_error_with_message(
         BOT_FLOW_ROUTER_PLUGIN_ID,
         format!("flow.{route}.{}", task.task_id),
-    );
-    error_value
-        .evidence
-        .insert("message".into(), ScalarValue::String(error.to_string()));
-    error_value
+        error,
+    )
 }
 
 #[cfg(test)]

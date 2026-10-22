@@ -12,9 +12,8 @@ use mutsuki_bot_interaction::{
 };
 use mutsuki_bot_protocol::{
     BOT_FLOW_INGRESS_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID, BotActiveDeliveryRequest,
-    BotDeliveryContent, BotDeliveryPartReceipt, BotEvent, BotFlowEventEnvelope, BotMessage,
-    BotTarget, DeliveryPartStatus, DeliveryPolicy, DeliveryStatus, MessageSegment,
-    QqConversationRef,
+    BotConversationRef, BotDeliveryContent, BotDeliveryPartReceipt, BotEvent, BotFlowEventEnvelope,
+    BotMessage, BotTarget, DeliveryPartStatus, DeliveryPolicy, DeliveryStatus, MessageSegment,
 };
 use mutsuki_bot_sandbox::{
     SANDBOX_SERVICE_ID, SandboxApi, SandboxError, SandboxRuntime, SandboxService,
@@ -400,30 +399,10 @@ impl QqBotPluginBundle {
 const QQ_ACTIVE_DELIVERY_RUNNER_ID: &str = "mutsuki.bot.qq.delivery.runner";
 
 fn merge_qq_active_delivery(left: PluginManifest) -> PluginManifest {
-    merge_plugin_manifests(
+    mutsuki_bot_sdk::manifest::merge(
         left,
         bot_delivery_manifest_for(QQBOT_ADAPTER_PLUGIN_ID, QQ_ACTIVE_DELIVERY_RUNNER_ID),
     )
-}
-
-pub(crate) fn merge_plugin_manifests(
-    mut left: PluginManifest,
-    right: PluginManifest,
-) -> PluginManifest {
-    debug_assert_eq!(left.plugin_id, right.plugin_id);
-    left.provides
-        .capabilities
-        .extend(right.provides.capabilities);
-    left.provides.runners.extend(right.provides.runners);
-    left.provides.protocols.extend(right.provides.protocols);
-    left.provides
-        .protocol_classes
-        .extend(right.provides.protocol_classes);
-    left.provides
-        .handler_bindings
-        .extend(right.provides.handler_bindings);
-    left.provides.extensions.extend(right.provides.extensions);
-    left
 }
 
 struct OwnerBackedQqManagementProvider {
@@ -878,7 +857,7 @@ struct ConfiguredAccountDeliveryPolicy {
 impl DeliveryPolicyResolver for ConfiguredAccountDeliveryPolicy {
     fn active_delivery_allowed(
         &self,
-        conversation: &QqConversationRef,
+        conversation: &BotConversationRef,
     ) -> Result<bool, mutsuki_bot_delivery::DeliveryError> {
         Ok(conversation.account_id == self.account_id)
     }
@@ -1006,7 +985,7 @@ impl SandboxRuntime for HostSandboxRuntime {
     async fn deliver(
         &self,
         operation_id: &str,
-        conversation: &QqConversationRef,
+        conversation: &BotConversationRef,
         segments: &[MessageSegment],
         reply_to: Option<&str>,
     ) -> Result<Value, SandboxError> {

@@ -13,10 +13,10 @@
 use async_trait::async_trait;
 use mutsuki_agent_contracts::{ScheduleExecutionStatus, ScheduledRunResult};
 use mutsuki_bot_protocol::{
-    BOT_MESSAGE_SEND_PROTOCOL_ID, BotActiveDeliveryRequest, BotDeliveryAttempt, BotDeliveryContent,
-    BotDeliveryPartReceipt, BotDeliveryReceipt, BotMessage, BotReplyDeliveryPart,
-    BotReplyDeliveryReceipt, BotReplyDeliveryRequest, BotTarget, DeliveryPartStatus,
-    DeliveryPolicy, DeliveryStatus, MessageSegment, QqConversationRef,
+    BOT_MESSAGE_SEND_PROTOCOL_ID, BotActiveDeliveryRequest, BotConversationRef, BotDeliveryAttempt,
+    BotDeliveryContent, BotDeliveryPartReceipt, BotDeliveryReceipt, BotMessage,
+    BotReplyDeliveryPart, BotReplyDeliveryReceipt, BotReplyDeliveryRequest, BotTarget,
+    DeliveryPartStatus, DeliveryPolicy, DeliveryStatus, MessageSegment,
 };
 use mutsuki_runtime_contracts::{ScalarValue, TaskOutcome};
 use mutsuki_runtime_sdk::AsyncRunnerContext;
@@ -131,7 +131,7 @@ pub trait DeliveryPolicyResolver: Send + Sync {
     /// Returns [`DeliveryError`] when the active policy cannot be resolved.
     fn active_delivery_allowed(
         &self,
-        conversation: &QqConversationRef,
+        conversation: &BotConversationRef,
     ) -> Result<bool, DeliveryError>;
 }
 
@@ -1006,7 +1006,7 @@ pub trait ScheduledDeliveryTargetResolver: Send + Sync {
     /// # Errors
     ///
     /// Returns an error when the binding is missing, invalid, or unavailable.
-    fn resolve_binding(&self, binding_id: &str) -> Result<QqConversationRef, DeliveryError>;
+    fn resolve_binding(&self, binding_id: &str) -> Result<BotConversationRef, DeliveryError>;
 }
 
 pub trait ScheduledDeliveryPolicyProvider: Send + Sync {
@@ -1017,7 +1017,7 @@ pub trait ScheduledDeliveryPolicyProvider: Send + Sync {
     /// Returns an error when policy state cannot be resolved.
     fn delivery_policy(
         &self,
-        conversation: &QqConversationRef,
+        conversation: &BotConversationRef,
     ) -> Result<DeliveryPolicy, DeliveryError>;
 }
 
@@ -1182,7 +1182,7 @@ mod tests {
 
     use mutsuki_agent_contracts::ScheduleTargetRef;
     use mutsuki_bot_protocol::{
-        BotConversationKind, DeliveryPolicy, MessageSegment, QQ_CONVERSATION_REF_VERSION,
+        BOT_CONVERSATION_REF_VERSION, BotConversationKind, DeliveryPolicy, MessageSegment,
     };
 
     use super::*;
@@ -1416,7 +1416,7 @@ mod tests {
     impl DeliveryPolicyResolver for AllowDelivery {
         fn active_delivery_allowed(
             &self,
-            _conversation: &QqConversationRef,
+            _conversation: &BotConversationRef,
         ) -> Result<bool, DeliveryError> {
             Ok(true)
         }
@@ -1635,7 +1635,7 @@ mod tests {
     struct ScheduledTarget;
 
     impl ScheduledDeliveryTargetResolver for ScheduledTarget {
-        fn resolve_binding(&self, binding_id: &str) -> Result<QqConversationRef, DeliveryError> {
+        fn resolve_binding(&self, binding_id: &str) -> Result<BotConversationRef, DeliveryError> {
             assert_eq!(binding_id, "daily-report-target");
             Ok(request().conversation)
         }
@@ -1644,7 +1644,7 @@ mod tests {
     impl ScheduledDeliveryPolicyProvider for AllowDelivery {
         fn delivery_policy(
             &self,
-            _conversation: &QqConversationRef,
+            _conversation: &BotConversationRef,
         ) -> Result<DeliveryPolicy, DeliveryError> {
             Ok(request().policy)
         }
@@ -1727,8 +1727,9 @@ mod tests {
         BotActiveDeliveryRequest {
             delivery_id: "delivery".into(),
             idempotency_key: "key".into(),
-            conversation: QqConversationRef {
-                version: QQ_CONVERSATION_REF_VERSION,
+            conversation: BotConversationRef {
+                version: BOT_CONVERSATION_REF_VERSION,
+                platform: mutsuki_bot_protocol::BotPlatform::QqBot,
                 account_id: "main".into(),
                 kind: BotConversationKind::Private,
                 user_id: Some("user".into()),

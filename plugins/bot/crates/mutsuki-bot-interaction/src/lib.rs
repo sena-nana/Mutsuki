@@ -375,8 +375,8 @@ mod tests {
     use std::sync::Mutex;
 
     use mutsuki_bot_protocol::{
-        BotAccountRef, BotConversationKind, BotEventKind, BotPlatform, BotTarget, BotUser,
-        InteractionWaitSpec, QQ_CONVERSATION_REF_VERSION, QqConversationRef,
+        BOT_CONVERSATION_REF_VERSION, BotAccountRef, BotConversationKind, BotConversationRef,
+        BotEventKind, BotPlatform, BotTarget, BotUser, InteractionWaitSpec,
     };
 
     use super::*;
@@ -601,9 +601,10 @@ mod tests {
         }
     }
 
-    fn conversation() -> QqConversationRef {
-        QqConversationRef {
-            version: QQ_CONVERSATION_REF_VERSION,
+    fn conversation() -> BotConversationRef {
+        BotConversationRef {
+            version: BOT_CONVERSATION_REF_VERSION,
+            platform: mutsuki_bot_protocol::BotPlatform::QqBot,
             account_id: "main".into(),
             kind: BotConversationKind::Group,
             user_id: None,

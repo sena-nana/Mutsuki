@@ -4574,6 +4574,7 @@ dependencies = [
  "md5",
  "mutsuki-bot-management",
  "mutsuki-bot-protocol",
+ "mutsuki-bot-sdk",
  "mutsuki-config-service",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-sdk",
@@ -4664,6 +4665,7 @@ name = "mutsuki-plugin-bot-command"
 version = "0.1.0"
 dependencies = [
  "mutsuki-bot-protocol",
+ "mutsuki-bot-sdk",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-sdk",
  "serde",
@@ -4677,6 +4679,7 @@ version = "0.1.0"
 dependencies = [
  "mutsuki-bot-conversation",
  "mutsuki-bot-protocol",
+ "mutsuki-bot-sdk",
  "mutsuki-bot-testkit",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-sdk",
@@ -4690,6 +4693,7 @@ version = "0.1.0"
 dependencies = [
  "mutsuki-bot-delivery",
  "mutsuki-bot-protocol",
+ "mutsuki-bot-sdk",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-sdk",
  "serde_json",
@@ -4702,6 +4706,7 @@ dependencies = [
  "mutsuki-bot-flow",
  "mutsuki-bot-link-parser",
  "mutsuki-bot-protocol",
+ "mutsuki-bot-sdk",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-sdk",
  "serde",
@@ -4731,6 +4736,7 @@ dependencies = [
  "mutsuki-bot-conversation",
  "mutsuki-bot-interaction",
  "mutsuki-bot-protocol",
+ "mutsuki-bot-sdk",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-sdk",
  "serde_json",
@@ -4742,6 +4748,7 @@ version = "0.1.0"
 dependencies = [
  "mutsuki-agent-contracts",
  "mutsuki-bot-protocol",
+ "mutsuki-bot-sdk",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-sdk",
  "serde",
@@ -4782,6 +4789,7 @@ version = "0.1.0"
 dependencies = [
  "mutsuki-bot-conversation",
  "mutsuki-bot-protocol",
+ "mutsuki-bot-sdk",
  "mutsuki-bot-testkit",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-sdk",
@@ -4793,6 +4801,7 @@ name = "mutsuki-plugin-bot-reply"
 version = "0.1.0"
 dependencies = [
  "mutsuki-bot-protocol",
+ "mutsuki-bot-sdk",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-sdk",
  "regex",

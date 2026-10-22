@@ -21,8 +21,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use mutsuki_bot_protocol::{
-    BotDeliveryAttempt, BotDeliveryReceipt, BotInteractionSession, BotUser, DeliveryStatus,
-    InteractionStatus, QqBotCapabilityMatrix, QqConversationRef,
+    BotConversationRef, BotDeliveryAttempt, BotDeliveryReceipt, BotInteractionSession, BotUser,
+    DeliveryStatus, InteractionStatus, QqBotCapabilityMatrix,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -162,7 +162,7 @@ pub enum QqManagementAction {
     },
     AccountSendTest {
         account_id: String,
-        conversation: QqConversationRef,
+        conversation: BotConversationRef,
         text: String,
     },
     DeliveryRetry {
@@ -862,7 +862,7 @@ fn reconnect_account(state: &mut LocalState, account_id: &str) -> Result<Value, 
 fn send_test(
     state: &mut LocalState,
     account_id: &str,
-    conversation: &QqConversationRef,
+    conversation: &BotConversationRef,
     text: &str,
 ) -> Result<Value, QqManagementError> {
     let _ = account_mut(state, account_id)?;
@@ -1154,9 +1154,10 @@ mod tests {
         }
     }
 
-    fn conversation() -> mutsuki_bot_protocol::QqConversationRef {
-        mutsuki_bot_protocol::QqConversationRef {
-            version: mutsuki_bot_protocol::QQ_CONVERSATION_REF_VERSION,
+    fn conversation() -> mutsuki_bot_protocol::BotConversationRef {
+        mutsuki_bot_protocol::BotConversationRef {
+            version: mutsuki_bot_protocol::BOT_CONVERSATION_REF_VERSION,
+            platform: mutsuki_bot_protocol::BotPlatform::QqBot,
             kind: BotConversationKind::Private,
             account_id: "main".into(),
             user_id: Some("u1".into()),
