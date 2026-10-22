@@ -15,11 +15,12 @@ use mutsuki_bot_management::{
 };
 use mutsuki_bot_protocol::{BOT_EVENT_INGEST_PROTOCOL_ID, BotTarget};
 
+use crate::commands::{binding_code, select_subscription, self_subscription_id_for};
 use crate::{
     BILIBILI_EVENT_TYPE, BilibiliBackendConfig, BilibiliConfig, BilibiliConfigStore,
     BilibiliCredentialStore, BilibiliError, BilibiliPollKind, BilibiliQrStatus,
     BilibiliSubscription, BilibiliTransport, SharedBilibiliConfig, SharedBilibiliCredential,
-    SqliteBilibiliRepository, binding_code, select_subscription, self_subscription_id_for,
+    SqliteBilibiliRepository,
 };
 
 #[async_trait]

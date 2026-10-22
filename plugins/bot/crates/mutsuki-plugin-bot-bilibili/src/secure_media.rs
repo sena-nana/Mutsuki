@@ -65,7 +65,7 @@ pub(crate) fn secure_resolve_redirect(
 mod tests {
     use url::Url;
 
-    use crate::allow_bilibili_url;
+    use crate::transport::allow_bilibili_url;
 
     /// The transport loop itself is covered in `mutsuki-bot-secure-fetch`; what is
     /// Bilibili-specific is which hosts the allowlist admits.

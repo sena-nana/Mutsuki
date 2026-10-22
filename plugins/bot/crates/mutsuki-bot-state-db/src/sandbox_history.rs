@@ -10,7 +10,9 @@ use mutsuki_bot_sandbox::{
 };
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 
-use super::{BotStateDbError, BotStateDbRepository, decode, encode, immediate, sqlite_integer};
+use crate::codec::{decode, encode, immediate, sqlite_integer, sqlite_unsigned};
+use crate::error::BotStateDbError;
+use crate::repository::BotStateDbRepository;
 
 pub(super) const SANDBOX_SCHEMA_SQL: &str = "
          CREATE TABLE IF NOT EXISTS bot_sandbox_meta(
@@ -253,11 +255,11 @@ fn load_conversations(
                     conversation,
                     users: users.clone(),
                     last_preview,
-                    last_activity_unix_ms: super::sqlite_unsigned(
+                    last_activity_unix_ms: sqlite_unsigned(
                         last_activity_unix_ms,
                         "last_activity_unix_ms",
                     )?,
-                    message_count: super::sqlite_unsigned(message_count, "message_count")?,
+                    message_count: sqlite_unsigned(message_count, "message_count")?,
                     active_message: active_message != 0,
                 },
                 users,
@@ -325,8 +327,8 @@ fn load_users(
                 user_id,
                 display_name,
                 avatar_url,
-                last_seen_unix_ms: super::sqlite_unsigned(last_seen_unix_ms, "last_seen_unix_ms")?,
-                message_count: super::sqlite_unsigned(message_count, "message_count")?,
+                last_seen_unix_ms: sqlite_unsigned(last_seen_unix_ms, "last_seen_unix_ms")?,
+                message_count: sqlite_unsigned(message_count, "message_count")?,
             })
         })
         .collect()
@@ -405,10 +407,7 @@ fn load_media(connection: &Connection) -> Result<Vec<SandboxAsset>, BotStateDbEr
                     name,
                     bytes: Vec::new(),
                     url,
-                    created_at_unix_ms: super::sqlite_unsigned(
-                        created_at_unix_ms,
-                        "created_at_unix_ms",
-                    )?,
+                    created_at_unix_ms: sqlite_unsigned(created_at_unix_ms, "created_at_unix_ms")?,
                 })
             },
         )
@@ -441,10 +440,7 @@ fn load_stickers(connection: &Connection) -> Result<Vec<SandboxSticker>, BotStat
                 mime,
                 name,
                 bytes: Vec::new(),
-                created_at_unix_ms: super::sqlite_unsigned(
-                    created_at_unix_ms,
-                    "created_at_unix_ms",
-                )?,
+                created_at_unix_ms: sqlite_unsigned(created_at_unix_ms, "created_at_unix_ms")?,
             })
         })
         .collect()
@@ -475,7 +471,7 @@ fn load_faces(connection: &Connection) -> Result<Vec<SandboxFace>, BotStateDbErr
                 face_key,
                 face_type,
                 face_id,
-                last_seen_unix_ms: super::sqlite_unsigned(last_seen_unix_ms, "last_seen_unix_ms")?,
+                last_seen_unix_ms: sqlite_unsigned(last_seen_unix_ms, "last_seen_unix_ms")?,
             })
         })
         .collect()
@@ -1016,7 +1012,7 @@ fn backfill_faces(connection: &Connection) -> Result<(), BotStateDbError> {
             Ok(refs) => refs,
             Err(_) => continue,
         };
-        let seen = super::sqlite_unsigned(time_ms.max(0), "time_ms")?;
+        let seen = sqlite_unsigned(time_ms.max(0), "time_ms")?;
         for item in refs {
             if item.kind != SandboxRefKind::Emoji {
                 continue;
