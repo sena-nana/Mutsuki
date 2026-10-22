@@ -323,3 +323,47 @@ async fn seeded_qq_login_document_uses_receive_switches() {
     assert!(value.get("gateway_intents").is_none());
     assert!(value.get("shard_index").is_none());
 }
+
+#[tokio::test]
+async fn invalid_distribution_selection_fails_before_startup() {
+    let root = tempfile::tempdir().unwrap();
+    let first = load_single_instance_product_for_test(root.path(), TEST_ADMIN_PASSPHRASE)
+        .await
+        .unwrap();
+    let snapshot = first
+        .config
+        .read(
+            PRODUCT_CONFIG_PROVIDER_ID,
+            ConfigContext::global(),
+            &[capability::VALUE_READ.into()],
+        )
+        .await
+        .unwrap();
+    let mut product = snapshot.value.to_json();
+    product["distribution"] = serde_json::json!({"mode": "clustered"});
+    first
+        .config
+        .apply(
+            PRODUCT_CONFIG_PROVIDER_ID,
+            ConfigApplyRequest {
+                candidate: ConfigValue::from_json(&product),
+                expected_revision: snapshot.revision,
+                dry_run: false,
+            },
+            ConfigContext::global(),
+            &[capability::VALUE_WRITE.into(), capability::APPLY.into()],
+        )
+        .await
+        .expect("the descriptor accepts a distribution section");
+    drop(first);
+
+    let error =
+        match load_single_instance_product_for_test(root.path(), TEST_ADMIN_PASSPHRASE).await {
+            Ok(_) => panic!("clustered distribution without a deployment file must not load"),
+            Err(error) => error,
+        };
+    assert!(
+        error.contains("distribution.deployment_required"),
+        "{error}"
+    );
+}

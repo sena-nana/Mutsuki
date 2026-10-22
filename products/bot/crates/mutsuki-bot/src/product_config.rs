@@ -15,7 +15,7 @@ use mutsuki_config_service::{
     ConfigApplyMode, ConfigConstraints, ConfigDescriptor, ConfigError, ConfigExpr, ConfigLifecycle,
     ConfigMutability, ConfigNode, ConfigPersistSink, ConfigPersistTransaction, ConfigPresentation,
     ConfigProviderId, ConfigProviderRegistry, ConfigRepository, ConfigScope, ConfigSecretMutation,
-    ConfigService, ConfigValue, ConfigValueType, LocalizedText, MapKeyStrategy,
+    ConfigService, ConfigValue, ConfigValueType, EnumOption, LocalizedText, MapKeyStrategy,
     MemoryConfigProvider, RestartPolicy, capability,
 };
 use mutsuki_plugin_bot_adapter_qqbot::{QQBOT_ADAPTER_PLUGIN_ID, qq_config_from_value};
@@ -189,9 +189,80 @@ pub fn product_descriptor() -> ConfigDescriptor {
                     restart_policy: RestartPolicy::PluginReload,
                     children: Vec::new(),
                 }),
+                distribution_node(),
             ],
         },
         groups: Vec::new(),
+    }
+}
+
+/// Optional `distribution` section; see `products/bot/docs/distributed-deployment.md`. A
+/// relative `deployment` path resolves against the instance directory.
+fn distribution_node() -> ConfigNode {
+    let options = |values: &[(&str, &str)]| ConfigValueType::Enum {
+        options: values
+            .iter()
+            .map(|(value, label)| EnumOption {
+                value: (*value).into(),
+                label: LocalizedText::new(*label),
+            })
+            .collect(),
+        multi: false,
+    };
+    let field = |key: &str, title: &str, value_type: ConfigValueType| ConfigNode {
+        key: key.into(),
+        value_type,
+        title: LocalizedText::new(title),
+        description: None,
+        default_value: None,
+        constraints: ConfigConstraints::default(),
+        presentation: ConfigPresentation::default(),
+        visibility: None,
+        enabled_if: None,
+        mutability: ConfigMutability::ReadWrite,
+        restart_policy: RestartPolicy::ApplicationRestart,
+        children: Vec::new(),
+    };
+    ConfigNode {
+        key: "distribution".into(),
+        value_type: ConfigValueType::Object,
+        title: LocalizedText::new("分布式部署"),
+        description: Some(LocalizedText::new(
+            "默认关闭。启用后需提供部署文件（相对实例目录），产品启动前校验并探测外部 DistributedHost。",
+        )),
+        default_value: None,
+        constraints: ConfigConstraints::default(),
+        presentation: ConfigPresentation::default(),
+        visibility: None,
+        enabled_if: None,
+        mutability: ConfigMutability::ReadWrite,
+        restart_policy: RestartPolicy::ApplicationRestart,
+        children: vec![
+            field(
+                "mode",
+                "模式",
+                options(&[
+                    ("disabled", "关闭"),
+                    ("local_observable", "仅本地观测"),
+                    ("clustered", "集群"),
+                ]),
+            ),
+            field(
+                "deployment",
+                "部署文件",
+                ConfigValueType::String { multiline: false },
+            ),
+            field(
+                "acceptance",
+                "验收级别",
+                options(&[("fast", "快速"), ("durable", "持久"), ("critical", "关键")]),
+            ),
+            field(
+                "fallback",
+                "回退",
+                options(&[("reject", "拒绝"), ("local_degraded", "本地降级")]),
+            ),
+        ],
     }
 }
 

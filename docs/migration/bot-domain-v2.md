@@ -126,3 +126,13 @@ order the changes land on `main`.
 - Hand-written `ServiceConfig` files and `[[plugins.configured]]` entries must use the new ids;
   installed ABI plugin directories named after a plugin id must be renamed.
 - Product config versions older than v3 are still rejected; recreate the instance repository.
+
+## Distribution in the single-instance product
+
+- `mutsuki.product` v4 has an optional `distribution` section (`mode`, `deployment`,
+  `acceptance`, `fallback`). The production entry now validates it at load, proves the external
+  DistributedHost before starting, reports the `distribution` health component and runs the
+  sidecar monitor. Absent means `disabled`, so existing instances are unaffected.
+- `SingleInstanceProduct` gains `product` (the loaded `mutsuki.product` document);
+  `validate_product_distribution` and `prepare_product_distribution` are the document-based
+  counterparts of the TOML-file functions.

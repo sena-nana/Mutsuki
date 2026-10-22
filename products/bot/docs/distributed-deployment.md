@@ -7,7 +7,15 @@ level, scheduler API or distributed metric is injected into a plugin.
 
 ## Selecting a mode
 
-The committed product configuration is explicit and inert:
+The single-instance product stores the selection in the `distribution` section of its
+`mutsuki.product` document (Web Console → 工作区 → 分布式部署, application restart). The section
+is absent by default, which means `disabled`. A relative `deployment` path resolves against the
+instance directory (`.mutsuki-bot/`). The product validates the section when it loads, and before
+the local `ServiceRuntime` starts it authenticates the sidecar, registers the `distribution`
+health component and runs the sidecar monitor for the lifetime of the process.
+
+Embedders that drive the library from a TOML product file (`prepare_distribution`) use the same
+selection under `[distribution]`; the committed product configuration is explicit and inert:
 
 ```toml
 [distribution]

@@ -31,6 +31,8 @@ const CONFIG_NAMESPACE: &str = "mutsuki-bot";
 
 pub struct SingleInstanceProduct {
     pub service: ServiceConfig,
+    /// The stored `mutsuki.product` document as loaded at startup.
+    pub product: serde_json::Value,
     pub config: Arc<ConfigService>,
     pub console: LocalConsoleConfig,
     pub root: PathBuf,
@@ -150,6 +152,8 @@ where
         ));
     }
     let product = product_snapshot.value.to_json();
+    // Fail before anything starts when the distribution selection or deployment file is invalid.
+    crate::validate_product_distribution(&product, root).map_err(|error| error.to_string())?;
     let mut console = console_config(&product);
     if let Ok(listen) = std::env::var(CONSOLE_LISTEN_ENV)
         && !listen.is_empty()
@@ -172,6 +176,7 @@ where
     let agent_connections = AgentConnectionRegistry::new();
     Ok(SingleInstanceProduct {
         service,
+        product,
         config,
         console,
         root: root.to_path_buf(),

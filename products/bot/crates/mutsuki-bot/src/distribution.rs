@@ -282,7 +282,31 @@ pub async fn prepare_distribution(
     product_config_path: &Path,
     service: &ServiceConfig,
 ) -> Result<DistributionRuntime, DistributionConfigError> {
-    let validated = load_distribution(product_config_path)?;
+    prepare_validated(load_distribution(product_config_path)?, service).await
+}
+
+/// Static validation of the `distribution` section of the stored product document.
+pub fn validate_product_distribution(
+    product: &serde_json::Value,
+    root: &Path,
+) -> Result<DistributionMode, DistributionConfigError> {
+    Ok(load_product_distribution(product, root)?.selection.mode)
+}
+
+/// [`prepare_distribution`] for the single-instance product, whose selection lives in the
+/// `mutsuki.product` document and whose deployment file resolves against the instance root.
+pub async fn prepare_product_distribution(
+    product: &serde_json::Value,
+    root: &Path,
+    service: &ServiceConfig,
+) -> Result<DistributionRuntime, DistributionConfigError> {
+    prepare_validated(load_product_distribution(product, root)?, service).await
+}
+
+async fn prepare_validated(
+    validated: ValidatedDistribution,
+    service: &ServiceConfig,
+) -> Result<DistributionRuntime, DistributionConfigError> {
     match validated.selection.mode {
         DistributionMode::Disabled => Ok(DistributionRuntime::local("disabled", "disabled")),
         DistributionMode::LocalObservable => Ok(DistributionRuntime::local(
@@ -446,7 +470,33 @@ fn load_distribution(
             DistributionConfigError::new("distribution.selection_invalid", error.to_string())
         })?
         .unwrap_or_default();
+    validate_selection(selection, product_config_path)
+}
 
+/// Reads the `distribution` section of the `mutsuki.product` document. A relative deployment
+/// path resolves against the instance root.
+fn load_product_distribution(
+    product: &serde_json::Value,
+    root: &Path,
+) -> Result<ValidatedDistribution, DistributionConfigError> {
+    let selection: DistributionSelection = product
+        .get("distribution")
+        .filter(|value| !value.is_null())
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|error| {
+            DistributionConfigError::new("distribution.selection_invalid", error.to_string())
+        })?
+        .unwrap_or_default();
+    // `resolve` resolves against the owner file's directory; the instance root owns this one.
+    validate_selection(selection, &root.join("mutsuki.product"))
+}
+
+fn validate_selection(
+    selection: DistributionSelection,
+    product_config_path: &Path,
+) -> Result<ValidatedDistribution, DistributionConfigError> {
     if selection.mode == DistributionMode::Disabled {
         require(
             selection.deployment.is_none()

@@ -373,3 +373,37 @@ fn policy_examples_cover_epic_choices_without_plugin_cluster_context() {
     assert!(source.contains("minimum_trust = \"managed\""));
     assert!(source.contains("minimum_trust = \"trusted\""));
 }
+
+/// The single-instance product reads its selection from the stored `mutsuki.product` document;
+/// a relative deployment path resolves against the instance directory.
+#[test]
+fn product_document_selects_distribution_relative_to_the_instance() {
+    let root = tempdir().unwrap();
+    assert_eq!(
+        mutsuki_bot::validate_product_distribution(
+            &serde_json::json!({"workspace_enabled": true, "runtime_plugins": {}}),
+            root.path(),
+        )
+        .unwrap(),
+        DistributionMode::Disabled
+    );
+
+    let deploy = root.path().join("deploy");
+    fs::create_dir_all(&deploy).unwrap();
+    for name in ["single-node.toml", "task-policies.toml"] {
+        fs::copy(deployment(name), deploy.join(name)).unwrap();
+    }
+    let product = serde_json::json!({
+        "workspace_enabled": true,
+        "runtime_plugins": {},
+        "distribution": {"mode": "local_observable", "deployment": "deploy/single-node.toml"}
+    });
+    assert_eq!(
+        mutsuki_bot::validate_product_distribution(&product, root.path()).unwrap(),
+        DistributionMode::LocalObservable
+    );
+
+    let missing = serde_json::json!({"distribution": {"mode": "clustered"}});
+    let error = mutsuki_bot::validate_product_distribution(&missing, root.path()).unwrap_err();
+    assert_eq!(error.code, "distribution.deployment_required");
+}

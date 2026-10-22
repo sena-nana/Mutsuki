@@ -13,6 +13,8 @@ pub enum ProductRunError {
     ConsoleStart(#[from] WebConsoleError),
     #[error(transparent)]
     ConsoleStop(#[from] mutsuki_web_host::WebHostError),
+    #[error("{0}")]
+    Distribution(String),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -53,15 +55,25 @@ pub async fn run_single_instance_product(
 ) -> Result<(), ProductRunError> {
     let SingleInstanceProduct {
         service,
+        product,
         config,
         console,
         root,
         agent_connections,
     } = product;
-    let mut runtime =
-        assemble_service_with_connections(service.clone(), config.clone(), agent_connections)?
-            .start()
-            .await?;
+    let mut distribution = crate::prepare_product_distribution(&product, &root, &service)
+        .await
+        .map_err(|error| ProductRunError::Distribution(error.to_string()))?;
+    let mut runtime = distribution
+        .attach_health_probe(assemble_service_with_connections(
+            service.clone(),
+            config.clone(),
+            agent_connections,
+        )?)
+        .start()
+        .await?;
+    // Dropping the monitor stops the sidecar health loop when the product exits.
+    let _distribution_monitor = distribution.start_monitor();
     config.set_lifecycle(Arc::new(TargetedPluginReloadLifecycle::new(
         runtime.handle(),
         root.clone(),
