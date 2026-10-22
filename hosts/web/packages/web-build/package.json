@@ -1,6 +1,7 @@
 {
   "name": "@mutsuki/web-build",
   "version": "0.1.0",
+  "private": true,
   "type": "module",
   "bin": {
     "mutsuki-web-build": "./bin/mutsuki-web-build.mjs"
@@ -9,19 +10,28 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     }
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "build": "tsc"
+    "build": "tsc",
+    "test": "vitest run"
   },
   "dependencies": {
-    "esbuild": "^0.28.2"
+    "@vitejs/plugin-vue": "catalog:",
+    "es-module-lexer": "catalog:",
+    "vite": "catalog:"
+  },
+  "peerDependencies": {
+    "vue": "catalog:"
   },
   "devDependencies": {
-    "@types/node": "^22.20.2",
-    "typescript": "^5.9.3"
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "vue": "catalog:"
   }
 }

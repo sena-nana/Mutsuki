@@ -71,8 +71,15 @@ rules. Cargo tests, contract conformance and scoped integration tests enforce be
 ## Non-Rust packages
 
 `kits/python-runner` mirrors the checked-in runtime wire artifacts from the same revision.
-`hosts/tauri` and `hosts/web` own their frontend SDKs and shells. Their package locks are not Rust
-Workspace locks and remain scoped to their JavaScript build boundaries.
+Browser packages share one pnpm workspace at the repository root (`pnpm-workspace.yaml`,
+`package.json`, `pnpm-lock.yaml`, `tsconfig.web.base.json`). It covers the WebHost packages in
+`hosts/web/packages/*` and extension frontends in the owning crate's `web/` directory
+(`{hosts/web,plugins/*,kits/*}/crates/*/web`). Shared runtime versions (vue, vue-router, pinia,
+vitest, vue-tsc, …) are pinned once in the workspace `catalog:`; packages reference them as
+`catalog:` and each other as `workspace:*`. `hosts/tauri` keeps its own lock until TauriHost moves
+onto the root catalog. The pnpm lock is not a Rust Workspace lock. `check_workspace.py`
+(`check_web_packages`) rejects nested pnpm workspaces, non-catalog shared dependencies and new
+hand-written `assets/*.js` modules beyond the shrinking allowlist.
 
 ## First-party Bot product
 

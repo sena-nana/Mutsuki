@@ -179,11 +179,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # The root pnpm workspace holds every WebHost/extension package. `@lilia/theme`
+          # declares node >=26, so this job pins it instead of inheriting a runner default.
           - owner: WebHost
-            directory: hosts/web
-            build: pnpm build && pnpm typecheck && pnpm test
+            directory: .
+            node: "26"
+            build: pnpm -r typecheck && pnpm -r test && pnpm -r build
           - owner: TauriHost
             directory: hosts/tauri
+            node: "22"
             build: pnpm typecheck
     defaults:
       run:
@@ -196,7 +200,7 @@ jobs:
           run_install: false
       - uses: actions/setup-node@v7
         with:
-          node-version: "22"
+          node-version: ${{ matrix.node }}
           cache: pnpm
           cache-dependency-path: ${{ matrix.directory }}/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile

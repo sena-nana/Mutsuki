@@ -61,5 +61,14 @@ bash scripts/check-distributed-boundary.sh
 cargo bench-smoke
 ```
 
-Python、前端、集成、性能和产品验证按 scoped `AGENTS.md`/技能执行。最终说明实际命令、结果、
+前端在仓库根 pnpm workspace 验证（Node 26）：
+
+```text
+pnpm install --frozen-lockfile
+pnpm -r typecheck
+pnpm -r test
+pnpm -r build
+```
+
+Python、集成、性能和产品验证按 scoped `AGENTS.md`/技能执行。最终说明实际命令、结果、
 性能产物、release revision 及未执行的 hosted/真实账号 smoke；部分检查不得宣称全量通过。

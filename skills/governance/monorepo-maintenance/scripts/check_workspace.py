@@ -485,6 +485,131 @@ def check_materialized_assets() -> None:
             )
 
 
+# Browser packages share one pnpm workspace at the repository root. hosts/tauri predates it and
+# keeps its own lockfile until TauriHost moves its client onto the root catalog.
+PNPM_WORKSPACE_EXCEPTIONS = frozenset({"hosts/tauri"})
+# Hand-written extension modules that predate `@mutsuki/web-build`. The list only shrinks:
+# each Vue migration deletes its entry, and a new hand-written asset fails the check.
+HANDWRITTEN_WEB_ASSETS = frozenset(
+    {
+        "hosts/web/crates/mutsuki-web-extension-control/assets/index.js",
+        "hosts/web/crates/mutsuki-web-extension-overview/assets/index.js",
+        "hosts/web/crates/mutsuki-web-extension-upgrade/assets/index.js",
+        "kits/agent/crates/mutsuki-agent-web-extension/assets/index.js",
+        "kits/agent/crates/mutsuki-agent-web-extension/assets/trajectory-model.js",
+        "kits/agent/crates/mutsuki-agent-web-extension/assets/trajectory-view.js",
+        "plugins/bot/crates/mutsuki-bot-web-extension-bilibili/assets/index.js",
+        "plugins/bot/crates/mutsuki-bot-web-extension-database/assets/index.js",
+        "plugins/bot/crates/mutsuki-bot-web-extension-flow/assets/index.js",
+        "plugins/bot/crates/mutsuki-bot-web-extension-flow/assets/lilia-context-menu.js",
+        "plugins/bot/crates/mutsuki-bot-web-extension-flow/assets/lilia-node-editor.js",
+        "plugins/bot/crates/mutsuki-bot-web-extension-qq/assets/index.js",
+        "plugins/bot/crates/mutsuki-bot-web-extension-sandbox/assets/index.js",
+        "plugins/bot/crates/mutsuki-bot-web-host-integration/assets/console-bootstrap.js",
+        "plugins/std/crates/mutsuki-std-web-extension-config/assets/index.js",
+    }
+)
+WEB_DEPENDENCY_FIELDS = ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies")
+
+
+def _pnpm_workspace() -> tuple[list[str], set[str]]:
+    """Package globs and catalog names of the root `pnpm-workspace.yaml`.
+
+    The file is plain block YAML written by hand; a two-section line reader keeps this
+    script free of third-party parsers.
+    """
+    path = ROOT / "pnpm-workspace.yaml"
+    if not path.is_file():
+        fail("missing root pnpm-workspace.yaml")
+    globs: list[str] = []
+    catalog: set[str] = set()
+    section = None
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.split("#", 1)[0].rstrip()
+        if not line:
+            continue
+        if not line.startswith(" "):
+            section = line.rstrip(":")
+            continue
+        entry = line.strip()
+        if section == "packages" and entry.startswith("- "):
+            globs.append(entry[2:].strip().strip('"\''))
+        elif section == "catalog" and ":" in entry:
+            catalog.add(entry.rsplit(":", 1)[0].strip().strip('"\''))
+    return globs, catalog
+
+
+def check_web_packages() -> None:
+    """One pnpm workspace, catalog-pinned shared runtime, and no new hand-written assets."""
+    for required in ("package.json", "pnpm-lock.yaml", "tsconfig.web.base.json"):
+        if not (ROOT / required).is_file():
+            fail(f"missing root web workspace file {required}")
+    nested = sorted(
+        path.parent.relative_to(ROOT).as_posix()
+        for name in ("pnpm-workspace.yaml", "pnpm-lock.yaml")
+        for path in ROOT.rglob(name)
+        if path.parent != ROOT and not {"node_modules", "target", ".git"} & set(path.parts)
+    )
+    stray = sorted({path for path in nested if path not in PNPM_WORKSPACE_EXCEPTIONS})
+    if stray:
+        fail(f"nested pnpm workspaces outside the root workspace: {', '.join(stray)}")
+
+    globs, catalog = _pnpm_workspace()
+    manifests = sorted(
+        {
+            manifest
+            for pattern in globs
+            for manifest in ROOT.glob(f"{pattern}/package.json")
+            if "node_modules" not in manifest.parts
+        }
+    )
+    if not manifests:
+        fail("root pnpm workspace matches no package.json")
+    names = {
+        json.loads(manifest.read_text(encoding="utf-8"))["name"] for manifest in manifests
+    }
+    problems = []
+    for manifest in manifests:
+        relative = manifest.relative_to(ROOT).as_posix()
+        package = json.loads(manifest.read_text(encoding="utf-8"))
+        if package.get("private") is not True or package.get("type") != "module":
+            problems.append(f"{relative}: must be private ES module package")
+        for field in WEB_DEPENDENCY_FIELDS:
+            for name, spec in package.get(field, {}).items():
+                if name in names and spec != "workspace:*":
+                    problems.append(f"{relative}: {field}.{name} must be workspace:*")
+                elif name in catalog and spec != "catalog:":
+                    problems.append(f"{relative}: {field}.{name} must use catalog:")
+        tsconfig = manifest.with_name("tsconfig.json")
+        if tsconfig.is_file():
+            extends = json.loads(tsconfig.read_text(encoding="utf-8")).get("extends", "")
+            if (tsconfig.parent / extends).resolve() != ROOT / "tsconfig.web.base.json":
+                problems.append(f"{tsconfig.relative_to(ROOT)}: must extend tsconfig.web.base.json")
+    if problems:
+        fail("web packages diverge from the root workspace:\n  " + "\n  ".join(problems))
+
+    tracked = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "*/assets/*.js"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    present = {path for path in tracked if (ROOT / path).is_file()}
+    added = sorted(present - HANDWRITTEN_WEB_ASSETS)
+    if added:
+        fail(
+            "new hand-written extension assets; build them from a web/ package with "
+            "@mutsuki/web-build instead:\n  " + "\n  ".join(added)
+        )
+    removed = sorted(HANDWRITTEN_WEB_ASSETS - present)
+    if removed:
+        fail(
+            "HANDWRITTEN_WEB_ASSETS lists files that no longer exist; drop them so the "
+            "allowlist keeps shrinking:\n  " + "\n  ".join(removed)
+        )
+
+
 def check_nested_workflows() -> None:
     """No workflow may live under a package's own `.github/`.
 
@@ -525,6 +650,7 @@ def main() -> None:
     check_unsafe_code_exceptions()
     check_manifest_urls()
     check_materialized_assets()
+    check_web_packages()
     check_nested_workflows()
     print(
         "workspace boundary check passed: "

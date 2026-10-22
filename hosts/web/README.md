@@ -66,9 +66,11 @@ budgets, while `mutsuki-web-host` only drains encoded events without an idle pol
 cargo fmt --check
 cargo check --locked
 cargo test --locked
+# from the repository root: one pnpm workspace for every browser package (Node 26)
 pnpm install --frozen-lockfile
-pnpm typecheck
-pnpm build
+pnpm -r typecheck
+pnpm -r test
+pnpm -r build
 ```
 
 See `AGENTS.md` for ownership rules.

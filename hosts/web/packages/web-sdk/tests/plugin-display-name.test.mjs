@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 
-import { pluginDisplayName } from "../dist/index.js";
+import { pluginDisplayName } from "../src/index.ts";
 
 function state(pages, navigation = []) {
   return {

@@ -36,7 +36,7 @@ Issue 是需求线索，不是当前 API 的事实源。
 | `@mutsuki/web-sdk` | Vue/WebExtension 前端 SDK |
 | `@mutsuki/web-shell` | 可复用 Shell 基础实现 |
 | `@mutsuki/ui` | LiliaUI token/layout 包装（styles + ConsoleShell）；视觉基座来自 pinned `@lilia/theme`，构建期由 `bundle-css.mjs` 打进 `dist/mutsuki-ui.css` |
-| `@mutsuki/web-build` | Vue/TS/CSS 标准构建工具（运行时不调用） |
+| `@mutsuki/web-build` | Vite + `@vitejs/plugin-vue` 扩展构建与产物门禁（运行时不调用） |
 
 跨 package：Core（仅通用协议缺口）、Link（standalone 桥接）、ServiceHost/Bot
 （嵌入宿主）、BotPlugins（Schema-first；默认 Web 配置插件不在本目录）、TauriHost
@@ -64,9 +64,14 @@ cargo fmt --check
 cargo check --locked
 cargo test --locked
 cargo metadata --locked --format-version 1
+# 前端包属于仓库根 pnpm workspace，在仓库根执行（Node 26）
 pnpm install --frozen-lockfile
-pnpm typecheck
-pnpm build
+pnpm -r typecheck
+pnpm -r test
+pnpm -r build
 ```
+
+`browser/*.js` 等被 Rust `include_bytes!` 的产物随源码提交；构建后 `git status --porcelain`
+必须为空。
 
 最终说明必须列出实际命令和结果；测试断言行为，不只匹配日志或文案。

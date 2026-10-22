@@ -48,6 +48,10 @@ Monorepo-maintenance owns `scripts/check_ci.py`; the root checker runs it and `p
 CI runs the Rust workspace as two parallel jobs sharing `.github/actions/rust-setup`: `rust`
 (static checks and every test) and `rust-gates` (clippy, bench-smoke, fuzz/template/feature builds,
 MSRV). `check_ci.py` requires the independent gates in `rust-gates` with `if: ${{ !cancelled() }}`.
+The `frontend` job runs the root pnpm workspace on Node 26 (`pnpm -r typecheck/test/build`) and then
+requires a clean `git status --porcelain`, because Rust embeds committed browser bundles.
+`check_web_packages` keeps one root pnpm workspace (only `hosts/tauri` is exempt), catalog-pinned
+shared dependencies, `workspace:*` internal links and the shrink-only `HANDWRITTEN_WEB_ASSETS` list.
 Preserve CI success/failure/cancellation behavior and reference failure propagation. Current cases and
 comparable metrics are mandatory; failed reports cannot be approved. Local coverage does not prove hosted
 Actions scheduling. The standalone fuzz lock must satisfy root dependency minimums and pass clone validation.

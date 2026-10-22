@@ -1,4 +1,4 @@
-// ../../node_modules/.pnpm/@msgpack+msgpack@3.1.3/node_modules/@msgpack/msgpack/dist.esm/utils/utf8.mjs
+// ../../../../node_modules/.pnpm/@msgpack+msgpack@3.1.3/node_modules/@msgpack/msgpack/dist.esm/utils/utf8.mjs
 function utf8Count(str) {
   const strLength = str.length;
   let byteLength = 0;
@@ -129,7 +129,7 @@ function utf8Decode(bytes, inputOffset, byteLength) {
   }
 }
 
-// ../../node_modules/.pnpm/@msgpack+msgpack@3.1.3/node_modules/@msgpack/msgpack/dist.esm/ExtData.mjs
+// ../../../../node_modules/.pnpm/@msgpack+msgpack@3.1.3/node_modules/@msgpack/msgpack/dist.esm/ExtData.mjs
 var ExtData = class {
   type;
   data;
@@ -139,7 +139,7 @@ var ExtData = class {
   }
 };
 
-// ../../node_modules/.pnpm/@msgpack+msgpack@3.1.3/node_modules/@msgpack/msgpack/dist.esm/DecodeError.mjs
+// ../../../../node_modules/.pnpm/@msgpack+msgpack@3.1.3/node_modules/@msgpack/msgpack/dist.esm/DecodeError.mjs
 var DecodeError = class _DecodeError extends Error {
   constructor(message) {
     super(message);
@@ -153,7 +153,7 @@ var DecodeError = class _DecodeError extends Error {
   }
 };
 
-// ../../node_modules/.pnpm/@msgpack+msgpack@3.1.3/node_modules/@msgpack/msgpack/dist.esm/utils/int.mjs
+// ../../../../node_modules/.pnpm/@msgpack+msgpack@3.1.3/node_modules/@msgpack/msgpack/dist.esm/utils/int.mjs
 var UINT32_MAX = 4294967295;
 function setUint64(view, offset, value) {
   const high = value / 4294967296;
@@ -178,7 +178,7 @@ function getUint64(view, offset) {
   return high * 4294967296 + low;
 }
 
-// ../../node_modules/.pnpm/@msgpack+msgpack@3.1.3/node_modules/@msgpack/msgpack/dist.esm/timestamp.mjs
+// ../../../../node_modules/.pnpm/@msgpack+msgpack@3.1.3/node_modules/@msgpack/msgpack/dist.esm/timestamp.mjs
 var EXT_TIMESTAMP = -1;
 var TIMESTAMP32_MAX_SEC = 4294967296 - 1;
 var TIMESTAMP64_MAX_SEC = 17179869184 - 1;
@@ -258,7 +258,7 @@ var timestampExtension = {
   decode: decodeTimestampExtension
 };
 
-// ../../node_modules/.pnpm/@msgpack+msgpack@3.1.3/node_modules/@msgpack/msgpack/dist.esm/ExtensionCodec.mjs
+// ../../../../node_modules/.pnpm/@msgpack+msgpack@3.1.3/node_modules/@msgpack/msgpack/dist.esm/ExtensionCodec.mjs
 var ExtensionCodec = class _ExtensionCodec {
   static defaultCodec = new _ExtensionCodec();
   // ensures ExtensionCodecType<X> matches ExtensionCodec<X>
@@ -320,7 +320,7 @@ var ExtensionCodec = class _ExtensionCodec {
   }
 };
 
-// ../../node_modules/.pnpm/@msgpack+msgpack@3.1.3/node_modules/@msgpack/msgpack/dist.esm/utils/typedArrays.mjs
+// ../../../../node_modules/.pnpm/@msgpack+msgpack@3.1.3/node_modules/@msgpack/msgpack/dist.esm/utils/typedArrays.mjs
 function isArrayBufferLike(buffer) {
   return buffer instanceof ArrayBuffer || typeof SharedArrayBuffer !== "undefined" && buffer instanceof SharedArrayBuffer;
 }
@@ -336,7 +336,7 @@ function ensureUint8Array(buffer) {
   }
 }
 
-// ../../node_modules/.pnpm/@msgpack+msgpack@3.1.3/node_modules/@msgpack/msgpack/dist.esm/Encoder.mjs
+// ../../../../node_modules/.pnpm/@msgpack+msgpack@3.1.3/node_modules/@msgpack/msgpack/dist.esm/Encoder.mjs
 var DEFAULT_MAX_DEPTH = 100;
 var DEFAULT_INITIAL_BUFFER_SIZE = 2048;
 var Encoder = class _Encoder {
@@ -739,18 +739,18 @@ var Encoder = class _Encoder {
   }
 };
 
-// ../../node_modules/.pnpm/@msgpack+msgpack@3.1.3/node_modules/@msgpack/msgpack/dist.esm/encode.mjs
+// ../../../../node_modules/.pnpm/@msgpack+msgpack@3.1.3/node_modules/@msgpack/msgpack/dist.esm/encode.mjs
 function encode(value, options) {
   const encoder = new Encoder(options);
   return encoder.encodeSharedRef(value);
 }
 
-// ../../node_modules/.pnpm/@msgpack+msgpack@3.1.3/node_modules/@msgpack/msgpack/dist.esm/utils/prettyByte.mjs
+// ../../../../node_modules/.pnpm/@msgpack+msgpack@3.1.3/node_modules/@msgpack/msgpack/dist.esm/utils/prettyByte.mjs
 function prettyByte(byte) {
   return `${byte < 0 ? "-" : ""}0x${Math.abs(byte).toString(16).padStart(2, "0")}`;
 }
 
-// ../../node_modules/.pnpm/@msgpack+msgpack@3.1.3/node_modules/@msgpack/msgpack/dist.esm/CachedKeyDecoder.mjs
+// ../../../../node_modules/.pnpm/@msgpack+msgpack@3.1.3/node_modules/@msgpack/msgpack/dist.esm/CachedKeyDecoder.mjs
 var DEFAULT_MAX_KEY_LENGTH = 16;
 var DEFAULT_MAX_LENGTH_PER_KEY = 16;
 var CachedKeyDecoder = class {
@@ -806,7 +806,7 @@ var CachedKeyDecoder = class {
   }
 };
 
-// ../../node_modules/.pnpm/@msgpack+msgpack@3.1.3/node_modules/@msgpack/msgpack/dist.esm/Decoder.mjs
+// ../../../../node_modules/.pnpm/@msgpack+msgpack@3.1.3/node_modules/@msgpack/msgpack/dist.esm/Decoder.mjs
 var STATE_ARRAY = "array";
 var STATE_MAP_KEY = "map_key";
 var STATE_MAP_VALUE = "map_value";
@@ -1434,7 +1434,7 @@ var Decoder = class _Decoder {
   }
 };
 
-// ../../node_modules/.pnpm/@msgpack+msgpack@3.1.3/node_modules/@msgpack/msgpack/dist.esm/decode.mjs
+// ../../../../node_modules/.pnpm/@msgpack+msgpack@3.1.3/node_modules/@msgpack/msgpack/dist.esm/decode.mjs
 function decode(buffer, options) {
   const decoder = new Decoder(options);
   return decoder.decode(buffer);

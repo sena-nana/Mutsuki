@@ -1,82 +1,116 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile, readdir, stat } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import * as esbuild from "esbuild";
+import vue from "@vitejs/plugin-vue";
+import { build, type InlineConfig } from "vite";
 
-export const SHARED_EXTERNALS = [
-  "vue",
-  "vue-router",
-  "pinia",
-  "@mutsuki/web-sdk",
-  "@mutsuki/ui",
-] as const;
+import {
+  SHARED_EXTERNALS,
+  checkBundle,
+  formatViolations,
+  walkFiles,
+  type CheckOptions,
+} from "./check.js";
+
+export {
+  DEFAULT_BUDGETS,
+  SHARED_EXTERNALS,
+  checkBundle,
+  formatViolations,
+  importSpecifiers,
+  type BundleBudgets,
+  type CheckOptions,
+  type CheckViolation,
+} from "./check.js";
+
+export const EXTENSION_ENTRY = "index.js";
+export const EXTENSION_STYLE = "index.css";
 
 export interface BuildOptions {
   entry: string;
-  outDir: string,
+  outDir: string;
   extensionId: string;
   version: string;
   capabilities?: string[];
   permissions?: string[];
   protocolVersion?: string;
-  /** Development HMR is opt-in and never used by production WebHost. */
-  hmr?: boolean;
+  /** Overrides for the bundle gate; defaults reject any shared runtime or raw color. */
+  check?: CheckOptions;
+}
+
+export interface AssetRecord {
+  path: string;
+  content_hash: string;
+  bytes: number;
 }
 
 export interface BuildResult {
   manifestPath: string;
   entryFile: string;
-  assets: Array<{ path: string; content_hash: string; bytes: number }>;
+  styles: string[];
+  assets: AssetRecord[];
 }
 
-function contentHash(bytes: Buffer): string {
+export function contentHash(bytes: Uint8Array): string {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
-async function walkFiles(root: string): Promise<string[]> {
-  const out: string[] = [];
-  async function walk(dir: string) {
-    for (const entry of await readdir(dir, { withFileTypes: true })) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        await walk(full);
-      } else {
-        out.push(full);
-      }
-    }
-  }
-  await walk(root);
-  return out;
+/**
+ * Vite library config for one extension: a single ES module plus at most one stylesheet,
+ * with every shared runtime left to the shell's import map.
+ */
+export function extensionViteConfig(options: {
+  entry: string;
+  outDir: string;
+  root?: string;
+  externals?: readonly string[];
+}): InlineConfig {
+  const externals = new Set(options.externals ?? SHARED_EXTERNALS);
+  return {
+    configFile: false,
+    root: options.root ?? path.dirname(options.entry),
+    logLevel: "warn",
+    plugins: [vue()],
+    define: {
+      "process.env.NODE_ENV": JSON.stringify("production"),
+      __VUE_OPTIONS_API__: "false",
+      __VUE_PROD_DEVTOOLS__: "false",
+      __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: "false",
+    },
+    build: {
+      outDir: options.outDir,
+      emptyOutDir: true,
+      target: "es2022",
+      minify: true,
+      cssCodeSplit: false,
+      copyPublicDir: false,
+      lib: {
+        entry: options.entry,
+        formats: ["es"],
+        fileName: () => EXTENSION_ENTRY,
+        cssFileName: path.basename(EXTENSION_STYLE, ".css"),
+      },
+      rolldownOptions: {
+        external: (id) => externals.has(id) || id.startsWith("node:"),
+      },
+    },
+  };
 }
 
 /**
- * Production build: Vue/TS/CSS precompiled to browser ESM.
+ * Production build: Vue SFC/TS/CSS precompiled to browser ESM plus a hashed manifest.
  * WebHost runtime never invokes this tool.
  */
 export async function buildExtension(options: BuildOptions): Promise<BuildResult> {
-  if (options.hmr) {
-    // HMR is a development aid only; production host must not depend on Vite/Node.
-    console.info("[mutsuki-web-build] HMR mode requested for development tooling only");
+  await build(extensionViteConfig({ entry: options.entry, outDir: options.outDir }));
+
+  const violations = await checkBundle(options.outDir, options.check);
+  if (violations.length) {
+    throw new Error(`extension bundle rejected:\n${formatViolations(violations)}`);
   }
 
-  await mkdir(options.outDir, { recursive: true });
-  const outfile = path.join(options.outDir, "index.js");
-
-  await esbuild.build({
-    entryPoints: [options.entry],
-    outfile,
-    bundle: true,
-    format: "esm",
-    platform: "browser",
-    target: ["es2022"],
-    external: [...SHARED_EXTERNALS],
-    // Vue SFC plugins can be added by callers; default path accepts pre-transformed TS/JS entry.
-    logLevel: "silent",
-  });
-
-  const files = await walkFiles(options.outDir);
-  const assets = [];
-  for (const file of files) {
+  const assets: AssetRecord[] = [];
+  for (const file of await walkFiles(options.outDir)) {
     if (path.basename(file) === "manifest.json") continue;
     const bytes = await readFile(file);
     assets.push({
@@ -85,12 +119,14 @@ export async function buildExtension(options: BuildOptions): Promise<BuildResult
       bytes: bytes.byteLength,
     });
   }
+  const styles = assets.filter((asset) => asset.path.endsWith(".css")).map((asset) => asset.path);
 
   const manifest = {
     manifest_version: 1,
     id: options.extensionId,
     version: options.version,
-    entry: "index.js",
+    entry: EXTENSION_ENTRY,
+    styles,
     capabilities: options.capabilities ?? [],
     permissions: options.permissions ?? [],
     assets,
@@ -98,44 +134,19 @@ export async function buildExtension(options: BuildOptions): Promise<BuildResult
   };
   const manifestPath = path.join(options.outDir, "manifest.json");
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-
-  // Fail if a shared runtime was accidentally bundled.
-  const entrySource = await readFile(outfile, "utf8");
-  for (const external of SHARED_EXTERNALS) {
-    // Heuristic: bundled vue runtime markers should not appear.
-    if (external === "vue" && entrySource.includes("Vue runtime DOM")) {
-      throw new Error(`shared dependency '${external}' appears bundled`);
-    }
-  }
-
-  return { manifestPath, entryFile: outfile, assets };
-}
-
-export async function checkExternals(outDir: string): Promise<string[]> {
-  const files = await walkFiles(outDir);
-  const warnings: string[] = [];
-  for (const file of files) {
-    if (!file.endsWith(".js")) continue;
-    const source = await readFile(file, "utf8");
-    const size = (await stat(file)).size;
-    if (size > 512 * 1024) {
-      warnings.push(`${file} exceeds 512KiB budget (${size} bytes)`);
-    }
-    if (source.includes("node:fs") || source.includes("from \"fs\"")) {
-      warnings.push(`${file} references Node fs APIs`);
-    }
-  }
-  return warnings;
+  return {
+    manifestPath,
+    entryFile: path.join(options.outDir, EXTENSION_ENTRY),
+    styles,
+    assets,
+  };
 }
 
 /**
- * Development-only Vite config snippet. Production WebHost never loads Vite.
- * Callers may write this file and run `vite` during plugin authoring.
+ * Development-only Vite config source. Production WebHost never loads Vite; HMR is opt-in
+ * through `MUTSUKI_WEB_HMR=1` in the CLI.
  */
-export function createViteHmrConfig(options: {
-  entry: string;
-  root?: string;
-}): string {
+export function createViteHmrConfig(options: { entry: string; root?: string }): string {
   const root = options.root ?? ".";
   return `import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
@@ -150,7 +161,7 @@ export default defineConfig({
       formats: ['es'],
       fileName: () => 'index.js',
     },
-    rollupOptions: {
+    rolldownOptions: {
       external: ${JSON.stringify([...SHARED_EXTERNALS])},
     },
   },

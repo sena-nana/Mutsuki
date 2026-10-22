@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 
 import {
   createExtensionContext,
@@ -9,7 +9,7 @@ import {
   groupNavigationItems,
   loadExtensions,
   validateShellState,
-} from "../dist/runtime.js";
+} from "../src/runtime.ts";
 
 function registry(label, disposed) {
   return {

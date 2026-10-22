@@ -19,3 +19,6 @@ Thumbs.db
 
 # Local ZCode session state
 /.zcode/
+
+# pnpm workspace (root pnpm-workspace.yaml)
+node_modules/

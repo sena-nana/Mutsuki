@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 
 import { decode, encode } from "@msgpack/msgpack";
 
-import { DisposableScope, WebBridgeClient, WebBridgeError } from "../dist/index.js";
+import { DisposableScope, WebBridgeClient, WebBridgeError } from "../src/index.ts";
 
 class FakeWebSocket {
   binaryType = "arraybuffer";

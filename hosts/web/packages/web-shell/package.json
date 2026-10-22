@@ -1,11 +1,13 @@
 {
   "name": "@mutsuki/web-shell",
   "version": "0.1.0",
+  "private": true,
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     }
@@ -14,22 +16,23 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc && pnpm build:browser",
     "build:browser": "esbuild src/runtime.ts --bundle --format=esm --platform=browser --target=es2022 --alias:@mutsuki/web-sdk=./web-sdk.js --external:./web-sdk.js --alias:@mutsuki/ui=../ui/dist/theme.js --outfile=browser/web-shell.js",
-    "test": "pnpm build && node --test tests/*.test.mjs"
+    "test": "vitest run"
   },
   "dependencies": {
     "@mutsuki/ui": "workspace:*",
     "@mutsuki/web-sdk": "workspace:*"
   },
   "peerDependencies": {
-    "vue": "^3.5.42",
-    "vue-router": "^4.4.0",
-    "pinia": "^3.0.4"
+    "pinia": "catalog:",
+    "vue": "catalog:",
+    "vue-router": "catalog:"
   },
   "devDependencies": {
-    "esbuild": "^0.28.2",
-    "typescript": "^5.9.3",
-    "vue": "^3.5.42",
-    "vue-router": "^4.4.0",
-    "pinia": "^3.0.4"
+    "esbuild": "catalog:",
+    "pinia": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "vue": "catalog:",
+    "vue-router": "catalog:"
   }
 }
