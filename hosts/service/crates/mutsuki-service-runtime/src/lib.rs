@@ -558,6 +558,54 @@ impl ServiceRuntimeBuilder {
         self
     }
 
+    /// Returns the application-lifetime service `service_id`, creating it on first use.
+    ///
+    /// For state several components share without one of them owning it (a single database
+    /// actor): the first factory that needs it creates it, later factories and reconfigured
+    /// components reuse the same instance, and the Host owns it until shutdown. The current
+    /// component is recorded as a consumer.
+    pub fn ensure_application_service<T, F>(
+        mut self,
+        service_id: &str,
+        create: F,
+    ) -> Result<(Self, Arc<T>), String>
+    where
+        T: HostService,
+        F: FnOnce() -> Result<Arc<T>, String>,
+    {
+        let existing = self
+            .components
+            .records
+            .get(BUILTIN_COMPONENT)
+            .and_then(|builtin| builtin.application_services.get(service_id))
+            .map(|value| value.resolve::<T>())
+            .or_else(|| {
+                self.application_services
+                    .committed_value(service_id)
+                    .map(|value| value.resolve::<T>())
+            })
+            .transpose()
+            .map_err(|failure| format!("{service_id}: {failure}"))?;
+        let service = match existing {
+            Some(service) => service,
+            None => {
+                let service = create()?;
+                self.components
+                    .record(BUILTIN_COMPONENT)
+                    .application_services
+                    .insert(
+                        service_id.to_string(),
+                        mutsuki_runtime_sdk::HostServiceValue::new(service.clone()),
+                    );
+                service
+            }
+        };
+        if self.current_component.is_some() {
+            self = self.require_application_service(service_id);
+        }
+        Ok((self, service))
+    }
+
     /// Declares that the current component consumes an application service. Boot fails when it
     /// is missing, and reconfiguring its provider co-reloads this component.
     pub fn require_application_service(mut self, service_id: impl Into<String>) -> Self {

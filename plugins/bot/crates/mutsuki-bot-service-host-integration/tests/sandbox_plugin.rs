@@ -123,6 +123,16 @@ fn qq_service_config(
     fake: &FakeQqServer,
     select_workspace_sandbox: bool,
 ) -> (ServiceConfig, tempfile::TempDir) {
+    qq_service_config_ordered(fake, select_workspace_sandbox, false)
+}
+
+/// `sandbox_after_qq` selects the sandbox after the QQ adapter: preparation order must not
+/// decide whether the two share one simulator.
+fn qq_service_config_ordered(
+    fake: &FakeQqServer,
+    select_workspace_sandbox: bool,
+    sandbox_after_qq: bool,
+) -> (ServiceConfig, tempfile::TempDir) {
     let secret_key = format!(
         "QQBOT_SANDBOX_PLUGIN_SECRET_{}",
         fake.websocket_addr().port()
@@ -135,7 +145,7 @@ fn qq_service_config(
     .unwrap();
     let qq = fake.config("sandbox-plugin", "TEST_APP_ID", &secret_key);
     let config_path = root.path().join("local.toml");
-    let sandbox_selection = if select_workspace_sandbox {
+    let sandbox_block = if select_workspace_sandbox {
         format!(
             r#"
 [[plugins.configured]]
@@ -145,6 +155,11 @@ enabled = true
         )
     } else {
         String::new()
+    };
+    let (sandbox_selection, sandbox_tail) = if sandbox_after_qq {
+        (String::new(), sandbox_block)
+    } else {
+        (sandbox_block, String::new())
     };
     std::fs::write(
         &config_path,
@@ -190,7 +205,7 @@ retry_max_delay_ms = 0
 reconnect_initial_delay_ms = 10
 reconnect_max_delay_ms = 20
 reconnect_jitter_ms = 0
-
+{sandbox_tail}
 [security]
 secret_file = "local.secret.toml"
 
@@ -220,4 +235,46 @@ panic_file = "panic.log"
     })
     .unwrap();
     (config, root)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sandbox_selected_after_qq_shares_the_simulator_and_reconfigures_repeatedly() {
+    let fake = FakeQqServer::start_with_gateway_script(FakeQqGatewayScript {
+        close_delay: Duration::from_secs(2),
+        ..FakeQqGatewayScript::default()
+    })
+    .await;
+    let (config, _root) = qq_service_config_ordered(&fake, true, true);
+    let runtime = {
+        let mut catalog =
+            mutsuki_std_service_host_integration::configured_std_plugin_catalog().unwrap();
+        catalog
+            .merge(configured_bot_plugin_catalog(DEFAULT_MEDIA_PROVIDER_ID.to_string()).unwrap())
+            .unwrap();
+        ServiceRuntimeBuilder::new(config)
+            .with_configured_plugin_catalog(catalog)
+            .start()
+            .await
+            .expect("sandbox selected after QQ must boot")
+    };
+    let before = runtime
+        .host_service::<SandboxService>(SANDBOX_SERVICE_ID)
+        .unwrap();
+    for _ in 0..2 {
+        runtime
+            .reconfigure_plugins(&[mutsuki_service_config::ConfiguredPluginSelection {
+                id: SANDBOX_SERVICE_ID.into(),
+                enabled: true,
+                config: json!({}),
+            }])
+            .await
+            .expect("sandbox reconfigures repeatedly");
+    }
+    let after = runtime
+        .host_service::<SandboxService>(SANDBOX_SERVICE_ID)
+        .unwrap();
+    // The simulator is application-lifetime state: reconfiguring the plugin keeps its history.
+    assert!(std::sync::Arc::ptr_eq(&before, &after));
+    runtime.shutdown().await;
+    fake.shutdown().await;
 }

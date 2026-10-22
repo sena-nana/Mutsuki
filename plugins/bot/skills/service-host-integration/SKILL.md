@@ -12,8 +12,11 @@ description: Change Bot plugin bundles, manifests, native runner factories, heal
 - Ensure declared capabilities and deployment match installed implementations.
 - Return unavailable on missing upstream capability instead of registering placeholder health or runners.
 - Open `data/bot/state.sqlite3` once per runtime and share the `BotStateDbRepository` actor
-  across Sandbox, QQ, Agent and interaction factories. Do not call `BotStateDbRepository::open`
-  again on the same path.
+  across Sandbox, QQ, Agent and interaction factories through the ServiceHost application
+  service `mutsuki.bot.state` (`bot_state_db(builder)`, built on
+  `ServiceRuntimeBuilder::ensure_application_service`); the sandbox simulator is shared the same
+  way (`mutsuki.bot.sandbox.state`). Never keep owner state in factory `OnceLock` slots or rely
+  on selection order, and do not call `BotStateDbRepository::open` again on the same path.
 - Register Host recovery EventSources for reply delivery `ResumeDue`, active delivery
   `ResumeDue`, and interaction `Recover`. Completion paths drain persisted work; they do not
   originate new business behavior. Active-delivery runner and recovery source share the QQ

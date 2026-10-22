@@ -47,6 +47,7 @@ impl ServiceRuntimeInner {
         }
 
         let mut candidate_components = PreparedComponentRegistry::default();
+        let mut created_builtin_services = BTreeMap::new();
         for plugin_id in &affected {
             let selections = candidate_config
                 .plugins
@@ -86,6 +87,12 @@ impl ServiceRuntimeInner {
                     detail,
                 })?;
             for (component_id, component) in prepared.components.records {
+                // Application-lifetime services first created by a reconfigured consumer join
+                // the Host-owned builtin component; nothing else of it may change.
+                if component_id == BUILTIN_COMPONENT {
+                    created_builtin_services.extend(component.application_services);
+                    continue;
+                }
                 if !affected.contains(&component_id) {
                     return Err(ServiceRuntimeError::ConfiguredPluginInstall {
                         plugin_id: PluginId::from(plugin_id.as_str()),
@@ -121,6 +128,10 @@ impl ServiceRuntimeInner {
             );
         }
 
+        combined_components
+            .record(BUILTIN_COMPONENT)
+            .application_services
+            .extend(created_builtin_services);
         let staged_services = StagedApplicationServices::stage(
             &self.application_services,
             ApplicationServiceTable::from_components(&combined_components)?,

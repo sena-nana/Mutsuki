@@ -56,3 +56,14 @@ order the changes land on `main`.
   `qqbot_adapter_manifest_for_accounts` declares the configured QQ account.
 - Still pending: `message/send@1` carries no account. Account routing via
   `BotAdapterDirectory` and `runner_hint` arrives with the simulated sandbox adapter.
+
+## Host-owned Bot state
+
+- The Bot state database and the sandbox simulator are ServiceHost application services
+  (`mutsuki.bot.state`, `mutsuki.bot.sandbox.state`) created on first use through
+  `ServiceRuntimeBuilder::ensure_application_service`. The factory-level `OnceLock` slots are gone:
+  the sandbox may be selected before or after the QQ adapter, and reconfiguring the sandbox no
+  longer fails with "sandbox service already prepared". The simulator keeps its history across
+  sandbox reconfigures because it is application-lifetime state.
+- Embedders that build factories themselves get the same behavior without extra wiring; nothing
+  needs to register the state database explicitly.

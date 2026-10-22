@@ -145,7 +145,9 @@ Domain plugins and durable services:
 - `mutsuki-bot-state-db`: durable session, delivery, interaction, persona, conversation-context
   and sandbox history repository; implements store traits from library crates rather than
   depending on plugin packages. Production assembly opens one actor per `data/bot/state.sqlite3`
-  and shares that `Arc` across Sandbox, QQ, Agent, and interaction factories. The actor uses WAL
+  as the Host-owned application service `mutsuki.bot.state` and shares that `Arc` across
+  Sandbox, QQ, Agent, and interaction factories; whichever factory prepares first opens it, so
+  selection order is irrelevant and reconfiguring a consumer reuses the same actor. The actor uses WAL
   with `busy_timeout` 5s and `synchronous=NORMAL`; last transactions may be lost on power failure
   by design, and two processes must not open the same `state.sqlite3`. Historical Flow
   tables are neither read nor destructively removed. Unused leftover

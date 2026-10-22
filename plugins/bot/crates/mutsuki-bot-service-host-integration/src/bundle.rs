@@ -39,7 +39,7 @@ use mutsuki_plugin_bot_adapter_qqbot::{
     QQBOT_ADAPTER_PLUGIN_ID, QqAuthManager, QqBotClients, QqBotConfig, QqGatewayMapRunner,
     QqGatewayMediaHandler, QqIdSource, QqMediaProvider, QqOpenApiError, QqOpenApiRunner,
     ReqwestQqHttpClient, ResourceGatewayQqMediaProvider, SharedQqCredentials,
-    qqbot_adapter_manifest, qqbot_adapter_manifest_for_accounts,
+    qqbot_adapter_manifest_for_accounts,
 };
 use mutsuki_plugin_bot_delivery::{bot_delivery_manifest_for, delivery_runner_for};
 use mutsuki_runtime_sdk::{LoadedPlugin, RuntimeBootstrapperService};
@@ -1131,7 +1131,9 @@ mod tests {
 
     #[test]
     fn qq_adapter_manifest_owns_active_delivery_protocol() {
-        let merged = merge_qq_active_delivery(qqbot_adapter_manifest(1, false));
+        let merged = merge_qq_active_delivery(
+            mutsuki_plugin_bot_adapter_qqbot::qqbot_adapter_manifest(1, false),
+        );
         assert_eq!(merged.plugin_id, QQBOT_ADAPTER_PLUGIN_ID);
         assert!(
             merged.provides.handler_bindings.iter().any(|binding| {

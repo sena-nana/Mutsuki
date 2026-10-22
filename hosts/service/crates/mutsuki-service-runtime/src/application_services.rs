@@ -140,6 +140,13 @@ impl ApplicationServiceDirectory {
             .map_err(|failure| format!("{service_id}: {failure}"))
     }
 
+    pub(crate) fn committed_value(&self, service_id: &str) -> Option<HostServiceValue> {
+        self.snapshot()
+            .services
+            .get(service_id)
+            .map(|(_, value)| value.clone())
+    }
+
     /// Resolves the currently committed provider without a consumer declaration (control plane).
     pub fn current<T: HostService>(&self, service_id: &str) -> Result<Arc<T>, String> {
         self.resolve(None, service_id)

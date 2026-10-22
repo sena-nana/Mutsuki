@@ -2601,3 +2601,121 @@ async fn undeclared_application_service_resolution_fails_boot() {
         "{error}"
     );
 }
+
+/// Opens the shared "database" on first use and records every open.
+struct EnsuringConsumerFactory {
+    plugin_id: &'static str,
+    opens: Arc<AtomicUsize>,
+}
+
+impl ConfiguredPluginFactory for EnsuringConsumerFactory {
+    fn plugin_id(&self) -> &str {
+        self.plugin_id
+    }
+
+    fn prepare(
+        &self,
+        _config: &Value,
+        builder: ServiceRuntimeBuilder,
+    ) -> Result<ServiceRuntimeBuilder, String> {
+        let opens = self.opens.clone();
+        let (builder, shared) = builder.ensure_application_service("svc.shared-db", move || {
+            let generation = opens.fetch_add(1, Ordering::SeqCst) as u64 + 1;
+            Ok(Arc::new(GenerationService(generation)))
+        })?;
+        let service_id = format!("{}.view", self.plugin_id);
+        let capability = format!("{}.capability", self.plugin_id);
+        let mut manifest = minimal_manifest(self.plugin_id);
+        manifest.provides.services.push(service_id.clone());
+        manifest.provides.capabilities.push(capability.clone());
+        let loaded_manifest = manifest.clone();
+        Ok(
+            builder.register_builtin_loaded_plugin_factory(manifest, move || {
+                Ok::<LoadedPlugin, String>(LoadedPlugin {
+                    manifest: loaded_manifest.clone(),
+                    runners: Vec::new(),
+                    async_handlers: Vec::new(),
+                    host_services: vec![RuntimeBootstrapperService::new(
+                        service_id.clone(),
+                        shared.clone(),
+                        capability.clone(),
+                    )],
+                    resource_providers: Vec::new(),
+                    async_resource_providers: Vec::new(),
+                    host_effects: Vec::new(),
+                })
+            }),
+        )
+    }
+}
+
+#[tokio::test]
+async fn ensured_application_services_are_opened_once_and_survive_reconfigure() {
+    let root = tempdir().expect("temp dir");
+    let config_dir = root.path().join("config");
+    std::fs::create_dir_all(&config_dir).expect("config dir");
+    let config_path = config_dir.join("local.toml");
+    std::fs::write(
+        &config_path,
+        r#"
+[[plugins.configured]]
+id = "test.ensure-b"
+enabled = true
+
+[[plugins.configured]]
+id = "test.ensure-a"
+enabled = true
+"#,
+    )
+    .expect("config file");
+    let mut config = ServiceConfig::load(mutsuki_service_config::ConfigOverrides {
+        config_file: Some(config_path),
+        home_dir: Some(root.path().to_path_buf()),
+        ..Default::default()
+    })
+    .expect("loaded config");
+    config.ipc.enabled = false;
+    config.observe.console = false;
+    config.plugins.dynamic_dirs.clear();
+    config.plugins.disabled_dir = root.path().join("disabled");
+    let opens = Arc::new(AtomicUsize::new(0));
+    let mut catalog = ConfiguredPluginCatalog::new();
+    for plugin_id in ["test.ensure-a", "test.ensure-b"] {
+        catalog
+            .register(EnsuringConsumerFactory {
+                plugin_id,
+                opens: opens.clone(),
+            })
+            .unwrap();
+    }
+    let runtime = ServiceRuntimeBuilder::new(config)
+        .with_configured_plugin_catalog(catalog)
+        .start()
+        .await
+        .expect("runtime starts");
+    let view = |runtime: &ServiceRuntime, id: &str| {
+        runtime
+            .host_service::<GenerationService>(&format!("{id}.view"))
+            .unwrap()
+    };
+    assert_eq!(opens.load(Ordering::SeqCst), 1);
+    assert!(Arc::ptr_eq(
+        &view(&runtime, "test.ensure-a"),
+        &view(&runtime, "test.ensure-b")
+    ));
+
+    runtime
+        .reconfigure_plugins(&[ConfiguredPluginSelection {
+            id: "test.ensure-a".into(),
+            enabled: true,
+            config: json!({}),
+        }])
+        .await
+        .expect("consumer reconfigured");
+
+    assert_eq!(opens.load(Ordering::SeqCst), 1);
+    assert!(Arc::ptr_eq(
+        &view(&runtime, "test.ensure-a"),
+        &view(&runtime, "test.ensure-b")
+    ));
+}

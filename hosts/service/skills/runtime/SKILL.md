@@ -16,5 +16,8 @@ description: Change ServiceHost Core bootstrap, ServiceRuntimeBuilder, HostServi
   `factory_context()`). Never share owner state through `OnceLock`/static slots or rely on
   selection order. Reconfiguring a provider stages its table, co-reloads declared consumers and
   restores the previous table on failure; a missing provider fails boot/reload loudly.
+- State several components share without one owner (one database actor) uses
+  `ensure_application_service`: the first factory creates it in the Host-owned builtin
+  component, later factories and reconfigured components reuse it, and it lives until shutdown.
 
 Test startup failure, real builder assembly, application-service co-reload/rollback, event-source stop and graceful shutdown ordering.

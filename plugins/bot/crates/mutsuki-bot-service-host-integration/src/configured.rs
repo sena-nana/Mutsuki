@@ -76,8 +76,7 @@ use mutsuki_plugin_bot_mihuashi::PLUGIN_ID as MIHUASHI_PLUGIN_ID;
 /// binding (tests, benchmarks and examples). Products pass the persistent
 /// SQLite provider explicitly.
 pub const DEFAULT_MEDIA_PROVIDER_ID: &str = mutsuki_plugin_resource_sqlite::PROVIDER_ID;
-use std::path::Path;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 struct ConfigProviderEffect(ConfigProviderRegistration);
 
@@ -310,9 +309,7 @@ impl ConfiguredPluginFactory for BotCommandConfiguredPlugin {
     }
 }
 
-struct BotInteractionConfiguredPlugin {
-    state_db: SharedStateDbSlot,
-}
+struct BotInteractionConfiguredPlugin;
 
 impl ConfiguredPluginFactory for BotInteractionConfiguredPlugin {
     fn plugin_id(&self) -> &str {
@@ -330,7 +327,7 @@ impl ConfiguredPluginFactory for BotInteractionConfiguredPlugin {
             config.clone()
         };
         mutsuki_bot_sdk::config::decode_empty(self.plugin_id(), &config)?;
-        let repository = shared_bot_state_db(&self.state_db, builder.data_dir())?;
+        let (builder, repository) = bot_state_db(builder)?;
         let interaction =
             InteractionService::new(repository, Arc::new(UnavailableInteractionMatcher));
         Ok(builder
@@ -435,7 +432,6 @@ impl AgentClientBackend for ConfigSelectedAgentBackend {
 
 pub struct BotAgentConfiguredPlugin {
     connections: AgentConnectionRegistry,
-    state_db: SharedStateDbSlot,
 }
 
 impl ConfiguredPluginFactory for BotAgentConfiguredPlugin {
@@ -462,7 +458,7 @@ impl ConfiguredPluginFactory for BotAgentConfiguredPlugin {
                 config_handle,
             ));
         }
-        let repository = shared_bot_state_db(&self.state_db, builder.data_dir())?;
+        let (builder, repository) = bot_state_db(builder)?;
         let conversation_context: Arc<dyn ConversationContextStore> = repository.clone();
         let persona_store: Arc<dyn PersonaStore> = repository.clone();
         // The interaction waiter nodes are part of the first-party AI chain that this
@@ -613,40 +609,42 @@ fn execution_product_policy(config: &BotAgentConfig) -> Result<ConversationPolic
     })
 }
 
-type SharedSandboxSlot = Arc<OnceLock<Arc<SandboxService>>>;
-type SharedStateDbSlot = Arc<OnceLock<Arc<BotStateDbRepository>>>;
+/// Application service holding the single Bot state database actor of this Host.
+pub const BOT_STATE_SERVICE_ID: &str = "mutsuki.bot.state";
+/// Application service holding the sandbox simulator shared by the sandbox plugin and the QQ
+/// adapter's sandbox-aware runners.
+const BOT_SANDBOX_STATE_SERVICE_ID: &str = "mutsuki.bot.sandbox.state";
 
-fn shared_bot_state_db(
-    slot: &SharedStateDbSlot,
-    data_dir: &Path,
-) -> Result<Arc<BotStateDbRepository>, String> {
-    if let Some(existing) = slot.get() {
-        return Ok(existing.clone());
-    }
-    let state_dir = data_dir.join("bot");
-    std::fs::create_dir_all(&state_dir).map_err(|error| {
-        format!(
-            "failed to create Bot state directory {}: {error}",
-            state_dir.display()
-        )
-    })?;
-    let repository = Arc::new(
+/// Opens `data/bot/state.sqlite3` once per Host; every consumer shares the same actor.
+fn bot_state_db(
+    builder: ServiceRuntimeBuilder,
+) -> Result<(ServiceRuntimeBuilder, Arc<BotStateDbRepository>), String> {
+    let state_dir = builder.data_dir().join("bot");
+    builder.ensure_application_service(BOT_STATE_SERVICE_ID, move || {
+        std::fs::create_dir_all(&state_dir).map_err(|error| {
+            format!(
+                "failed to create Bot state directory {}: {error}",
+                state_dir.display()
+            )
+        })?;
         BotStateDbRepository::open(state_dir.join("state.sqlite3"))
-            .map_err(|error| error.to_string())?,
-    );
-    match slot.set(repository.clone()) {
-        Ok(()) => Ok(repository),
-        Err(_) => Ok(slot
-            .get()
-            .expect("BotStateDb slot remains populated after a lost set")
-            .clone()),
-    }
+            .map(Arc::new)
+            .map_err(|error| error.to_string())
+    })
 }
 
-struct SandboxConfiguredPlugin {
-    slot: SharedSandboxSlot,
-    state_db: SharedStateDbSlot,
+fn bot_sandbox(
+    builder: ServiceRuntimeBuilder,
+) -> Result<(ServiceRuntimeBuilder, Arc<SandboxService>), String> {
+    let (builder, repository) = bot_state_db(builder)?;
+    builder.ensure_application_service(BOT_SANDBOX_STATE_SERVICE_ID, move || {
+        SandboxService::with_history("local", repository)
+            .map(Arc::new)
+            .map_err(|error| error.to_string())
+    })
 }
+
+struct SandboxConfiguredPlugin;
 
 impl ConfiguredPluginFactory for SandboxConfiguredPlugin {
     fn plugin_id(&self) -> &str {
@@ -664,13 +662,7 @@ impl ConfiguredPluginFactory for SandboxConfiguredPlugin {
             config.clone()
         };
         mutsuki_bot_sdk::config::decode_empty(self.plugin_id(), &config)?;
-        let repository = shared_bot_state_db(&self.state_db, builder.data_dir())?;
-        let sandbox = Arc::new(
-            SandboxService::with_history("local", repository).map_err(|error| error.to_string())?,
-        );
-        self.slot
-            .set(sandbox.clone())
-            .map_err(|_| "sandbox service already prepared".to_string())?;
+        let (builder, sandbox) = bot_sandbox(builder)?;
         let mut manifest = PluginBuilder::new(SANDBOX_SERVICE_ID).build().manifest;
         manifest.provides.services.push(SANDBOX_SERVICE_ID.into());
         manifest.provides.capabilities.push("bot.sandbox".into());
@@ -696,8 +688,6 @@ impl ConfiguredPluginFactory for SandboxConfiguredPlugin {
 }
 
 pub struct QqBotConfiguredPlugin {
-    slot: SharedSandboxSlot,
-    state_db: SharedStateDbSlot,
     media_provider_id: String,
 }
 
@@ -716,7 +706,7 @@ impl ConfiguredPluginFactory for QqBotConfiguredPlugin {
         // The product assembly owns the media resource provider binding; inbound
         // media validation reads it back from the adapter config.
         config.media_provider_id = Some(self.media_provider_id.clone());
-        let repository = shared_bot_state_db(&self.state_db, builder.data_dir())?;
+        let (mut builder, repository) = bot_state_db(builder)?;
         let mut bundle =
             QqBotPluginBundle::new(config).map_err(|error| error.redacted_message())?;
         bundle = bundle
@@ -726,9 +716,10 @@ impl ConfiguredPluginFactory for QqBotConfiguredPlugin {
             .configured_plugin_selection(SANDBOX_SERVICE_ID)
             .is_some()
         {
-            let sandbox = self.slot.get().cloned().ok_or_else(|| {
-                "sandbox plugin must be prepared before the QQ adapter".to_string()
-            })?;
+            // Whichever of the sandbox plugin and this adapter prepares first creates the
+            // simulator; selection order does not matter.
+            let (with_sandbox, sandbox) = bot_sandbox(builder)?;
+            builder = with_sandbox;
             bundle = bundle.with_workspace_sandbox(sandbox);
         }
         bundle
@@ -1175,28 +1166,19 @@ fn field_node(
 pub fn configured_bot_plugin_catalog(
     media_provider_id: String,
 ) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
-    configured_bot_plugin_catalog_inner(None, None, media_provider_id).map(|(catalog, _)| catalog)
+    configured_bot_plugin_catalog_inner(None, None, media_provider_id)
 }
 
 fn configured_bot_plugin_catalog_inner(
     config: Option<Arc<ConfigService>>,
     flow_registry: Option<Arc<BotFlowRegistry>>,
     media_provider_id: String,
-) -> ServiceRuntimeResult<(ConfiguredPluginCatalog, SharedStateDbSlot)> {
+) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
     let mut catalog = ConfiguredPluginCatalog::new();
-    let slot: SharedSandboxSlot = Arc::new(OnceLock::new());
-    let state_db: SharedStateDbSlot = Arc::new(OnceLock::new());
     catalog.register(BotCommandConfiguredPlugin)?;
-    catalog.register(BotInteractionConfiguredPlugin {
-        state_db: state_db.clone(),
-    })?;
-    catalog.register(SandboxConfiguredPlugin {
-        slot: slot.clone(),
-        state_db: state_db.clone(),
-    })?;
+    catalog.register(BotInteractionConfiguredPlugin)?;
+    catalog.register(SandboxConfiguredPlugin)?;
     catalog.register(QqBotConfiguredPlugin {
-        slot,
-        state_db: state_db.clone(),
         media_provider_id: media_provider_id.clone(),
     })?;
     let bilibili = match flow_registry.clone() {
@@ -1209,7 +1191,7 @@ fn configured_bot_plugin_catalog_inner(
         media_provider_id: media_provider_id.clone(),
     })?;
     catalog.register(MihuashiConfiguredPlugin { media_provider_id })?;
-    Ok((catalog, state_db))
+    Ok(catalog)
 }
 
 /// Adds the Flow Router only when product bootstrap supplies ConfigService.
@@ -1218,7 +1200,7 @@ pub fn configured_bot_plugin_catalog_with_config(
     media_provider_id: String,
 ) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
     let flow_registry = Arc::new(BotFlowRegistry::new(BotNodeCatalog::default()));
-    let (mut catalog, _) = configured_bot_plugin_catalog_inner(
+    let mut catalog = configured_bot_plugin_catalog_inner(
         Some(config.clone()),
         Some(flow_registry.clone()),
         media_provider_id,
@@ -1241,7 +1223,7 @@ pub fn configured_bot_plugin_catalog_with_agent_and_flow(
     seed_flow: Option<BotFlowDocument>,
     media_provider_id: String,
 ) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
-    let (mut catalog, state_db) = configured_bot_plugin_catalog_inner(
+    let mut catalog = configured_bot_plugin_catalog_inner(
         Some(config.clone()),
         Some(flow_registry.clone()),
         media_provider_id,
@@ -1251,10 +1233,7 @@ pub fn configured_bot_plugin_catalog_with_agent_and_flow(
         registry: Some(flow_registry),
         seed: seed_flow,
     })?;
-    catalog.register(BotAgentConfiguredPlugin {
-        connections,
-        state_db,
-    })?;
+    catalog.register(BotAgentConfiguredPlugin { connections })?;
     Ok(catalog)
 }
 
@@ -1534,20 +1513,25 @@ pub(crate) mod tests {
             .expect(
                 "Command node plugin should accept a graph-only selection without a config table",
             );
-        BotInteractionConfiguredPlugin {
-            state_db: Arc::new(OnceLock::new()),
-        }
-        .prepare(&Value::Null, ServiceRuntimeBuilder::new(service))
-        .expect("Interaction plugin should accept a graph-only selection without a config table");
+        BotInteractionConfiguredPlugin
+            .prepare(&Value::Null, ServiceRuntimeBuilder::new(service))
+            .expect(
+                "Interaction plugin should accept a graph-only selection without a config table",
+            );
     }
 
     #[test]
     fn sandbox_agent_and_qq_share_one_state_db_actor() {
         let root = tempfile::tempdir().unwrap();
-        let slot: SharedStateDbSlot = Arc::new(OnceLock::new());
-        let first = shared_bot_state_db(&slot, root.path()).unwrap();
-        let second = shared_bot_state_db(&slot, root.path()).unwrap();
+        let mut service = ServiceConfig::default();
+        service.service.data_dir = root.path().to_path_buf();
+        let builder = ServiceRuntimeBuilder::new(service);
+        let (builder, first) = bot_state_db(builder).unwrap();
+        let (builder, sandbox) = bot_sandbox(builder).unwrap();
+        let (builder, second) = bot_state_db(builder).unwrap();
+        let (_, sandbox_again) = bot_sandbox(builder).unwrap();
         assert!(Arc::ptr_eq(&first, &second));
+        assert!(Arc::ptr_eq(&sandbox, &sandbox_again));
         assert_eq!(first.metrics().connection_open_count, 1);
         assert_eq!(first.journal_mode(), "wal");
     }
