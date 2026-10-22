@@ -15,6 +15,7 @@
 mod budgets;
 mod error;
 mod message;
+mod typed;
 mod versions;
 
 pub use budgets::{DEFAULT_BUDGETS, ResourceBudgets};
@@ -22,6 +23,9 @@ pub use error::{ProtocolError, ProtocolResult};
 pub use message::{
     EventEnvelope, EventSubscription, JsonValue, RpcErrorBody, RpcRequest, RpcResponse,
     SessionInfo, WireMessage,
+};
+pub use typed::{
+    RpcMethodDescriptor, RpcOperation, TopicDescriptor, TypedRpc, TypedTopic, ts_contract_module,
 };
 pub use versions::{
     EXTENSION_MANIFEST_VERSION, WEB_PROTOCOL_VERSION, WEB_PROTOCOL_VERSION_MAJOR,

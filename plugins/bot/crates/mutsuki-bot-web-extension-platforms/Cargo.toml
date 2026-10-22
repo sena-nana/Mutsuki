@@ -1,0 +1,19 @@
+[package]
+name = "mutsuki-bot-web-extension-platforms"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mutsuki-bot-console-protocol.workspace = true
+mutsuki-bot-management.workspace = true
+mutsuki-web-extension-api.workspace = true
+mutsuki-web-protocol.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

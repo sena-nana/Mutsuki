@@ -12,8 +12,10 @@
 )]
 
 mod bilibili;
+mod platforms;
 
 pub use bilibili::*;
+pub use platforms::*;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -1225,6 +1227,50 @@ mod tests {
             retries_remaining: 0,
         });
         (QqBotManagementService::new(local.clone()), local)
+    }
+
+    #[tokio::test]
+    async fn qq_platform_provider_projects_accounts_and_runs_actions() {
+        let (service, _) = service();
+        let provider = QqPlatformConsoleProvider::new("qq-adapter", Arc::new(service));
+        let adapter = provider.adapter();
+        let accounts = provider.accounts().await.unwrap();
+        assert_eq!(accounts.len(), 1);
+        let account = &accounts[0];
+        assert_eq!(account.account_id, "main");
+        assert_eq!(
+            account.health,
+            mutsuki_bot_console_protocol::platforms::PlatformHealth::Ok
+        );
+        // Every declared field has a value, so the console never renders a dangling column.
+        for field in &adapter.account_fields {
+            assert!(account.fields.contains_key(&field.key), "{}", field.key);
+        }
+        provider
+            .action(
+                "tester",
+                mutsuki_bot_console_protocol::platforms::AccountActionParams {
+                    adapter_id: "qq-adapter".into(),
+                    account_id: "main".into(),
+                    action: "health_check".into(),
+                    params: Value::Null,
+                },
+            )
+            .await
+            .unwrap();
+        let unknown = provider
+            .action(
+                "tester",
+                mutsuki_bot_console_protocol::platforms::AccountActionParams {
+                    adapter_id: "qq-adapter".into(),
+                    account_id: "main".into(),
+                    action: "explode".into(),
+                    params: Value::Null,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(unknown.code, "platform.action_unknown");
     }
 
     #[test]

@@ -3807,6 +3807,7 @@ dependencies = [
  "mutsuki-agent-service-host-integration",
  "mutsuki-bot-bilibili-service-host-integration",
  "mutsuki-bot-flow",
+ "mutsuki-bot-management",
  "mutsuki-bot-protocol",
  "mutsuki-bot-qq-service-host-integration",
  "mutsuki-bot-service-host-integration",
@@ -3910,6 +3911,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mutsuki-bot-console-protocol"
+version = "0.1.0"
+dependencies = [
+ "mutsuki-web-protocol",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "mutsuki-bot-conversation"
 version = "0.1.0"
 dependencies = [
@@ -3977,6 +3987,7 @@ name = "mutsuki-bot-management"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "mutsuki-bot-console-protocol",
  "mutsuki-bot-protocol",
  "mutsuki-bot-qq-protocol",
  "serde",
@@ -4224,6 +4235,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "mutsuki-bot-web-extension-platforms"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "mutsuki-bot-console-protocol",
+ "mutsuki-bot-management",
+ "mutsuki-web-extension-api",
+ "mutsuki-web-protocol",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "mutsuki-bot-web-extension-qq"
 version = "0.1.0"
 dependencies = [
@@ -4275,6 +4299,7 @@ dependencies = [
  "mutsuki-bot-web-extension-bilibili",
  "mutsuki-bot-web-extension-database",
  "mutsuki-bot-web-extension-flow",
+ "mutsuki-bot-web-extension-platforms",
  "mutsuki-bot-web-extension-qq",
  "mutsuki-bot-web-extension-sandbox",
  "mutsuki-config-service",

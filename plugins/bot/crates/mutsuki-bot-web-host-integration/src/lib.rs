@@ -29,7 +29,7 @@ pub use config_demo::demo_config_service;
 pub use layout::{ActivityPosition, ConsoleActivity, ConsoleLayout, SETTINGS_ACTIVITY};
 pub use secret_status::{SecretKeyResolver, SecretMonitor, SecretStatusWebExtension};
 pub use watch_bridge::{
-    ControlChangeBridge, ManagementChangeBridge, attach_control_changed_bridge,
+    BilibiliResolver, ControlChangeBridge, ManagementChangeBridge, attach_control_changed_bridge,
     attach_management_changed_bridges, attach_revision_changed_bridge,
 };
 
@@ -50,6 +50,7 @@ use mutsuki_bot_web_extension_database::{
 use mutsuki_bot_web_extension_flow::{
     BotFlowEditorWebExtension, materialize_frontend_assets as materialize_bot_flow_assets,
 };
+use mutsuki_bot_web_extension_platforms::{PlatformProviderSource, PlatformsWebExtension};
 use mutsuki_bot_web_extension_qq::{
     QqBotManagementApi, QqBotWebExtension, materialize_frontend_assets as materialize_qq_assets,
 };
@@ -157,34 +158,6 @@ impl WebConsolePaths {
     }
 }
 
-/// Build an embedded WebHost pre-wired with control + overview (+ optional config/upgrade/bilibili/qq) extensions.
-pub fn build_console_host(
-    config: &WebConsoleConfig,
-    secrets: &WebConsoleSecrets,
-    control: Arc<dyn ControlHandler>,
-    control_token: &str,
-    config_service: Option<Arc<ConfigService>>,
-    secret_monitor: Option<SecretMonitor>,
-    paths: &WebConsolePaths,
-    bilibili: Option<Arc<dyn BilibiliManagementApi>>,
-    qq: Option<Arc<dyn QqBotManagementApi>>,
-) -> WebHostResult<(MutsukiWebHost, ConsoleAssetDirs)> {
-    build_console_host_with_agent(
-        config,
-        secrets,
-        control,
-        control_token,
-        config_service,
-        secret_monitor,
-        paths,
-        bilibili,
-        qq,
-        None,
-        None,
-        BotAgentConsoleServices::default(),
-    )
-}
-
 /// Owner services that make Agent connection management and Bot flow authoring real.
 #[derive(Default)]
 pub struct BotAgentConsoleServices {
@@ -193,22 +166,39 @@ pub struct BotAgentConsoleServices {
     pub flow: Option<Arc<BotFlowRegistry>>,
 }
 
-/// Builds the console and exposes each Agent page only when its owner service is registered.
-#[allow(clippy::too_many_arguments)]
-pub fn build_console_host_with_agent(
+/// Owner services the console exposes; every field is optional and pages follow their owner.
+#[derive(Default)]
+pub struct BotConsoleServices {
+    pub config: Option<Arc<ConfigService>>,
+    pub secret_monitor: Option<SecretMonitor>,
+    pub bilibili: Option<Arc<dyn BilibiliManagementApi>>,
+    pub qq: Option<Arc<dyn QqBotManagementApi>>,
+    pub sandbox: Option<Arc<dyn SandboxApi>>,
+    pub database: Option<Arc<BotStateDbRepository>>,
+    pub agent: BotAgentConsoleServices,
+    /// Live platform adapters for the generic `platforms` surface.
+    pub platforms: Option<PlatformProviderSource>,
+}
+
+/// Builds the embedded Bot console; each page is mounted only when its owner service exists.
+pub fn build_bot_console(
     config: &WebConsoleConfig,
     secrets: &WebConsoleSecrets,
     control: Arc<dyn ControlHandler>,
     control_token: &str,
-    config_service: Option<Arc<ConfigService>>,
-    secret_monitor: Option<SecretMonitor>,
     paths: &WebConsolePaths,
-    bilibili: Option<Arc<dyn BilibiliManagementApi>>,
-    qq: Option<Arc<dyn QqBotManagementApi>>,
-    sandbox: Option<Arc<dyn SandboxApi>>,
-    database: Option<Arc<BotStateDbRepository>>,
-    bot_agent: BotAgentConsoleServices,
+    services: BotConsoleServices,
 ) -> WebHostResult<(MutsukiWebHost, ConsoleAssetDirs)> {
+    let BotConsoleServices {
+        config: config_service,
+        secret_monitor,
+        bilibili,
+        qq,
+        sandbox,
+        database,
+        agent: bot_agent,
+        platforms,
+    } = services;
     if !config.enabled {
         return Err(mutsuki_web_host::WebHostError::InvalidConfig(
             "web.console.enabled is false".into(),
@@ -333,6 +323,9 @@ pub fn build_console_host_with_agent(
         builder = builder.extension(
             BotFlowEditorWebExtension::new(service, flow).with_frontend_assets(page(FLOW_PAGE)),
         );
+    }
+    if let Some(providers) = platforms {
+        builder = builder.extension(PlatformsWebExtension::new(providers));
     }
     let host = builder.build()?;
     Ok((host, asset_dirs))

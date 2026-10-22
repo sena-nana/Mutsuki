@@ -2,9 +2,8 @@ use std::sync::Arc;
 
 use mutsuki_bot_sandbox::{SandboxApi, SandboxService};
 use mutsuki_bot_web_host_integration::{
-    BotAgentConsoleServices, ConsoleActivity, ConsoleLayout, WebConsoleConfig, WebConsolePaths,
-    WebConsoleSecrets, attach_control_changed_bridge, build_console_host_with_agent,
-    demo_config_service,
+    BotConsoleServices, ConsoleActivity, ConsoleLayout, WebConsoleConfig, WebConsolePaths,
+    WebConsoleSecrets, attach_control_changed_bridge, build_bot_console, demo_config_service,
 };
 use mutsuki_service_control::{ControlChangeDomain, ControlChangeEvent, ControlChangeSubscription};
 use mutsuki_web_extension_control::FixtureControlHandler;
@@ -32,19 +31,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let control = FixtureControlHandler::default();
     let uptime_ms = control.uptime_ms.clone();
     let service_status_calls = control.service_status_calls.clone();
-    let (mut host, _assets) = build_console_host_with_agent(
+    let (mut host, _assets) = build_bot_console(
         &config,
         &secrets,
         Arc::new(control),
         "fixture",
-        Some(demo_config_service()),
-        None,
         &WebConsolePaths::default(),
-        None,
-        None,
-        Some(Arc::new(SandboxService::new()) as Arc<dyn SandboxApi>),
-        None,
-        BotAgentConsoleServices::default(),
+        BotConsoleServices {
+            config: Some(demo_config_service()),
+            sandbox: Some(Arc::new(SandboxService::new()) as Arc<dyn SandboxApi>),
+            ..BotConsoleServices::default()
+        },
     )?;
     host.start().await?;
     let (changes, receiver) = tokio::sync::broadcast::channel(8);

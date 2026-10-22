@@ -12,15 +12,22 @@ use mutsuki_bot_service_host_integration::{
     QqConsoleBridge, SANDBOX_SERVICE_ID, SandboxConsoleBridge,
 };
 use mutsuki_bot_web_host_integration::{
-    BotAgentConsoleServices, ConfigNavigationGroup, ConfigNavigationItem, ConsoleActivity,
-    ConsoleAssetDirs, ConsoleLayout, ControlChangeBridge, ManagementChangeBridge,
-    SecretKeyResolver, SecretMonitor, WebConsoleConfig, WebConsolePaths, WebConsoleSecrets,
-    attach_control_changed_bridge, attach_management_changed_bridges,
-    attach_revision_changed_bridge, build_console_host_with_agent,
+    BilibiliResolver, BotAgentConsoleServices, BotConsoleServices, ConfigNavigationGroup,
+    ConfigNavigationItem, ConsoleActivity, ConsoleAssetDirs, ConsoleLayout, ControlChangeBridge,
+    ManagementChangeBridge, SecretKeyResolver, SecretMonitor, WebConsoleConfig, WebConsolePaths,
+    WebConsoleSecrets, attach_control_changed_bridge, attach_management_changed_bridges,
+    attach_revision_changed_bridge, build_bot_console,
 };
 use mutsuki_plugin_bot_adapter_qqbot::QQBOT_ADAPTER_PLUGIN_ID;
 
 use crate::owners::{ConsoleSection, console_items};
+use mutsuki_bot_management::{
+    BilibiliManagementApi, BilibiliPlatformConsoleProvider, PlatformConsoleProvider,
+    QqBotManagementApi, QqBotManagementService, QqPlatformConsoleProvider,
+};
+use mutsuki_bot_service_host_integration::{
+    BILIBILI_MANAGEMENT_SERVICE_ID, QQ_MANAGEMENT_SERVICE_ID,
+};
 use mutsuki_plugin_bot_agent::BOT_AGENT_BRIDGE_PLUGIN_ID;
 use mutsuki_plugin_bot_bilibili::PLUGIN_ID as BILIBILI_PLUGIN_ID;
 use mutsuki_plugin_bot_bilibili_workshop::PLUGIN_ID as WORKSHOP_PLUGIN_ID;
@@ -93,22 +100,25 @@ impl WebConsoleGuard {
         let bilibili = BilibiliConsoleBridge::get(runtime);
         let qq = QqConsoleBridge::get(runtime);
         let sandbox = SandboxConsoleBridge::get(runtime);
-        let (host, assets) = build_console_host_with_agent(
+        let (host, assets) = build_bot_console(
             &config,
             &secrets,
             runtime.control_handler(),
             runtime.control_token(),
-            Some(config_service.clone()),
-            secret_monitor,
             &WebConsolePaths::resolve(product_root, &config),
-            bilibili.clone(),
-            qq.clone(),
-            sandbox.clone(),
-            BotDatabaseConsoleBridge::get(runtime),
-            BotAgentConsoleServices {
-                connections: AgentConnectionConsoleBridge::get(runtime),
-                sessions: LocalAgentConsoleBridge::get(runtime),
-                flow: BotFlowConsoleBridge::get(runtime),
+            BotConsoleServices {
+                config: Some(config_service.clone()),
+                secret_monitor,
+                bilibili: bilibili.clone(),
+                qq: qq.clone(),
+                sandbox: sandbox.clone(),
+                database: BotDatabaseConsoleBridge::get(runtime),
+                agent: BotAgentConsoleServices {
+                    connections: AgentConnectionConsoleBridge::get(runtime),
+                    sessions: LocalAgentConsoleBridge::get(runtime),
+                    flow: BotFlowConsoleBridge::get(runtime),
+                },
+                platforms: Some(platform_providers(runtime)),
             },
         )?;
         let mut host = host;
@@ -127,10 +137,19 @@ impl WebConsoleGuard {
                     message: "started Web Console has no event bridge".into(),
                 },
             )?;
+        let bilibili_resolver: BilibiliResolver = {
+            let runtime = runtime.handle();
+            Arc::new(move || {
+                runtime
+                    .host_service::<Arc<dyn BilibiliManagementApi>>(BILIBILI_MANAGEMENT_SERVICE_ID)
+                    .ok()
+                    .map(|api| (*api).clone())
+            })
+        };
         let management_changes = attach_management_changed_bridges(
             &host,
             qq.as_ref(),
-            bilibili.as_ref(),
+            Some(bilibili_resolver),
             sandbox.as_ref(),
         )
         .ok_or_else(|| WebConsoleError::Config {
@@ -234,6 +253,32 @@ pub fn console_layout() -> ConsoleLayout {
         .map(|(from, to)| (from.to_owned(), to.to_owned()))
         .collect(),
     }
+}
+
+/// Platform adapters for the generic `platforms` console surface, resolved on every call so an
+/// adapter enabled or reloaded after the console started shows up without a restart.
+fn platform_providers(
+    runtime: &ServiceRuntime,
+) -> Arc<dyn Fn() -> Vec<Arc<dyn PlatformConsoleProvider>> + Send + Sync> {
+    let runtime = runtime.handle();
+    Arc::new(move || {
+        let mut providers: Vec<Arc<dyn PlatformConsoleProvider>> = Vec::new();
+        if let Ok(qq) = runtime.host_service::<QqBotManagementService>(QQ_MANAGEMENT_SERVICE_ID) {
+            providers.push(Arc::new(QqPlatformConsoleProvider::new(
+                QQBOT_ADAPTER_PLUGIN_ID,
+                qq as Arc<dyn QqBotManagementApi>,
+            )));
+        }
+        if let Ok(bilibili) =
+            runtime.host_service::<Arc<dyn BilibiliManagementApi>>(BILIBILI_MANAGEMENT_SERVICE_ID)
+        {
+            providers.push(Arc::new(BilibiliPlatformConsoleProvider::new(
+                BILIBILI_PLUGIN_ID,
+                (*bilibili).clone(),
+            )));
+        }
+        providers
+    })
 }
 
 fn config_navigation_groups() -> Vec<ConfigNavigationGroup> {

@@ -3,7 +3,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use mutsuki_web_protocol::JsonValue;
+use mutsuki_web_protocol::{JsonValue, TypedRpc};
 
 use crate::ExtensionError;
 
@@ -125,6 +125,43 @@ impl RpcRegistry {
                 Box::pin(handler(context, params))
             })),
         );
+    }
+
+    /// Registers a [`TypedRpc`] method: the Host checks `M::CAPABILITY`, decodes the params
+    /// (`invalid_params` on mismatch) and encodes the result, so handlers only see typed values.
+    ///
+    /// # Panics
+    /// When `M::NAMESPACE` is not this registry's namespace (a programming error).
+    pub fn register_typed<M, F, Fut>(&mut self, handler: F)
+    where
+        M: TypedRpc,
+        F: Fn(RpcCallContext, M::Params) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<M::Result, ExtensionError>> + Send + 'static,
+    {
+        assert_eq!(
+            M::NAMESPACE,
+            self.namespace,
+            "typed RPC {} registered on the wrong namespace",
+            M::METHOD
+        );
+        let handler = Arc::new(handler);
+        self.register_async_contextual(M::METHOD, move |context, params| {
+            let handler = handler.clone();
+            async move {
+                context.require(M::CAPABILITY)?;
+                let params = serde_json::from_value::<M::Params>(params).map_err(|error| {
+                    ExtensionError::Rpc {
+                        code: "invalid_params".into(),
+                        message: format!("{}.{}: {error}", M::NAMESPACE, M::METHOD),
+                    }
+                })?;
+                let result = handler(context, params).await?;
+                serde_json::to_value(result).map_err(|error| ExtensionError::Rpc {
+                    code: "invalid_result".into(),
+                    message: format!("{}.{}: {error}", M::NAMESPACE, M::METHOD),
+                })
+            }
+        });
     }
 
     pub fn call(&self, method: &str, params: JsonValue) -> Result<JsonValue, ExtensionError> {
@@ -280,5 +317,55 @@ mod tests {
             .unwrap();
         assert_eq!(value, serde_json::json!({"content": "login"}));
         assert!(rpc.call("qr.render", serde_json::json!({})).is_err());
+    }
+}
+
+#[cfg(test)]
+mod typed_tests {
+    use mutsuki_web_protocol::{RpcOperation, TypedRpc};
+    use serde_json::json;
+
+    use super::*;
+
+    struct Double;
+
+    impl TypedRpc for Double {
+        const NAMESPACE: &'static str = "math";
+        const METHOD: &'static str = "double";
+        const OPERATION: RpcOperation = RpcOperation::Read;
+        const CAPABILITY: &'static str = "math.read";
+        const TS_PARAMS: &'static str = "number";
+        const TS_RESULT: &'static str = "number";
+        type Params = i64;
+        type Result = i64;
+    }
+
+    fn registry() -> RpcRegistry {
+        let mut registry = RpcRegistry::new("math");
+        registry.register_typed::<Double, _, _>(|_context, value| async move { Ok(value * 2) });
+        registry
+    }
+
+    #[tokio::test]
+    async fn typed_rpc_checks_capability_decodes_params_and_encodes_result() {
+        let registry = registry();
+        let allowed = RpcCallContext::new(&["math.read".into()]);
+        assert_eq!(
+            registry
+                .call_async_with_context("math.double", json!(21), allowed.clone())
+                .await
+                .unwrap(),
+            json!(42)
+        );
+        let invalid = registry
+            .call_async_with_context("math.double", json!("x"), allowed)
+            .await
+            .unwrap_err();
+        assert_eq!(invalid.rpc_code(), "invalid_params");
+        let denied = registry
+            .call_async_with_context("math.double", json!(1), RpcCallContext::new(&[]))
+            .await
+            .unwrap_err();
+        assert_eq!(denied.rpc_code(), "capability_denied");
     }
 }

@@ -64,40 +64,68 @@ impl Drop for ManagementChangeBridge {
     }
 }
 
+/// Resolves the Bilibili management service that is live right now.
+pub type BilibiliResolver = Arc<dyn Fn() -> Option<Arc<dyn BilibiliManagementApi>> + Send + Sync>;
+
+/// How long a bridge waits before re-subscribing after its owner went away (reload, disable).
+const RESUBSCRIBE_DELAY: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Forwards owner change streams to `<owner>.changed` and `platforms.changed`.
+///
+/// A stream ends when its owner reloads or is disabled; each bridge then re-subscribes against
+/// the owner that is live at that moment, so the console keeps receiving changes across reloads.
+/// `qq` and `sandbox` must resolve their owner per call (the console bridges do).
 pub fn attach_management_changed_bridges(
     host: &MutsukiWebHost,
     qq: Option<&Arc<dyn QqBotManagementApi>>,
-    bilibili: Option<&Arc<dyn BilibiliManagementApi>>,
+    bilibili: Option<BilibiliResolver>,
     sandbox: Option<&Arc<dyn SandboxApi>>,
 ) -> Option<ManagementChangeBridge> {
     let bridge = host.bridge()?.clone();
     let mut tasks = Vec::new();
-    if let Some(mut changes) = qq.and_then(|api| api.subscribe_changes()) {
+    if let Some(qq) = qq.cloned() {
         let bridge = bridge.clone();
         tasks.push(tokio::spawn(async move {
-            while let Some(event) = changes.changed().await {
-                if let Ok(payload) = serde_json::to_value(event) {
-                    let _ = bridge.publish_event("qq.changed", payload);
+            loop {
+                if let Some(mut changes) = qq.subscribe_changes() {
+                    while let Some(event) = changes.changed().await {
+                        if let Ok(payload) = serde_json::to_value(event) {
+                            let _ = bridge.publish_event("qq.changed", payload);
+                            let _ = bridge.publish_event("platforms.changed", json!({}));
+                        }
+                    }
                 }
+                tokio::time::sleep(RESUBSCRIBE_DELAY).await;
             }
         }));
     }
-    if let Some(mut changes) = bilibili.and_then(|api| api.subscribe_changes()) {
+    if let Some(resolve) = bilibili {
         let bridge = bridge.clone();
         tasks.push(tokio::spawn(async move {
-            while let Some(event) = changes.changed().await {
-                if let Ok(payload) = serde_json::to_value(event) {
-                    let _ = bridge.publish_event("bilibili.changed", payload);
+            loop {
+                if let Some(mut changes) = resolve().and_then(|api| api.subscribe_changes()) {
+                    while let Some(event) = changes.changed().await {
+                        if let Ok(payload) = serde_json::to_value(event) {
+                            let _ = bridge.publish_event("bilibili.changed", payload);
+                            let _ = bridge.publish_event("platforms.changed", json!({}));
+                        }
+                    }
                 }
+                tokio::time::sleep(RESUBSCRIBE_DELAY).await;
             }
         }));
     }
-    if let Some(mut changes) = sandbox.and_then(|api| api.subscribe_changes()) {
+    if let Some(sandbox) = sandbox.cloned() {
         tasks.push(tokio::spawn(async move {
-            while let Some(event) = changes.changed().await {
-                if let Ok(payload) = serde_json::to_value(event) {
-                    let _ = bridge.publish_event("sandbox.changed", payload);
+            loop {
+                if let Some(mut changes) = sandbox.subscribe_changes() {
+                    while let Some(event) = changes.changed().await {
+                        if let Ok(payload) = serde_json::to_value(event) {
+                            let _ = bridge.publish_event("sandbox.changed", payload);
+                        }
+                    }
                 }
+                tokio::time::sleep(RESUBSCRIBE_DELAY).await;
             }
         }));
     }

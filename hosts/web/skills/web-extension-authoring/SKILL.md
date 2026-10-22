@@ -14,7 +14,13 @@ package and is built by `@mutsuki/web-build`.
 - `crates/<owner>/web/package.json`: private ES module, `catalog:` for vue/vue-router/pinia/
   vitest, `workspace:*` for `@mutsuki/web-sdk`/`@mutsuki/ui`; `tsconfig.json` extends the
   root `tsconfig.web.base.json`. It is a root pnpm workspace member automatically.
-- `src/contract.ts` declares the RPCs by hand until the host generates them (B7):
+- RPCs are declared once in Rust as `TypedRpc`/`TypedTopic` markers (pure DTO crate, e.g.
+  `mutsuki-bot-console-protocol`) and registered with `RpcRegistry::register_typed`, which enforces
+  the capability and decodes/encodes typed values (`invalid_params` on mismatch). The extension crate
+  exports `ts_contract()` built with `mutsuki_web_protocol::ts_contract_module`, and a
+  `tests/ts_contract.rs` keeps the committed `web/src/generated/<ns>.contract.gen.ts` current
+  (`MUTSUKI_BLESS_TS_CONTRACT=1 cargo test -p <crate>`). DTO shapes live in hand-written
+  `web/src/types.ts` next to it. Extensions not migrated yet keep a hand-written `src/contract.ts`:
   `defineRpc({ namespace, methods: { list: query<P, R>({ capability }), save: mutation<P, R>() } })`
   plus `topic<T>(name, capability)` for events. Namespace = the Rust registry namespace.
 - `src/index.ts` default-exports `defineExtension({ id, setup(ctx) })`. `id` is the owner id

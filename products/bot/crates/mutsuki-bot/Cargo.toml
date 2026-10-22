@@ -17,6 +17,7 @@ default = ["web-console"]
 web-console = ["dep:mutsuki-bot-web-host-integration", "dep:mutsuki-web-host"]
 
 [dependencies]
+mutsuki-bot-management.workspace = true
 mutsuki-distributed-contracts.workspace = true
 mutsuki-distributed-control-client.workspace = true
 mutsuki-service-config.workspace = true

@@ -72,6 +72,7 @@ Adapter/Gateway。它不拥有 Core 调度、Host 生命周期、Agent 能力或
 | crate | 职责 |
 | --- | --- |
 | `mutsuki-bot-protocol` | 纯契约。`event/ingest`、`command/handle` 是 envelope ID，不是 runner；平台中立的 `BotConversationRef`、`BotAdapterDescriptor`/`BotAdapterDirectory` 与 `BotAdapterCapabilities` |
+| `mutsuki-bot-console-protocol` | 控制台 WebExtension 的纯 DTO 与 `TypedRpc` 标记（如 `platforms`）；前端契约由其生成 |
 | `mutsuki-bot-qq-protocol` | QQ 平台契约：`mutsuki.bot.qqbot.*` 协议 ID、`qqbot.openapi.*` 错误码、`QqBotCapabilityMatrix`；业务插件不得依赖 |
 | `mutsuki-bot-conversation` | 会话、ICL 与 persona 的 store trait；plugin 包只做 Runner |
 | `mutsuki-bot-interaction` / `mutsuki-bot-delivery` | waiter / delivery 服务与 repository；`DeliveryGateway` 用 `BotTarget` |
@@ -81,6 +82,7 @@ Adapter/Gateway。它不拥有 Core 调度、Host 生命周期、Agent 能力或
 | `mutsuki-bot-service-host-integration` | 平台中立的显式 Host 装配面（Flow Router、Command、Interaction、Sandbox、Agent 链、恢复源、控制台桥）；不依赖任何聊天适配器或 B 站包，禁止再往里加业务 Runner |
 | `mutsuki-bot-qq-service-host-integration` / `mutsuki-bot-bilibili-service-host-integration` | 各平台 owner 的 Host 装配（configured catalog、EventSource、健康映射、凭据存储）；产品合并 `configured_qq_plugin_catalog` / `configured_bilibili_plugin_catalog` |
 | `mutsuki-bot-web-host-integration` | Bot 包提供的 WebHost 装配 helper，产品可选启用 |
+| `mutsuki-bot-web-extension-platforms` | 通用平台控制台：按 `PlatformConsoleProvider`（`mutsuki-bot-management`）逐次解析在线适配器，新平台只需实现 provider，不新增页面 |
 
 ## 验证
 

@@ -107,6 +107,7 @@ name = "protocol-packages-do-not-depend-on-execution-layers"
 source_package_prefixes = ["mutsuki-protocol-"]
 source_packages = [
   "mutsuki-agent-contracts",
+  "mutsuki-bot-console-protocol",
   "mutsuki-bot-protocol",
   "mutsuki-bot-qq-protocol",
   "mutsuki-distributed-contracts",

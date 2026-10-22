@@ -136,3 +136,20 @@ order the changes land on `main`.
 - `SingleInstanceProduct` gains `product` (the loaded `mutsuki.product` document);
   `validate_product_distribution` and `prepare_product_distribution` are the document-based
   counterparts of the TOML-file functions.
+
+## Typed console contracts and the platforms surface
+
+- `mutsuki-web-protocol` adds `TypedRpc`/`TypedTopic` and `ts_contract_module`;
+  `RpcRegistry::register_typed` checks the capability and decodes params before the handler runs,
+  reporting `capability_denied`, `invalid_params` or the handler's own `ExtensionError::Rpc` code.
+- New `mutsuki-bot-console-protocol` (pure DTOs) and `mutsuki-bot-web-extension-platforms`
+  (`mutsuki.bot.platforms`, namespace `platforms`: `adapters.list`, `accounts.list`,
+  `accounts.action`, topic `platforms.changed`). Adapters plug in through
+  `mutsuki_bot_management::PlatformConsoleProvider`; QQ and Bilibili providers ship in
+  `mutsuki-bot-management`. Providers are resolved on every call, so adapters enabled or
+  reloaded after the console started appear without a restart.
+- `build_console_host` and `build_console_host_with_agent` are replaced by
+  `build_bot_console(config, secrets, control, token, paths, BotConsoleServices { .. })`.
+- `attach_management_changed_bridges` takes a `BilibiliResolver` and re-subscribes every owner
+  stream after it ends, so `qq.changed`, `bilibili.changed` and `sandbox.changed` keep firing
+  across owner reloads; QQ and Bilibili changes also publish `platforms.changed`.

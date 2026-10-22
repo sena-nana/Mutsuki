@@ -10,8 +10,8 @@ use futures::{SinkExt, StreamExt};
 use mutsuki_bot_sandbox::{SandboxApi, SandboxService};
 use mutsuki_bot_state_db::BotStateDbRepository;
 use mutsuki_bot_web_host_integration::{
-    BotAgentConsoleServices, SecretKeyResolver, SecretMonitor, WebConsoleConfig, WebConsolePaths,
-    WebConsoleSecrets, build_console_host, build_console_host_with_agent, demo_config_service,
+    BotAgentConsoleServices, BotConsoleServices, SecretKeyResolver, SecretMonitor,
+    WebConsoleConfig, WebConsolePaths, WebConsoleSecrets, build_bot_console, demo_config_service,
     empty_config_service,
 };
 use mutsuki_web_extension_control::FixtureControlHandler;
@@ -33,16 +33,13 @@ async fn embedded_console_document_resolves_through_its_import_map() {
     let secrets = WebConsoleSecrets {
         auth_token: "local-dev".into(),
     };
-    let (mut host, _dirs) = build_console_host(
+    let (mut host, _dirs) = build_bot_console(
         &config,
         &secrets,
         Arc::new(FixtureControlHandler::default()),
         "local-dev",
-        None,
-        None,
         &WebConsolePaths::default(),
-        None,
-        None,
+        BotConsoleServices::default(),
     )
     .unwrap();
     host.start().await.unwrap();
@@ -106,16 +103,13 @@ async fn embedded_console_reads_overview_and_control() {
     let secrets = WebConsoleSecrets {
         auth_token: "local-dev".into(),
     };
-    let (mut host, _dirs) = build_console_host(
+    let (mut host, _dirs) = build_bot_console(
         &config,
         &secrets,
         Arc::new(FixtureControlHandler::default()),
         "local-dev",
-        None,
-        None,
         &WebConsolePaths::default(),
-        None,
-        None,
+        BotConsoleServices::default(),
     )
     .unwrap();
     host.start().await.unwrap();
@@ -169,19 +163,16 @@ async fn embedded_console_reads_live_bot_state_database() {
     let secrets = WebConsoleSecrets {
         auth_token: "local-dev".into(),
     };
-    let (mut host, _dirs) = build_console_host_with_agent(
+    let (mut host, _dirs) = build_bot_console(
         &config,
         &secrets,
         Arc::new(FixtureControlHandler::default()),
         "local-dev",
-        None,
-        None,
         &WebConsolePaths::default(),
-        None,
-        None,
-        None,
-        Some(repository),
-        BotAgentConsoleServices::default(),
+        BotConsoleServices {
+            database: Some(repository),
+            ..BotConsoleServices::default()
+        },
     )
     .unwrap();
     host.start().await.unwrap();
@@ -220,16 +211,16 @@ async fn embedded_console_with_config_shell() {
     let secrets = WebConsoleSecrets {
         auth_token: "local-dev".into(),
     };
-    let (mut host, _dirs) = build_console_host(
+    let (mut host, _dirs) = build_bot_console(
         &config,
         &secrets,
         Arc::new(FixtureControlHandler::default()),
         "local-dev",
-        Some(empty_config_service()),
-        None,
         &WebConsolePaths::default(),
-        None,
-        None,
+        BotConsoleServices {
+            config: Some(empty_config_service()),
+            ..BotConsoleServices::default()
+        },
     )
     .unwrap();
     host.start().await.unwrap();
@@ -271,16 +262,16 @@ async fn embedded_console_demo_config_provider_is_usable() {
     let secrets = WebConsoleSecrets {
         auth_token: "local-dev".into(),
     };
-    let (mut host, _dirs) = build_console_host(
+    let (mut host, _dirs) = build_bot_console(
         &config,
         &secrets,
         Arc::new(FixtureControlHandler::default()),
         "local-dev",
-        Some(demo_config_service()),
-        None,
         &WebConsolePaths::default(),
-        None,
-        None,
+        BotConsoleServices {
+            config: Some(demo_config_service()),
+            ..BotConsoleServices::default()
+        },
     )
     .unwrap();
     host.start().await.unwrap();
@@ -326,16 +317,13 @@ async fn embedded_console_starts_upgrade_extension_when_release_set_configured()
     let paths = WebConsolePaths {
         release_set: config.release_set.as_ref().map(std::path::PathBuf::from),
     };
-    let (mut host, _dirs) = build_console_host(
+    let (mut host, _dirs) = build_bot_console(
         &config,
         &secrets,
         Arc::new(FixtureControlHandler::default()),
         "local-dev",
-        None,
-        None,
         &paths,
-        None,
-        None,
+        BotConsoleServices::default(),
     )
     .unwrap();
     host.start().await.unwrap();
@@ -371,16 +359,16 @@ async fn embedded_console_secret_status_is_read_only() {
             values: [("WEB_CONSOLE_AUTH_TOKEN".into(), "configured".into())].into(),
         }),
     );
-    let (mut host, _dirs) = build_console_host(
+    let (mut host, _dirs) = build_bot_console(
         &config,
         &secrets,
         Arc::new(FixtureControlHandler::default()),
         "local-dev",
-        None,
-        Some(monitor),
         &WebConsolePaths::default(),
-        None,
-        None,
+        BotConsoleServices {
+            secret_monitor: Some(monitor),
+            ..BotConsoleServices::default()
+        },
     )
     .unwrap();
     host.start().await.unwrap();
@@ -458,16 +446,16 @@ async fn embedded_console_mounts_qq_management_extension() {
     let secrets = WebConsoleSecrets {
         auth_token: "local-dev".into(),
     };
-    let (mut host, dirs) = build_console_host(
+    let (mut host, dirs) = build_bot_console(
         &config,
         &secrets,
         Arc::new(FixtureControlHandler::default()),
         "local-dev",
-        None,
-        None,
         &WebConsolePaths::default(),
-        None,
-        Some(api),
+        BotConsoleServices {
+            qq: Some(api),
+            ..BotConsoleServices::default()
+        },
     )
     .unwrap();
     host.start().await.unwrap();
@@ -506,19 +494,16 @@ async fn embedded_console_serves_sandbox_panel() {
     let secrets = WebConsoleSecrets {
         auth_token: "local-dev".into(),
     };
-    let (mut host, dirs) = build_console_host_with_agent(
+    let (mut host, dirs) = build_bot_console(
         &config,
         &secrets,
         Arc::new(FixtureControlHandler::default()),
         "local-dev",
-        None,
-        None,
         &WebConsolePaths::default(),
-        None,
-        None,
-        Some(Arc::new(SandboxService::new()) as Arc<dyn SandboxApi>),
-        None,
-        BotAgentConsoleServices::default(),
+        BotConsoleServices {
+            sandbox: Some(Arc::new(SandboxService::new()) as Arc<dyn SandboxApi>),
+            ..BotConsoleServices::default()
+        },
     )
     .unwrap();
     host.start().await.unwrap();
@@ -569,21 +554,19 @@ async fn embedded_console_serves_lilia_flow_node_editor() {
     let secrets = WebConsoleSecrets {
         auth_token: "local-dev".into(),
     };
-    let (mut host, dirs) = build_console_host_with_agent(
+    let (mut host, dirs) = build_bot_console(
         &config,
         &secrets,
         Arc::new(FixtureControlHandler::default()),
         "local-dev",
-        Some(service),
-        None,
         &WebConsolePaths::default(),
-        None,
-        None,
-        None,
-        None,
-        BotAgentConsoleServices {
-            flow: Some(flow),
-            ..BotAgentConsoleServices::default()
+        BotConsoleServices {
+            config: Some(service),
+            agent: BotAgentConsoleServices {
+                flow: Some(flow),
+                ..BotAgentConsoleServices::default()
+            },
+            ..BotConsoleServices::default()
         },
     )
     .unwrap();
@@ -603,7 +586,7 @@ async fn embedded_console_serves_lilia_flow_node_editor() {
 
 #[test]
 fn embedded_console_rejects_explicit_bilibili_extension_without_service() {
-    let error = build_console_host(
+    let error = build_bot_console(
         &WebConsoleConfig {
             enabled: true,
             listen: "127.0.0.1:0".into(),
@@ -615,11 +598,8 @@ fn embedded_console_rejects_explicit_bilibili_extension_without_service() {
         },
         Arc::new(FixtureControlHandler::default()),
         "local-dev",
-        None,
-        None,
         &WebConsolePaths::default(),
-        None,
-        None,
+        BotConsoleServices::default(),
     )
     .err()
     .expect("missing management service");
@@ -632,7 +612,7 @@ fn embedded_console_rejects_explicit_bilibili_extension_without_service() {
 
 #[test]
 fn embedded_console_rejects_explicit_sandbox_extension_without_service() {
-    let error = build_console_host(
+    let error = build_bot_console(
         &WebConsoleConfig {
             enabled: true,
             listen: "127.0.0.1:0".into(),
@@ -644,11 +624,8 @@ fn embedded_console_rejects_explicit_sandbox_extension_without_service() {
         },
         Arc::new(FixtureControlHandler::default()),
         "local-dev",
-        None,
-        None,
         &WebConsolePaths::default(),
-        None,
-        None,
+        BotConsoleServices::default(),
     )
     .err()
     .expect("missing management service");
@@ -668,7 +645,7 @@ async fn product_layout_reaches_the_console_and_invalid_layouts_are_refused() {
         .push(ConsoleActivity::top("agent", "会话与 Agent", "chat", 20));
     layout.placements.insert("bot".into(), "agent".into());
     let build = |layout: ConsoleLayout| {
-        build_console_host(
+        build_bot_console(
             &WebConsoleConfig {
                 enabled: true,
                 listen: "127.0.0.1:0".into(),
@@ -680,11 +657,8 @@ async fn product_layout_reaches_the_console_and_invalid_layouts_are_refused() {
             },
             Arc::new(FixtureControlHandler::default()),
             "local-dev",
-            None,
-            None,
             &WebConsolePaths::default(),
-            None,
-            None,
+            BotConsoleServices::default(),
         )
     };
     let (mut host, _dirs) = build(layout).unwrap();

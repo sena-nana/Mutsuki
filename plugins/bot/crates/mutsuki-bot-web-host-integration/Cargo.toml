@@ -6,6 +6,7 @@ license.workspace = true
 description = "Embedded Bot admin console assembly: WebHost + control/overview/config extensions."
 
 [dependencies]
+mutsuki-bot-web-extension-platforms.workspace = true
 mutsuki-config-service = { workspace = true }
 mutsuki-bot-flow = { workspace = true }
 mutsuki-std-web-extension-config = { workspace = true }
