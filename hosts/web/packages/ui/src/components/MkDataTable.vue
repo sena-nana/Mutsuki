@@ -1,4 +1,4 @@
-<script setup lang="ts" generic="Row extends Record<string, unknown>">
+<script setup lang="ts" generic="Row extends object">
 import { computed, ref } from "vue";
 import { useUiText } from "../messages";
 import type { MkColumn } from "../types";
@@ -7,7 +7,8 @@ import type { MkColumn } from "../types";
 const props = defineProps<{
   columns: MkColumn<Row>[];
   rows: Row[];
-  rowKey: keyof Row & string;
+  /** Field holding a stable unique key. */
+  rowKey: string;
   /** Accessible table name, rendered visually hidden. */
   caption: string;
   emptyText?: string;
@@ -15,9 +16,13 @@ const props = defineProps<{
 const text = useUiText();
 const sort = ref<{ key: string; direction: "ascending" | "descending" } | null>(null);
 
+function field(row: Row, key: string): unknown {
+  return (row as Record<string, unknown>)[key];
+}
+
 function cellText(row: Row, column: MkColumn<Row>): string {
   if (column.format) return column.format(row);
-  const value = row[column.key];
+  const value = field(row, column.key);
   return value == null || value === "" ? "—" : String(value);
 }
 
@@ -28,8 +33,8 @@ const sorted = computed(() => {
   if (!column) return props.rows;
   const factor = current.direction === "ascending" ? 1 : -1;
   return [...props.rows].sort((a, b) => {
-    const left = a[column.key];
-    const right = b[column.key];
+    const left = field(a, column.key);
+    const right = field(b, column.key);
     if (typeof left === "number" && typeof right === "number") return (left - right) * factor;
     return cellText(a, column).localeCompare(cellText(b, column), "zh-CN") * factor;
   });
@@ -73,13 +78,13 @@ function toggleSort(key: string) {
         </tr>
       </thead>
       <tbody>
-        <tr v-for="row in sorted" :key="String(row[rowKey])">
+        <tr v-for="row in sorted" :key="String(field(row, rowKey))">
           <td
             v-for="column in columns"
             :key="column.key"
             :class="`mk-table__cell--${column.align ?? 'start'}`"
           >
-            <slot :name="`cell-${column.key}`" :row="row" :value="row[column.key]">
+            <slot :name="`cell-${column.key}`" :row="row" :value="field(row, column.key)">
               {{ cellText(row, column) }}
             </slot>
           </td>

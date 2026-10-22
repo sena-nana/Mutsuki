@@ -1,0 +1,29 @@
+{
+  "name": "@mutsuki/web-ext-diagnostics",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Diagnostics pages over the Control API, including the RuntimeEvent timeline.",
+  "scripts": {
+    "typecheck": "vue-tsc --noEmit",
+    "build": "mutsuki-web-build build src/index.ts browser --no-manifest",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@mutsuki/ui": "workspace:*",
+    "@mutsuki/web-sdk": "workspace:*"
+  },
+  "peerDependencies": {
+    "vue": "catalog:"
+  },
+  "devDependencies": {
+    "@mutsuki/web-build": "workspace:*",
+    "@vitejs/plugin-vue": "catalog:",
+    "@vue/test-utils": "catalog:",
+    "happy-dom": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "vue": "catalog:",
+    "vue-tsc": "catalog:"
+  }
+}

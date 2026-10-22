@@ -18,7 +18,15 @@ package and is built by `@mutsuki/web-build`.
   `defineRpc({ namespace, methods: { list: query<P, R>({ capability }), save: mutation<P, R>() } })`
   plus `topic<T>(name, capability)` for events. Namespace = the Rust registry namespace.
 - `src/index.ts` default-exports `defineExtension({ id, setup(ctx) })`. `id` is the owner id
-  (`mutsuki.<owner>.<surface>`). Only bare imports of the shared runtime are allowed.
+  (`mutsuki.<owner>.<surface>`, same as the Rust `PLUGIN_ID`). Only bare imports of the shared
+  runtime are allowed.
+- Build with `mutsuki-web-build build src/index.ts browser --no-manifest`; commit `browser/`.
+  The Rust crate `include_str!`s `web/browser/index.js` (and `index.css` if any) and derives the
+  manifest itself, so there is one source of truth for capabilities.
+- The RPC namespace is `WebExtension::namespace()` in Rust (defaults to the id). A qualified id
+  keeps a short namespace (`mutsuki.web.diagnostics` → `control`); two extensions cannot share
+  one namespace. Pages registered by a migrated extension keep their old page ids so saved
+  routes keep working.
 
 ## Shell contract
 
@@ -53,8 +61,9 @@ package and is built by `@mutsuki/web-build`.
 
 ## Text and formatting
 
-- All copy goes through `defineMessages({ "zh-CN": { … } })` + `useI18n().t("key", params)`;
-  register with `i18n.extend(namespace, messages)`. Locales must define identical keys.
+- All copy goes through `defineMessages({ "zh-CN": { … } })`; components read it with
+  `useMessages(messages).t("key", params)` (follows the shell locale, keys checked at compile
+  time). Locales must define identical keys.
 - Use `formatDateTime`/`formatRelativeTime`/`formatDuration`/`formatBytes`, not ad-hoc math.
 
 ## Budgets

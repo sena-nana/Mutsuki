@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,7 +33,7 @@ describe("buildExtension", () => {
     expect(result.assets.map((asset) => asset.path).sort()).toEqual(["index.css", "index.js"]);
     const source = await readFile(result.entryFile, "utf8");
     expect(await importSpecifiers(source)).toEqual(["vue"]);
-    const manifest = JSON.parse(await readFile(result.manifestPath, "utf8"));
+    const manifest = JSON.parse(await readFile(result.manifestPath!, "utf8"));
     expect(manifest).toMatchObject({
       manifest_version: 1,
       id: "mutsuki.fixture",
@@ -42,6 +42,19 @@ describe("buildExtension", () => {
       capabilities: ["runtime.read"],
     });
     expect(manifest.assets[0].content_hash).toMatch(/^sha256:[0-9a-f]{64}$/);
+  });
+
+  test("leaves the manifest to an embedding crate when asked", async () => {
+    const outDir = await tempDir();
+    const result = await buildExtension({
+      entry: path.join(fixtures, "ok/index.ts"),
+      outDir,
+      extensionId: "mutsuki.fixture",
+      version: "1.2.3",
+      writeManifest: false,
+    });
+    expect(result.manifestPath).toBeNull();
+    expect((await readdir(outDir)).sort()).toEqual(["index.css", "index.js"]);
   });
 
   test("refuses node modules and raw colors", async () => {

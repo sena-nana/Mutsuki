@@ -29,7 +29,9 @@ use mutsuki_web_extension_control::CAPABILITY_RUNTIME_READ;
 use mutsuki_web_protocol::{AssetEntry, ExtensionManifest, JsonValue, WebFrontendAssets};
 use serde_json::{Value, json};
 
-pub const PLUGIN_ID: &str = "upgrade";
+pub const PLUGIN_ID: &str = "mutsuki.web.upgrade";
+/// RPC namespace (`upgrade.*`); the extension id is qualified, the namespace stays short.
+pub const RPC_NAMESPACE: &str = "upgrade";
 pub const PLUGIN_VERSION: &str = "0.1.0";
 
 pub struct UpgradeWebExtension {
@@ -75,6 +77,10 @@ impl WebExtension for UpgradeWebExtension {
                 .map(|assets| assets.manifest.assets)
                 .unwrap_or_default(),
         )
+    }
+
+    fn namespace(&self) -> String {
+        RPC_NAMESPACE.into()
     }
 
     fn frontend_assets(&self) -> Option<WebFrontendAssets> {
@@ -246,7 +252,8 @@ fn manifest(assets: Vec<AssetEntry>) -> ExtensionManifest {
     .build(assets)
 }
 
+/// Writes the Vue page built from `web/` (`@mutsuki/web-ext-upgrade`) and its manifest.
 pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::Error> {
-    let js = include_str!("../assets/index.js");
+    let js = include_str!("../web/browser/index.js");
     materialize_bundled_assets(out_dir, manifest, &[("index.js", js.as_bytes())])
 }

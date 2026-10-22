@@ -124,3 +124,24 @@ export function useI18n<T extends MessageTree = MessageTree>(): I18n<T> {
   fallback ??= createI18n();
   return fallback as unknown as I18n<T>;
 }
+
+export interface ScopedMessages<T extends MessageTree> {
+  t(key: MessageKey<T>, params?: Record<string, string | number>): string;
+}
+
+/**
+ * An extension's own copy, keyed without a namespace and following the shell's current locale.
+ * Keys are checked at compile time against `messages`.
+ */
+export function useMessages<T extends MessageTree>(messages: LocaleMessages<T>): ScopedMessages<T> {
+  const { locale } = useI18n();
+  const catalogs = new Map(
+    SUPPORTED_LOCALES.map((code) => [code, flatten(messages[code] as MessageTree)] as const),
+  );
+  return {
+    t(key, params) {
+      const template = catalogs.get(locale.value)?.get(key) ?? catalogs.get(DEFAULT_LOCALE)?.get(key);
+      return template === undefined ? key : interpolate(template, params);
+    },
+  };
+}

@@ -520,8 +520,9 @@ fn manifest(assets: Vec<AssetEntry>) -> ExtensionManifest {
     .build(assets)
 }
 
-/// Writes the shared trajectory projector/view used by Agent and Tasks pages.
-pub fn materialize_trajectory_assets(out_dir: &Path) -> Result<(), std::io::Error> {
+/// Writes the trajectory projector/view the Agent pages import by relative path. The Tasks
+/// page's `RuntimeEvent` timeline now ships inside the diagnostics extension.
+fn materialize_trajectory_assets(out_dir: &Path) -> Result<(), std::io::Error> {
     std::fs::create_dir_all(out_dir)?;
     std::fs::write(
         out_dir.join("trajectory-model.js"),

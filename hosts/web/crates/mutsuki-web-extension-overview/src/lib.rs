@@ -21,7 +21,9 @@ use mutsuki_web_extension_control::{CAPABILITY_RUNTIME_READ, ControlRpcCaller};
 use mutsuki_web_protocol::{AssetEntry, ExtensionManifest, WebFrontendAssets};
 use serde_json::{Value, json};
 
-pub const PLUGIN_ID: &str = "overview";
+pub const PLUGIN_ID: &str = "mutsuki.web.overview";
+/// RPC namespace (`overview.*`).
+pub const RPC_NAMESPACE: &str = "overview";
 pub const PLUGIN_VERSION: &str = "0.1.0";
 
 #[derive(Clone)]
@@ -107,6 +109,10 @@ impl WebExtension for OverviewWebExtension {
         )
     }
 
+    fn namespace(&self) -> String {
+        RPC_NAMESPACE.into()
+    }
+
     fn frontend_assets(&self) -> Option<WebFrontendAssets> {
         self.assets_root.resolve(manifest_for)
     }
@@ -145,7 +151,8 @@ fn manifest_for(assets: Vec<AssetEntry>) -> ExtensionManifest {
 }
 
 pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::Error> {
-    // The design-system stylesheet is part of the shared runtime the shell links once.
-    let js = include_str!("../assets/index.js");
+    // Built from `web/` (`@mutsuki/web-ext-overview`); the design-system stylesheet is part of
+    // the shared runtime the shell links once.
+    let js = include_str!("../web/browser/index.js");
     materialize_bundled_assets(out_dir, manifest_for, &[("index.js", js.as_bytes())])
 }

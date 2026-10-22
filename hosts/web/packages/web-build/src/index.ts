@@ -36,6 +36,11 @@ export interface BuildOptions {
   protocolVersion?: string;
   /** Overrides for the bundle gate; defaults reject any shared runtime or raw color. */
   check?: CheckOptions;
+  /**
+   * Write `manifest.json` (default). Extensions embedded by a Rust crate pass `false`: the crate
+   * derives the manifest from the bytes it embeds, so a second copy could only drift.
+   */
+  writeManifest?: boolean;
 }
 
 export interface AssetRecord {
@@ -45,7 +50,7 @@ export interface AssetRecord {
 }
 
 export interface BuildResult {
-  manifestPath: string;
+  manifestPath: string | null;
   entryFile: string;
   styles: string[];
   assets: AssetRecord[];
@@ -131,8 +136,11 @@ export async function buildExtension(options: BuildOptions): Promise<BuildResult
     assets,
     protocol_version: options.protocolVersion ?? "1.1.0",
   };
-  const manifestPath = path.join(options.outDir, "manifest.json");
-  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  let manifestPath: string | null = null;
+  if (options.writeManifest ?? true) {
+    manifestPath = path.join(options.outDir, "manifest.json");
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  }
   return {
     manifestPath,
     entryFile: path.join(options.outDir, EXTENSION_ENTRY),

@@ -41,6 +41,8 @@ impl WebExtensionContext {
 #[derive(Clone)]
 pub struct ExtensionRecord {
     pub manifest: ExtensionManifest,
+    /// RPC namespace (see [`WebExtension::namespace`]).
+    pub namespace: String,
     pub assets: Option<WebFrontendAssets>,
     pub rpc: Arc<RpcRegistry>,
     pub events: Arc<EventRegistry>,
@@ -55,7 +57,10 @@ pub struct ExtensionLoadReport {
 
 #[derive(Default)]
 pub struct ExtensionRegistry {
+    /// Keyed by extension id.
     records: HashMap<String, ExtensionRecord>,
+    /// RPC namespace → extension id.
+    namespaces: HashMap<String, String>,
     budgets: ResourceBudgets,
 }
 
@@ -63,6 +68,7 @@ impl ExtensionRegistry {
     pub fn new(budgets: ResourceBudgets) -> Self {
         Self {
             records: HashMap::new(),
+            namespaces: HashMap::new(),
             budgets,
         }
     }
@@ -79,19 +85,32 @@ impl ExtensionRegistry {
         }
 
         let manifest = extension.descriptor();
-        let mut rpc = RpcRegistry::new(manifest.id.clone());
-        let mut events = EventRegistry::new(manifest.id.clone());
+        let namespace = extension.namespace();
+        if let Some(owner) = self
+            .namespaces
+            .get(&namespace)
+            .filter(|owner| **owner != manifest.id)
+        {
+            return Err(ExtensionError::Registration(format!(
+                "namespace `{namespace}` of {} is already owned by {owner}",
+                manifest.id
+            )));
+        }
+        let mut rpc = RpcRegistry::new(namespace.clone());
+        let mut events = EventRegistry::new(namespace.clone());
         extension.register_rpc(&mut rpc)?;
         extension.register_events(&mut events)?;
 
         let record = ExtensionRecord {
             manifest: manifest.clone(),
+            namespace: namespace.clone(),
             assets: extension.frontend_assets(),
             rpc: Arc::new(rpc),
             events: Arc::new(events),
             enabled: true,
             failed: None,
         };
+        self.namespaces.insert(namespace, manifest.id.clone());
         self.records.insert(manifest.id.clone(), record.clone());
         Ok(record)
     }
@@ -115,6 +134,7 @@ impl ExtensionRegistry {
                         assets: vec![],
                         protocol_version: mutsuki_web_protocol::WEB_PROTOCOL_VERSION.into(),
                     },
+                    namespace: extension_id.to_string(),
                     assets: None,
                     rpc: Arc::new(RpcRegistry::new(extension_id)),
                     events: Arc::new(EventRegistry::new(extension_id)),
@@ -128,8 +148,8 @@ impl ExtensionRegistry {
     pub fn disable(&mut self, extension_id: &str) -> bool {
         if let Some(record) = self.records.get_mut(extension_id) {
             record.enabled = false;
-            record.rpc = Arc::new(RpcRegistry::new(extension_id));
-            record.events = Arc::new(EventRegistry::new(extension_id));
+            record.rpc = Arc::new(RpcRegistry::new(record.namespace.clone()));
+            record.events = Arc::new(EventRegistry::new(record.namespace.clone()));
             true
         } else {
             false
@@ -137,7 +157,11 @@ impl ExtensionRegistry {
     }
 
     pub fn unload(&mut self, extension_id: &str) -> bool {
-        self.records.remove(extension_id).is_some()
+        let Some(record) = self.records.remove(extension_id) else {
+            return false;
+        };
+        self.namespaces.remove(&record.namespace);
+        true
     }
 
     pub fn get(&self, extension_id: &str) -> Option<&ExtensionRecord> {
@@ -185,9 +209,13 @@ impl ExtensionRegistry {
         method: &str,
         session_capabilities: &[String],
     ) -> Result<Arc<RpcRegistry>, ExtensionError> {
-        let record = self.records.get(namespace).ok_or_else(|| {
-            ExtensionError::Registration(format!("unknown namespace: {namespace}"))
-        })?;
+        let record = self
+            .namespaces
+            .get(namespace)
+            .and_then(|id| self.records.get(id))
+            .ok_or_else(|| {
+                ExtensionError::Registration(format!("unknown namespace: {namespace}"))
+            })?;
         if !record.enabled {
             return Err(ExtensionError::Registration(format!(
                 "extension disabled: {namespace}"
@@ -258,6 +286,7 @@ mod tests {
                 assets: Vec::new(),
                 protocol_version: mutsuki_web_protocol::WEB_PROTOCOL_VERSION.into(),
             },
+            namespace: "demo".into(),
             assets: None,
             rpc: Arc::new(rpc),
             events: Arc::new(EventRegistry::new("demo")),
@@ -286,6 +315,7 @@ mod tests {
         });
         let mut registry = ExtensionRegistry::new(DEFAULT_BUDGETS);
         registry.records.insert("demo".into(), demo_record(rpc));
+        registry.namespaces.insert("demo".into(), "demo".into());
 
         let call = tokio::spawn(async move {
             registry
@@ -312,10 +342,81 @@ mod tests {
         });
         let mut registry = ExtensionRegistry::new(DEFAULT_BUDGETS);
         registry.records.insert("demo".into(), demo_record(rpc));
+        registry.namespaces.insert("demo".into(), "demo".into());
         drop(owned);
 
         assert!(weak.upgrade().is_some());
         assert!(registry.disable("demo"));
         assert!(weak.upgrade().is_none());
+    }
+
+    struct Named {
+        id: &'static str,
+        namespace: &'static str,
+    }
+
+    impl WebExtension for Named {
+        fn descriptor(&self) -> mutsuki_web_extension_api::WebExtensionDescriptor {
+            ExtensionManifest {
+                id: self.id.into(),
+                ..demo_record(RpcRegistry::new("demo")).manifest
+            }
+        }
+
+        fn namespace(&self) -> String {
+            self.namespace.into()
+        }
+
+        fn frontend_assets(&self) -> Option<WebFrontendAssets> {
+            None
+        }
+
+        fn register_rpc(&self, ctx: &mut RpcRegistry) -> Result<(), ExtensionError> {
+            ctx.register("ping", |_| Ok(JsonValue::String("pong".into())));
+            Ok(())
+        }
+
+        fn register_events(&self, _ctx: &mut EventRegistry) -> Result<(), ExtensionError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn qualified_ids_answer_on_their_short_namespace_and_namespaces_are_exclusive() {
+        let mut registry = ExtensionRegistry::new(DEFAULT_BUDGETS);
+        registry
+            .load_extension(&Named {
+                id: "mutsuki.web.diagnostics",
+                namespace: "control",
+            })
+            .unwrap();
+        assert_eq!(
+            registry
+                .call_rpc("control", "ping", JsonValue::Null, &[])
+                .unwrap(),
+            JsonValue::String("pong".into())
+        );
+        assert!(
+            registry
+                .call_rpc("mutsuki.web.diagnostics", "ping", JsonValue::Null, &[])
+                .is_err()
+        );
+        assert!(registry.get("mutsuki.web.diagnostics").is_some());
+
+        let Err(clash) = registry.load_extension(&Named {
+            id: "mutsuki.other",
+            namespace: "control",
+        }) else {
+            panic!("a second owner of `control` must be refused");
+        };
+        assert!(clash.to_string().contains("already owned"));
+
+        assert!(registry.unload("mutsuki.web.diagnostics"));
+        registry
+            .load_extension(&Named {
+                id: "mutsuki.other",
+                namespace: "control",
+            })
+            .unwrap();
     }
 }

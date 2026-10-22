@@ -83,3 +83,22 @@
 - Playwright smoke（`pnpm --filter @mutsuki/bot-console e2e`，CI `console-e2e`）基于
   `examples/embedded_console_fixture.rs`；该示例读取 `MUTSUKI_CONSOLE_FIXTURE_LISTEN`，并启用
   config（demo provider）与沙盒页。
+
+## W6 Host 侧扩展 Vue 化
+
+- `upgrade`、`overview`、`control` 三个扩展改为各自 crate 下 `web/` 的 Vue 包
+  （`@mutsuki/web-ext-{upgrade,overview,diagnostics}`），产物 `web/browser/index.js` 随源码提交并由
+  crate `include_str!`；`assets/index.js` 删除，手写资产白名单相应缩短。
+- 扩展 id 改为 `mutsuki.web.upgrade`、`mutsuki.web.overview`、`mutsuki.web.diagnostics`（原
+  `control`）。`WebExtension` 新增 `namespace()`（缺省为 id）：三者的 RPC 命名空间保持
+  `upgrade`/`overview`/`control`，`control.changed` 话题不变。同一命名空间只允许一个扩展。
+  `ExtensionRecord` 新增 `namespace` 字段。
+- 控制台 `console-options.json` 与 `ConsoleAssetDirs::page_assets` 使用新 id；挂载目录为
+  `extensions/{overview,diagnostics,upgrade}`。页面 id（`overview.page`、`control.*`、
+  `upgrade.page`）不变，已保存的路由继续有效。
+- RuntimeEvent 时间线投影迁入 diagnostics 包（`runtime-events.ts` + `RuntimeTimeline.vue`）；
+  控制台不再把 `trajectory-model.js`/`trajectory-view.js` 写到文档根或 control 目录，
+  `mutsuki_agent_web_extension::materialize_trajectory_assets` 改为 crate 私有（Agent 页仍自带）。
+- 确认/提示改用 `useConfirm`（排空、关闭服务需输入确认词），失败以 toast 呈现；不再使用原生
+  `confirm()`/`prompt()`。`@mutsuki/web-build` 新增 `--no-manifest`；SDK 新增 `useMessages`；
+  `MkDataTable` 的行类型放宽为任意对象（`rowKey: string`）。

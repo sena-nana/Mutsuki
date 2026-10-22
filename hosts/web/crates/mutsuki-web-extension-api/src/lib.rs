@@ -25,6 +25,11 @@ pub type WebExtensionDescriptor = ExtensionManifest;
 /// Backend-facing extension contract. Frontend Vue setup lives in precompiled ESM.
 pub trait WebExtension: Send + Sync {
     fn descriptor(&self) -> WebExtensionDescriptor;
+    /// RPC namespace and event-topic prefix. Defaults to the extension id; owners with a
+    /// qualified id (`mutsuki.web.diagnostics`) keep a short namespace (`control`) here.
+    fn namespace(&self) -> String {
+        self.descriptor().id
+    }
     fn frontend_assets(&self) -> Option<WebFrontendAssets>;
     fn register_rpc(&self, ctx: &mut RpcRegistry) -> Result<(), ExtensionError>;
     fn register_events(&self, ctx: &mut EventRegistry) -> Result<(), ExtensionError>;

@@ -19,6 +19,7 @@ import {
   topic,
   toRpcError,
   useI18n,
+  useMessages,
   useMutation,
   usePolling,
   useRpc,
@@ -312,6 +313,12 @@ describe("i18n", () => {
     expect(checkMessageKeys({ "zh-CN": { a: "1", b: { c: "2" } }, "en-US": { a: "1" } })).toEqual([
       "en-US:b.c",
     ]);
+  });
+
+  test("useMessages binds an extension's own catalog without global keys", () => {
+    const mounted = withRuntime(() => useMessages(messages));
+    expect(mounted.result.t("overview.uptime", { duration: "1 秒" })).toBe("已运行 1 秒");
+    mounted.unmount();
   });
 
   test("useI18n resolves the provided catalog", () => {

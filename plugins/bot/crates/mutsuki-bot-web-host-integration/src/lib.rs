@@ -35,7 +35,7 @@ pub use watch_bridge::{
 
 use mutsuki_agent_web_extension::{
     AgentConnectionManagementResolver, BotAgentWebExtension, LocalAgentManagementResolver,
-    materialize_frontend_assets as materialize_bot_agent_assets, materialize_trajectory_assets,
+    materialize_frontend_assets as materialize_bot_agent_assets,
 };
 use mutsuki_bot_flow::BotFlowRegistry;
 use mutsuki_bot_management::BilibiliManagementApi;
@@ -245,7 +245,7 @@ pub fn build_console_host_with_agent(
     let caller = ControlRpcCaller::new(control, control_token);
     let mut builder = base_builder(config, secrets, &asset_dirs);
     builder = builder.extension(
-        ControlWebExtension::new(caller.clone()).with_frontend_assets(page(CONTROL_PAGE)),
+        ControlWebExtension::new(caller.clone()).with_frontend_assets(page(DIAGNOSTICS_PAGE)),
     );
     builder = builder.extension(
         OverviewWebExtension::new(caller.clone()).with_frontend_assets(page(OVERVIEW_PAGE)),
@@ -370,10 +370,10 @@ pub(crate) fn base_builder(
         .auth_token(secrets.auth_token.clone())
 }
 
-const OVERVIEW_PAGE: &str = "overview";
-const CONTROL_PAGE: &str = "control";
+const OVERVIEW_PAGE: &str = mutsuki_web_extension_overview::PLUGIN_ID;
+const DIAGNOSTICS_PAGE: &str = mutsuki_web_extension_control::PLUGIN_ID;
 const DATABASE_PAGE: &str = "database";
-const UPGRADE_PAGE: &str = "upgrade";
+const UPGRADE_PAGE: &str = mutsuki_web_extension_upgrade::PLUGIN_ID;
 const BILIBILI_PAGE: &str = "bilibili";
 const QQ_PAGE: &str = "qq-bot";
 const SANDBOX_PAGE: &str = "sandbox";
@@ -390,32 +390,27 @@ struct ConsolePage {
     /// Directory below `extensions/` the browser imports the module from.
     mount: &'static str,
     materialize: fn(&Path) -> std::io::Result<PathBuf>,
-    /// Extra modules the page imports by relative path (Agent trajectory view).
-    with_trajectory: bool,
 }
 
 /// Always mounted, never gated.
 const BASE_PAGES: [ConsolePage; 3] = [
     ConsolePage {
         id: OVERVIEW_PAGE,
-        selection: OVERVIEW_PAGE,
+        selection: "overview",
         mount: "overview",
         materialize: materialize_overview_assets,
-        with_trajectory: false,
     },
     ConsolePage {
-        id: CONTROL_PAGE,
-        selection: CONTROL_PAGE,
-        mount: "control",
+        id: DIAGNOSTICS_PAGE,
+        selection: "diagnostics",
+        mount: "diagnostics",
         materialize: materialize_control_assets,
-        with_trajectory: true,
     },
     ConsolePage {
         id: DATABASE_PAGE,
         selection: DATABASE_PAGE,
         mount: "database",
         materialize: materialize_database_assets,
-        with_trajectory: false,
     },
 ];
 
@@ -427,49 +422,42 @@ const OPTIONAL_PAGES: [ConsolePage; 7] = [
         selection: "upgrade",
         mount: "upgrade",
         materialize: materialize_upgrade_assets,
-        with_trajectory: false,
     },
     ConsolePage {
         id: BILIBILI_PAGE,
         selection: "bilibili",
         mount: "bilibili",
         materialize: materialize_bilibili_assets,
-        with_trajectory: false,
     },
     ConsolePage {
         id: QQ_PAGE,
         selection: "qq",
         mount: "qq-bot",
         materialize: materialize_qq_assets,
-        with_trajectory: false,
     },
     ConsolePage {
         id: SANDBOX_PAGE,
         selection: "sandbox",
         mount: "sandbox",
         materialize: materialize_sandbox_assets,
-        with_trajectory: false,
     },
     ConsolePage {
         id: AGENT_PAGE,
         selection: "agent",
         mount: "bot-agent",
         materialize: materialize_bot_agent_assets,
-        with_trajectory: false,
     },
     ConsolePage {
         id: FLOW_PAGE,
         selection: "bot-flow-editor",
         mount: "bot-flow",
         materialize: materialize_bot_flow_assets,
-        with_trajectory: false,
     },
     ConsolePage {
         id: CONFIG_PAGE,
         selection: "config",
         mount: "config",
         materialize: materialize_config_assets,
-        with_trajectory: false,
     },
 ];
 
@@ -506,9 +494,6 @@ impl ConsoleAssetDirs {
         for page in selected {
             let dir = tempfile::tempdir().map_err(io_error)?;
             let assets = (page.materialize)(dir.path()).map_err(io_error)?;
-            if page.with_trajectory {
-                materialize_trajectory_assets(&assets).map_err(io_error)?;
-            }
             copy_dir(
                 &assets,
                 &document.path().join("extensions").join(page.mount),
@@ -520,8 +505,6 @@ impl ConsoleAssetDirs {
                 _dir: dir,
             });
         }
-        // Agent trajectory modules are imported from the document root as well.
-        materialize_trajectory_assets(document.path()).map_err(io_error)?;
         materialize_console_shell(document.path(), optional, layout).map_err(io_error)?;
         Ok(Self {
             document,
@@ -726,8 +709,8 @@ mod owner_console_tests {
         assert_eq!(
             extension_ids(&dirs),
             [
-                "overview",
-                "control",
+                "mutsuki.web.overview",
+                "mutsuki.web.diagnostics",
                 "database",
                 "bot-agent",
                 "bot-flow-editor"
@@ -739,10 +722,19 @@ mod owner_console_tests {
         let root = dirs.document_root();
         assert!(!root.join("extensions/bot-agent").exists());
         assert!(!root.join("extensions/bot-flow").exists());
-        assert!(root.join("trajectory-model.js").is_file());
-        assert!(root.join("trajectory-view.js").is_file());
+        // The RuntimeEvent timeline is bundled into the diagnostics page; nothing is staged
+        // at the document root for it any more.
+        assert!(!root.join("trajectory-model.js").exists());
+        assert!(root.join("extensions/diagnostics/index.js").is_file());
         assert!(root.join("extensions/database/index.js").is_file());
-        assert_eq!(extension_ids(&dirs), ["overview", "control", "database"]);
+        assert_eq!(
+            extension_ids(&dirs),
+            [
+                "mutsuki.web.overview",
+                "mutsuki.web.diagnostics",
+                "database"
+            ]
+        );
         assert!(dirs.page_assets(AGENT_PAGE).is_none());
     }
 

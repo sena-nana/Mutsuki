@@ -31,7 +31,10 @@ use mutsuki_web_protocol::{AssetEntry, ExtensionManifest, WebFrontendAssets};
 use serde::Deserialize;
 use serde_json::Value;
 
-pub const PLUGIN_ID: &str = "control";
+pub const PLUGIN_ID: &str = "mutsuki.web.diagnostics";
+/// RPC namespace (`control.*`): it proxies the ServiceHost Control API, which other pages and
+/// bridges also address (`control.changed`), so it keeps its short name.
+pub const RPC_NAMESPACE: &str = "control";
 pub const PLUGIN_VERSION: &str = "0.1.0";
 pub const CAPABILITY_RUNTIME_READ: &str = "runtime.read";
 pub const CAPABILITY_RUNTIME_WRITE: &str = "runtime.write";
@@ -288,6 +291,10 @@ impl WebExtension for ControlWebExtension {
         )
     }
 
+    fn namespace(&self) -> String {
+        RPC_NAMESPACE.into()
+    }
+
     fn frontend_assets(&self) -> Option<WebFrontendAssets> {
         self.assets_root.resolve(manifest)
     }
@@ -376,8 +383,10 @@ fn manifest(assets: Vec<AssetEntry>) -> ExtensionManifest {
     .build(assets)
 }
 
+/// Writes the diagnostics pages built from `web/` (`@mutsuki/web-ext-diagnostics`), including
+/// the RuntimeEvent timeline, and their manifest.
 pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::Error> {
-    let js = include_str!("../assets/index.js");
+    let js = include_str!("../web/browser/index.js");
     materialize_bundled_assets(out_dir, manifest, &[("index.js", js.as_bytes())])
 }
 

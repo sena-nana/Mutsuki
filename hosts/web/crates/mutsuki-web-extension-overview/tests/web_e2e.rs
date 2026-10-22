@@ -21,16 +21,10 @@ async fn start(fail_statistics: bool) -> MutsukiWebHost {
     let assets_dir = tempfile::tempdir().unwrap();
     let shell_dir = tempfile::tempdir().unwrap();
     let assets = materialize_frontend_assets(assets_dir.path()).unwrap();
+    // The page is a prebuilt Vue module: it imports the shared runtime, never bundles it.
     let frontend = std::fs::read_to_string(assets.join("index.js")).unwrap();
-    assert!(frontend.contains("overview.cards"));
-    assert!(frontend.contains("overview-cards"));
-    assert!(frontend.contains("overviewCardSpan"));
-    assert!(frontend.contains("--overview-card-col-span"));
-    assert!(frontend.contains("--overview-card-row-span"));
-    assert!(frontend.contains(r#"className = "card card--outlined""#));
-    assert!(frontend.contains(r#"aria-label", "刷新""#));
-    assert!(!frontend.contains("mountQqAccountCards"));
-    assert!(!frontend.contains("qq-bot/index.js"));
+    assert!(frontend.contains(r#"from"@mutsuki/web-sdk""#));
+    assert!(!frontend.contains("__v_isVNode"));
     std::fs::write(
         assets.join("test-shell.html"),
         "<!doctype html><title>Mutsuki Console</title><div id=app></div>",

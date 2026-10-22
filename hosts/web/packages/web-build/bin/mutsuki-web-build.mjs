@@ -3,7 +3,9 @@ import { buildExtension, checkBundle, createViteHmrConfig, formatViolations } fr
 import path from "node:path";
 import { writeFile } from "node:fs/promises";
 
-const [command, ...rest] = process.argv.slice(2);
+const [command, ...args] = process.argv.slice(2);
+const flags = new Set(args.filter((arg) => arg.startsWith("--")));
+const rest = args.filter((arg) => !arg.startsWith("--"));
 
 function list(value) {
   return (value ?? "")
@@ -22,6 +24,7 @@ async function main() {
       extensionId: process.env.MUTSUKI_EXTENSION_ID ?? "mutsuki.example.web",
       version: process.env.MUTSUKI_EXTENSION_VERSION ?? "0.1.0",
       capabilities: list(process.env.MUTSUKI_EXTENSION_CAPABILITIES),
+      writeManifest: !flags.has("--no-manifest"),
     });
     console.log(JSON.stringify(result, null, 2));
     return;
@@ -51,7 +54,7 @@ async function main() {
   }
 
   console.log(`Usage:
-  mutsuki-web-build build [entry] [outDir]
+  mutsuki-web-build build [entry] [outDir] [--no-manifest]
   mutsuki-web-build check [outDir]
   MUTSUKI_WEB_HMR=1 mutsuki-web-build dev [entry] [viteConfigOut]
 

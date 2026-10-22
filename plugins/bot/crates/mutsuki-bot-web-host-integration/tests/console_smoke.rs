@@ -76,13 +76,12 @@ async fn embedded_console_document_resolves_through_its_import_map() {
     assert_eq!(document.options["homePageId"], "overview.page");
     assert_eq!(
         document.extension_ids(),
-        ["overview", "control", "database"]
+        [
+            "mutsuki.web.overview",
+            "mutsuki.web.diagnostics",
+            "database"
+        ]
     );
-
-    // Agent trajectory modules stay importable from the document root and the control page.
-    for path in ["/trajectory-model.js", "/trajectory-view.js"] {
-        assert!(!http_get_body(&addr, path).await.is_empty());
-    }
 
     // Fonts are host-served next to the document.
     for weight in ["400", "500", "600", "700"] {

@@ -444,9 +444,6 @@ PNPM_WORKSPACE_EXCEPTIONS = frozenset({"hosts/tauri"})
 # each Vue migration deletes its entry, and a new hand-written asset fails the check.
 HANDWRITTEN_WEB_ASSETS = frozenset(
     {
-        "hosts/web/crates/mutsuki-web-extension-control/assets/index.js",
-        "hosts/web/crates/mutsuki-web-extension-overview/assets/index.js",
-        "hosts/web/crates/mutsuki-web-extension-upgrade/assets/index.js",
         "kits/agent/crates/mutsuki-agent-web-extension/assets/index.js",
         "kits/agent/crates/mutsuki-agent-web-extension/assets/trajectory-model.js",
         "kits/agent/crates/mutsuki-agent-web-extension/assets/trajectory-view.js",

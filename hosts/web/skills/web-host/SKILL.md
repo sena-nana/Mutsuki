@@ -32,6 +32,9 @@ Use for `crates/mutsuki-web-{host,protocol,bridge,extension,recovery}`.
 ## Rules
 
 - Validate extension manifest version, protocol compatibility, entry, and content hashes.
+- Records are keyed by extension id; RPC/topic routing goes through `WebExtension::namespace()`
+  (default: the id). A namespace has exactly one owner; a second extension claiming it fails to
+  load.
 - Isolate setup failures; dispose registrations on unload/disable.
 - Event fanout uses bounded queues with drop metrics; idle sockets must not busy-poll.
 - Missing config/capability/revision fails structured.
