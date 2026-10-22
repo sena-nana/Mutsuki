@@ -97,8 +97,8 @@ Console 的库依赖。
 - `mutsuki-plugin-bot-agent`: explicit QQ-to-AgentKit bridge with durable conversation/session
   handling and production configured factory `mutsuki.plugin.bot.agent`. Its config stores only
   `connection_id`; AgentKit supplies the selected `agent_connection:<id>`.
-- `mutsuki-agent-web-extension`: authenticated Agent connection management only; event matching
-  is edited in the Flow page.
+- `mutsuki-agent-web-extension`: authenticated Agent console (sessions, approvals, connections);
+  event matching is edited in the Flow page.
 - `mutsuki-bot-sandbox`: QQ conversation sandbox with `BotStateDb` history. Simulate mode is a
   Koishi-style closed loop through Bot Flow: the operator picks a virtual-user identity and
   sends into Flow; live mode projects real inbound events and sends as the bot.

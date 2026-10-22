@@ -41,6 +41,9 @@ package and is built by `@mutsuki/web-build`.
   never calls `ctx.activities.register` (unknown ids land in the shell's failures panel).
 - Register a Vue component as `PageRegistration.component`; plain `{ mount }` objects still work
   through `legacyMount` until W11. Each page renders inside an `ExtensionBoundary`.
+- Platform adapters that declare `detail_panels` get their extension's slot
+  `platform.detail:<platform>` rendered under each account on the platforms page, with
+  `{ adapter, account }` props; account-wide actions belong in the adapter's `account_actions`.
 - Header actions teleport into `#mk-page-actions`; the shell owns title, skip link, landmarks and
   the connection live region.
 
@@ -62,6 +65,8 @@ package and is built by `@mutsuki/web-build`.
   fail the build). `MkAsync` renders a `useRpc` result's loading/error/empty/data states.
 - Confirm destructive actions with `useConfirm({ danger: true, requireText })`, ask with
   `usePrompt`, report with `useToast`; never `window.confirm/prompt/alert` or `innerHTML`.
+- Event/trajectory timelines use `MkEventLedger` (grouping, running rows, inspector) over the
+  owner's own projection into `MkLedgerRecord`s.
 - Icon-only controls need a label (`MkIconButton label`); inputs live in `MkField` or carry
   `label`; secrets use `MkSecretInput` and are never read back.
 

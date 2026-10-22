@@ -354,7 +354,7 @@ async fn web_login_stays_available_when_subscription_management_is_disabled() {
 async fn login_poll_requires_runtime_write_capability() {
     let api = Arc::new(Api::default());
     let extension = BilibiliWebExtension::new(api);
-    let mut registry = RpcRegistry::new(PLUGIN_ID);
+    let mut registry = RpcRegistry::new(RPC_NAMESPACE);
     extension.register_rpc(&mut registry).unwrap();
 
     let error = registry
@@ -403,7 +403,7 @@ async fn rpc(address: &str, method: &str, params: Value) -> Result<Value, String
         .send(Message::Binary(
             WireMessage::Rpc(RpcRequest {
                 id: Uuid::new_v4(),
-                namespace: PLUGIN_ID.into(),
+                namespace: RPC_NAMESPACE.into(),
                 method: method.into(),
                 params,
             })

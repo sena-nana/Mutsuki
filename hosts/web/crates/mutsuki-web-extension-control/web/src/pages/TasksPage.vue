@@ -1,12 +1,11 @@
 <script setup lang="ts">
-import { MkAsync, MkButton, MkCard, MkDataTable, MkKeyValue } from "@mutsuki/ui";
+import { MkAsync, MkButton, MkCard, MkDataTable, MkEventLedger, MkKeyValue, type MkLedgerRecord } from "@mutsuki/ui";
 import { callRpc, toRpcError, useMessages, useMutsukiRuntime } from "@mutsuki/web-sdk";
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from "vue";
 
 import { useControlAction, useControlQuery } from "../composables";
 import { controlApi, type RuntimeEvent, type TaskEntry } from "../contract";
 import { messages } from "../messages";
-import RuntimeTimeline from "../RuntimeTimeline.vue";
 import {
   EVENT_PAGE_LIMIT,
   EVENT_WINDOW_LIMIT,
@@ -105,8 +104,10 @@ async function loadOlder() {
   }
 }
 
-async function inspect(record: TimelineRecord) {
-  return events.value.filter((event) => record.sequences.includes(sequenceOf(event) ?? -1));
+/** Raw events behind one record: its sequences are the runtime-event projection's own. */
+async function inspect(record: MkLedgerRecord) {
+  const sequences = (record as TimelineRecord).sequences ?? [];
+  return events.value.filter((event) => sequences.includes(sequenceOf(event) ?? -1));
 }
 
 watch(() => tasks.data.value, () => void loadLatest(), { immediate: false });
@@ -154,7 +155,7 @@ function cancel(task: TaskEntry) {
     <MkCard :title="t('tasks.timeline')">
       <p class="muted">{{ t("tasks.timelineHint") }}</p>
       <p v-if="timeline.error" class="err-text" role="alert">{{ timeline.error }}</p>
-      <RuntimeTimeline
+      <MkEventLedger
         :records="projection.records"
         :groups="projection.groups"
         :loading="timeline.loading"
@@ -162,7 +163,7 @@ function cancel(task: TaskEntry) {
         :has-older="hasOlder"
         :lost="timeline.lost"
         :truncated="timeline.truncated"
-        :empty-text="t('timeline.empty')"
+        :empty-text="t('tasks.timelineEmpty')"
         :inspect="inspect"
         @older="loadOlder"
       />

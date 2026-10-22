@@ -118,3 +118,26 @@
   回退方案）；账号管理迁到平台账号页。QQ 管理错误改为 `ExtensionError::Rpc { code, message }`，
   客户端按 `qq.owner_unavailable` 等 code 分支，不再解析 JSON 文本。
 - `@mutsuki/web-sdk/testing` 的 `FakeHandler` 返回值放宽为 `unknown`。
+
+## W8 Agent 与 B 站
+
+- `@mutsuki/ui` 新增 `MkEventLedger`（及 `MkLedgerRecord`/`MkLedgerGroup` 类型），由 diagnostics 的
+  `RuntimeTimeline.vue` 上提而来，支持运行中状态、思考与耗时；diagnostics 任务页与 Agent 会话页共用。
+  `useUiText` 键改为点分路径（`ledger.*`）。
+- Agent 控制台改为 `@mutsuki/agent-console`（`kits/agent/crates/mutsuki-agent-web-extension/web`），
+  扩展 id `mutsuki.agent.console`，命名空间仍为 `bot-agent`。页面进入 `agent` activity：会话
+  （`bot-agent.page`，转写、审批、交互回答、事件时间线与单事件详情、取消/关闭需确认）、审批收件箱
+  （`agent.approvals`）与连接（`agent.connections`，此前未使用的 `connections.test/upsert/reconnect`
+  与 `provider.test` 现均有入口，写入与重连需确认）。Agent 事件投影移植为 TypeScript
+  （`agent-events.ts`）。
+- `assets/{index,trajectory-model,trajectory-view}.js` 与 `trajectory-model.test.mjs` 删除，
+  `materialize_trajectory_assets` 移除；`materialize_frontend_assets` 只写 `index.js` 与 manifest。
+  Agent RPC 错误改为 `ExtensionError::Rpc { code, message }`（如 `agent.owner_unavailable`、
+  `agent.session.event_not_found`），参数缺失为 `invalid_params`；客户端不再解析 JSON 文本。
+- B 站扩展改为 `@mutsuki/bot-ext-bilibili`，id `mutsuki.bot.bilibili`，命名空间与
+  `bilibili.changed` 话题不变，不再注册 `bot` activity。扫码登录与自助绑定成为平台账号页的
+  `platform.detail:bilibili` 面板（每 2 秒轮询 `login.poll` 直至 `confirmed`/`expired`）；订阅列表、
+  暂停/恢复、预览（仅 http(s) 链接可点）、删除（危险确认）与新增迁到 `automation` activity 的
+  「B 站推送」页（`bilibili.subscriptions`）。清除凭据由平台账号操作 `credential_clear` 提供。
+- 产品布局的 `placements` 清空；所有内置扩展直接登记到布局 activity。手写资产白名单删除 Agent 与
+  B 站条目。

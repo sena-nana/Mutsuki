@@ -27,7 +27,9 @@ use mutsuki_web_extension_api::{
 use mutsuki_web_protocol::{AssetEntry, ExtensionManifest, WebFrontendAssets};
 use serde_json::{Value, json};
 
-pub const PLUGIN_ID: &str = "bot-agent";
+pub const PLUGIN_ID: &str = "mutsuki.agent.console";
+/// RPC namespace kept stable for existing console callers.
+pub const RPC_NAMESPACE: &str = "bot-agent";
 pub const PLUGIN_VERSION: &str = "0.1.0";
 pub const CAPABILITY_CONNECTION_READ: &str = "agent.connection.read";
 pub const CAPABILITY_CONNECTION_WRITE: &str = "agent.connection.write";
@@ -89,6 +91,10 @@ impl WebExtension for BotAgentWebExtension {
                 .map(|assets| assets.manifest.assets)
                 .unwrap_or_default(),
         )
+    }
+
+    fn namespace(&self) -> String {
+        RPC_NAMESPACE.into()
     }
 
     fn frontend_assets(&self) -> Option<WebFrontendAssets> {
@@ -233,13 +239,9 @@ impl WebExtension for BotAgentWebExtension {
                     .into_iter()
                     .find(|event| event.sequence == sequence)
                     .ok_or_else(|| {
-                        ExtensionError::Registration(
-                            json!({
-                                "code": "agent.session.event_not_found",
-                                "message": format!("event {sequence} was not found"),
-                                "retryable": false
-                            })
-                            .to_string(),
+                        rpc_error(
+                            "agent.session.event_not_found",
+                            format!("event {sequence} was not found"),
                         )
                     })?;
                 encode_event_get(event)
@@ -424,16 +426,9 @@ fn encoded_len(value: &impl serde::Serialize) -> usize {
 fn encode_event_get(event: AgentEventEnvelope) -> Result<Value, ExtensionError> {
     let value = serde_json::to_value(&event).map_err(encode_error)?;
     if encoded_len(&value) > CONSOLE_EVENT_GET_BUDGET_BYTES {
-        return Err(ExtensionError::Registration(
-            json!({
-                "code": "agent.session.event_too_large",
-                "message": format!(
-                    "event {} exceeds console payload budget",
-                    event.sequence
-                ),
-                "retryable": false
-            })
-            .to_string(),
+        return Err(rpc_error(
+            "agent.session.event_too_large",
+            format!("event {} exceeds console payload budget", event.sequence),
         ));
     }
     Ok(value)
@@ -444,9 +439,9 @@ fn decode<T: serde::de::DeserializeOwned>(params: &Value, key: &str) -> Result<T
         params
             .get(key)
             .cloned()
-            .ok_or_else(|| ExtensionError::Registration(format!("missing {key}")))?,
+            .ok_or_else(|| invalid_params(format!("missing {key}")))?,
     )
-    .map_err(|error| ExtensionError::Registration(error.to_string()))
+    .map_err(|error| invalid_params(error.to_string()))
 }
 
 fn required_str(params: &Value, key: &str) -> Result<String, ExtensionError> {
@@ -455,7 +450,7 @@ fn required_str(params: &Value, key: &str) -> Result<String, ExtensionError> {
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| ExtensionError::Registration(format!("missing {key}")))?;
+        .ok_or_else(|| invalid_params(format!("missing {key}")))?;
     Ok(value.to_owned())
 }
 
@@ -463,38 +458,38 @@ fn required_u64(params: &Value, key: &str) -> Result<u64, ExtensionError> {
     params
         .get(key)
         .and_then(Value::as_u64)
-        .ok_or_else(|| ExtensionError::Registration(format!("missing {key}")))
+        .ok_or_else(|| invalid_params(format!("missing {key}")))
+}
+
+fn rpc_error(code: impl Into<String>, message: impl Into<String>) -> ExtensionError {
+    ExtensionError::Rpc {
+        code: code.into(),
+        message: message.into(),
+    }
+}
+
+fn invalid_params(message: String) -> ExtensionError {
+    rpc_error("invalid_params", message)
 }
 
 fn agent_error(error: AgentManagementError) -> ExtensionError {
-    ExtensionError::Registration(json!({"code": error.code, "message": error.message}).to_string())
+    rpc_error(error.code, error.message)
 }
 
 fn wire_error(error: mutsuki_agent_contracts::AgentWireError) -> ExtensionError {
-    ExtensionError::Registration(
-        json!({"code": error.code, "message": error.message, "retryable": error.retryable})
-            .to_string(),
-    )
+    rpc_error(error.code, error.message)
 }
 
 fn resolve_sessions(
     resolver: &LocalAgentManagementResolver,
 ) -> Result<Arc<dyn AgentSessionManagementApi>, ExtensionError> {
-    resolver().map_err(|message| {
-        ExtensionError::Registration(
-            json!({"code": "agent.owner_unavailable", "message": message}).to_string(),
-        )
-    })
+    resolver().map_err(|message| rpc_error("agent.owner_unavailable", message))
 }
 
 fn resolve_connections(
     resolver: &AgentConnectionManagementResolver,
 ) -> Result<Arc<dyn AgentConnectionManagementApi>, ExtensionError> {
-    resolver().map_err(|message| {
-        ExtensionError::Registration(
-            json!({"code": "agent.connection_owner_unavailable", "message": message}).to_string(),
-        )
-    })
+    resolver().map_err(|message| rpc_error("agent.connection_owner_unavailable", message))
 }
 
 fn encode_error(error: serde_json::Error) -> ExtensionError {
@@ -520,36 +515,10 @@ fn manifest(assets: Vec<AssetEntry>) -> ExtensionManifest {
     .build(assets)
 }
 
-/// Writes the trajectory projector/view the Agent pages import by relative path. The Tasks
-/// page's `RuntimeEvent` timeline now ships inside the diagnostics extension.
-fn materialize_trajectory_assets(out_dir: &Path) -> Result<(), std::io::Error> {
-    std::fs::create_dir_all(out_dir)?;
-    std::fs::write(
-        out_dir.join("trajectory-model.js"),
-        include_str!("../assets/trajectory-model.js"),
-    )?;
-    std::fs::write(
-        out_dir.join("trajectory-view.js"),
-        include_str!("../assets/trajectory-view.js"),
-    )?;
-    Ok(())
-}
-
-/// Writes the embedded management frontend and its content-addressed manifest.
+/// Writes the embedded console bundle and its content-addressed manifest.
 pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::Error> {
-    let js = include_str!("../assets/index.js");
-    let model = include_str!("../assets/trajectory-model.js");
-    let view = include_str!("../assets/trajectory-view.js");
-    materialize_trajectory_assets(out_dir)?;
-    materialize_bundled_assets(
-        out_dir,
-        manifest,
-        &[
-            ("index.js", js.as_bytes()),
-            ("trajectory-model.js", model.as_bytes()),
-            ("trajectory-view.js", view.as_bytes()),
-        ],
-    )
+    let js = include_str!("../web/browser/index.js");
+    materialize_bundled_assets(out_dir, manifest, &[("index.js", js.as_bytes())])
 }
 
 #[cfg(test)]
@@ -559,41 +528,21 @@ mod tests {
     use mutsuki_web_extension_api::RpcCallContext;
 
     #[test]
-    fn trajectory_model_projects_agent_and_runtime_events() {
-        let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("assets/trajectory-model.test.mjs");
-        let output = std::process::Command::new("node")
-            .arg(&script)
-            .output()
-            .expect("node must be available to verify trajectory projection");
-        assert!(
-            output.status.success(),
-            "stdout={} stderr={}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    #[test]
     fn assets_are_materialized() {
         let root = tempfile::tempdir().unwrap();
         materialize_frontend_assets(root.path()).unwrap();
         assert!(root.path().join("index.js").is_file());
-        assert!(root.path().join("trajectory-model.js").is_file());
-        assert!(root.path().join("trajectory-view.js").is_file());
         assert!(root.path().join("manifest.json").is_file());
-        let index_js = include_str!("../assets/index.js");
+        let index_js = include_str!("../web/browser/index.js");
         assert!(index_js.contains("sessions.event_get"));
-        assert!(!index_js.contains("测试模型"));
-        assert!(!index_js.contains("provider.test"));
-        assert!(include_str!("../assets/trajectory-model.js").contains("EVENT_WINDOW_LIMIT"));
+        assert!(index_js.contains("provider.test"));
     }
 
     #[test]
     fn rpc_authorization_uses_authenticated_context_not_request_fields() {
         let extension = BotAgentWebExtension::new(None)
             .with_connection_resolver(Some(Arc::new(|| Err("not running".into()))));
-        let mut rpc = RpcRegistry::new(PLUGIN_ID);
+        let mut rpc = RpcRegistry::new(RPC_NAMESPACE);
         extension.register_rpc(&mut rpc).unwrap();
 
         assert!(matches!(
@@ -611,8 +560,8 @@ mod tests {
                 json!({}),
                 RpcCallContext::new(&[CAPABILITY_CONNECTION_READ.into()]),
             ),
-            Err(ExtensionError::Registration(message))
-                if message.contains("agent.connection_owner_unavailable")
+            Err(ExtensionError::Rpc { code, .. })
+                if code == "agent.connection_owner_unavailable"
         ));
     }
 
@@ -658,10 +607,7 @@ mod tests {
     fn console_event_get_rejects_oversized_payload() {
         let event = dummy_envelope(3, &"z".repeat(CONSOLE_EVENT_GET_BUDGET_BYTES));
         let error = encode_event_get(event).unwrap_err();
-        let ExtensionError::Registration(message) = error else {
-            panic!("expected registration error");
-        };
-        assert!(message.contains("agent.session.event_too_large"));
+        assert_eq!(error.rpc_code(), "agent.session.event_too_large");
     }
 
     #[test]
@@ -669,7 +615,7 @@ mod tests {
         let extension = BotAgentWebExtension::new(None).with_sessions(Some(Arc::new(|| {
             Ok(Arc::new(FakeSessions::default()) as Arc<dyn AgentSessionManagementApi>)
         })));
-        let mut rpc = RpcRegistry::new(PLUGIN_ID);
+        let mut rpc = RpcRegistry::new(RPC_NAMESPACE);
         extension.register_rpc(&mut rpc).unwrap();
         assert!(matches!(
             rpc.call_with_context("sessions.event_get", json!({"session_id":"s1","sequence":1}), RpcCallContext::default()),

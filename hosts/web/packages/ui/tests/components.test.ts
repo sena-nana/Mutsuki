@@ -11,6 +11,7 @@ import {
   MkDialog,
   MkEmptyState,
   MkErrorState,
+  MkEventLedger,
   MkField,
   MkIconButton,
   MkJsonView,
@@ -331,5 +332,44 @@ describe("behavior", () => {
 
   test("ui messages are complete for every locale", () => {
     expect(checkMessageKeys(uiMessages)).toEqual([]);
+  });
+});
+
+describe("event ledger", () => {
+  const records = [
+    { id: "a", index: 1, kind: "tool", label: "search", preview: "query=cats", groupId: "t1", isError: false, status: "done" as const, input: '{"q":"cats"}' },
+    { id: "b", index: 2, kind: "assistant", label: "助手", preview: "hello", groupId: "t1", isError: false, status: "running" as const, thinking: "pondering" },
+    { id: "c", index: 3, kind: "error", label: "failed", preview: "boom", groupId: "t2", isError: true },
+  ];
+  const groups = [
+    { id: "t1", label: "第 1 轮" },
+    { id: "t2", label: "第 2 轮" },
+  ];
+
+  test("filters, collapses groups and inspects raw events", async () => {
+    const inspect = vi.fn(async () => [{ sequence: 1 }]);
+    const wrapper = mount(MkEventLedger, { props: { records, groups, inspect }, attachTo: document.body });
+    const rows = () => wrapper.findAll(".trajectory-row").map((row) => row.find(".trajectory-row__kind").text());
+    expect(rows()).toEqual(["search", "助手", "failed"]);
+    expect(wrapper.find('[role="status"]').text()).toContain("3 / 3 条");
+
+    await wrapper.find('input[type="search"]').setValue("boom");
+    expect(rows()).toEqual(["failed"]);
+    await wrapper.find('input[type="search"]').setValue("");
+
+    await wrapper.find(".trajectory-group").trigger("click");
+    expect(wrapper.find(".trajectory-group").attributes("aria-expanded")).toBe("false");
+    expect(rows()).toEqual(["failed"]);
+    await wrapper.find(".trajectory-group").trigger("click");
+
+    await wrapper.findAll(".trajectory-row")[1].trigger("click");
+    await settle();
+    const inspector = wrapper.find(".trajectory-inspector").text();
+    expect(inspector).toContain("进行中");
+    expect(inspector).toContain("pondering");
+    expect(inspector).toContain('"sequence": 1');
+    expect(inspect).toHaveBeenCalledWith(records[1]);
+    expect(await axe(wrapper.element as HTMLElement)).toHaveNoViolations();
+    wrapper.unmount();
   });
 });

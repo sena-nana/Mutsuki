@@ -60,3 +60,26 @@ export interface MkMenuItem {
   danger?: boolean;
   disabled?: boolean;
 }
+
+/** One row of `MkEventLedger`: a projected event (or group of events) of a run or session. */
+export interface MkLedgerRecord {
+  id: string;
+  index: number;
+  kind: string;
+  label: string;
+  preview: string;
+  groupId: string;
+  isError: boolean;
+  status?: "running" | "done" | "error";
+  input?: string | null;
+  output?: string | null;
+  thinking?: string | null;
+  durationMs?: number | null;
+  /** Nested under a parent record (sub-tool calls). */
+  parentId?: string | null;
+}
+
+export interface MkLedgerGroup {
+  id: string;
+  label: string;
+}

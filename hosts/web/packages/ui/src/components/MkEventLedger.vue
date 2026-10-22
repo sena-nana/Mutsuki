@@ -1,25 +1,31 @@
 <script setup lang="ts">
-import { MkButton, MkCodeBlock, MkSearchInput, MkStatusBadge } from "@mutsuki/ui";
-import { useMessages } from "@mutsuki/web-sdk";
+import { formatDuration } from "@mutsuki/web-sdk";
 import { computed, reactive, ref, watch } from "vue";
 
-import { messages } from "./messages";
-import type { TimelineGroup, TimelineRecord } from "./runtime-events";
+import { useUiText } from "../messages";
+import type { MkLedgerGroup, MkLedgerRecord } from "../types";
+import MkButton from "./MkButton.vue";
+import MkCodeBlock from "./MkCodeBlock.vue";
+import MkSearchInput from "./MkSearchInput.vue";
+import MkStatusBadge from "./MkStatusBadge.vue";
 
-/** Grouped event ledger with search, collapsible groups and an inspector for raw events. */
+/**
+ * Grouped event ledger (run/session timelines) with search, collapsible groups, older-page
+ * loading and an inspector that can fetch the raw events behind a record.
+ */
 const props = defineProps<{
-  records: TimelineRecord[];
-  groups: TimelineGroup[];
+  records: MkLedgerRecord[];
+  groups: MkLedgerGroup[];
   loading?: boolean;
   loadingOlder?: boolean;
   hasOlder?: boolean;
   lost?: number;
   truncated?: boolean;
   emptyText?: string;
-  inspect?: (record: TimelineRecord) => Promise<unknown>;
+  inspect?: (record: MkLedgerRecord) => Promise<unknown>;
 }>();
 const emit = defineEmits<{ older: [] }>();
-const { t } = useMessages(messages);
+const t = useUiText();
 const query = ref("");
 const collapsed = reactive(new Set<string>());
 const selectedId = ref<string | null>(null);
@@ -29,7 +35,7 @@ const visible = computed(() => {
   const needle = query.value.trim().toLowerCase();
   if (!needle) return props.records;
   return props.records.filter((record) =>
-    [record.label, record.preview, record.input, record.output, record.groupLabel]
+    [record.label, record.preview, record.input, record.output, record.thinking]
       .filter(Boolean)
       .join("\n")
       .toLowerCase()
@@ -43,10 +49,10 @@ const buckets = computed(() =>
 );
 const status = computed(() =>
   [
-    props.loading ? t("timeline.loading") : "",
-    props.lost ? t("timeline.lost", { count: props.lost }) : "",
-    props.truncated ? t("timeline.truncated") : "",
-    t("timeline.count", { visible: visible.value.length, total: props.records.length }),
+    props.loading ? t("ledger.loading") : "",
+    props.lost ? t("ledger.lost", { count: props.lost }) : "",
+    props.truncated ? t("ledger.truncated") : "",
+    t("ledger.count", { visible: visible.value.length, total: props.records.length }),
   ]
     .filter(Boolean)
     .join(" · "),
@@ -59,7 +65,7 @@ watch(
   },
 );
 
-async function select(record: TimelineRecord) {
+async function select(record: MkLedgerRecord) {
   selectedId.value = record.id;
   raw.value = { loading: !!props.inspect, text: "" };
   if (!props.inspect) return;
@@ -83,15 +89,15 @@ function toggle(id: string) {
   <div class="trajectory">
     <div class="trajectory-toolbar">
       <MkButton v-if="hasOlder || loadingOlder" size="sm" :loading="loadingOlder" @click="emit('older')">
-        {{ loadingOlder ? t("timeline.loadingOlder") : t("timeline.older") }}
+        {{ loadingOlder ? t("ledger.loadingOlder") : t("ledger.older") }}
       </MkButton>
-      <MkSearchInput v-model="query" :label="t('timeline.search')" :debounce-ms="0" />
+      <MkSearchInput v-model="query" :label="t('ledger.search')" :debounce-ms="0" />
       <span class="muted" role="status">{{ status }}</span>
     </div>
     <div class="trajectory-body">
-      <div class="trajectory-ledger" :aria-label="t('timeline.label')" role="group">
+      <div class="trajectory-ledger" :aria-label="t('ledger.label')" role="group">
         <p v-if="!buckets.length" class="muted trajectory-empty">
-          {{ loading ? t("timeline.loading") : (emptyText ?? t("timeline.empty")) }}
+          {{ loading ? t("ledger.loading") : (emptyText ?? t("ledger.empty")) }}
         </p>
         <template v-for="bucket in buckets" :key="bucket.group.id">
           <button
@@ -111,7 +117,12 @@ function toggle(id: string) {
               :class="[
                 'trajectory-row',
                 `is-${record.kind}`,
-                { 'is-selected': record.id === selectedId, 'is-error': record.isError },
+                {
+                  'is-selected': record.id === selectedId,
+                  'is-error': record.isError,
+                  'is-running': record.status === 'running',
+                  'is-nested': !!record.parentId,
+                },
               ]"
               :aria-pressed="record.id === selectedId ? 'true' : 'false'"
               @click="select(record)"
@@ -124,27 +135,40 @@ function toggle(id: string) {
         </template>
       </div>
       <aside class="trajectory-inspector">
-        <p v-if="!selected" class="muted">{{ t("timeline.inspect") }}</p>
+        <p v-if="!selected" class="muted">{{ t("ledger.inspect") }}</p>
         <template v-else>
           <h3>{{ selected.label }} <span class="muted">#{{ selected.index }}</span></h3>
           <p>
-            {{ t("timeline.status") }}:
+            {{ t("ledger.status") }}:
             <MkStatusBadge
-              :tone="selected.isError ? 'err' : 'ok'"
-              :label="selected.isError ? t('timeline.error') : t('timeline.done')"
+              :tone="selected.isError ? 'err' : selected.status === 'running' ? 'info' : 'ok'"
+              :label="
+                selected.isError
+                  ? t('ledger.error')
+                  : selected.status === 'running'
+                    ? t('ledger.running')
+                    : t('ledger.done')
+              "
             />
+            <span v-if="selected.durationMs != null" class="muted">
+              {{ t("ledger.duration", { duration: formatDuration(selected.durationMs) }) }}
+            </span>
           </p>
           <template v-if="selected.input">
-            <h4>{{ t("timeline.input") }}</h4>
+            <h4>{{ t("ledger.input") }}</h4>
             <MkCodeBlock :code="selected.input" :copyable="false" />
           </template>
+          <template v-if="selected.thinking">
+            <h4>{{ t("ledger.thinking") }}</h4>
+            <MkCodeBlock :code="selected.thinking" :copyable="false" />
+          </template>
           <template v-if="selected.output">
-            <h4>{{ t("timeline.output") }}</h4>
+            <h4>{{ t("ledger.output") }}</h4>
             <MkCodeBlock :code="selected.output" :copyable="false" />
           </template>
           <template v-if="raw.loading || raw.text">
-            <h4>{{ t("timeline.raw") }}</h4>
-            <MkCodeBlock :code="raw.loading ? t('timeline.rawLoading') : raw.text" language="json" />
+            <h4>{{ t("ledger.raw") }}</h4>
+            <MkCodeBlock :code="raw.loading ? t('ledger.rawLoading') : raw.text" language="json" />
           </template>
         </template>
       </aside>

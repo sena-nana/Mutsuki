@@ -215,8 +215,10 @@ Bot-owned pages live here:
 - `mutsuki-bot-web-extension-sandbox`: simulate/live conversation client.
 - `mutsuki-bot-web-extension-database`: BotStateDb browser.
 - `mutsuki-bot-web-extension-flow`: Flow node editor.
-- `mutsuki-bot-web-extension-qq`: QQ management console.
-- `mutsuki-bot-web-extension-bilibili`: Bilibili management console.
+- `mutsuki-bot-web-extension-platforms`: generic platform accounts page.
+- `mutsuki-bot-web-extension-qq`: QQ overview card, deliveries and interactions pages.
+- `mutsuki-bot-web-extension-bilibili`: Bilibili login panel (platforms page) and push
+  subscriptions page.
 
 Pages with no Bot content live with their owners, and the console composes them:
 
@@ -224,7 +226,7 @@ Pages with no Bot content live with their owners, and the console composes them:
 - `hosts/web/crates/mutsuki-web-extension-overview`: overview dashboard.
 - `hosts/web/crates/mutsuki-web-extension-upgrade`: module upgrade UI, over
   `crates/mutsuki-module-catalog`.
-- `kits/agent/crates/mutsuki-agent-web-extension`: Agent connection management.
+- `kits/agent/crates/mutsuki-agent-web-extension`: Agent sessions, approvals and connections.
 - `mutsuki-bot-web-host-integration`: Bot-package WebHost assembly helper that embeds the admin
   WebExtensions. Products may opt in; this crate is not a Host and not a product entry.
 - `mutsuki-bot-service-host-integration`: platform-neutral ServiceHost assembly (Flow Router,

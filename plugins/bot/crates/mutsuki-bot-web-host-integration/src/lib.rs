@@ -371,11 +371,11 @@ const OVERVIEW_PAGE: &str = mutsuki_web_extension_overview::PLUGIN_ID;
 const DIAGNOSTICS_PAGE: &str = mutsuki_web_extension_control::PLUGIN_ID;
 const DATABASE_PAGE: &str = mutsuki_bot_web_extension_database::PLUGIN_ID;
 const UPGRADE_PAGE: &str = mutsuki_web_extension_upgrade::PLUGIN_ID;
-const BILIBILI_PAGE: &str = "bilibili";
+const BILIBILI_PAGE: &str = mutsuki_bot_web_extension_bilibili::PLUGIN_ID;
 const QQ_PAGE: &str = mutsuki_bot_web_extension_qq::PLUGIN_ID;
 const PLATFORMS_PAGE: &str = mutsuki_bot_web_extension_platforms::PLUGIN_ID;
 const SANDBOX_PAGE: &str = "sandbox";
-const AGENT_PAGE: &str = "bot-agent";
+const AGENT_PAGE: &str = mutsuki_agent_web_extension::PLUGIN_ID;
 const FLOW_PAGE: &str = "bot-flow-editor";
 const CONFIG_PAGE: &str = "config";
 
@@ -723,7 +723,6 @@ mod owner_console_tests {
         let root = dirs.document_root();
         for staged in [
             "extensions/bot-agent/index.js",
-            "extensions/bot-agent/trajectory-view.js",
             "extensions/bot-flow/index.js",
             "extensions/bot-flow/lilia-node-editor.js",
         ] {
@@ -735,7 +734,7 @@ mod owner_console_tests {
                 "mutsuki.web.overview",
                 "mutsuki.web.diagnostics",
                 "mutsuki.bot.database",
-                "bot-agent",
+                "mutsuki.agent.console",
                 "bot-flow-editor"
             ]
         );

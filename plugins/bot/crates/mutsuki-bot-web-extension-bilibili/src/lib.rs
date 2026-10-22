@@ -26,7 +26,9 @@ use mutsuki_web_extension_api::{
 use mutsuki_web_protocol::{AssetEntry, ExtensionManifest, WebFrontendAssets};
 use serde_json::{Value as JsonValue, json};
 
-pub const PLUGIN_ID: &str = "bilibili";
+pub const PLUGIN_ID: &str = "mutsuki.bot.bilibili";
+/// RPC namespace and `bilibili.changed` topic prefix, unchanged for existing callers.
+pub const RPC_NAMESPACE: &str = "bilibili";
 pub const PLUGIN_VERSION: &str = "0.1.0";
 pub const CAPABILITY_RUNTIME_READ: &str = "runtime.read";
 pub const CAPABILITY_RUNTIME_WRITE: &str = "runtime.write";
@@ -67,6 +69,10 @@ impl WebExtension for BilibiliWebExtension {
                 .map(|assets| assets.manifest.assets)
                 .unwrap_or_default(),
         )
+    }
+
+    fn namespace(&self) -> String {
+        RPC_NAMESPACE.into()
     }
 
     fn frontend_assets(&self) -> Option<WebFrontendAssets> {
@@ -285,8 +291,16 @@ fn manifest(assets: Vec<AssetEntry>) -> ExtensionManifest {
 }
 
 pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::Error> {
-    let js = include_str!("../assets/index.js");
-    materialize_bundled_assets(out_dir, manifest, &[(BUNDLED_ENTRY_ASSET, js.as_bytes())])
+    let js = include_str!("../web/browser/index.js");
+    let css = include_str!("../web/browser/index.css");
+    materialize_bundled_assets(
+        out_dir,
+        manifest,
+        &[
+            (BUNDLED_ENTRY_ASSET, js.as_bytes()),
+            ("index.css", css.as_bytes()),
+        ],
+    )
 }
 
 fn map_bili_error(error: BilibiliManagementError) -> ExtensionError {

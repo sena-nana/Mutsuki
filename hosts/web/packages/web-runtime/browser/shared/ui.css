@@ -2600,6 +2600,8 @@ button:disabled {
   flex-direction: column;
   gap: 10px;
   margin: 12px 0;
+  padding: 0;
+  list-style: none;
 }
 
 .mutsuki-console .agent-message {
