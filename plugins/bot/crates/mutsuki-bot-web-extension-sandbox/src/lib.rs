@@ -18,7 +18,9 @@ use mutsuki_web_extension_api::{
 use mutsuki_web_protocol::{AssetEntry, ExtensionManifest, WebFrontendAssets};
 use serde_json::{Value, json};
 
-pub const PLUGIN_ID: &str = "sandbox";
+pub const PLUGIN_ID: &str = "mutsuki.bot.sandbox";
+/// RPC namespace and `sandbox.changed` topic prefix, unchanged for existing callers.
+pub const RPC_NAMESPACE: &str = "sandbox";
 pub const PLUGIN_VERSION: &str = "0.1.0";
 pub const CAPABILITY_BOT_READ: &str = "bot.read";
 pub const CAPABILITY_SANDBOX_WRITE: &str = "bot.sandbox.write";
@@ -62,6 +64,10 @@ impl WebExtension for SandboxWebExtension {
         )
     }
 
+    fn namespace(&self) -> String {
+        RPC_NAMESPACE.into()
+    }
+
     fn frontend_assets(&self) -> Option<WebFrontendAssets> {
         self.assets_root.resolve(manifest)
     }
@@ -86,9 +92,7 @@ impl WebExtension for SandboxWebExtension {
                 let conversation_id = params
                     .get("conversation_id")
                     .and_then(Value::as_str)
-                    .ok_or_else(|| {
-                        ExtensionError::Registration("missing conversation_id".into())
-                    })?;
+                    .ok_or_else(|| invalid_params("missing conversation_id"))?;
                 serde_json::to_value(api.messages(conversation_id).await.map_err(domain_error)?)
                     .map_err(|error| encode_error(&error))
             }
@@ -102,9 +106,9 @@ impl WebExtension for SandboxWebExtension {
                     params
                         .get("request")
                         .cloned()
-                        .ok_or_else(|| ExtensionError::Registration("missing request".into()))?,
+                        .ok_or_else(|| invalid_params("missing request"))?,
                 )
-                .map_err(|error| ExtensionError::Registration(error.to_string()))?;
+                .map_err(|error| invalid_params(error.to_string()))?;
                 if request.operation_id.trim().is_empty() {
                     request.operation_id = uuid::Uuid::new_v4().to_string();
                 }
@@ -114,9 +118,10 @@ impl WebExtension for SandboxWebExtension {
                     .unwrap_or(false);
                 let snapshot = api.snapshot("").await.map_err(domain_error)?;
                 if requires_confirmation(snapshot.mode, &request.action) && !confirmed {
-                    return Err(ExtensionError::Registration(
-                        "dangerous action requires confirmation".into(),
-                    ));
+                    return Err(ExtensionError::Rpc {
+                        code: "sandbox.confirmation_required".into(),
+                        message: "dangerous action requires confirmation".into(),
+                    });
                 }
                 context.require(required_capability(&request.action))?;
                 serde_json::to_value(
@@ -138,9 +143,8 @@ impl WebExtension for SandboxWebExtension {
                 let raw = params
                     .get("bytes")
                     .and_then(Value::as_str)
-                    .ok_or_else(|| ExtensionError::Registration("missing bytes".into()))?;
-                let bytes = base64_decode(raw)
-                    .map_err(|error| ExtensionError::Registration(error.to_owned()))?;
+                    .ok_or_else(|| invalid_params("missing bytes"))?;
+                let bytes = base64_decode(raw).map_err(invalid_params)?;
                 serde_json::to_value(
                     api.upload_media(name, mime, bytes)
                         .await
@@ -158,7 +162,7 @@ impl WebExtension for SandboxWebExtension {
                 let media_id = params
                     .get("media_id")
                     .and_then(Value::as_str)
-                    .ok_or_else(|| ExtensionError::Registration("missing media_id".into()))?;
+                    .ok_or_else(|| invalid_params("missing media_id"))?;
                 let blob = api.media_blob(media_id).await.map_err(domain_error)?;
                 Ok(json!({
                     "media_id": blob.media_id,
@@ -179,9 +183,8 @@ impl WebExtension for SandboxWebExtension {
                 let raw = params
                     .get("bytes")
                     .and_then(Value::as_str)
-                    .ok_or_else(|| ExtensionError::Registration("missing bytes".into()))?;
-                let bytes = base64_decode(raw)
-                    .map_err(|error| ExtensionError::Registration(error.to_owned()))?;
+                    .ok_or_else(|| invalid_params("missing bytes"))?;
+                let bytes = base64_decode(raw).map_err(invalid_params)?;
                 let uploaded = api
                     .upload_sticker(name, mime, bytes)
                     .await
@@ -212,7 +215,7 @@ impl WebExtension for SandboxWebExtension {
                 let sticker_id = params
                     .get("sticker_id")
                     .and_then(Value::as_str)
-                    .ok_or_else(|| ExtensionError::Registration("missing sticker_id".into()))?;
+                    .ok_or_else(|| invalid_params("missing sticker_id"))?;
                 let blob = api.sticker_blob(sticker_id).await.map_err(domain_error)?;
                 Ok(json!({
                     "sticker_id": blob.media_id,
@@ -247,8 +250,13 @@ impl WebExtension for SandboxWebExtension {
 ///
 /// Returns an I/O error when directory creation, manifest encoding, or asset writes fail.
 pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::Error> {
-    let js = include_str!("../assets/index.js");
-    materialize_bundled_assets(out_dir, manifest, &[("index.js", js.as_bytes())])
+    let js = include_str!("../web/browser/index.js");
+    let css = include_str!("../web/browser/index.css");
+    materialize_bundled_assets(
+        out_dir,
+        manifest,
+        &[("index.js", js.as_bytes()), ("index.css", css.as_bytes())],
+    )
 }
 
 fn manifest(assets: Vec<AssetEntry>) -> ExtensionManifest {
@@ -266,11 +274,21 @@ fn manifest(assets: Vec<AssetEntry>) -> ExtensionManifest {
 }
 
 fn domain_error(SandboxError { code, message }: SandboxError) -> ExtensionError {
-    ExtensionError::Registration(json!({"code": code, "message": message}).to_string())
+    ExtensionError::Rpc { code, message }
+}
+
+fn invalid_params(message: impl Into<String>) -> ExtensionError {
+    ExtensionError::Rpc {
+        code: "invalid_params".into(),
+        message: message.into(),
+    }
 }
 
 fn encode_error(error: &serde_json::Error) -> ExtensionError {
-    ExtensionError::Registration(format!("encode failed: {error}"))
+    ExtensionError::Rpc {
+        code: "sandbox.encode_failed".into(),
+        message: error.to_string(),
+    }
 }
 
 fn required_capability(action: &SandboxAction) -> &'static str {

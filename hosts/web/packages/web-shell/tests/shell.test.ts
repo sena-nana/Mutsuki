@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { flushPromises, mount } from "@vue/test-utils";
 import { describe, expect, test, vi } from "vitest";
-import { defineComponent, h, provide, ref } from "vue";
+import { defineComponent, h, onMounted, provide, ref } from "vue";
 
 import { createI18n, provideI18n, RpcError } from "@mutsuki/web-sdk";
 import { uiMessages } from "@mutsuki/ui";
@@ -9,7 +9,6 @@ import ConsoleRoot from "../src/app/ConsoleRoot.vue";
 import ExtensionBoundary from "../src/app/ExtensionBoundary.vue";
 import { SHELL_CONTEXT } from "../src/app/context";
 import { placeNavigation, type ConsoleLayout } from "../src/layout";
-import { isLegacyPage, legacyMount } from "../src/legacy";
 import { shellMessages } from "../src/messages";
 import { buildShellModel } from "../src/navigation";
 import { createShellState, loadExtensions, type WebShellRuntime } from "../src/runtime";
@@ -21,7 +20,6 @@ const layout: ConsoleLayout = {
     { id: "data", label: "数据", icon: "data", order: 50, position: "top" },
     { id: "settings", label: "设置", icon: "settings", order: 100, position: "bottom" },
   ],
-  placements: { bot: "agent", "database.nav": "data" },
 };
 
 function i18nPlugin() {
@@ -30,37 +28,32 @@ function i18nPlugin() {
 }
 
 describe("layout placement", () => {
-  test("moves legacy navigation and reports what the layout cannot hold", () => {
+  test("keeps navigation filed under layout activities and reports the rest", () => {
     const nav = (id: string, activityId: string) => ({ id, activityId, pageId: `${id}.page`, label: id });
     const { placed, failures } = placeNavigation(
       layout,
-      [nav("overview.nav", "home"), nav("sessions.nav", "bot"), nav("database.nav", "system"), nav("x.nav", "nowhere")],
+      [nav("overview.nav", "home"), nav("sessions.nav", "agent"), nav("old.nav", "bot"), nav("x.nav", "nowhere")],
       (item) => `owner-of-${item.id}`,
     );
     expect(placed.map((item) => [item.id, item.activityId])).toEqual([
       ["overview.nav", "home"],
       ["sessions.nav", "agent"],
-      ["database.nav", "data"],
     ]);
     expect(failures).toEqual([
+      expect.objectContaining({ extensionId: "owner-of-old.nav", stage: "layout" }),
       expect.objectContaining({ extensionId: "owner-of-x.nav", stage: "layout" }),
     ]);
   });
 
-  test("extensions cannot add activities; unknown ones are failures, known ones no-ops", async () => {
+  test("an extension that still registers activities fails to load; the layout is untouched", async () => {
     const state = createShellState();
     for (const activity of layout.activities) state.activities.register(activity);
-    (globalThis as Record<string, unknown>).__layoutExtension = (ctx: {
-      activities: { register(item: object): { dispose(): void } };
-    }) => {
-      ctx.activities.register({ id: "agent", label: "Bot", icon: "bot" });
+    (globalThis as Record<string, unknown>).__layoutExtension = (ctx: Record<string, { register(item: object): unknown }>) =>
       ctx.activities.register({ id: "automation", label: "自动化", icon: "flow" });
-    };
     await loadExtensions(
       state,
-      [{ id: "legacy", url: "data:text/javascript,export default {setup(ctx){return globalThis.__layoutExtension(ctx)}}" }],
+      [{ id: "v1", url: "data:text/javascript,export default {setup(ctx){return globalThis.__layoutExtension(ctx)}}" }],
       () => ({
-        activities: state.activities,
         pages: state.pages,
         navigation: state.navigation,
         slots: state.slots,
@@ -69,23 +62,21 @@ describe("layout placement", () => {
         events: { subscribe: () => ({ dispose() {} }) },
       }),
     );
-    expect(state.extensions).toEqual(["legacy"]);
+    expect(state.extensions).toEqual([]);
     expect(state.activities.list().map((item) => item.id)).toEqual(["home", "agent", "data", "settings"]);
-    expect(state.failures).toEqual([
-      expect.objectContaining({ extensionId: "legacy", stage: "layout", message: expect.stringContaining("automation") }),
-    ]);
+    expect(state.failures).toEqual([expect.objectContaining({ extensionId: "v1", stage: "load" })]);
   });
 
   test("model hides empty activities, filters capabilities and prefers the home page", () => {
     const state = createShellState();
     const page = (id: string, requiredCapability?: string) =>
-      state.pages.register({ id, path: `/${id}`, title: id, component: { mount() {} }, requiredCapability });
+      state.pages.register({ id, path: `/${id}`, title: id, component: { render: () => null }, requiredCapability });
     page("overview");
     page("db", "data.read");
     page("sessions");
     state.navigation.register({ id: "overview.nav", activityId: "home", pageId: "overview", label: "总览" });
-    state.navigation.register({ id: "database.nav", activityId: "system", pageId: "db", label: "数据库" });
-    state.navigation.register({ id: "sessions.nav", activityId: "bot", pageId: "sessions", label: "会话" });
+    state.navigation.register({ id: "database.nav", activityId: "data", pageId: "db", label: "数据库" });
+    state.navigation.register({ id: "sessions.nav", activityId: "agent", pageId: "sessions", label: "会话" });
     state.owners.set("database.nav", "database");
     const model = buildShellModel(state, layout, (cap) => cap !== "data.read", "sessions");
     expect(model.activities.map((item) => item.id)).toEqual(["home", "agent"]);
@@ -95,34 +86,19 @@ describe("layout placement", () => {
   });
 });
 
-describe("legacy pages and the boundary", () => {
+describe("the extension boundary", () => {
   function shellContext(reportFailure = vi.fn()) {
     return { reportFailure, failures: ref([]) } as never;
   }
 
-  test("legacyMount mounts into its own element and disposes on unmount", async () => {
-    const dispose = vi.fn();
-    const page = {
-      mount(element: HTMLElement) {
-        element.textContent = "legacy content";
-        return { dispose };
-      },
-    };
-    expect(isLegacyPage(page)).toBe(true);
-    expect(isLegacyPage(defineComponent({ setup: () => () => null }))).toBe(false);
-    const wrapper = mount(legacyMount(page));
-    await flushPromises();
-    expect(wrapper.text()).toBe("legacy content");
-    expect(wrapper.classes()).toContain("legacy-page");
-    wrapper.unmount();
-    expect(dispose).toHaveBeenCalledOnce();
-  });
-
   test("a failing extension page renders an error state and is reported", async () => {
     const reportFailure = vi.fn();
-    const Broken = legacyMount({
-      async mount() {
-        throw new RpcError("internal", "page exploded");
+    const Broken = defineComponent({
+      setup() {
+        onMounted(() => {
+          throw new RpcError("internal", "page exploded");
+        });
+        return () => h("p", "page");
       },
     });
     const Host = defineComponent({

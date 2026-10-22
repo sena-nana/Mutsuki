@@ -6,7 +6,6 @@ import {
   createRegistry,
   pluginDisplayName,
   pluginIdsOf,
-  type ActivityRegistration,
   type BridgeConnectionState,
   type BridgeHelloAck,
   type Disposable,
@@ -21,7 +20,7 @@ import {
 import { applyTheme } from "@mutsuki/ui";
 import { defineComponent, h, markRaw, type Component } from "vue";
 
-import type { ConsoleLayout, ShellFailure } from "./layout.js";
+import type { ConsoleActivity, ConsoleLayout, ShellFailure } from "./layout.js";
 
 export type WebUiThemePreference = "system" | "light" | "dark";
 
@@ -100,7 +99,8 @@ export interface ShellState {
   /** Extension that registered each page and navigation id (for failure attribution). */
   owners: Map<string, string>;
   capabilities: Set<string>;
-  activities: ReturnType<typeof createRegistry<ActivityRegistration>>;
+  /** The product layout's activities; extensions have no registry for these. */
+  activities: ReturnType<typeof createRegistry<ConsoleActivity>>;
   pages: ReturnType<typeof createRegistry<PageRegistration>>;
   navigation: ReturnType<typeof createRegistry<NavigationRegistration>>;
   slots: ReturnType<typeof createRegistry<SlotRegistration>>;
@@ -216,30 +216,6 @@ function ownedRegistry<T extends { id: string }>(
   };
 }
 
-/**
- * Activities belong to the product layout. A legacy extension that still registers one gets
- * a no-op; an activity the layout does not know is recorded as a layout failure.
- */
-function layoutActivities(
-  registry: Registry<ActivityRegistration>,
-  state: ShellState,
-  extensionId: string,
-): Registry<ActivityRegistration> {
-  return {
-    register(item) {
-      if (!registry.list().some((activity) => activity.id === item.id)) {
-        state.failures.push({
-          extensionId,
-          stage: "layout",
-          message: `activity ${item.id} is not defined by the console layout`,
-        });
-      }
-      return { dispose() {} };
-    },
-    list: () => registry.list(),
-  };
-}
-
 function ownedExtensionContext(
   context: ExtensionContext,
   scope: DisposableScope,
@@ -248,7 +224,6 @@ function ownedExtensionContext(
 ): ExtensionContext {
   const own = (item: { id: string }) => state.owners.set(item.id, extensionId);
   return {
-    activities: layoutActivities(context.activities, state, extensionId),
     pages: ownedRegistry(context.pages, scope, own),
     navigation: ownedRegistry(context.navigation, scope, own),
     slots: ownedRegistry(context.slots, scope),
@@ -329,7 +304,6 @@ export function createExtensionContext(
   events: ExtensionContext["events"],
 ): ExtensionContext {
   return {
-    activities: state.activities,
     pages: state.pages,
     navigation: state.navigation,
     slots: state.slots,

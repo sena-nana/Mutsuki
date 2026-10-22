@@ -64,4 +64,33 @@ impl ExtensionError {
             _ => "rpc_failed",
         }
     }
+
+    /// Message sent to WebBridge callers next to [`Self::rpc_code`]. A coded owner error
+    /// carries its own message; the code travels separately, so it is not repeated here.
+    pub fn rpc_message(&self) -> String {
+        match self {
+            Self::Rpc { message, .. } => message.clone(),
+            other => other.to_string(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ExtensionError;
+
+    #[test]
+    fn coded_errors_keep_code_and_message_apart() {
+        let error = ExtensionError::Rpc {
+            code: "config.revision_conflict".into(),
+            message: "revision conflict: expected 3, current 5".into(),
+        };
+        assert_eq!(error.rpc_code(), "config.revision_conflict");
+        assert_eq!(
+            error.rpc_message(),
+            "revision conflict: expected 3, current 5"
+        );
+        let denied = ExtensionError::CapabilityDenied("bot.read".into());
+        assert_eq!(denied.rpc_message(), "capability denied: bot.read");
+    }
 }

@@ -26,6 +26,12 @@ export const ICON_PATHS = {
   external: "M14 4h6v6M20 4l-9 9M18 14v6H4V6h6",
   menu: "M4 6h16M4 12h16M4 18h16",
   chat: "M4 5h16v11H9l-5 4V5Zm4 5h8M8 13h5",
+  image: "M3 3h18v18H3zM8.5 10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM21 15l-5-5L5 21",
+  attach: "m21.4 11-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5",
+  smile: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20ZM8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01",
+  document: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6Zm0 0v6h6M16 13H8m8 4H8",
+  grid: "M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z",
+  reply: "M9 14 4 9l5-5M20 20v-7a4 4 0 0 0-4-4H4",
 } as const;
 
 export type IconName = keyof typeof ICON_PATHS;

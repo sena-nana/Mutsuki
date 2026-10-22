@@ -4,17 +4,12 @@ import type { Disposable, ExtensionContext, Registry, SlotRegistration, WebExten
 import { RpcError } from "./errors.js";
 import type { RpcClient } from "./bridge.js";
 
-/** A vanilla mount point, the contract every slot accepts until Vue slots land. */
-export interface MountableComponent {
-  mount(element: HTMLElement, options?: Record<string, unknown>): void | Disposable | Promise<void | Disposable>;
-}
-
 /**
  * Slot payload types, keyed by slot name. Owners add their slots by declaration merging:
  * `declare module "@mutsuki/web-sdk" { interface ExtensionSlots { "flow.node": … } }`.
  */
 export interface ExtensionSlots {
-  "overview.cards": MountableComponent | Component;
+  "overview.cards": Component;
   /** Plugin hub for `#/plugins/<id>` routes the shell creates; rendered with `{ pluginId }`. */
   "plugin.home": Component;
   /** Replaces the generated config form on the owner's plugin hub; rendered with `{ providerId }`. */
@@ -47,7 +42,7 @@ export interface DefinedExtensionContext extends Omit<ExtensionContext, "slots">
 /** Per-extension limits. Exceeding one fails the extension, never the shell. */
 export interface ExtensionBudgets {
   setupTimeoutMs: number;
-  /** Pages, navigation, slots, commands and activities together. */
+  /** Pages, navigation, slots and commands together. */
   maxRegistrations: number;
   maxConcurrentRpc: number;
 }
@@ -130,7 +125,6 @@ export function defineExtension(definition: ExtensionDefinition): WebExtension {
       const context: DefinedExtensionContext = {
         ...ctx,
         extensionId: definition.id,
-        activities: bounded(ctx.activities),
         pages: bounded(ctx.pages),
         navigation: bounded(ctx.navigation),
         slots: bounded(ctx.slots) as DefinedExtensionContext["slots"],

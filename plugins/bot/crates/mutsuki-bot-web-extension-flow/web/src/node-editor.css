@@ -1,4 +1,7 @@
-/* Lilia node editor surface. Product pages mount `.lilia-node-editor` inside Console main. */
+/*
+ * Lilia node editor surface, owned by the flow extension (moved out of @mutsuki/ui in W10).
+ * The flow page mounts `.lilia-node-editor` inside the console main area.
+ */
 
 .mutsuki-console .console-page-content:has(.lilia-node-editor) {
   display: flex;
@@ -468,13 +471,31 @@
   gap: 1px;
 }
 
-.success-banner {
-  margin-bottom: 16px;
-  padding: 12px 14px;
-  border: 1px solid color-mix(in oklch, var(--ok) 32%, var(--border));
-  border-radius: var(--radius-md);
-  background: var(--ok-soft);
-  color: var(--ok);
+.flow-inspector {
+  display: grid;
+  gap: var(--mk-space-3);
+}
+
+.flow-inspector__group {
+  display: grid;
+  gap: var(--mk-space-2);
+  margin: 0;
+  padding: var(--mk-space-2);
+  border: 1px solid var(--mk-color-border);
+  border-radius: var(--mk-radius-sm);
+  min-width: 0;
+}
+
+.flow-inspector__row {
+  display: flex;
+  gap: var(--mk-space-2);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.flow-inspector__row > :first-child {
+  flex: 1;
+  min-width: 0;
 }
 
 @media (max-width: 1100px) {

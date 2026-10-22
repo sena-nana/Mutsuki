@@ -36,10 +36,10 @@ Issue 是需求线索，不是当前 API 的事实源。
 | `mutsuki-web-recovery` | 最小恢复与安全模式 Shell |
 | `mutsuki-web-shared-runtime` | 嵌入 `@mutsuki/web-runtime` 预构建的共享模块：内容寻址文件名、import map、CSP 哈希 |
 | `@mutsuki/web-sdk` | Vue/WebExtension 前端 SDK：bridge、`RpcError`、`defineRpc`、composables、i18n、`defineExtension`；`/testing` 提供 fake bridge |
-| `@mutsuki/web-shell` | Vue Shell v2：`startConsole`、hash 路由、ActivityBar/ContextNav、ExtensionBoundary、失败面板、登录与设置页、`legacyMount`；activity 只来自产品布局（`ConsoleLayout`） |
+| `@mutsuki/web-shell` | Vue Shell v2：`startConsole`、hash 路由、ActivityBar/ContextNav、ExtensionBoundary、失败面板、登录与设置页、插件 hub 补全（`plugin.home`）；activity 只来自产品布局（`ConsoleLayout`），页面只接受 Vue 组件 |
 | `@mutsuki/ui` | Vue 组件库 `Mk*`（基于 Lilia token 的 `--mk-*`，全局 `mk-` 类）、`useConfirm`/`usePrompt`/`useToast`、Shell a11y 件；视觉基座来自 pinned `@lilia/theme`，`bundle-css.mjs` 合成 `dist/mutsuki-ui.css`，经共享运行时以 `shared/ui.<hash>.css` 发布一次 |
 | `@mutsuki/web-runtime` | 构建 `browser/shared/{vue,vue-router,pinia,web-sdk,ui,web-shell}.js` 与 `ui.css`（提交产物，Rust 嵌入） |
-| `@mutsuki/web-build` | Vite + `@vitejs/plugin-vue` 扩展构建与产物门禁（运行时不调用） |
+| `@mutsuki/web-build` | Vite + `@vitejs/plugin-vue` 扩展构建与产物门禁（运行时不调用）；单文件预算 JS 48 KiB / CSS 8 KiB，包内 `mutsuki.budgets` 带理由才能放宽 |
 
 跨 package：Core（仅通用协议缺口）、Link（standalone 桥接）、ServiceHost/Bot
 （嵌入宿主）、BotPlugins（Schema-first；默认 Web 配置插件不在本目录）、TauriHost
@@ -58,7 +58,10 @@ Issue 是需求线索，不是当前 API 的事实源。
 9. 本机默认只监听 loopback；非 loopback 必须有明确 TLS/远程认证策略。
 10. 仓内 Mutsuki 依赖必须继承根 Workspace 的 path；禁止内部 Git pin、仓库外 Cargo `path` 和本地 `[patch]`。
 11. 不向插件暴露 Axum/Hyper 类型作为稳定 ABI。
-12. 不在本目录实现数据库、日志、指标、市场或 Bot 管理业务页面。
+12. 本目录只放 Host 自身控制面的扩展（`mutsuki.web.{overview,diagnostics,upgrade}`，基于 Control API）；数据库、Bot 管理与其他业务页面由各自 owner 的 `web/` 包实现。
+13. 扩展前端只能是 owner crate 下的 `web/` Vue 包，经 `@mutsuki/web-build` 构建并提交 `web/browser/`；手写 `assets/*.js` 由 `check_workspace.py` 拒绝，`legacyMount`/`{ mount }` 页面与 v1 `ActivityRegistration` 已删除。
+14. Activity 只由产品 `ConsoleLayout` 定义；扩展的 `ExtensionContext` 没有 activity registry，导航指向布局外的 activity 记为 layout 失败。
+15. 扩展专属样式（如流程节点编辑器）随该扩展的 `index.css` 发布，不进入 `@mutsuki/ui` 共享样式。
 
 ## 验证
 

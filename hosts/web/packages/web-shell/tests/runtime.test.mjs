@@ -24,7 +24,6 @@ function registry(label, disposed) {
 
 function context(disposed) {
   return {
-    activities: registry("activity", disposed),
     pages: registry("page", disposed),
     navigation: registry("navigation", disposed),
     slots: registry("slot", disposed),
@@ -86,7 +85,7 @@ test("shell contract rejects dangling navigation and duplicate page paths", () =
     id: "one",
     path: "/one",
     title: "One",
-    component: { mount() {} },
+    component: { render: () => null },
   });
   state.navigation.register({
     id: "one.nav",
@@ -101,7 +100,7 @@ test("shell contract rejects dangling navigation and duplicate page paths", () =
     id: "two",
     path: "/one",
     title: "Two",
-    component: { mount() {} },
+    component: { render: () => null },
   });
   assert.throws(() => validateShellState(state), /duplicate page path/);
 });
@@ -165,7 +164,7 @@ test("slot contributions remain available after all extensions load", async () =
     ctx.slots.register({
       id: "guest.card",
       slot: "overview.cards",
-      component: { mount() {} },
+      component: { render: () => null },
     });
   };
   await loadExtensions(
@@ -215,7 +214,7 @@ test("finalizePluginActivity adds hub pages for extra plugin-owned pages", () =>
     path: "/bilibili",
     title: "B站推送",
     pluginId: "mutsuki.bot.bilibili",
-    component: { mount() {} },
+    component: { render: () => null },
   });
   state.navigation.register({
     id: "bilibili.nav",
@@ -246,7 +245,7 @@ test("finalizePluginActivity upgrades id hubs and keeps named hubs", () => {
     path: "/plugins/mutsuki.bot.sandbox",
     title: "mutsuki.bot.sandbox",
     pluginId: "mutsuki.bot.sandbox",
-    component: { mount() {} },
+    component: { render: () => null },
   });
   state.navigation.register({
     id: "mutsuki.bot.sandbox.nav",
@@ -259,7 +258,7 @@ test("finalizePluginActivity upgrades id hubs and keeps named hubs", () => {
     path: "/sandbox",
     title: "沙盒",
     pluginId: "mutsuki.bot.sandbox",
-    component: { mount() {} },
+    component: { render: () => null },
   });
   state.navigation.register({
     id: "sandbox.nav",
@@ -272,7 +271,7 @@ test("finalizePluginActivity upgrades id hubs and keeps named hubs", () => {
     path: "/plugins/mutsuki.bot.router.flow",
     title: "流程编辑器",
     pluginId: "mutsuki.bot.router.flow",
-    component: { mount() {} },
+    component: { render: () => null },
   });
   state.navigation.register({
     id: "mutsuki.bot.router.flow.nav",
@@ -285,7 +284,7 @@ test("finalizePluginActivity upgrades id hubs and keeps named hubs", () => {
     path: "/flows",
     title: "流程编排",
     pluginId: "mutsuki.bot.router.flow",
-    component: { mount() {} },
+    component: { render: () => null },
   });
   state.navigation.register({
     id: "bot-flow.nav",

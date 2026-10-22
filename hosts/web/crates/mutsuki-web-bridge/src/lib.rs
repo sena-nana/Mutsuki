@@ -342,7 +342,7 @@ impl WebBridge {
                     result: Some(result),
                     error: None,
                 },
-                Err(err) => rpc_error(request.id, err.rpc_code(), err.to_string()),
+                Err(err) => rpc_error(request.id, err.rpc_code(), err.rpc_message()),
             }
         };
         self.inner.metrics.dec_rpc_inflight();
@@ -383,8 +383,8 @@ impl WebBridge {
                     result: Some(result),
                     error: None,
                 })
-                .unwrap_or_else(|err| rpc_error(request.id, err.rpc_code(), err.to_string())),
-            Err(err) => rpc_error(request.id, err.rpc_code(), err.to_string()),
+                .unwrap_or_else(|err| rpc_error(request.id, err.rpc_code(), err.rpc_message())),
+            Err(err) => rpc_error(request.id, err.rpc_code(), err.rpc_message()),
         };
         self.inner.metrics.dec_rpc_inflight();
         self.inner

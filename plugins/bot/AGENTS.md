@@ -37,8 +37,12 @@ Adapter/Gateway。它不拥有 Core 调度、Host 生命周期、Agent 能力或
     插件 ID 一律为 `mutsuki.plugin.bot.<crate 后缀>`（如 `mutsuki.plugin.bot.adapter-qqbot`、`mutsuki.plugin.bot.flow`、
     `mutsuki.plugin.bot.sandbox`）；host service ID 保持 `mutsuki.bot.*` 且不得与插件 ID 复用，Flow 节点类型 ID 不随改名变化。
     反向同样成立：不建 `PluginBuilder` 的 crate 不得占用该前缀。WebExtension 属于此类，
-    统一用 `mutsuki-bot-web-extension-*`，且骨架从 `mutsuki-web-extension-api` 复用。
-    不含 Bot 内容的控制台页面归各自 owner（`hosts/web`、`kits/agent`），不留在本包。
+    统一用 `mutsuki-bot-web-extension-*`，且骨架从 `mutsuki-web-extension-api` 复用；扩展 id 为
+    `mutsuki.bot.<surface>`（`database`、`platforms`、`qq`、`bilibili`、`flow`、`sandbox`），不与插件 ID
+    或 host service ID 复用，RPC 命名空间可保持短名（`qq-bot`、`bot-flow-editor`、`sandbox`）。
+    前端只在该 crate 的 `web/` Vue 包内（`@mutsuki/bot-ext-*`，提交 `web/browser/` 产物，crate
+    `include_str!` 嵌入）；页面导航只登记到产品布局已有的 activity，不注册 activity。
+    不含 Bot 内容的控制台页面归各自 owner（`hosts/web`、`kits/agent`、`plugins/std`），不留在本包。
     `mutsuki-bot-state-db` 实现 conversation/persona/delivery/interaction/sandbox 库面 store，
     禁止反向依赖 plugin 包。`PersonaStore` 与 `ConversationContextStore` 同属
     `mutsuki-bot-conversation`；plugin crate 不得 re-export 库面 trait，消费者一律从 owner 引入。

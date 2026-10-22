@@ -374,9 +374,9 @@ const UPGRADE_PAGE: &str = mutsuki_web_extension_upgrade::PLUGIN_ID;
 const BILIBILI_PAGE: &str = mutsuki_bot_web_extension_bilibili::PLUGIN_ID;
 const QQ_PAGE: &str = mutsuki_bot_web_extension_qq::PLUGIN_ID;
 const PLATFORMS_PAGE: &str = mutsuki_bot_web_extension_platforms::PLUGIN_ID;
-const SANDBOX_PAGE: &str = "sandbox";
+const SANDBOX_PAGE: &str = mutsuki_bot_web_extension_sandbox::PLUGIN_ID;
 const AGENT_PAGE: &str = mutsuki_agent_web_extension::PLUGIN_ID;
-const FLOW_PAGE: &str = "bot-flow-editor";
+const FLOW_PAGE: &str = mutsuki_bot_web_extension_flow::PLUGIN_ID;
 const CONFIG_PAGE: &str = mutsuki_std_web_extension_config::PLUGIN_ID;
 
 /// One console page module: how the product selects it and where the shell loads it from.
@@ -724,7 +724,7 @@ mod owner_console_tests {
         for staged in [
             "extensions/bot-agent/index.js",
             "extensions/bot-flow/index.js",
-            "extensions/bot-flow/lilia-node-editor.js",
+            "extensions/bot-flow/index.css",
         ] {
             assert!(root.join(staged).is_file(), "{staged} not staged");
         }
@@ -735,7 +735,7 @@ mod owner_console_tests {
                 "mutsuki.web.diagnostics",
                 "mutsuki.bot.database",
                 "mutsuki.agent.console",
-                "bot-flow-editor"
+                "mutsuki.bot.flow"
             ]
         );
         assert!(dirs.page_assets(AGENT_PAGE).is_some());

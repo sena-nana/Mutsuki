@@ -345,6 +345,6 @@ async fn every_control_command_is_exposed_with_its_mutation_capability() {
     let reached = ws_rpc(&addr, "core_status", read_params(), &["runtime.read"])
         .await
         .unwrap_err();
-    assert!(reached.contains("unsupported"), "{reached}");
+    assert!(reached.contains("not supported"), "{reached}");
     host.stop().await.unwrap();
 }

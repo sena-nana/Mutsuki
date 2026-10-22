@@ -44,7 +44,6 @@ describe("extension", () => {
     expect(ctx.navigation.list().map((item) => [item.activityId, item.pageId])).toEqual([
       ["automation", "bilibili.subscriptions"],
     ]);
-    expect(ctx.activities.list()).toEqual([]);
   });
 });
 

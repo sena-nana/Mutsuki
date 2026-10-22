@@ -28,7 +28,9 @@ use mutsuki_web_protocol::{AssetEntry, ExtensionManifest, WebFrontendAssets};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-pub const PLUGIN_ID: &str = "bot-flow-editor";
+pub const PLUGIN_ID: &str = "mutsuki.bot.flow";
+/// RPC namespace kept stable for existing callers.
+pub const RPC_NAMESPACE: &str = "bot-flow-editor";
 pub const PLUGIN_VERSION: &str = "0.2.0";
 pub const CAPABILITY_FLOW_READ: &str = "bot.flow.read";
 pub const CAPABILITY_FLOW_WRITE: &str = "bot.flow.write";
@@ -63,6 +65,10 @@ impl WebExtension for BotFlowEditorWebExtension {
                 .map(|assets| assets.manifest.assets)
                 .unwrap_or_default(),
         )
+    }
+
+    fn namespace(&self) -> String {
+        RPC_NAMESPACE.into()
     }
 
     fn frontend_assets(&self) -> Option<WebFrontendAssets> {
@@ -152,7 +158,7 @@ fn decode_flow(params: &Value) -> Result<BotFlowDocument, ExtensionError> {
         params
             .get("flow")
             .cloned()
-            .ok_or_else(|| ExtensionError::Registration("missing flow".into()))?,
+            .ok_or_else(|| invalid_params("missing flow"))?,
     )
     .map_err(decode_error)
 }
@@ -167,23 +173,27 @@ fn manifest(assets: Vec<AssetEntry>) -> ExtensionManifest {
     .build(assets)
 }
 
+/// Writes the editor bundle (module plus its node-editor stylesheet) and its manifest.
 pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::Error> {
-    let js = include_str!("../assets/index.js");
-    let editor = include_str!("../assets/lilia-node-editor.js");
-    let menu = include_str!("../assets/lilia-context-menu.js");
+    let js = include_str!("../web/browser/index.js");
+    let css = include_str!("../web/browser/index.css");
     materialize_bundled_assets(
         out_dir,
         manifest,
-        &[
-            ("index.js", js.as_bytes()),
-            ("lilia-node-editor.js", editor.as_bytes()),
-            ("lilia-context-menu.js", menu.as_bytes()),
-        ],
+        &[("index.js", js.as_bytes()), ("index.css", css.as_bytes())],
     )
 }
 
+/// Config failures keep the config extension's codes (`config.revision_conflict`, …).
 fn config_error(error: mutsuki_config_service::ConfigError) -> ExtensionError {
-    ExtensionError::Registration(error.to_string())
+    let kind = serde_json::to_value(&error)
+        .ok()
+        .and_then(|value| value.get("kind").and_then(Value::as_str).map(str::to_owned))
+        .unwrap_or_else(|| "error".into());
+    ExtensionError::Rpc {
+        code: format!("config.{kind}"),
+        message: error.to_string(),
+    }
 }
 
 fn json_config_error(error: serde_json::Error) -> mutsuki_config_service::ConfigError {
@@ -192,12 +202,22 @@ fn json_config_error(error: serde_json::Error) -> mutsuki_config_service::Config
     }
 }
 
+fn invalid_params(message: impl Into<String>) -> ExtensionError {
+    ExtensionError::Rpc {
+        code: "invalid_params".into(),
+        message: message.into(),
+    }
+}
+
 fn encode_error(error: serde_json::Error) -> ExtensionError {
-    ExtensionError::Registration(error.to_string())
+    ExtensionError::Rpc {
+        code: "bot.flow.encode_failed".into(),
+        message: error.to_string(),
+    }
 }
 
 fn decode_error(error: serde_json::Error) -> ExtensionError {
-    ExtensionError::Registration(format!("invalid request: {error}"))
+    invalid_params(format!("invalid request: {error}"))
 }
 
 #[cfg(test)]
@@ -224,7 +244,7 @@ mod tests {
     #[test]
     fn rpc_surface_is_explicit_and_uses_authenticated_context() {
         let (editor, _) = editor();
-        let mut rpc = RpcRegistry::new(PLUGIN_ID);
+        let mut rpc = RpcRegistry::new(RPC_NAMESPACE);
         editor.register_rpc(&mut rpc).unwrap();
         let mut methods = rpc.methods();
         methods.sort();
@@ -257,7 +277,7 @@ mod tests {
     #[test]
     fn apply_is_one_revision_cas_and_conflict_keeps_active_snapshot() {
         let (editor, flow) = editor();
-        let mut rpc = RpcRegistry::new(PLUGIN_ID);
+        let mut rpc = RpcRegistry::new(RPC_NAMESPACE);
         editor.register_rpc(&mut rpc).unwrap();
         let write = RpcCallContext::new(&[CAPABILITY_FLOW_WRITE.into()]);
         futures_executor::block_on(rpc.call_async_with_context(
@@ -274,56 +294,27 @@ mod tests {
             write,
         ))
         .unwrap_err();
-        assert!(error.to_string().contains("revision conflict"));
+        assert_eq!(error.rpc_code(), "config.revision_conflict");
         assert_eq!(flow.active().revision, 1);
     }
 
     /// The manifest is what the Host serves and what the client integrity-checks, so it — not the
-    /// bundle's rendered copy — is what this test can hold. The editor is a second module rather
-    /// than a chunk of `index.js`, and the manifest has to declare it or the shell cannot load it.
+    /// bundle's rendered copy — is what this test can hold.
     #[test]
-    fn materialized_manifest_declares_every_shipped_asset() {
+    fn materialized_manifest_declares_the_bundle_and_its_stylesheet() {
         let root = tempfile::tempdir().unwrap();
         materialize_frontend_assets(root.path()).unwrap();
         let extension = editor().0.with_frontend_assets(root.path());
         let descriptor = extension.descriptor();
 
+        assert_eq!(descriptor.id, PLUGIN_ID);
         assert_eq!(descriptor.entry, "index.js");
-        let declared: Vec<&str> = descriptor
-            .assets
-            .iter()
-            .map(|asset| asset.path.as_str())
-            .collect();
-        assert_eq!(
-            declared,
-            ["index.js", "lilia-node-editor.js", "lilia-context-menu.js"]
-        );
+        assert_eq!(descriptor.styles, ["index.css"]);
         for asset in &descriptor.assets {
             let bytes = std::fs::read(root.path().join(&asset.path)).unwrap();
             assert_eq!(asset.bytes, bytes.len() as u64);
             assert_eq!(asset.content_hash, content_hash(&bytes));
         }
-
-        // The entry must reach each module through its declared path, not by inlining it.
-        assert!(include_str!("../assets/index.js").contains("lilia-node-editor.js"));
-        assert!(include_str!("../assets/index.js").contains("lilia-context-menu.js"));
-        assert!(include_str!("../assets/lilia-context-menu.js").contains("openContextMenuAt"));
-        assert!(include_str!("../assets/lilia-node-editor.js").contains("mountLiliaNodeEditor"));
-    }
-
-    #[test]
-    fn node_editor_geometry_and_port_types() {
-        let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("assets/lilia-node-editor.test.mjs");
-        let output = std::process::Command::new("node")
-            .arg(&script)
-            .output()
-            .expect("node must be available to verify the Lilia node editor");
-        assert!(
-            output.status.success(),
-            "stdout={} stderr={}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
+        assert_eq!(extension.namespace(), RPC_NAMESPACE);
     }
 }

@@ -9,14 +9,9 @@ export interface ConsoleActivity {
   position: "top" | "bottom";
 }
 
-/**
- * The product's information architecture. `placements` moves navigation registered by
- * not-yet-migrated extensions: keys are a navigation id or a legacy activity id, values an
- * activity of this layout. It shrinks as extensions migrate and disappears in W11.
- */
+/** The product's information architecture: the only source of activities. */
 export interface ConsoleLayout {
   activities: ConsoleActivity[];
-  placements?: Record<string, string>;
 }
 
 export interface ShellFailure {
@@ -26,20 +21,18 @@ export interface ShellFailure {
   stage?: "load" | "layout" | "render";
 }
 
-/** Places navigation into layout activities; anything left over is a layout failure. */
+/** Keeps navigation filed under layout activities; anything else is a layout failure. */
 export function placeNavigation(
   layout: ConsoleLayout,
   items: NavigationRegistration[],
   ownerOf: (item: NavigationRegistration) => string,
 ): { placed: NavigationRegistration[]; failures: ShellFailure[] } {
   const known = new Set(layout.activities.map((activity) => activity.id));
-  const placements = layout.placements ?? {};
   const placed: NavigationRegistration[] = [];
   const failures: ShellFailure[] = [];
   for (const item of items) {
-    const activityId = placements[item.id] ?? placements[item.activityId] ?? item.activityId;
-    if (known.has(activityId)) {
-      placed.push(activityId === item.activityId ? item : { ...item, activityId });
+    if (known.has(item.activityId)) {
+      placed.push(item);
     } else {
       failures.push({
         extensionId: ownerOf(item),

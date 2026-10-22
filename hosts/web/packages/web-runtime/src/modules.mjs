@@ -15,8 +15,9 @@ export const SHARED_STYLESHEET = "ui.css";
 
 /** Budgets for the shared runtime itself; extensions keep the stricter web-build defaults. */
 export const SHARED_BUDGETS = {
-  jsBytes: 200 * 1024,
-  // Lilia base + workspace/sidebar/page layouts + console chrome + node editor, unminified so
-  // the font-face urls stay byte-for-byte what the host serves.
-  cssBytes: 160 * 1024,
+  // The Vue runtime is the largest module (~115 KiB).
+  jsBytes: 128 * 1024,
+  // Lilia base + workspace/sidebar/page layouts + console chrome + `Mk*` components, unminified
+  // so the font-face urls stay byte-for-byte what the host serves (~82 KiB).
+  cssBytes: 96 * 1024,
 };

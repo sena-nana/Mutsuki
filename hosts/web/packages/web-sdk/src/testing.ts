@@ -111,7 +111,6 @@ export function createFakeBridge(options: FakeBridgeOptions = {}): FakeBridge {
 /** A shell-like extension context over a fake bridge, with real registries. */
 export function createTestExtensionContext(bridge: FakeBridge = createFakeBridge()): ExtensionContext {
   return {
-    activities: createRegistry({ onDuplicate: "retain" }),
     pages: createRegistry(),
     navigation: createRegistry(),
     slots: createRegistry(),

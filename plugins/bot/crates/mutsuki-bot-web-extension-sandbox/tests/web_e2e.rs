@@ -375,7 +375,7 @@ async fn rpc(address: &str, method: &str, params: Value) -> Result<Value, String
         .send(Message::Binary(
             WireMessage::Rpc(RpcRequest {
                 id: Uuid::new_v4(),
-                namespace: PLUGIN_ID.into(),
+                namespace: RPC_NAMESPACE.into(),
                 method: method.into(),
                 params,
             })

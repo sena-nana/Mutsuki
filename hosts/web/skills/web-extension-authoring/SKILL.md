@@ -37,10 +37,11 @@ package and is built by `@mutsuki/web-build`.
 ## Shell contract
 
 - Activities belong to the product layout (`ConsoleLayout`, e.g. `console_layout()` in
-  `products/bot`); an extension registers pages and navigation into existing activity ids and
-  never calls `ctx.activities.register` (unknown ids land in the shell's failures panel).
-- Register a Vue component as `PageRegistration.component`; plain `{ mount }` objects still work
-  through `legacyMount` until W11. Each page renders inside an `ExtensionBoundary`.
+  `products/bot`); the extension context has no activity registry. Navigation names an existing
+  activity id; any other id lands in the shell's failures panel.
+- `PageRegistration.component` and every slot payload (`overview.cards`, `plugin.home`,
+  `config.form`, `config.field:<format>`, `platform.detail:<platform>`) are Vue components; there
+  is no `{ mount }` form. Each page renders inside an `ExtensionBoundary`.
 - Platform adapters that declare `detail_panels` get their extension's slot
   `platform.detail:<platform>` rendered under each account on the platforms page, with
   `{ adapter, account }` props; account-wide actions belong in the adapter's `account_actions`.
@@ -88,6 +89,11 @@ package and is built by `@mutsuki/web-build`.
 `defineExtension` fails the extension (never the shell) when setup exceeds 5s, it registers
 more than 128 items, or it has more than 16 RPCs in flight; the shell loads at most
 `MAX_EXTENSIONS` (64). Raise a budget only with a written reason in `budgets`.
+
+`mutsuki-web-build` also caps each bundle file (JS and CSS). A package that needs more declares
+it next to its code in `package.json`: `"mutsuki": { "budgets": { "cssBytes": N, "reason": "…" } }`;
+a budget without a reason fails the build. Extension-specific surfaces (e.g. the flow node editor)
+ship their stylesheet in their own bundle, never in `@mutsuki/ui`.
 
 ## Tests
 

@@ -163,3 +163,37 @@
   路由为 `#/plugins/control.plugins`）。
 - 产品 `config_navigation_groups` 删除列出旧扩展 id（`overview`、`control`、`upgrade` 等）的「扩展」组，
   保留工作区、接入、助手、服务组，以及只含无 schema 运行插件的「运行插件」组。
+
+## W10 流程与沙盒
+
+- 流程编辑器改为 `@mutsuki/bot-ext-flow`，扩展 id `mutsuki.bot.flow`（命名空间仍为 `bot-flow-editor`），
+  页面 `bot-flow.page` 在 `automation` activity。画布、右键/搜索菜单、属性面板为 Vue 组件；属性面板为
+  每个输出端口列出可连接的输入端口，键盘即可连线。保存先校验再按读取时的 revision 应用，
+  `config.revision_conflict` 保留编辑并提示重新加载。`assets/{index,lilia-node-editor,lilia-context-menu}.js`
+  与依赖 `node` 的 cargo 测试删除，几何与连线规则改由 vitest 覆盖。
+- `node-editor.css` 从 `@mutsuki/ui` 移入流程包，随 `index.css` 发布；流程包在 `package.json` 声明
+  `mutsuki.budgets.cssBytes` 及理由。`@mutsuki/web-build` 支持包级预算，无理由的预算会使构建失败。
+- 沙盒改为 `@mutsuki/bot-ext-sandbox`，扩展 id `mutsuki.bot.sandbox`（命名空间与 `sandbox.changed` 不变），
+  仍使用现有 `sandbox.*` RPC（独立模拟适配器延后）。会话、聊天与成员三栏为 Vue 组件；消息内容按片段
+  渲染为文本与媒体元素，图片只加载 https；真实数据模式发送前确认；清空会话与移除成员需危险确认；
+  失败以 toast 显示 owner 的消息。沙盒的内联样式移入 `sandbox.css`。
+- 沙盒 RPC 错误改为 `ExtensionError::Rpc`（owner code、`invalid_params`、`sandbox.confirmation_required`）；
+  流程 RPC 的配置错误使用 `config.<kind>`。WebBridge 对 `ExtensionError::Rpc` 只发送其 message
+  （`ExtensionError::rpc_message`），code 单独下发，不再出现 `rpc failed (code): …` 前缀。
+- `@mutsuki/ui` 新增 `image`、`attach`、`smile`、`document`、`grid`、`reply` 图标。手写资产白名单清空。
+
+## W11 清理
+
+- 删除 v1 页面与 activity 接口：`@mutsuki/web-shell` 的 `legacy.ts`（`legacyMount`、`isLegacyPage`）、
+  `@mutsuki/web-sdk` 的 `PageComponent`、`MountableComponent`、`ActivityRegistration` 与
+  `ExtensionContext.activities`。`PageRegistration.component` 与所有 slot（含 `overview.cards`）只接受
+  Vue 组件；仍调用 `ctx.activities.register` 的扩展加载失败并进入失败面板。
+- `ConsoleLayout.placements`（TS 与 Rust）删除：导航必须登记在布局已有的 activity 下，否则记为 layout 失败。
+- 仓库内不再有手写扩展模块：`check_workspace.py` 删除 `HANDWRITTEN_WEB_ASSETS` 白名单，任何
+  `*/assets/*.js|mjs` 都会失败。
+- 收紧产物预算：扩展单文件 JS 48 KiB、CSS 8 KiB（原 200 KiB / 40 KiB），超出须在包内
+  `mutsuki.budgets` 写明理由（目前只有流程编辑器样式）；共享运行时 JS 128 KiB、CSS 96 KiB（原 200 / 160 KiB）。
+  config 扩展启动时的 `schema.get` 以每批 8 个发出，不超过扩展的并发 RPC 预算。
+- `console.css` 删除只被已删除手写页面使用的规则（旧配置表单、日志块、数据表等）。
+- 文档终审：`hosts/web/AGENTS.md`（规则 12–15）、`plugins/bot/AGENTS.md` 第 12 条（扩展 id 与 `web/` 包约定）、
+  `products/bot/skills/integration-testing`（组件层与 Playwright 层覆盖范围）。

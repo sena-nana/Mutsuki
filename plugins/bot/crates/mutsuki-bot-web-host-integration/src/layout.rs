@@ -1,7 +1,7 @@
 //! Console information architecture. The product owns which activities exist; extensions
 //! only contribute pages and navigation into them.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use serde::Serialize;
 
@@ -42,13 +42,11 @@ impl ConsoleActivity {
     }
 }
 
-/// Activities plus placements for navigation that not-yet-migrated extensions still file
-/// under their own activity ids. A placement key is a navigation id or a legacy activity id;
-/// its value must be an activity of this layout.
+/// The console's activities. Extensions file navigation under these ids and cannot add more;
+/// navigation for an undefined activity is reported as a layout failure in the shell.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct ConsoleLayout {
     pub activities: Vec<ConsoleActivity>,
-    pub placements: BTreeMap<String, String>,
 }
 
 /// Activity hosting the shell's own settings page; every layout must define it.
@@ -66,14 +64,12 @@ impl Default for ConsoleLayout {
                 ConsoleActivity::top("system", "诊断", "system", 50),
                 ConsoleActivity::bottom(SETTINGS_ACTIVITY, "设置", "settings", 100),
             ],
-            placements: BTreeMap::new(),
         }
     }
 }
 
 impl ConsoleLayout {
-    /// Ids are unique, the settings activity exists and every placement targets a defined
-    /// activity.
+    /// Ids are unique and the settings activity exists.
     ///
     /// # Errors
     ///
@@ -89,13 +85,6 @@ impl ConsoleLayout {
             return Err(format!(
                 "console layout lacks the `{SETTINGS_ACTIVITY}` activity"
             ));
-        }
-        for (key, target) in &self.placements {
-            if !ids.contains(target.as_str()) {
-                return Err(format!(
-                    "placement `{key}` targets undefined activity `{target}`"
-                ));
-            }
         }
         Ok(())
     }
@@ -119,16 +108,12 @@ mod tests {
     }
 
     #[test]
-    fn validation_rejects_duplicates_dangling_placements_and_missing_settings() {
+    fn validation_rejects_duplicates_and_missing_settings() {
         let mut layout = ConsoleLayout::default();
         layout
             .activities
             .push(ConsoleActivity::top("home", "重复", "home", 1));
         assert!(layout.validate().unwrap_err().contains("duplicate"));
-
-        let mut layout = ConsoleLayout::default();
-        layout.placements.insert("bot".into(), "agent".into());
-        assert!(layout.validate().unwrap_err().contains("`agent`"));
 
         let mut layout = ConsoleLayout::default();
         layout

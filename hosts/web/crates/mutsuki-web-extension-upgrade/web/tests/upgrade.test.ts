@@ -63,6 +63,5 @@ describe("upgrade page", () => {
     await extension.setup(ctx);
     expect(ctx.pages.list().map((page) => page.id)).toEqual(["upgrade.page"]);
     expect(ctx.navigation.list()[0]).toMatchObject({ activityId: "system", pageId: "upgrade.page" });
-    expect(ctx.activities.list()).toEqual([]);
   });
 });

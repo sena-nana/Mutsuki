@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -242,8 +242,6 @@ pub fn console_layout() -> ConsoleLayout {
             ConsoleActivity::top("system", "系统", "system", 70),
             ConsoleActivity::bottom("settings", "设置", "settings", 100),
         ],
-        // Every bundled extension now files its pages under these activities directly.
-        placements: BTreeMap::new(),
     }
 }
 
@@ -364,12 +362,21 @@ mod tests {
                 "settings"
             ]
         );
-        // Every legacy activity id an extension still files navigation under is either a
-        // layout activity or placed into one.
-        for legacy in ["home", "system", "automation", "sandbox", "plugins"] {
+        // Every activity a bundled extension files navigation under exists in the layout;
+        // the shell reports navigation for any other activity as a layout failure.
+        for filed in [
+            "home",
+            "platforms",
+            "agent",
+            "automation",
+            "sandbox",
+            "data",
+            "plugins",
+            "system",
+        ] {
             assert!(
-                layout.has_activity(legacy) || layout.placements.contains_key(legacy),
-                "legacy activity `{legacy}` has no home in the console layout"
+                layout.has_activity(filed),
+                "activity `{filed}` is missing from the console layout"
             );
         }
     }

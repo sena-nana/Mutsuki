@@ -44,7 +44,9 @@ Use for `packages/web-{build,sdk,shell}` and the root pnpm workspace files.
 - `buildExtension` runs Vite library mode with `@vitejs/plugin-vue`: one `index.js`, at most one
   `index.css`, `vue`/`vue-router`/`pinia`/`@mutsuki/web-sdk`/`@mutsuki/ui` external.
 - `checkBundle` (also `mutsuki-web-build check`) rejects bare imports outside the shared runtime,
-  a bundled Vue runtime, JS > 200KiB / CSS > 40KiB (override per package with a written reason),
+  a bundled Vue runtime, JS > 48 KiB / CSS > 8 KiB per file (a package raises its own cap with
+  `"mutsuki": { "budgets": { "cssBytes": N, "reason": "…" } }` in package.json; no reason, no
+  build), the shared runtime's own caps in `web-runtime/src/modules.mjs` (128 KiB JS / 96 KiB CSS),
   hex colors in CSS declarations (use Lilia / `--mk-*` tokens) and `node:` imports.
 - Emit a versioned manifest with content hashes, `styles`, and protocol version.
 - HMR is opt-in via `MUTSUKI_WEB_HMR=1` and must not be required at runtime.

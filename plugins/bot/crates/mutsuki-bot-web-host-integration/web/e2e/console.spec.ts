@@ -104,6 +104,18 @@ test("a config hub validates and applies the generated form", async ({ page }) =
   await expect(page.locator(".console-page-content").getByLabel("显示名称")).toHaveValue("睦月 e2e");
 });
 
+test("a sandbox send the owner rejects keeps the draft and says why", async ({ page }) => {
+  await login(page);
+  await page.goto("/#/sandbox/sandbox.page");
+  const content = page.locator(".console-page-content");
+  const input = content.getByLabel("消息", { exact: true });
+  await input.fill("e2e 你好");
+  await input.press("Enter");
+  // The fixture runs no Bot Flow, so the simulated ingest is refused with the owner's message.
+  await expect(page.locator(".mk-toast")).toContainText("操作失败：Bot 流程当前不可用");
+  await expect(input).toHaveValue("e2e 你好");
+});
+
 test("theme switches between light and dark", async ({ page }) => {
   await login(page);
   await page.goto("/#/settings/webui.settings");
@@ -130,11 +142,11 @@ for (const colorScheme of ["light", "dark"] as const) {
       "#/platforms/platforms.accounts",
       "#/platforms/qq-bot.deliveries",
       "#/data/database.page",
+      "#/sandbox/sandbox.page",
     ]) {
       await page.goto(`/${route}`);
       await page.waitForLoadState("networkidle");
-      // Hand-written pages are migrated in W6–W10; until then only the shell around them counts.
-      const scan = await new AxeBuilder({ page }).exclude(".legacy-page").analyze();
+      const scan = await new AxeBuilder({ page }).analyze();
       expect(serious(scan.violations), route).toEqual([]);
     }
   });

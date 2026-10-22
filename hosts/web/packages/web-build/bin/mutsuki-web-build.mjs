@@ -1,7 +1,17 @@
 #!/usr/bin/env node
-import { buildExtension, checkBundle, createViteHmrConfig, formatViolations } from "../dist/index.js";
+import { buildExtension, checkBundle, createViteHmrConfig, formatViolations, packageBudgets } from "../dist/index.js";
 import path from "node:path";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
+
+/** Budget overrides from the package being built (`mutsuki.budgets` in its package.json). */
+async function ownBudgets() {
+  try {
+    return packageBudgets(JSON.parse(await readFile(path.resolve("package.json"), "utf8")));
+  } catch (error) {
+    if (error?.code === "ENOENT") return {};
+    throw error;
+  }
+}
 
 const [command, ...args] = process.argv.slice(2);
 const flags = new Set(args.filter((arg) => arg.startsWith("--")));
@@ -25,6 +35,7 @@ async function main() {
       version: process.env.MUTSUKI_EXTENSION_VERSION ?? "0.1.0",
       capabilities: list(process.env.MUTSUKI_EXTENSION_CAPABILITIES),
       writeManifest: !flags.has("--no-manifest"),
+      check: { budgets: await ownBudgets() },
     });
     console.log(JSON.stringify(result, null, 2));
     return;
@@ -32,7 +43,7 @@ async function main() {
 
   if (command === "check") {
     const outDir = rest[0] ?? "dist/web";
-    const violations = await checkBundle(path.resolve(outDir));
+    const violations = await checkBundle(path.resolve(outDir), { budgets: await ownBudgets() });
     if (violations.length) console.error(formatViolations(violations));
     process.exitCode = violations.length ? 1 : 0;
     return;
@@ -59,7 +70,8 @@ async function main() {
   MUTSUKI_WEB_HMR=1 mutsuki-web-build dev [entry] [viteConfigOut]
 
 build/check reject: bare imports outside the shared runtime, bundled Vue runtime,
-JS > 200KiB or CSS > 40KiB, raw hex colors in CSS, and node: modules.
+JS or CSS over budget, raw hex colors in CSS, and node: modules. A package may raise its
+budget in package.json: "mutsuki": { "budgets": { "cssBytes": N, "reason": "why" } }.
 
 Optional env:
   MUTSUKI_EXTENSION_ID

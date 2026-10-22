@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 
-import { buildExtension, checkBundle, importSpecifiers } from "../src/index.js";
+import { buildExtension, checkBundle, importSpecifiers, packageBudgets } from "../src/index.js";
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
 const temps: string[] = [];
@@ -84,6 +84,13 @@ describe("checkBundle", () => {
       ["index.js", "vue_runtime_bundled"],
       ["nested/big.css", "css_budget"],
     ]);
+  });
+
+  test("a package budget override must state its reason", () => {
+    expect(packageBudgets({ name: "x" })).toEqual({});
+    expect(packageBudgets({ mutsuki: { budgets: { cssBytes: 12288, reason: "node editor surface" } } })).toEqual({ cssBytes: 12288 });
+    expect(() => packageBudgets({ mutsuki: { budgets: { cssBytes: 12288 } } })).toThrow(/reason/);
+    expect(() => packageBudgets({ mutsuki: { budgets: { jsBytes: -1, reason: "x" } } })).toThrow(/positive integer/);
   });
 
   test("id selectors are not colors", async () => {

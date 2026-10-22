@@ -543,15 +543,19 @@ async fn embedded_console_serves_sandbox_panel() {
     );
     let document = ConsoleDocument::fetch(&addr).await;
     document.assert_complete(&addr).await;
-    // The extension's own `sandbox` activity is not honoured: only a layout can add it.
+    // The default layout has no `sandbox` activity, and extensions cannot add one.
     assert!(!document.activity_ids().contains(&"sandbox".to_string()));
-    assert!(document.extension_ids().contains(&"sandbox".to_string()));
+    assert!(
+        document
+            .extension_ids()
+            .contains(&"mutsuki.bot.sandbox".to_string())
+    );
     let snap = ws_rpc_params(&addr, "sandbox", "snapshot", json!({}))
         .await
         .unwrap();
     assert_eq!(snap["mode"], "simulate");
     assert!(!snap["conversations"].as_array().unwrap().is_empty());
-    assert!(dirs.page_assets("sandbox").is_some());
+    assert!(dirs.page_assets("mutsuki.bot.sandbox").is_some());
     host.stop().await.unwrap();
 }
 
@@ -597,14 +601,14 @@ async fn embedded_console_serves_lilia_flow_node_editor() {
     host.start().await.unwrap();
     let addr = host.listen_addr().unwrap().to_string();
     let document = ConsoleDocument::fetch(&addr).await;
-    // Crawling the flow module also proves its relative editor/context-menu imports are staged.
+    // Crawling the flow module also proves its stylesheet is staged and declared.
     document.assert_complete(&addr).await;
     assert!(
         document
             .extension_ids()
-            .contains(&"bot-flow-editor".to_string())
+            .contains(&"mutsuki.bot.flow".to_string())
     );
-    assert!(dirs.page_assets("bot-flow-editor").is_some());
+    assert!(dirs.page_assets("mutsuki.bot.flow").is_some());
     host.stop().await.unwrap();
 }
 
@@ -667,7 +671,6 @@ async fn product_layout_reaches_the_console_and_invalid_layouts_are_refused() {
     layout
         .activities
         .push(ConsoleActivity::top("agent", "会话与 Agent", "chat", 20));
-    layout.placements.insert("bot".into(), "agent".into());
     let build = |layout: ConsoleLayout| {
         build_bot_console(
             &WebConsoleConfig {
@@ -693,13 +696,15 @@ async fn product_layout_reaches_the_console_and_invalid_layouts_are_refused() {
         document.activity_ids(),
         ["home", "plugins", "data", "system", "settings", "agent"]
     );
-    assert_eq!(document.options["layout"]["placements"]["bot"], "agent");
+    assert!(document.options["layout"].get("placements").is_none());
     host.stop().await.unwrap();
 
-    let mut dangling = ConsoleLayout::default();
-    dangling.placements.insert("bot".into(), "nowhere".into());
-    let error = build(dangling).err().expect("dangling placement");
-    assert!(error.to_string().contains("nowhere"));
+    let mut duplicate = ConsoleLayout::default();
+    duplicate
+        .activities
+        .push(ConsoleActivity::top("home", "重复", "home", 1));
+    let error = build(duplicate).err().expect("duplicate activity");
+    assert!(error.to_string().contains("duplicate"));
 }
 
 /// The console document as a browser sees it: CSP, import map, stylesheet and module list.

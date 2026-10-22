@@ -44,8 +44,8 @@ Default listen is loopback. Non-loopback requires TLS or explicit remote auth to
 
 `@mutsuki/web-shell` renders extension pages from scoped registries:
 
-- `activities`: product baseline is `home`, `plugins` (or `settings`), and `system`. Extensions may register extra first-level activities; duplicate ids are reused.
-- `pages`: mountable components. Optional `pluginId` / `pluginIds` mark plugin-owned extra pages.
+- Activities come only from the product's `ConsoleLayout`; the extension context has no activity registry, and navigation under an activity the layout lacks is reported as a layout failure.
+- `pages`: precompiled Vue components. Optional `pluginId` / `pluginIds` mark plugin-owned extra pages.
 - `navigation`: links an `activityId` to a `pageId`.
 - `slots`: `overview.cards`, `plugin.home` (the hub component the shell renders for `#/plugins/<id>` with `{ pluginId }`), `config.form` (replaces the generated form on the owner's hub, rendered with `{ providerId }`), `config.field:<format>` (SchemaForm renderer for `presentation.format`) and `platform.detail:<platform>`. Cards with `pluginId` also mount on that plugin's hub page. The homepage overview host lays `overview.cards` on a 4-column grid with a fixed row height; contributions declare `colSpan` / `rowSpan` (default 2×1) and only fill the card interior. Plugin hub pages still wrap contributions in `.card` using the existing flow layout.
 

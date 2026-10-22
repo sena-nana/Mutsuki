@@ -2,6 +2,7 @@ import { createRegistry, RpcError, type SlotRegistration } from "@mutsuki/web-sd
 import { createFakeBridge, createTestExtensionContext } from "@mutsuki/web-sdk/testing";
 import { flushPromises } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { defineComponent, h, onBeforeUnmount } from "vue";
 
 import extension from "../src/index";
 import OverviewPage from "../src/OverviewPage.vue";
@@ -68,22 +69,22 @@ describe("overview page", () => {
     wrapper.unmount();
   });
 
-  test("mounts legacy overview cards with their span and disposes them", async () => {
+  test("renders overview card components with their span and unmounts them", async () => {
     const slots = createRegistry<SlotRegistration>();
-    const dispose = vi.fn();
+    const unmounted = vi.fn();
     slots.register({
       id: "qq.card",
       slot: "overview.cards",
       colSpan: 4,
       rowSpan: 2,
-      component: {
-        mount(element: HTMLElement) {
-          element.append("QQ 账号");
-          return { dispose };
+      component: defineComponent({
+        setup() {
+          onBeforeUnmount(unmounted);
+          return () => h("p", "QQ 账号");
         },
-      },
+      }),
     });
-    slots.register({ id: "other", slot: "plugin.home", component: { mount() {} } });
+    slots.register({ id: "other", slot: "plugin.home", component: defineComponent({ render: () => null }) });
     const bridge = createFakeBridge({ handlers: { "overview.summary": () => summary(1) } });
     const { wrapper } = mountPage(OverviewPage, { bridge, props: { slots } });
     await flushPromises();
@@ -92,7 +93,7 @@ describe("overview page", () => {
     expect(cards[0].text()).toBe("QQ 账号");
     expect(cards[0].attributes("style")).toContain("--overview-card-col-span: 4");
     wrapper.unmount();
-    expect(dispose).toHaveBeenCalledOnce();
+    expect(unmounted).toHaveBeenCalledOnce();
   });
 
   test("registers the home page", async () => {

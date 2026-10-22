@@ -54,25 +54,13 @@ export interface PageRegistration {
   id: string;
   path: string;
   title: string;
-  /** A Vue component, or a legacy `{ mount }` object adapted by the shell. */
-  component: PageComponent | Component;
+  /** Precompiled Vue component rendered inside the shell's `ExtensionBoundary`. */
+  component: Component;
   requiredCapability?: string;
   /** Runtime plugin / config provider that owns this extra page. */
   pluginId?: string;
   /** Additional owners when one page belongs to multiple plugins. */
   pluginIds?: string[];
-}
-
-export interface PageComponent {
-  mount(element: HTMLElement): void | Disposable | Promise<void | Disposable>;
-}
-
-export interface ActivityRegistration {
-  id: string;
-  label: string;
-  icon: string;
-  order?: number;
-  position?: "top" | "bottom";
 }
 
 export interface NavigationRegistration {
@@ -107,8 +95,11 @@ export interface CommandRegistration {
   requiredCapability?: string;
 }
 
+/**
+ * What an extension may register. Activities are not here: only the product layout defines
+ * them, and extensions file navigation under its activity ids.
+ */
 export interface ExtensionContext {
-  activities: Registry<ActivityRegistration>;
   pages: Registry<PageRegistration>;
   navigation: Registry<NavigationRegistration>;
   slots: Registry<SlotRegistration>;

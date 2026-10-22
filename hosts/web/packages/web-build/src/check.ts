@@ -18,10 +18,38 @@ export interface BundleBudgets {
   cssBytes: number;
 }
 
+/**
+ * Per-file caps for an extension bundle. The largest page today (config hubs + SchemaForm) is
+ * ~36 KiB of JS and the largest stylesheet ~8 KiB; anything bigger declares its own budget.
+ */
 export const DEFAULT_BUDGETS: BundleBudgets = {
-  jsBytes: 200 * 1024,
-  cssBytes: 40 * 1024,
+  jsBytes: 48 * 1024,
+  cssBytes: 8 * 1024,
 };
+
+/**
+ * A package's own budget override, declared in its `package.json` as
+ * `"mutsuki": { "budgets": { "cssBytes": 12288, "reason": "…" } }`. A budget above the default
+ * must say why, so every exception stays reviewable next to the code it covers.
+ */
+export function packageBudgets(packageJson: unknown): Partial<BundleBudgets> {
+  const declared = (packageJson as { mutsuki?: { budgets?: Record<string, unknown> } } | null)?.mutsuki?.budgets;
+  if (declared === undefined) return {};
+  const reason = declared?.reason;
+  if (typeof reason !== "string" || !reason.trim()) {
+    throw new Error("mutsuki.budgets needs a non-empty `reason` explaining the exception");
+  }
+  const budgets: Partial<BundleBudgets> = {};
+  for (const key of ["jsBytes", "cssBytes"] as const) {
+    const value = declared[key];
+    if (value === undefined) continue;
+    if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+      throw new Error(`mutsuki.budgets.${key} must be a positive integer byte count`);
+    }
+    budgets[key] = value;
+  }
+  return budgets;
+}
 
 export interface CheckOptions {
   /** Bare specifiers that may stay unresolved (served by the import map). */

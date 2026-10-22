@@ -322,6 +322,28 @@ describe("plugin hubs", () => {
     expect(nav["mutsuki.catalog.only"]).toBeUndefined();
   });
 
+  test("many providers stay within the extension's RPC budget", async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const items = Array.from({ length: 30 }, (_, index) => ({ provider_id: `p${index}` }));
+    const bridge = createFakeBridge({
+      handlers: {
+        "config.navigation.list": () => [{ items }],
+        "config.schema.get": async () => {
+          peak = Math.max(peak, ++inFlight);
+          await new Promise((resolve) => setTimeout(resolve, 1));
+          inFlight -= 1;
+          return schema;
+        },
+        "control.plugin_list": () => ({ plugins: [] }),
+      },
+    });
+    const ctx = createTestExtensionContext(bridge);
+    await extension.setup(ctx);
+    expect(ctx.navigation.list()).toHaveLength(30);
+    expect(peak).toBeLessThanOrEqual(8);
+  });
+
   test("provider hubs survive a failing plugin list", async () => {
     const bridge = createFakeBridge({
       handlers: {

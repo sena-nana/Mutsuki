@@ -18,6 +18,7 @@ export {
   checkBundle,
   formatViolations,
   importSpecifiers,
+  packageBudgets,
   type BundleBudgets,
   type CheckOptions,
   type CheckViolation,

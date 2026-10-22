@@ -440,16 +440,6 @@ def check_manifest_urls() -> None:
 # Browser packages share one pnpm workspace at the repository root. hosts/tauri predates it and
 # keeps its own lockfile until TauriHost moves its client onto the root catalog.
 PNPM_WORKSPACE_EXCEPTIONS = frozenset({"hosts/tauri"})
-# Hand-written extension modules that predate `@mutsuki/web-build`. The list only shrinks:
-# each Vue migration deletes its entry, and a new hand-written asset fails the check.
-HANDWRITTEN_WEB_ASSETS = frozenset(
-    {
-        "plugins/bot/crates/mutsuki-bot-web-extension-flow/assets/index.js",
-        "plugins/bot/crates/mutsuki-bot-web-extension-flow/assets/lilia-context-menu.js",
-        "plugins/bot/crates/mutsuki-bot-web-extension-flow/assets/lilia-node-editor.js",
-        "plugins/bot/crates/mutsuki-bot-web-extension-sandbox/assets/index.js",
-    }
-)
 WEB_DEPENDENCY_FIELDS = ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies")
 
 
@@ -481,7 +471,7 @@ def _pnpm_workspace() -> tuple[list[str], set[str]]:
 
 
 def check_web_packages() -> None:
-    """One pnpm workspace, catalog-pinned shared runtime, and no new hand-written assets."""
+    """One pnpm workspace, catalog-pinned shared runtime, and no hand-written assets."""
     for required in ("package.json", "pnpm-lock.yaml", "tsconfig.web.base.json"):
         if not (ROOT / required).is_file():
             fail(f"missing root web workspace file {required}")
@@ -530,24 +520,27 @@ def check_web_packages() -> None:
         fail("web packages diverge from the root workspace:\n  " + "\n  ".join(problems))
 
     tracked = subprocess.run(
-        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "*/assets/*.js"],
+        [
+            "git",
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "*/assets/*.js",
+            "*/assets/*.mjs",
+        ],
         cwd=ROOT,
         capture_output=True,
         text=True,
         check=True,
     ).stdout.split()
-    present = {path for path in tracked if (ROOT / path).is_file()}
-    added = sorted(present - HANDWRITTEN_WEB_ASSETS)
-    if added:
+    # Every extension frontend is a `web/` package built by @mutsuki/web-build (W11): a
+    # hand-written module under `assets/` is never accepted, so there is no allowlist.
+    present = sorted(path for path in tracked if (ROOT / path).is_file())
+    if present:
         fail(
-            "new hand-written extension assets; build them from a web/ package with "
-            "@mutsuki/web-build instead:\n  " + "\n  ".join(added)
-        )
-    removed = sorted(HANDWRITTEN_WEB_ASSETS - present)
-    if removed:
-        fail(
-            "HANDWRITTEN_WEB_ASSETS lists files that no longer exist; drop them so the "
-            "allowlist keeps shrinking:\n  " + "\n  ".join(removed)
+            "hand-written extension assets; build them from a web/ package with "
+            "@mutsuki/web-build instead:\n  " + "\n  ".join(present)
         )
 
 

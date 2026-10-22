@@ -85,7 +85,12 @@ export default defineExtension({
     const [groups, plugins] = await Promise.all([callRpc(ctx.rpc, configApi["navigation.list"]), loadedPlugins(ctx)]);
     const loaded = new Set(plugins.filter((plugin) => plugin.configured || plugin.active_deployment).map((plugin) => plugin.plugin_id));
     const entries = groups.flatMap((group) => group.items.map((item) => ({ group: group.label, item })));
-    const titles = await Promise.all(entries.map(({ item }) => schemaTitle(ctx, item.provider_id)));
+    // At most eight schema reads at once: the extension's RPC budget is sixteen in flight.
+    const titles: Array<string | null> = [];
+    for (let start = 0; start < entries.length; start += 8) {
+      const batch = entries.slice(start, start + 8);
+      titles.push(...(await Promise.all(batch.map(({ item }) => schemaTitle(ctx, item.provider_id)))));
+    }
 
     const covered = new Set<string>();
     const register = (pluginId: string, title: string, group: string | undefined, order: number, hasSchema: boolean) => {
