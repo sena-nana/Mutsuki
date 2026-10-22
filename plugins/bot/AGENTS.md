@@ -34,6 +34,8 @@ Adapter/Gateway。它不拥有 Core 调度、Host 生命周期、Agent 能力或
 10. 媒体等可选后端必须显式提供并与 manifest capability 一致，不注册 unavailable 生产替代。
 11. QQBot 文档必须区分单元、fake E2E 和真实账号 smoke，且与当前 manifest、配置和实现同步。
 12. 有 `PluginBuilder` 的可加载面必须使用 `mutsuki-plugin-*` 名；库面 crate 只持有 trait/service。
+    插件 ID 一律为 `mutsuki.plugin.bot.<crate 后缀>`（如 `mutsuki.plugin.bot.adapter-qqbot`、`mutsuki.plugin.bot.flow`、
+    `mutsuki.plugin.bot.sandbox`）；host service ID 保持 `mutsuki.bot.*` 且不得与插件 ID 复用，Flow 节点类型 ID 不随改名变化。
     反向同样成立：不建 `PluginBuilder` 的 crate 不得占用该前缀。WebExtension 属于此类，
     统一用 `mutsuki-bot-web-extension-*`，且骨架从 `mutsuki-web-extension-api` 复用。
     不含 Bot 内容的控制台页面归各自 owner（`hosts/web`、`kits/agent`），不留在本包。

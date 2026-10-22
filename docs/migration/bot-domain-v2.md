@@ -101,3 +101,28 @@ order the changes land on `main`.
   `OFL.txt`); a moved binary or an external product built from a git dependency works without
   the source tree.
 - `TargetedPluginReloadLifecycle::new` takes the instance root as its second argument.
+
+## Unified plugin ids (product config v4)
+
+| Before | After |
+| --- | --- |
+| `mutsuki.bot.adapter.qqbot` | `mutsuki.plugin.bot.adapter-qqbot` |
+| `mutsuki.bot.router.flow` | `mutsuki.plugin.bot.flow` |
+| `mutsuki.bot.command` | `mutsuki.plugin.bot.command` |
+| `mutsuki.bot.bilibili` | `mutsuki.plugin.bot.bilibili` |
+| `mutsuki.bot.bilibili.workshop` | `mutsuki.plugin.bot.bilibili-workshop` |
+| `mutsuki.bot.mihuashi` | `mutsuki.plugin.bot.mihuashi` |
+| `mutsuki.bot.sandbox` (plugin) | `mutsuki.plugin.bot.sandbox` (`mutsuki.bot.sandbox` stays the host service id) |
+| `mutsuki.plugin.bot.conversation.context` | `mutsuki.plugin.bot.conversation-context` |
+| `mutsuki.plugin.bot.flow.tool` | `mutsuki.plugin.bot.flow-agent-tool` |
+
+- Runner, protocol, Flow node type and host service ids are unchanged, so stored Flow graphs keep
+  validating.
+- The single-instance product migrates a v3 config repository once on startup: it copies
+  `config.sqlite3` (and `-wal`/`-shm`) to `config.sqlite3.v3.bak`, moves the QQ, Bilibili,
+  Workshop and Mihuashi owner documents to their new provider ids and stamps `mutsuki.product` as
+  schema/value v4. Documents under the old ids are left in place but unused. To roll back, stop the
+  product and restore the `.v3.bak` files over `config.sqlite3*`.
+- Hand-written `ServiceConfig` files and `[[plugins.configured]]` entries must use the new ids;
+  installed ABI plugin directories named after a plugin id must be renamed.
+- Product config versions older than v3 are still rejected; recreate the instance repository.

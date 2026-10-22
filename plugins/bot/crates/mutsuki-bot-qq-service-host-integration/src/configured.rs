@@ -1,5 +1,4 @@
-use mutsuki_bot_sandbox::SANDBOX_SERVICE_ID;
-use mutsuki_bot_service_host_integration::{bot_sandbox, bot_state_db};
+use mutsuki_bot_service_host_integration::{BOT_SANDBOX_PLUGIN_ID, bot_sandbox, bot_state_db};
 use mutsuki_plugin_bot_adapter_qqbot::{QQBOT_ADAPTER_PLUGIN_ID, QqBotConfig};
 use mutsuki_service_runtime::{
     ConfiguredPluginCatalog, ConfiguredPluginFactory, ServiceRuntimeBuilder, ServiceRuntimeResult,
@@ -43,7 +42,7 @@ impl ConfiguredPluginFactory for QqBotConfiguredPlugin {
             .with_resource_media_provider(self.media_provider_id.clone())
             .with_state_repository(repository);
         if builder
-            .configured_plugin_selection(SANDBOX_SERVICE_ID)
+            .configured_plugin_selection(BOT_SANDBOX_PLUGIN_ID)
             .is_some()
         {
             // Whichever of the sandbox plugin and this adapter prepares first creates the

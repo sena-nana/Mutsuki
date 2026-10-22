@@ -7,7 +7,7 @@ Required migration:
 
 1. Register one shared `AgentConnectionRegistry` in the Agent connection and Bot configured
    catalogs.
-2. Select the platform adapter, `mutsuki.bot.flow`, `mutsuki.bot.command`,
+2. Select the platform adapter, `mutsuki.bot.flow`, `mutsuki.plugin.bot.command`,
    `mutsuki.plugin.bot.agent`, and reliable delivery explicitly.
 3. Add the required `BotAgentConfig.connection_id`. Endpoint and authentication fields remain in
    connector-owned opaque connection config; only Host secret key references are persisted.

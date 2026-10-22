@@ -41,7 +41,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use url::Url;
 
-pub const PLUGIN_ID: &str = "mutsuki.bot.mihuashi";
+pub const PLUGIN_ID: &str = "mutsuki.plugin.bot.mihuashi";
 pub const RUNNER_ID: &str = "mutsuki.bot.mihuashi.runner";
 pub const LINK_RESOLVE: &str = "mutsuki.bot.mihuashi.link/resolve@1";
 

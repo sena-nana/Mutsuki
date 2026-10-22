@@ -26,7 +26,7 @@ use crate::{
     match_node_catalog, source_kinds_for_node,
 };
 
-pub const BOT_FLOW_ROUTER_PLUGIN_ID: &str = "mutsuki.bot.router.flow";
+pub const BOT_FLOW_ROUTER_PLUGIN_ID: &str = "mutsuki.plugin.bot.flow";
 pub const BOT_FLOW_INGRESS_RUNNER_ID: &str = "mutsuki.bot.router.flow.ingress";
 pub const BOT_FLOW_NODE_RUNNER_ID: &str = "mutsuki.bot.router.flow.node";
 pub const BOT_FLOW_REGISTRY_SERVICE_ID: &str = "mutsuki.bot.flow.registry";

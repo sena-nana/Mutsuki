@@ -30,17 +30,17 @@ async fn empty_single_instance_is_seeded_once_and_restored() {
         .await
         .unwrap();
     assert_eq!(first_product.revision.0, 1);
-    assert_eq!(first_product.schema_version, 3);
-    assert_eq!(first_product.value_version, 3);
+    assert_eq!(first_product.schema_version, 4);
+    assert_eq!(first_product.value_version, 4);
     assert_eq!(
         first_product.value.to_json()["workspace_enabled"],
         serde_json::Value::Bool(true)
     );
     for id in [
         "mutsuki.agent.connections",
-        "mutsuki.bot.router.flow",
-        "mutsuki.bot.sandbox",
-        "mutsuki.bot.command",
+        "mutsuki.plugin.bot.flow",
+        "mutsuki.plugin.bot.sandbox",
+        "mutsuki.plugin.bot.command",
         "mutsuki.plugin.bot.interaction",
     ] {
         assert!(
@@ -119,6 +119,75 @@ async fn legacy_product_document_version_is_rejected_without_migration() {
     assert!(error.contains("product.config.version_unsupported"));
 }
 
+/// A v3 instance (plugin ids before unification) migrates once: owner documents move to their
+/// v4 provider ids, `mutsuki.product` is stamped v4 and the v3 repository is kept as a backup.
+#[tokio::test]
+async fn v3_instance_migrates_owner_documents_to_unified_plugin_ids() {
+    let root = tempfile::tempdir().unwrap();
+    let instance = root.path();
+    {
+        let repository = mutsuki_config_sqlite::SqliteConfigRepository::open(
+            instance.join("config.sqlite3"),
+            "mutsuki-bot",
+        )
+        .unwrap();
+        let write = |provider_id: &str, value: serde_json::Value, version: u32| {
+            let mut write = mutsuki_config_service::ConfigRepository::prepare_compare_and_set(
+                &repository,
+                ConfigCompareAndSetRequest {
+                    key: ConfigDocumentKey::new(provider_id, ConfigContext::global()),
+                    expected_revision: mutsuki_config_service::ConfigRevision::ABSENT,
+                    value: ConfigValue::from_json(&value),
+                    schema_version: version,
+                    value_version: version,
+                },
+            )
+            .unwrap();
+            write.commit().unwrap();
+            write.finish().unwrap();
+        };
+        write(
+            PRODUCT_CONFIG_PROVIDER_ID,
+            serde_json::json!({"workspace_enabled": false, "runtime_plugins": {}}),
+            3,
+        );
+        let legacy = mutsuki_plugin_bot_adapter_qqbot::QqBotConfig {
+            app_id: "LEGACY_APP".into(),
+            ..Default::default()
+        };
+        write(
+            "mutsuki.bot.adapter.qqbot",
+            mutsuki_plugin_bot_adapter_qqbot::qq_config_value(false, &legacy).to_json(),
+            1,
+        );
+    }
+
+    let migrated = load_single_instance_product_for_test(instance, TEST_ADMIN_PASSPHRASE)
+        .await
+        .unwrap();
+    let product = migrated
+        .config
+        .read(
+            PRODUCT_CONFIG_PROVIDER_ID,
+            ConfigContext::global(),
+            &[capability::VALUE_READ.into()],
+        )
+        .await
+        .unwrap();
+    assert_eq!((product.schema_version, product.value_version), (4, 4));
+    let qq = migrated
+        .config
+        .read(
+            QQBOT_ADAPTER_PLUGIN_ID,
+            ConfigContext::global(),
+            &[capability::VALUE_READ.into()],
+        )
+        .await
+        .unwrap();
+    assert_eq!(qq.value.to_json()["app_id"], "LEGACY_APP");
+    assert!(instance.join("config.sqlite3.v3.bak").is_file());
+}
+
 #[tokio::test]
 async fn builtin_platform_plugins_boot_with_disabled_owner_documents() {
     let root = tempfile::tempdir().unwrap();
@@ -126,9 +195,9 @@ async fn builtin_platform_plugins_boot_with_disabled_owner_documents() {
         .await
         .unwrap();
     for id in [
-        "mutsuki.bot.bilibili",
-        "mutsuki.bot.bilibili.workshop",
-        "mutsuki.bot.mihuashi",
+        "mutsuki.plugin.bot.bilibili",
+        "mutsuki.plugin.bot.bilibili-workshop",
+        "mutsuki.plugin.bot.mihuashi",
     ] {
         let snapshot = product
             .config
@@ -179,7 +248,7 @@ async fn owner_plugin_ids_are_rejected_from_runtime_plugins() {
         .and_then(ConfigValue::as_object_mut)
         .unwrap()
         .insert(
-            "mutsuki.bot.adapter.qqbot".into(),
+            "mutsuki.plugin.bot.adapter-qqbot".into(),
             ConfigValue::from_json(&serde_json::json!({"enabled": true, "config": {}})),
         );
     first

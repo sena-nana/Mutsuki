@@ -596,6 +596,9 @@ fn execution_product_policy(config: &BotAgentConfig) -> Result<ConversationPolic
     })
 }
 
+/// Configured plugin that publishes the sandbox simulator (`SANDBOX_SERVICE_ID`).
+pub const BOT_SANDBOX_PLUGIN_ID: &str = "mutsuki.plugin.bot.sandbox";
+
 /// Application service holding the single Bot state database actor of this Host.
 pub const BOT_STATE_SERVICE_ID: &str = "mutsuki.bot.state";
 /// Application service holding the sandbox simulator shared by the sandbox plugin and the QQ
@@ -635,7 +638,7 @@ struct SandboxConfiguredPlugin;
 
 impl ConfiguredPluginFactory for SandboxConfiguredPlugin {
     fn plugin_id(&self) -> &str {
-        SANDBOX_SERVICE_ID
+        BOT_SANDBOX_PLUGIN_ID
     }
 
     fn prepare(
@@ -650,7 +653,7 @@ impl ConfiguredPluginFactory for SandboxConfiguredPlugin {
         };
         mutsuki_bot_sdk::config::decode_empty(self.plugin_id(), &config)?;
         let (builder, sandbox) = bot_sandbox(builder)?;
-        let mut manifest = PluginBuilder::new(SANDBOX_SERVICE_ID).build().manifest;
+        let mut manifest = PluginBuilder::new(BOT_SANDBOX_PLUGIN_ID).build().manifest;
         manifest.provides.services.push(SANDBOX_SERVICE_ID.into());
         manifest.provides.capabilities.push("bot.sandbox".into());
         let loaded_manifest = manifest.clone();

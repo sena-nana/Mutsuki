@@ -17,7 +17,7 @@ timeout_ms = 15000
 max_dom_bytes = 2097152
 
 [[plugins.configured]]
-id = "mutsuki.bot.bilibili"
+id = "mutsuki.plugin.bot.bilibili"
 
 [plugins.configured.config]
 # Other required Bilibili product fields are omitted here.

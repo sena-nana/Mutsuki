@@ -35,7 +35,7 @@ use mutsuki_runtime_sdk::{
 use mutsuki_runtime_sdk::{Runner, RuntimeResult};
 use serde_json::{Value, json};
 
-pub const PLUGIN_ID: &str = "mutsuki.plugin.bot.flow.tool";
+pub const PLUGIN_ID: &str = "mutsuki.plugin.bot.flow-agent-tool";
 pub const RUNNER_ID: &str = "mutsuki.agent.bot-flow-tool.runner";
 
 const CAPABILITY_FLOW_READ: &str = "bot.flow.read";

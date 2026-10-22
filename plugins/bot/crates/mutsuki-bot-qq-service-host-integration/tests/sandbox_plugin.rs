@@ -6,6 +6,7 @@ use mutsuki_bot_protocol::BotConversationKind;
 use mutsuki_bot_sandbox::{
     SANDBOX_SERVICE_ID, SandboxAction, SandboxApi, SandboxMode, SandboxService, SandboxWriteRequest,
 };
+use mutsuki_bot_service_host_integration::BOT_SANDBOX_PLUGIN_ID;
 use mutsuki_bot_testkit::{FakeQqGatewayScript, FakeQqServer};
 use mutsuki_plugin_bot_adapter_qqbot::QQBOT_ADAPTER_PLUGIN_ID;
 use mutsuki_service_config::{ConfigOverrides, ServiceConfig};
@@ -144,7 +145,7 @@ fn qq_service_config_ordered(
         format!(
             r#"
 [[plugins.configured]]
-id = "{SANDBOX_SERVICE_ID}"
+id = "{BOT_SANDBOX_PLUGIN_ID}"
 enabled = true
 "#
         )
@@ -256,7 +257,7 @@ async fn sandbox_selected_after_qq_shares_the_simulator_and_reconfigures_repeate
     for _ in 0..2 {
         runtime
             .reconfigure_plugins(&[mutsuki_service_config::ConfiguredPluginSelection {
-                id: SANDBOX_SERVICE_ID.into(),
+                id: BOT_SANDBOX_PLUGIN_ID.into(),
                 enabled: true,
                 config: json!({}),
             }])

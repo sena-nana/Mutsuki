@@ -1,4 +1,4 @@
-const QQ_PROVIDER_ID = "mutsuki.bot.adapter.qqbot";
+const QQ_PROVIDER_ID = "mutsuki.plugin.bot.adapter-qqbot";
 
 const STYLE = `
 .qq-account + .qq-account { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border, #d0d7de); }

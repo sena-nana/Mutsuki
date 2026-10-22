@@ -40,7 +40,7 @@ use crate::gateway::GatewayFrame;
 pub use crate::gateway::QQBOT_GATEWAY_FRAME_PROTOCOL_ID;
 use crate::inbound_media::gateway_media_descriptor;
 
-pub const QQBOT_ADAPTER_PLUGIN_ID: &str = "mutsuki.bot.adapter.qqbot";
+pub const QQBOT_ADAPTER_PLUGIN_ID: &str = "mutsuki.plugin.bot.adapter-qqbot";
 pub const QQBOT_GATEWAY_RUNNER_ID: &str = "mutsuki.bot.adapter.qqbot.gateway";
 pub const QQBOT_OPENAPI_RUNNER_ID: &str = "mutsuki.bot.adapter.qqbot.openapi";
 pub const QQBOT_OPENAPI_RESULT_EVENT: &str = "mutsuki.bot.qqbot.openapi.result";

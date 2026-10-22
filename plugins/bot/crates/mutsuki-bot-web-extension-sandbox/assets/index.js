@@ -1355,7 +1355,7 @@ export default {
     });
     ctx.pages.register({
       id: "sandbox.page", path: "/sandbox", title: "沙盒",
-      pluginId: "mutsuki.bot.sandbox",
+      pluginId: "mutsuki.plugin.bot.sandbox",
       component: { mount(el) { const panel = mountSandboxPanel(el, ctx.rpc, ctx.events); return { dispose: () => panel.destroy() }; } },
       requiredCapability: "bot.read",
     });

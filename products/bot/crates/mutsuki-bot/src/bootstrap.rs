@@ -4,9 +4,11 @@ use std::sync::Arc;
 
 use mutsuki_agent_service_host_integration::AgentConnectionRegistry;
 use mutsuki_config_service::{
-    ConfigApplyMode, ConfigConstraints, ConfigContext, ConfigDescriptor, ConfigKey,
-    ConfigMutability, ConfigNode, ConfigPresentation, ConfigProviderId, ConfigScope, ConfigService,
-    ConfigValue, ConfigValueType, LocalizedText, MemoryConfigProvider, RestartPolicy, capability,
+    ConfigApplyMode, ConfigCompareAndSetRequest, ConfigConstraints, ConfigContext,
+    ConfigDescriptor, ConfigDocumentKey, ConfigError, ConfigKey, ConfigMutability, ConfigNode,
+    ConfigPresentation, ConfigProviderId, ConfigRepository, ConfigRevision, ConfigScope,
+    ConfigService, ConfigValue, ConfigValueType, LocalizedText, MemoryConfigProvider,
+    RestartPolicy, capability,
 };
 use mutsuki_config_sqlite::SqliteConfigRepository;
 use mutsuki_service_config::{
@@ -14,8 +16,9 @@ use mutsuki_service_config::{
 };
 
 use crate::{
-    PRODUCT_CONFIG_PROVIDER_ID, ProductConfigOptions, configured_product_owner_selections,
-    configured_product_selections, product_config_service_with_options, product_seed_defaults,
+    PRODUCT_CONFIG_PROVIDER_ID, PRODUCT_CONFIG_VERSION, ProductConfigOptions,
+    configured_product_owner_selections, configured_product_selections,
+    product_config_service_with_options, product_seed_defaults,
     register_configured_product_providers,
 };
 
@@ -85,6 +88,7 @@ where
         SqliteConfigRepository::open(repository_path, CONFIG_NAMESPACE)
             .map_err(|error| error.to_string())?,
     );
+    migrate_product_config_to_v4(repository.as_ref(), &root.join("config.sqlite3"))?;
     let config = product_config_service_with_options(ProductConfigOptions::new(repository))
         .map_err(|error| error.to_string())?;
     config
@@ -137,9 +141,11 @@ where
         )
         .await
         .map_err(|error| error.to_string())?;
-    if product_snapshot.schema_version != 3 || product_snapshot.value_version != 3 {
+    if product_snapshot.schema_version != PRODUCT_CONFIG_VERSION
+        || product_snapshot.value_version != PRODUCT_CONFIG_VERSION
+    {
         return Err(format!(
-            "product.config.version_unsupported: stored mutsuki.product schema/value version {}/{} is unsupported; recreate the product config repository for version 3",
+            "product.config.version_unsupported: stored mutsuki.product schema/value version {}/{} is unsupported; recreate the product config repository for version {PRODUCT_CONFIG_VERSION}",
             product_snapshot.schema_version, product_snapshot.value_version
         ));
     }
@@ -232,6 +238,109 @@ const MEDIA_RESOURCE_MAX_TOTAL_BYTES: u64 = 512 * 1024 * 1024;
 /// Disabling the selection is the owner's call: the media plugins declare the
 /// provider surface as a hard requirement, so the LoadPlan then fails with a
 /// missing capability instead of silently running without media.
+/// Owner config documents whose provider id changed when plugin ids were unified (v4).
+const OWNER_PROVIDER_RENAMES_V4: &[(&str, &str)] = &[
+    (
+        "mutsuki.bot.adapter.qqbot",
+        "mutsuki.plugin.bot.adapter-qqbot",
+    ),
+    ("mutsuki.bot.bilibili", "mutsuki.plugin.bot.bilibili"),
+    (
+        "mutsuki.bot.bilibili.workshop",
+        "mutsuki.plugin.bot.bilibili-workshop",
+    ),
+    ("mutsuki.bot.mihuashi", "mutsuki.plugin.bot.mihuashi"),
+];
+
+/// One-shot v3 -> v4 migration of the product config repository.
+///
+/// Copies the repository (with its `-wal`/`-shm` siblings) to `config.sqlite3.v3.bak`, moves every
+/// owner document to its v4 provider id and stamps `mutsuki.product` as v4. Any other stored
+/// version is left for the version check to reject; an empty repository is seeded at v4.
+fn migrate_product_config_to_v4(
+    repository: &dyn ConfigRepository,
+    repository_path: &Path,
+) -> Result<(), String> {
+    let product_key = ConfigDocumentKey::new(PRODUCT_CONFIG_PROVIDER_ID, ConfigContext::global());
+    let Some(product) = repository
+        .read(&product_key)
+        .map_err(|error| error.to_string())?
+    else {
+        return Ok(());
+    };
+    if product.schema_version != 3 || product.value_version != 3 {
+        return Ok(());
+    }
+    for suffix in ["", "-wal", "-shm"] {
+        let source = PathBuf::from(format!("{}{suffix}", repository_path.display()));
+        if source.is_file() {
+            let backup = PathBuf::from(format!("{}.v3.bak{suffix}", repository_path.display()));
+            std::fs::copy(&source, &backup).map_err(|error| {
+                format!(
+                    "product.config.migration_backup_failed: {} -> {}: {error}",
+                    source.display(),
+                    backup.display()
+                )
+            })?;
+        }
+    }
+    for (old_id, new_id) in OWNER_PROVIDER_RENAMES_V4 {
+        let old_key = ConfigDocumentKey::new(*old_id, ConfigContext::global());
+        let new_key = ConfigDocumentKey::new(*new_id, ConfigContext::global());
+        let Some(document) = repository
+            .read(&old_key)
+            .map_err(|error| error.to_string())?
+        else {
+            continue;
+        };
+        if repository
+            .read(&new_key)
+            .map_err(|error| error.to_string())?
+            .is_some()
+        {
+            continue;
+        }
+        write_config_document(
+            repository,
+            ConfigCompareAndSetRequest {
+                key: new_key,
+                expected_revision: ConfigRevision::ABSENT,
+                value: document.value,
+                schema_version: document.schema_version,
+                value_version: document.value_version,
+            },
+        )?;
+    }
+    write_config_document(
+        repository,
+        ConfigCompareAndSetRequest {
+            key: product_key,
+            expected_revision: product.revision,
+            value: product.value,
+            schema_version: PRODUCT_CONFIG_VERSION,
+            value_version: PRODUCT_CONFIG_VERSION,
+        },
+    )
+}
+
+fn write_config_document(
+    repository: &dyn ConfigRepository,
+    request: ConfigCompareAndSetRequest,
+) -> Result<(), String> {
+    let provider_id = request.key.provider_id.to_string();
+    let failure = |error: ConfigError| {
+        format!("product.config.migration_write_failed: {provider_id}: {error}")
+    };
+    let mut write = repository
+        .prepare_compare_and_set(request)
+        .map_err(failure)?;
+    if let Err(error) = write.commit() {
+        let _ = write.rollback();
+        return Err(failure(error));
+    }
+    write.finish().map_err(failure)
+}
+
 /// Applies the instance-bound selection settings the product owns (the media resource database
 /// and the image-render fonts). Bootstrap and hot reload both compile selections through here,
 /// so a reload diffs like against like and never drops a product binding.
@@ -608,7 +717,7 @@ mod tests {
         local_agent_config_value,
     };
     use mutsuki_bot_flow::BotFlowRegistry;
-    use mutsuki_bot_service_host_integration::SANDBOX_SERVICE_ID;
+    use mutsuki_bot_service_host_integration::BOT_SANDBOX_PLUGIN_ID;
     use mutsuki_config_service::{ConfigApplyRequest, SecretState, SecretValue};
     use mutsuki_plugin_bot_adapter_qqbot::QQBOT_ADAPTER_PLUGIN_ID;
     use mutsuki_plugin_bot_event_router::BOT_FLOW_REGISTRY_SERVICE_ID;
@@ -772,8 +881,8 @@ mod tests {
         let product = load_test_product(root.path()).await;
         for id in [
             AGENT_CONNECTIONS_PLUGIN_ID,
-            "mutsuki.bot.router.flow",
-            SANDBOX_SERVICE_ID,
+            "mutsuki.plugin.bot.flow",
+            BOT_SANDBOX_PLUGIN_ID,
         ] {
             assert!(
                 product

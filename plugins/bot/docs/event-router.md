@@ -1,6 +1,6 @@
 # Bot Flow Router
 
-`mutsuki.bot.router.flow` executes the single immutable Bot DAG revision applied through
+`mutsuki.plugin.bot.flow` executes the single immutable Bot DAG revision applied through
 `ConfigService`. The active Flow provider snapshot is the only routing source of truth; plugin
 manifests contribute only `mutsuki.bot.flow.nodes@1` catalogs containing node types, typed ports,
 configuration schemas and exact `HandlerBinding` targets.

@@ -67,7 +67,7 @@ pub use transport::{
     RuntimeBilibiliHttp, sign_wbi_query,
 };
 
-pub const PLUGIN_ID: &str = "mutsuki.bot.bilibili";
+pub const PLUGIN_ID: &str = "mutsuki.plugin.bot.bilibili";
 pub const RUNNER_ID: &str = "mutsuki.bot.bilibili.runner";
 pub const POLL_LIVE: &str = "mutsuki.bot.bilibili.poll/live@1";
 pub const POLL_DYNAMIC: &str = "mutsuki.bot.bilibili.poll/dynamic@1";

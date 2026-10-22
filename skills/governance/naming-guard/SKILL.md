@@ -26,4 +26,10 @@ does not apply to them. Agent domain services (sessions, prompts, credentials, k
 `mutsuki-agent-services`; it is a service library, not a runtime. A package directory carries the package name, never a backend suffix
 (the Takumi renderer lives in `plugins/std/plugins/mutsuki-plugin-image-render`).
 
+Bot plugin ids follow their crate: a `mutsuki-plugin-bot-<suffix>` crate (or an integration-built
+plugin) is `mutsuki.plugin.bot.<suffix>`, keeping hyphens (`mutsuki.plugin.bot.adapter-qqbot`,
+`mutsuki.plugin.bot.flow`, `mutsuki.plugin.bot.sandbox`). Host service ids stay
+`mutsuki.bot.<owner>.<service>` and protocol ids `mutsuki.bot.<domain>/<op>@N`; persisted Flow node
+type ids never change with a rename. A plugin id is never reused as a service id.
+
 For a multi-component audit, read [naming rules](references/naming-rules.md).

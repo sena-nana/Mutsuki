@@ -610,7 +610,7 @@ mod tests {
 
     #[test]
     fn product_descriptor_exposes_login_switches_instead_of_intent_bits() {
-        let descriptor = qq_config_descriptor("mutsuki.bot.adapter.qqbot");
+        let descriptor = qq_config_descriptor("mutsuki.plugin.bot.adapter-qqbot");
         assert_eq!(descriptor.schema_version, 3);
         assert_eq!(descriptor.value_version, 3);
         let keys = descriptor

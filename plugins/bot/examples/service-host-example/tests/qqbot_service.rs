@@ -190,11 +190,11 @@ dynamic_dirs = []
 disabled_dir = "disabled"
 
 [[plugins.configured]]
-id = "mutsuki.bot.router.flow"
+id = "mutsuki.plugin.bot.flow"
 [plugins.configured.config]
 
 [[plugins.configured]]
-id = "mutsuki.bot.command"
+id = "mutsuki.plugin.bot.command"
 [plugins.configured.config]
 
 [[plugins.configured]]
@@ -208,7 +208,7 @@ id = "mutsuki.std.resource.sqlite"
 database_path = "{}"
 
 [[plugins.configured]]
-id = "mutsuki.bot.adapter.qqbot"
+id = "mutsuki.plugin.bot.adapter-qqbot"
 [plugins.configured.config]
 account_id = "{}"
 app_id = "{}"

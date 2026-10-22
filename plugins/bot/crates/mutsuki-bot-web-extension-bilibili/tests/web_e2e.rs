@@ -194,7 +194,7 @@ async fn start_host(api: Arc<Api>) -> (MutsukiWebHost, String) {
     let mut host = MutsukiWebHost::builder()
         .application(MinimalWebApplication::new(
             WebApplicationDescriptor {
-                id: "mutsuki.bot.bilibili".into(),
+                id: "mutsuki.plugin.bot.bilibili".into(),
                 name: "Bilibili".into(),
                 version: "0.1.0".into(),
                 brand: Some("Mutsuki".into()),

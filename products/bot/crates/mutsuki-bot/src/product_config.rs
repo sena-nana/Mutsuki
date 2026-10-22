@@ -8,7 +8,7 @@ use mutsuki_agent_service_host_integration::{
     LOCAL_AGENT_PLUGIN_ID, local_agent_config_from_value,
 };
 use mutsuki_bot_service_host_integration::{
-    BOT_COMMAND_PLUGIN_ID, BOT_INTERACTION_PLUGIN_ID, SANDBOX_SERVICE_ID,
+    BOT_COMMAND_PLUGIN_ID, BOT_INTERACTION_PLUGIN_ID, BOT_SANDBOX_PLUGIN_ID,
 };
 use mutsuki_config_service::document::{bool_field, document_object};
 use mutsuki_config_service::{
@@ -30,6 +30,9 @@ use mutsuki_service_config::{
 };
 
 pub const PRODUCT_CONFIG_PROVIDER_ID: &str = "mutsuki.product";
+
+/// Schema and value version of the `mutsuki.product` document (v4: unified plugin ids).
+pub const PRODUCT_CONFIG_VERSION: u32 = 4;
 
 /// Resource provider the product binds to every media-consuming plugin. The
 /// binding is owned by this assembly; owner documents no longer carry it.
@@ -145,8 +148,8 @@ pub fn product_config_service_with_options(
 pub fn product_descriptor() -> ConfigDescriptor {
     ConfigDescriptor {
         provider_id: ConfigProviderId::new(PRODUCT_CONFIG_PROVIDER_ID),
-        schema_version: 3,
-        value_version: 3,
+        schema_version: PRODUCT_CONFIG_VERSION,
+        value_version: PRODUCT_CONFIG_VERSION,
         title: LocalizedText::new("工作区"),
         description: None,
         scopes: vec![ConfigScope::global()],
@@ -320,7 +323,7 @@ pub(crate) fn configured_product_selections(
             config: serde_json::json!({}),
         },
         ConfiguredPluginSelection {
-            id: SANDBOX_SERVICE_ID.into(),
+            id: BOT_SANDBOX_PLUGIN_ID.into(),
             enabled: workspace_enabled,
             config: serde_json::json!({}),
         },

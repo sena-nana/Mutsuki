@@ -65,7 +65,7 @@ async fn identical_business_config_runs_builtin_then_managed_abi() {
     assert!(artifact.is_file(), "ABI plugin: {}", artifact.display());
 
     let installed = root.path().join("plugins").join("installed");
-    let plugin_dir = installed.join("mutsuki.bot.command");
+    let plugin_dir = installed.join("mutsuki.plugin.bot.command");
     fs::create_dir_all(&plugin_dir).unwrap();
     let installed_artifact = plugin_dir.join(file_name);
     fs::copy(&artifact, &installed_artifact).unwrap();
@@ -112,7 +112,7 @@ dynamic_dirs = ["{}"]
 disabled_dir = "plugins/disabled"
 
 [[plugins.configured]]
-id = "mutsuki.bot.command"
+id = "mutsuki.plugin.bot.command"
 
 [plugins.configured.config]
 
@@ -148,7 +148,7 @@ panic_file = "panic.log"
     )
     .unwrap();
     assert_eq!(
-        builtin_lock["plugin_deployments"]["mutsuki.bot.command"],
+        builtin_lock["plugin_deployments"]["mutsuki.plugin.bot.command"],
         "builtin"
     );
 
@@ -165,7 +165,7 @@ panic_file = "panic.log"
     ));
     let switched = client
         .request(ControlCommand::PluginDeploymentSet(PluginDeploymentParam {
-            plugin_id: "mutsuki.bot.command".into(),
+            plugin_id: "mutsuki.plugin.bot.command".into(),
             deployment: PluginDeploymentKind::Abi,
         }))
         .await
@@ -178,7 +178,10 @@ panic_file = "panic.log"
         &fs::read(root.path().join("run").join("runtime.lock.json")).unwrap(),
     )
     .unwrap();
-    assert_eq!(abi_lock["plugin_deployments"]["mutsuki.bot.command"], "abi");
+    assert_eq!(
+        abi_lock["plugin_deployments"]["mutsuki.plugin.bot.command"],
+        "abi"
+    );
     runtime.shutdown().await;
 
     let runtime = assemble_service(
@@ -193,14 +196,17 @@ panic_file = "panic.log"
         &fs::read(root.path().join("run").join("runtime.lock.json")).unwrap(),
     )
     .unwrap();
-    assert_eq!(abi_lock["plugin_deployments"]["mutsuki.bot.command"], "abi");
+    assert_eq!(
+        abi_lock["plugin_deployments"]["mutsuki.plugin.bot.command"],
+        "abi"
+    );
     let client = ControlClient::new(mutsuki_service_runtime::local_control_client_config(
         &service,
     ));
     let cleared = client
         .request(ControlCommand::PluginDeploymentClear(
             PluginDeploymentClearParam {
-                plugin_id: "mutsuki.bot.command".into(),
+                plugin_id: "mutsuki.plugin.bot.command".into(),
             },
         ))
         .await
@@ -214,7 +220,7 @@ panic_file = "panic.log"
     )
     .unwrap();
     assert_eq!(
-        cleared_lock["plugin_deployments"]["mutsuki.bot.command"],
+        cleared_lock["plugin_deployments"]["mutsuki.plugin.bot.command"],
         "builtin"
     );
     runtime.shutdown().await;

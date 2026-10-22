@@ -12,7 +12,7 @@ async fn control_lifecycle_invokes_real_plugin_reload() {
     let lifecycle = ControlPluginReloadLifecycle::new(fixture.clone(), "fixture");
     let completed = lifecycle
         .execute(
-            "mutsuki.bot.command",
+            "mutsuki.plugin.bot.command",
             &ConfigValue::Null,
             &ConfigValue::Null,
             RestartPolicy::PluginReload,

@@ -1612,7 +1612,7 @@ async fn plugin_list_includes_loaded_records_missing_from_configured_and_candida
         let mut catalog = inner.catalog.lock().expect("catalog mutex");
         catalog.records.push(PluginRecord {
             manifest_path: "<builtin>".into(),
-            manifest: minimal_manifest("mutsuki.bot.mihuashi"),
+            manifest: minimal_manifest("mutsuki.plugin.bot.mihuashi"),
             runtime: None,
             resolved_artifact: None,
         });
@@ -1623,7 +1623,7 @@ async fn plugin_list_includes_loaded_records_missing_from_configured_and_candida
     let loaded = plugins
         .plugins
         .iter()
-        .find(|plugin| plugin.plugin_id == "mutsuki.bot.mihuashi")
+        .find(|plugin| plugin.plugin_id == "mutsuki.plugin.bot.mihuashi")
         .expect("records-only plugin");
     assert!(!loaded.configured);
     assert_eq!(loaded.active_deployment.as_deref(), Some("builtin"));

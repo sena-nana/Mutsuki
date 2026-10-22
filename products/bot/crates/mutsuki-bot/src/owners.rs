@@ -11,7 +11,7 @@ use mutsuki_agent_service_host_integration::{
     local_agent_config_descriptor, local_agent_config_value,
 };
 use mutsuki_bot_service_host_integration::{
-    BOT_COMMAND_PLUGIN_ID, BOT_INTERACTION_PLUGIN_ID, SANDBOX_SERVICE_ID,
+    BOT_COMMAND_PLUGIN_ID, BOT_INTERACTION_PLUGIN_ID, BOT_SANDBOX_PLUGIN_ID,
     link_card_config_descriptor, link_card_config_value,
 };
 use mutsuki_config_service::{
@@ -64,7 +64,7 @@ pub(crate) struct ProductOwner {
 pub(crate) const WORKSPACE_PLUGIN_IDS: &[&str] = &[
     AGENT_CONNECTIONS_PLUGIN_ID,
     BOT_FLOW_ROUTER_PLUGIN_ID,
-    SANDBOX_SERVICE_ID,
+    BOT_SANDBOX_PLUGIN_ID,
     BOT_COMMAND_PLUGIN_ID,
     BOT_INTERACTION_PLUGIN_ID,
 ];
@@ -237,6 +237,32 @@ mod tests {
                     assert!(owner.http_domains.contains(&domain.as_str()));
                 }
             }
+        }
+    }
+
+    /// Loadable Bot plugins are named `mutsuki.plugin.bot.<crate suffix>`; library, service and
+    /// protocol ids keep their own `mutsuki.bot.*` namespaces.
+    #[test]
+    fn first_party_bot_plugin_ids_follow_the_plugin_namespace() {
+        for (plugin_id, crate_suffix) in [
+            (QQBOT_ADAPTER_PLUGIN_ID, "adapter-qqbot"),
+            (BOT_FLOW_ROUTER_PLUGIN_ID, "flow"),
+            (BOT_COMMAND_PLUGIN_ID, "command"),
+            (BOT_INTERACTION_PLUGIN_ID, "interaction"),
+            (BOT_AGENT_BRIDGE_PLUGIN_ID, "agent"),
+            (BILIBILI_PLUGIN_ID, "bilibili"),
+            (WORKSHOP_PLUGIN_ID, "bilibili-workshop"),
+            (MIHUASHI_PLUGIN_ID, "mihuashi"),
+            (
+                mutsuki_bot_service_host_integration::BOT_SANDBOX_PLUGIN_ID,
+                "sandbox",
+            ),
+            (
+                mutsuki_plugin_bot_flow_agent_tool::PLUGIN_ID,
+                "flow-agent-tool",
+            ),
+        ] {
+            assert_eq!(plugin_id, format!("mutsuki.plugin.bot.{crate_suffix}"));
         }
     }
 

@@ -27,7 +27,7 @@ use serde_json::{Value, json};
 
 use crate::{CommandParseError, CommandParser, message_text, validate_command_descriptors};
 
-pub const BOT_COMMAND_PLUGIN_ID: &str = "mutsuki.bot.command";
+pub const BOT_COMMAND_PLUGIN_ID: &str = "mutsuki.plugin.bot.command";
 pub const BOT_COMMAND_RUNNER_ID: &str = "mutsuki.bot.command.parse";
 pub const BOT_COMMAND_MATCH_NODE_TYPE_ID: &str = "mutsuki.bot.command.match";
 pub const BOT_COMMAND_REPLY_NODE_TYPE_ID: &str = "mutsuki.bot.command.reply";

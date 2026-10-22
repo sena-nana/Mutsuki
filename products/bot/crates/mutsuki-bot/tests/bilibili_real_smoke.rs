@@ -25,7 +25,7 @@ use uuid::Uuid;
 
 use process::ProductProcess;
 
-const BILIBILI_PLUGIN_ID: &str = "mutsuki.bot.bilibili";
+const BILIBILI_PLUGIN_ID: &str = "mutsuki.plugin.bot.bilibili";
 const IMAGE_RENDER_PLUGIN_ID: &str = "mutsuki.std.image.render";
 const COOKIE_SECRET_KEY: &str = "BILIBILI_COOKIE";
 const SMOKE_CONSOLE_TOKEN: &str = "bilibili-smoke-console-token";

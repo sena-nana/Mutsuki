@@ -54,9 +54,9 @@ events. Mini-program auto-parse needs full group receive (`GROUP_MESSAGE_CREATE`
 
 Select the native plugins under `[[plugins.configured]]`:
 
-- `mutsuki.bot.router.flow`: empty owner config; graph state is stored in the Bot repository.
-- `mutsuki.bot.command`: optional empty owner config contributing the Command Match node.
-- `mutsuki.bot.adapter.qqbot`: owner config is `QqBotConfig`.
+- `mutsuki.plugin.bot.flow`: empty owner config; graph state is stored in the Bot repository.
+- `mutsuki.plugin.bot.command`: optional empty owner config contributing the Command Match node.
+- `mutsuki.plugin.bot.adapter-qqbot`: owner config is `QqBotConfig`.
 
 After startup, publish a graph that connects the QQ Source to Match/Processor/Sink nodes. There is
 no TOML subscription list, global command prefix or adapter-owned Handler switch.

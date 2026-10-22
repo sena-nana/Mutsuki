@@ -31,7 +31,7 @@ use serde_json::{Value, json};
 
 use mutsuki_bot_conversation::ConversationContextStore;
 
-pub const BOT_CONVERSATION_CONTEXT_PLUGIN_ID: &str = "mutsuki.plugin.bot.conversation.context";
+pub const BOT_CONVERSATION_CONTEXT_PLUGIN_ID: &str = "mutsuki.plugin.bot.conversation-context";
 pub const BOT_CONVERSATION_CONTEXT_RUNNER_ID: &str = "mutsuki.bot.conversation.context";
 pub const BOT_CONVERSATION_RECORD_ICL_NODE_TYPE: &str = "mutsuki.bot.conversation.record_icl";
 pub const BOT_CONVERSATION_ATTACH_ICL_NODE_TYPE: &str = "mutsuki.bot.conversation.attach_icl";

@@ -413,7 +413,7 @@ id = "mutsuki.std.resource.sqlite"
 database_path = "{}"
 
 [[plugins.configured]]
-id = "mutsuki.bot.adapter.qqbot"
+id = "mutsuki.plugin.bot.adapter-qqbot"
 [plugins.configured.config]
 account_id = "{}"
 app_id = "{}"
@@ -433,7 +433,7 @@ reconnect_jitter_ms = 0
 id = "{CAPTURE_PLUGIN_ID}"
 
 [[plugins.configured]]
-id = "mutsuki.bot.router.flow"
+id = "mutsuki.plugin.bot.flow"
 
 [security]
 secret_file = "local.secret.toml"

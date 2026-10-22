@@ -37,7 +37,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use url::Url;
 
-pub const PLUGIN_ID: &str = "mutsuki.bot.bilibili.workshop";
+pub const PLUGIN_ID: &str = "mutsuki.plugin.bot.bilibili-workshop";
 pub const RUNNER_ID: &str = "mutsuki.bot.bilibili.workshop.runner";
 pub const LINK_RESOLVE: &str = "mutsuki.bot.bilibili.workshop.link/resolve@1";
 

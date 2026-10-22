@@ -407,10 +407,10 @@ id = "mutsuki.plugin.agent.skills"
 id = "mutsuki.plugin.agent.tool_router"
 
 [[plugins.configured]]
-id = "mutsuki.bot.router.flow"
+id = "mutsuki.plugin.bot.flow"
 
 [[plugins.configured]]
-id = "mutsuki.plugin.bot.flow.tool"
+id = "mutsuki.plugin.bot.flow-agent-tool"
 
 [observe]
 console = false

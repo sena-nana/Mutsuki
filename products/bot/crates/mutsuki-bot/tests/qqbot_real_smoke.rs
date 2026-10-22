@@ -26,7 +26,7 @@ use uuid::Uuid;
 
 use process::ProductProcess;
 
-const QQBOT_PLUGIN_ID: &str = "mutsuki.bot.adapter.qqbot";
+const QQBOT_PLUGIN_ID: &str = "mutsuki.plugin.bot.adapter-qqbot";
 const QQBOT_HEALTH_PREFIX: &str = "mutsuki.bot.qqbot.gateway:";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

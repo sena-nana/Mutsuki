@@ -535,7 +535,7 @@ export default {
       id: "bilibili.page",
       path: "/bilibili",
       title: "B站推送",
-      pluginId: "mutsuki.bot.bilibili",
+      pluginId: "mutsuki.plugin.bot.bilibili",
       component: {
         mount(el) {
           const panel = mountBilibiliPanel(el, ctx.rpc, ctx.events);
