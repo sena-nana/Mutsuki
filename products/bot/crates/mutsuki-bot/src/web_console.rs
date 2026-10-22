@@ -244,14 +244,10 @@ pub fn console_layout() -> ConsoleLayout {
         ],
         // Pages of extensions not yet migrated to the layout file themselves under their old
         // activities; each entry goes away when its extension migrates (W7–W10).
-        placements: [
-            ("bot", "agent"),
-            ("bilibili.nav", "automation"),
-            ("database.nav", "data"),
-        ]
-        .into_iter()
-        .map(|(from, to)| (from.to_owned(), to.to_owned()))
-        .collect(),
+        placements: [("bot", "agent"), ("bilibili.nav", "automation")]
+            .into_iter()
+            .map(|(from, to)| (from.to_owned(), to.to_owned()))
+            .collect(),
     }
 }
 

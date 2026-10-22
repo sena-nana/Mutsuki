@@ -1,3 +1,5 @@
+import type { Component } from "vue";
+
 import type { Disposable, ExtensionContext, Registry, SlotRegistration, WebExtension } from "./extension.js";
 import { RpcError } from "./errors.js";
 import type { RpcClient } from "./bridge.js";
@@ -12,8 +14,13 @@ export interface MountableComponent {
  * `declare module "@mutsuki/web-sdk" { interface ExtensionSlots { "flow.node": … } }`.
  */
 export interface ExtensionSlots {
-  "overview.cards": MountableComponent;
+  "overview.cards": MountableComponent | Component;
   "plugin.home": MountableComponent;
+  /**
+   * Extra panel in the platforms account detail, named by the adapter descriptor's
+   * `detail_panels` (e.g. `platform.detail:bilibili`). Rendered with `{ adapter, account }` props.
+   */
+  [panel: `platform.detail:${string}`]: Component;
 }
 
 export type SlotName = keyof ExtensionSlots & string;

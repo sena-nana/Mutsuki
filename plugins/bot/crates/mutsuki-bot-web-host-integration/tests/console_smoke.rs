@@ -61,7 +61,7 @@ async fn embedded_console_document_resolves_through_its_import_map() {
     // Activities come only from the layout (the generic default here), never extensions.
     assert_eq!(
         document.activity_ids(),
-        ["home", "plugins", "system", "settings"]
+        ["home", "plugins", "data", "system", "settings"]
     );
     assert!(
         document.options["layout"]["activities"]
@@ -76,7 +76,7 @@ async fn embedded_console_document_resolves_through_its_import_map() {
         [
             "mutsuki.web.overview",
             "mutsuki.web.diagnostics",
-            "database"
+            "mutsuki.bot.database"
         ]
     );
 
@@ -243,7 +243,7 @@ async fn embedded_console_with_config_shell() {
     // Selecting the config extension does not change the product layout.
     assert_eq!(
         document.activity_ids(),
-        ["home", "plugins", "system", "settings"]
+        ["home", "plugins", "data", "system", "settings"]
     );
     host.stop().await.unwrap();
 }
@@ -453,7 +453,16 @@ async fn embedded_console_mounts_qq_management_extension() {
         "local-dev",
         &WebConsolePaths::default(),
         BotConsoleServices {
-            qq: Some(api),
+            qq: Some(api.clone()),
+            platforms: Some(Arc::new(move || {
+                vec![
+                    Arc::new(mutsuki_bot_management::QqPlatformConsoleProvider::new(
+                        "mutsuki.plugin.bot.adapter-qqbot",
+                        api.clone(),
+                    ))
+                        as Arc<dyn mutsuki_bot_management::PlatformConsoleProvider>,
+                ]
+            })),
             ..BotConsoleServices::default()
         },
     )
@@ -472,13 +481,28 @@ async fn embedded_console_mounts_qq_management_extension() {
     );
     let document = ConsoleDocument::fetch(&addr).await;
     document.assert_complete(&addr).await;
-    assert!(document.extension_ids().contains(&"qq-bot".to_string()));
+    assert!(
+        document
+            .extension_ids()
+            .contains(&"mutsuki.bot.qq".to_string())
+    );
+    // The accounts page follows its provider source and is staged with a hashed manifest.
+    assert!(
+        document
+            .extension_ids()
+            .contains(&"mutsuki.bot.platforms".to_string())
+    );
+    let accounts = ws_rpc_params(&addr, "platforms", "accounts.list", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(accounts[0]["account_id"], "main");
+    assert_eq!(accounts[0]["health"], "ok");
     let snap = ws_rpc_params(&addr, "qq-bot", "snapshot", json!({}))
         .await
         .unwrap();
     assert_eq!(snap["accounts"][0]["account_id"], "main");
     assert_eq!(snap["accounts"][0]["credential_status"], "configured");
-    assert!(dirs.page_assets("qq-bot").is_some());
+    assert!(dirs.page_assets("mutsuki.bot.qq").is_some());
     host.stop().await.unwrap();
 }
 
@@ -667,7 +691,7 @@ async fn product_layout_reaches_the_console_and_invalid_layouts_are_refused() {
     let document = ConsoleDocument::fetch(&addr).await;
     assert_eq!(
         document.activity_ids(),
-        ["home", "plugins", "system", "settings", "agent"]
+        ["home", "plugins", "data", "system", "settings", "agent"]
     );
     assert_eq!(document.options["layout"]["placements"]["bot"], "agent");
     host.stop().await.unwrap();

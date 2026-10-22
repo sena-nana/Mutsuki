@@ -102,3 +102,19 @@
 - 确认/提示改用 `useConfirm`（排空、关闭服务需输入确认词），失败以 toast 呈现；不再使用原生
   `confirm()`/`prompt()`。`@mutsuki/web-build` 新增 `--no-manifest`；SDK 新增 `useMessages`；
   `MkDataTable` 的行类型放宽为任意对象（`rowKey: string`）。
+
+## W7 平台与数据页
+
+- 数据库页改为 `@mutsuki/bot-ext-database`（Vue），扩展 id `mutsuki.bot.database`，命名空间仍为
+  `database`；导航进入 `data` activity（产品布局删除 `database.nav` placement，通用缺省布局新增
+  `data`）。原 cargo 测试里 spawn `node` 校验单元格转义的用例与 `assets/escape.test.mjs` 删除，
+  改由 vitest 断言单元格以文本渲染、不产生元素。
+- 新增通用平台账号页 `@mutsuki/bot-ext-platforms`（`mutsuki.bot.platforms`，`platforms` activity）：
+  按 `PlatformAdapterView` 渲染账号字段（按 `format`）、操作（`danger` 需确认，按 capability
+  禁用）与 `platform.detail:<platform>` 面板（`ExtensionSlots` 新增该模式，面板以
+  `{ adapter, account }` 为 props）。设置 `BotConsoleServices.platforms` 时控制台挂载该页。
+- QQ 扩展改为 `@mutsuki/bot-ext-qq`，id `mutsuki.bot.qq`（命名空间仍为 `qq-bot`）：只保留概览卡片，
+  新增「投递记录」「交互等待」两页（仍走 `qq-bot.deliveries.list|interactions.list|write`，计划 W7a
+  回退方案）；账号管理迁到平台账号页。QQ 管理错误改为 `ExtensionError::Rpc { code, message }`，
+  客户端按 `qq.owner_unavailable` 等 code 分支，不再解析 JSON 文本。
+- `@mutsuki/web-sdk/testing` 的 `FakeHandler` 返回值放宽为 `unknown`。

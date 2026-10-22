@@ -19,7 +19,9 @@ use mutsuki_web_extension_api::{
 use mutsuki_web_protocol::{AssetEntry, ExtensionManifest, WebFrontendAssets};
 use serde_json::Value;
 
-pub const PLUGIN_ID: &str = "database";
+pub const PLUGIN_ID: &str = "mutsuki.bot.database";
+/// RPC namespace (`database.*`).
+pub const RPC_NAMESPACE: &str = "database";
 pub const PLUGIN_VERSION: &str = "0.1.0";
 pub const CAPABILITY_RUNTIME_READ: &str = "runtime.read";
 
@@ -51,6 +53,10 @@ impl WebExtension for DatabaseWebExtension {
                 .map(|assets| assets.manifest.assets)
                 .unwrap_or_default(),
         )
+    }
+
+    fn namespace(&self) -> String {
+        RPC_NAMESPACE.into()
     }
 
     fn frontend_assets(&self) -> Option<WebFrontendAssets> {
@@ -109,7 +115,8 @@ impl WebExtension for DatabaseWebExtension {
 ///
 /// Returns an I/O error when directory creation, manifest encoding, or asset writes fail.
 pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::Error> {
-    let js = include_str!("../assets/index.js");
+    // Built from `web/` (`@mutsuki/bot-ext-database`); its vitest suite covers cell rendering.
+    let js = include_str!("../web/browser/index.js");
     materialize_bundled_assets(out_dir, manifest, &[("index.js", js.as_bytes())])
 }
 
@@ -139,26 +146,5 @@ fn map_db_error(error: BotStateDbError) -> ExtensionError {
         }
         .into(),
         message: error.to_string(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    /// Stored cell text reaches attribute values, so the escaper is a security
-    /// boundary rather than a formatting detail.
-    #[test]
-    fn cell_escaping_closes_attribute_injection() {
-        let script =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/escape.test.mjs");
-        let output = std::process::Command::new("node")
-            .arg(&script)
-            .output()
-            .expect("node must be available to verify database cell escaping");
-        assert!(
-            output.status.success(),
-            "stdout={} stderr={}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
     }
 }

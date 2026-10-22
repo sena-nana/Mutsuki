@@ -11,7 +11,8 @@ import { createI18n, provideI18n, type I18n } from "./i18n.js";
 import type { JsonValue } from "./json.js";
 import { QueryBus, provideMutsukiRuntime, type RuntimeClient, type SessionApi } from "./runtime.js";
 
-export type FakeHandler = (params: JsonValue) => JsonValue | Promise<JsonValue>;
+/** Returns whatever the RPC would; plain object literals are fine (no JSON typing needed). */
+export type FakeHandler = (params: JsonValue) => unknown;
 
 export interface FakeCall {
   namespace: string;
@@ -61,7 +62,7 @@ export function createFakeBridge(options: FakeBridgeOptions = {}): FakeBridge {
         retryable: false,
       });
     }
-    return handler(params);
+    return (await handler(params)) as JsonValue;
   };
 
   return {

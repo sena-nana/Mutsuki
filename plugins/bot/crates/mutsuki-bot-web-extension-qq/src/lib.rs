@@ -7,9 +7,11 @@ use mutsuki_web_extension_api::{
     WebExtensionDescriptor, materialize_bundled_assets,
 };
 use mutsuki_web_protocol::{AssetEntry, ExtensionManifest, WebFrontendAssets};
-use serde_json::{Value, json};
+use serde_json::Value;
 
-pub const PLUGIN_ID: &str = "qq-bot";
+pub const PLUGIN_ID: &str = "mutsuki.bot.qq";
+/// RPC namespace (`qq-bot.*`), unchanged so existing clients and tests keep working.
+pub const RPC_NAMESPACE: &str = "qq-bot";
 pub const PLUGIN_VERSION: &str = "0.1.0";
 pub const CAPABILITY_BOT_READ: &str = "bot.read";
 pub const CAPABILITY_BOT_CONFIG_WRITE: &str = "bot.config.write";
@@ -52,6 +54,10 @@ impl WebExtension for QqBotWebExtension {
                 .map(|assets| assets.manifest.assets)
                 .unwrap_or_default(),
         )
+    }
+
+    fn namespace(&self) -> String {
+        RPC_NAMESPACE.into()
     }
 
     fn frontend_assets(&self) -> Option<WebFrontendAssets> {
@@ -175,14 +181,20 @@ impl WebExtension for QqBotWebExtension {
     }
 }
 
-/// Writes the embedded QQ management frontend and its content-addressed manifest.
+/// Writes the QQ overview card and delivery/interaction pages built from `web/`
+/// (`@mutsuki/bot-ext-qq`) and their content-addressed manifest.
 ///
 /// # Errors
 ///
 /// Returns an I/O error when directory creation, manifest encoding, or asset writes fail.
 pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::Error> {
-    let js = include_str!("../assets/index.js");
-    materialize_bundled_assets(out_dir, manifest, &[("index.js", js.as_bytes())])
+    let js = include_str!("../web/browser/index.js");
+    let css = include_str!("../web/browser/index.css");
+    materialize_bundled_assets(
+        out_dir,
+        manifest,
+        &[("index.js", js.as_bytes()), ("index.css", css.as_bytes())],
+    )
 }
 
 fn manifest(assets: Vec<AssetEntry>) -> ExtensionManifest {
@@ -201,8 +213,10 @@ fn manifest(assets: Vec<AssetEntry>) -> ExtensionManifest {
     .build(assets)
 }
 
+/// Owner failures keep their stable code (`qq.owner_unavailable`, `qq.revision_conflict`, …) so
+/// the console branches on it instead of parsing the message.
 fn domain_error(QqManagementError { code, message }: QqManagementError) -> ExtensionError {
-    ExtensionError::Registration(json!({"code": code, "message": message}).to_string())
+    ExtensionError::Rpc { code, message }
 }
 
 fn page_limit(params: &Value) -> u32 {

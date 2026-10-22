@@ -3,7 +3,7 @@ use std::sync::Arc;
 use futures::{SinkExt, StreamExt};
 use mutsuki_bot_state_db::BotStateDbRepository;
 use mutsuki_bot_web_extension_database::{
-    DatabaseWebExtension, PLUGIN_ID, materialize_frontend_assets,
+    DatabaseWebExtension, RPC_NAMESPACE, materialize_frontend_assets,
 };
 use mutsuki_web_extension_api::{WebExtension, content_hash};
 use mutsuki_web_host::{MinimalWebApplication, MutsukiWebHost, WebHost};
@@ -129,7 +129,7 @@ async fn rpc(address: &str, method: &str, params: Value) -> Result<Value, String
         .send(Message::Binary(
             WireMessage::Rpc(RpcRequest {
                 id: Uuid::new_v4(),
-                namespace: PLUGIN_ID.into(),
+                namespace: RPC_NAMESPACE.into(),
                 method: method.into(),
                 params,
             })

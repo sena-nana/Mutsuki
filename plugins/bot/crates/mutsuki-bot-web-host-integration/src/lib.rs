@@ -226,6 +226,8 @@ pub fn build_bot_console(
         .iter()
         .filter(|page| match page.id {
             BILIBILI_PAGE => include_bilibili,
+            // Like Bilibili, the accounts page follows its provider source, not a selection key.
+            PLATFORMS_PAGE => platforms.is_some(),
             _ => config.has_extension(page.selection),
         })
         .map(|page| page.id)
@@ -325,7 +327,9 @@ pub fn build_bot_console(
         );
     }
     if let Some(providers) = platforms {
-        builder = builder.extension(PlatformsWebExtension::new(providers));
+        builder = builder.extension(
+            PlatformsWebExtension::new(providers).with_frontend_assets(page(PLATFORMS_PAGE)),
+        );
     }
     let host = builder.build()?;
     Ok((host, asset_dirs))
@@ -365,10 +369,11 @@ pub(crate) fn base_builder(
 
 const OVERVIEW_PAGE: &str = mutsuki_web_extension_overview::PLUGIN_ID;
 const DIAGNOSTICS_PAGE: &str = mutsuki_web_extension_control::PLUGIN_ID;
-const DATABASE_PAGE: &str = "database";
+const DATABASE_PAGE: &str = mutsuki_bot_web_extension_database::PLUGIN_ID;
 const UPGRADE_PAGE: &str = mutsuki_web_extension_upgrade::PLUGIN_ID;
 const BILIBILI_PAGE: &str = "bilibili";
-const QQ_PAGE: &str = "qq-bot";
+const QQ_PAGE: &str = mutsuki_bot_web_extension_qq::PLUGIN_ID;
+const PLATFORMS_PAGE: &str = mutsuki_bot_web_extension_platforms::PLUGIN_ID;
 const SANDBOX_PAGE: &str = "sandbox";
 const AGENT_PAGE: &str = "bot-agent";
 const FLOW_PAGE: &str = "bot-flow-editor";
@@ -409,7 +414,13 @@ const BASE_PAGES: [ConsolePage; 3] = [
 
 /// Optional pages in load order. Config runs last so its plugin hubs can see the pages and
 /// overview cards the others registered when deciding route availability.
-const OPTIONAL_PAGES: [ConsolePage; 7] = [
+const OPTIONAL_PAGES: [ConsolePage; 8] = [
+    ConsolePage {
+        id: PLATFORMS_PAGE,
+        selection: "platforms",
+        mount: "platforms",
+        materialize: materialize_platforms_assets,
+    },
     ConsolePage {
         id: UPGRADE_PAGE,
         selection: "upgrade",
@@ -453,6 +464,25 @@ const OPTIONAL_PAGES: [ConsolePage; 7] = [
         materialize: materialize_config_assets,
     },
 ];
+
+/// Stages the platforms accounts page built in that crate's `web/`. The extension derives its
+/// manifest from the staged entry, so it is written here from its own descriptor.
+fn materialize_platforms_assets(out_dir: &Path) -> std::io::Result<PathBuf> {
+    use mutsuki_web_extension::WebExtension as _;
+    std::fs::create_dir_all(out_dir)?;
+    std::fs::write(
+        out_dir.join("index.js"),
+        include_str!("../../mutsuki-bot-web-extension-platforms/web/browser/index.js"),
+    )?;
+    let manifest = PlatformsWebExtension::new(Arc::new(Vec::new))
+        .with_frontend_assets(out_dir)
+        .descriptor();
+    std::fs::write(
+        out_dir.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest).map_err(std::io::Error::other)?,
+    )?;
+    Ok(out_dir.to_path_buf())
+}
 
 /// One page's materialized assets. The temp dir must outlive the host.
 struct StagedPage {
@@ -704,7 +734,7 @@ mod owner_console_tests {
             [
                 "mutsuki.web.overview",
                 "mutsuki.web.diagnostics",
-                "database",
+                "mutsuki.bot.database",
                 "bot-agent",
                 "bot-flow-editor"
             ]
@@ -725,7 +755,7 @@ mod owner_console_tests {
             [
                 "mutsuki.web.overview",
                 "mutsuki.web.diagnostics",
-                "database"
+                "mutsuki.bot.database"
             ]
         );
         assert!(dirs.page_assets(AGENT_PAGE).is_none());

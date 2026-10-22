@@ -55,13 +55,14 @@ pub struct ConsoleLayout {
 pub const SETTINGS_ACTIVITY: &str = "settings";
 
 impl Default for ConsoleLayout {
-    /// Generic console: overview, diagnostics, plugin hubs and settings. Activities without
+    /// Generic console: overview, plugin hubs, data, diagnostics and settings. Activities without
     /// accessible navigation are hidden, so unused entries cost nothing.
     fn default() -> Self {
         Self {
             activities: vec![
                 ConsoleActivity::top("home", "概览", "home", 0),
                 ConsoleActivity::top("plugins", "插件", "config", 40),
+                ConsoleActivity::top("data", "数据", "data", 45),
                 ConsoleActivity::top("system", "诊断", "system", 50),
                 ConsoleActivity::bottom(SETTINGS_ACTIVITY, "设置", "settings", 100),
             ],
@@ -113,7 +114,7 @@ mod tests {
         let layout = ConsoleLayout::default();
         layout.validate().unwrap();
         let json = serde_json::to_value(&layout).unwrap();
-        assert_eq!(json["activities"][3]["position"], "bottom");
+        assert_eq!(json["activities"][4]["position"], "bottom");
         assert_eq!(json["activities"][0]["position"], "top");
     }
 

@@ -77,6 +77,19 @@ test("every page mounts without boundary or console errors", async ({ page }) =>
   expect(errors).toEqual([]);
 });
 
+test("platform accounts come from the adapter descriptors", async ({ page }) => {
+  await login(page);
+  await page.goto("/#/platforms/platforms.accounts");
+  const content = page.locator(".console-page-content");
+  await expect(content.getByRole("heading", { name: "QQ" })).toBeVisible();
+  await expect(content.getByText("fixture-app")).toBeVisible();
+  await content.getByRole("button", { name: "健康检查" }).click();
+  await expect(page.locator(".mk-toast")).toBeVisible();
+  // The QQ overview card is a Vue slot contribution on the home page.
+  await page.goto("/#/home/overview.page");
+  await expect(page.locator(".qq-card")).toContainText("main");
+});
+
 test("theme switches between light and dark", async ({ page }) => {
   await login(page);
   await page.goto("/#/settings/webui.settings");
@@ -95,7 +108,14 @@ for (const colorScheme of ["light", "dark"] as const) {
     expect(serious(loginScan.violations)).toEqual([]);
 
     await login(page);
-    for (const route of ["#/home/overview.page", "#/settings/webui.settings", "#/system/control.plugins"]) {
+    for (const route of [
+      "#/home/overview.page",
+      "#/settings/webui.settings",
+      "#/system/control.plugins",
+      "#/platforms/platforms.accounts",
+      "#/platforms/qq-bot.deliveries",
+      "#/data/database.page",
+    ]) {
       await page.goto(`/${route}`);
       await page.waitForLoadState("networkidle");
       // Hand-written pages are migrated in W6–W10; until then only the shell around them counts.

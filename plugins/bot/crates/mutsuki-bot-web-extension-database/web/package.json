@@ -1,0 +1,29 @@
+{
+  "name": "@mutsuki/bot-ext-database",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Bot state database browser (read-only).",
+  "scripts": {
+    "typecheck": "vue-tsc --noEmit",
+    "build": "mutsuki-web-build build src/index.ts browser --no-manifest",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@mutsuki/ui": "workspace:*",
+    "@mutsuki/web-sdk": "workspace:*"
+  },
+  "peerDependencies": {
+    "vue": "catalog:"
+  },
+  "devDependencies": {
+    "@mutsuki/web-build": "workspace:*",
+    "@vitejs/plugin-vue": "catalog:",
+    "@vue/test-utils": "catalog:",
+    "happy-dom": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "vue": "catalog:",
+    "vue-tsc": "catalog:"
+  }
+}

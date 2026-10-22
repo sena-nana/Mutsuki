@@ -1,6 +1,16 @@
 use std::sync::Arc;
 
+use mutsuki_bot_management::{PlatformConsoleProvider, QqPlatformConsoleProvider};
+use mutsuki_bot_protocol::{
+    BotAdapterCapabilities, BotConversationKind, BotRateLimitPolicy, BotSegmentKind,
+    BotStreamingStrategy, BotUploadConstraints,
+};
+use mutsuki_bot_qq_protocol::{QqBotCapabilityMatrix, QqPermissionRequirement};
 use mutsuki_bot_sandbox::{SandboxApi, SandboxService};
+use mutsuki_bot_web_extension_qq::{
+    LocalQqManagementProvider, QqAccountViewInput, QqBotManagementApi, QqBotManagementService,
+    account_view_from_config,
+};
 use mutsuki_bot_web_host_integration::{
     BotConsoleServices, ConsoleActivity, ConsoleLayout, WebConsoleConfig, WebConsolePaths,
     WebConsoleSecrets, attach_control_changed_bridge, build_bot_console, demo_config_service,
@@ -15,16 +25,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listen =
         std::env::var("MUTSUKI_CONSOLE_FIXTURE_LISTEN").unwrap_or_else(|_| "127.0.0.1:0".into());
     let mut layout = ConsoleLayout::default();
-    layout
-        .activities
-        .push(ConsoleActivity::top("sandbox", "沙盒", "sandbox", 30));
+    layout.activities.extend([
+        ConsoleActivity::top("platforms", "平台与消息", "bot", 10),
+        ConsoleActivity::top("sandbox", "沙盒", "sandbox", 30),
+    ]);
     let config = WebConsoleConfig {
         enabled: true,
         listen,
-        extensions: vec!["config".into(), "sandbox".into()],
+        extensions: vec!["config".into(), "sandbox".into(), "qq".into()],
         layout,
         ..Default::default()
     };
+    let qq = fixture_qq();
+    let platforms_qq = qq.clone();
     let secrets = WebConsoleSecrets {
         auth_token: "embedded-console-fixture".into(),
     };
@@ -40,6 +53,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         BotConsoleServices {
             config: Some(demo_config_service()),
             sandbox: Some(Arc::new(SandboxService::new()) as Arc<dyn SandboxApi>),
+            qq: Some(qq),
+            // The real QQ projection over a local (in-memory) management service.
+            platforms: Some(Arc::new(move || {
+                vec![Arc::new(QqPlatformConsoleProvider::new(
+                    "mutsuki.plugin.bot.adapter-qqbot",
+                    platforms_qq.clone(),
+                )) as Arc<dyn PlatformConsoleProvider>]
+            })),
             ..BotConsoleServices::default()
         },
     )?;
@@ -66,4 +87,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[allow(unreachable_code)]
     host.stop().await?;
     Ok(())
+}
+
+/// One identified QQ account held in memory; no QQ endpoint or credential is involved.
+fn fixture_qq() -> Arc<dyn QqBotManagementApi> {
+    let local = LocalQqManagementProvider::new();
+    local.upsert_account(account_view_from_config(QqAccountViewInput {
+        account_id: "main".into(),
+        app_id: "fixture-app".into(),
+        credential_reference: "QQBOT_CLIENT_SECRET".into(),
+        credential_present: true,
+        capability: QqBotCapabilityMatrix {
+            account_id: "main".into(),
+            configured_intents: 1,
+            shard: [0, 1],
+            required_intents: vec!["group_and_c2c_event".into()],
+            required_permissions: vec![QqPermissionRequirement::ReadC2cMessages],
+            capabilities: BotAdapterCapabilities {
+                conversation_kinds: vec![BotConversationKind::Private],
+                outbound_conversation_kinds: vec![BotConversationKind::Private],
+                active_message_kinds: vec![BotConversationKind::Private],
+                inbound_segments: vec![BotSegmentKind::Text],
+                outbound_segments: vec![BotSegmentKind::Text],
+                inbound_media: Vec::new(),
+                outbound_media: Vec::new(),
+                active_message: true,
+                message_edit: false,
+                message_recall: true,
+                reply: true,
+                quote: true,
+                mention: true,
+                upload: BotUploadConstraints::default(),
+                rate_limit: BotRateLimitPolicy::default(),
+                streaming: vec![BotStreamingStrategy::FinalOnly],
+            },
+        },
+        intents: 1,
+        shard: [0, 1],
+        connected: true,
+        identified: true,
+        last_heartbeat_unix_ms: Some(1),
+        last_error: None,
+        last_error_code: None,
+        reconnect_count: 0,
+        self_user: None,
+    }));
+    Arc::new(QqBotManagementService::local(local))
 }

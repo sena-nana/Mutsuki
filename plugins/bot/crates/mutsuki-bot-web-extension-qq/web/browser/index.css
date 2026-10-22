@@ -1,0 +1,2 @@
+.qq-card__accounts{gap:var(--mk-space-2);margin:var(--mk-space-2) 0 0;padding:0;list-style:none;display:grid}.qq-card__avatar{background:var(--mk-color-accent-soft);width:40px;height:40px;color:var(--mk-color-accent-on-soft);object-fit:cover;border-radius:50%;flex:none;place-items:center;font-weight:600;display:grid}
+/*$vite$:1*/
