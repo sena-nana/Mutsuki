@@ -181,7 +181,7 @@ jobs:
         include:
           - owner: WebHost
             directory: hosts/web
-            build: pnpm build
+            build: pnpm build && pnpm typecheck && pnpm test
           - owner: TauriHost
             directory: hosts/tauri
             build: pnpm typecheck

@@ -1481,6 +1481,7 @@ var DisposableScope = class {
     }
   }
 };
+var AUTH_REJECTION_CODES = /* @__PURE__ */ new Set(["auth_failed", "unauthenticated"]);
 var WebBridgeError = class extends Error {
   constructor(code, message) {
     super(message);
@@ -1527,7 +1528,9 @@ var WebBridgeClient = class {
   async connect(protocolVersion = "1.0.0") {
     if (this.connectionState === "open" && this.helloAck) return this.helloAck;
     if (this.connectPromise) return this.connectPromise;
-    if (this.connectionState === "closed") this.setState("idle");
+    if (this.connectionState === "closed" || this.connectionState === "unauthorized") {
+      this.setState("idle");
+    }
     this.connectPromise = this.openGeneration(protocolVersion);
     return this.connectPromise;
   }
@@ -1591,7 +1594,7 @@ var WebBridgeClient = class {
       ws.addEventListener("message", (event) => {
         void decodeWireMessage(event.data).then((message) => {
           if (!this.isCurrent(generation, ws)) return;
-          const ack = this.dispatch(generation, message);
+          const ack = this.dispatch(generation, ws, message);
           if (ack) {
             this.clearHelloTimer();
             this.helloReject = null;
@@ -1625,7 +1628,11 @@ var WebBridgeClient = class {
       });
     });
   }
-  dispatch(generation, message) {
+  dispatch(generation, ws, message) {
+    if (message.type === "error") {
+      this.dispatchServerError(generation, ws, message);
+      return null;
+    }
     if (message.type === "hello_ack") {
       const ack = message;
       return {
@@ -1658,6 +1665,39 @@ var WebBridgeClient = class {
       sub?.handler(message.payload ?? null);
     }
     return null;
+  }
+  /**
+   * Server `error` frames. Before hello they reject the handshake and stop reconnecting:
+   * a rejected credential or incompatible protocol does not heal by retrying. After hello
+   * they fail the request or subscription they name.
+   */
+  dispatchServerError(generation, ws, message) {
+    const code = String(message.code ?? "protocol_error");
+    const error = new WebBridgeError(code, String(message.message ?? code));
+    if (!this.sessionId) {
+      this.failHello(generation, error);
+      this.setState(AUTH_REJECTION_CODES.has(code) ? "unauthorized" : "closed");
+      this.ws = null;
+      ws.close();
+      return;
+    }
+    if (message.request_id != null) {
+      const id = uuidKey(message.request_id);
+      const pending = this.pending.get(id);
+      if (pending && pending.generation === generation) {
+        this.pending.delete(id);
+        clearTimeout(pending.timer);
+        pending.reject(error);
+      }
+    }
+    if (message.subscription_id != null) {
+      const subscriptionId = uuidKey(message.subscription_id);
+      const subscription = this.subscriptions.get(subscriptionId);
+      if (subscription) {
+        this.subscriptions.delete(subscriptionId);
+        subscription.onError?.(error);
+      }
+    }
   }
   async call(namespace, method, params = null, options = {}) {
     if (this.connectionState !== "open" || !this.ws) {
@@ -1706,9 +1746,9 @@ var WebBridgeClient = class {
   write(namespace, method, params = null) {
     return this.call(namespace, method, params, { operation: "write" });
   }
-  subscribe(topic, handler, requiredCapability) {
+  subscribe(topic, handler, requiredCapability, onError) {
     const subscriptionId = this.nextId();
-    this.subscriptions.set(subscriptionId, { topic, handler, requiredCapability });
+    this.subscriptions.set(subscriptionId, { topic, handler, requiredCapability, onError });
     if (this.connectionState === "open") this.sendSubscription(subscriptionId);
     return {
       dispose: () => {
@@ -1744,7 +1784,7 @@ var WebBridgeClient = class {
     void ws;
   }
   handleDisconnect(generation, protocolVersion) {
-    if (generation !== this.generation || this.connectionState === "closed") return;
+    if (generation !== this.generation || this.isTerminal()) return;
     this.clearHelloTimer();
     this.failHello(
       generation,
@@ -1757,7 +1797,7 @@ var WebBridgeClient = class {
     this.scheduleReconnect(protocolVersion);
   }
   scheduleReconnect(protocolVersion) {
-    if (this.connectionState === "closed" || this.reconnectTimer) return;
+    if (this.isTerminal() || this.reconnectTimer) return;
     this.setState("reconnecting");
     this.reconnectAttempt += 1;
     const delay = Math.min(
@@ -1766,7 +1806,7 @@ var WebBridgeClient = class {
     );
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      if (this.connectionState === "closed") return;
+      if (this.isTerminal()) return;
       this.connectPromise = this.openGeneration(protocolVersion);
       void this.connectPromise.catch(() => void 0);
     }, delay);
@@ -1814,6 +1854,9 @@ var WebBridgeClient = class {
       throw new WebBridgeError("not_connected", "web bridge generation is not open");
     }
     this.ws.send(encodeWireMessage(payload));
+  }
+  isTerminal() {
+    return this.connectionState === "closed" || this.connectionState === "unauthorized";
   }
   isCurrent(generation, ws) {
     return generation === this.generation && ws === this.ws;

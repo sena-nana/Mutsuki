@@ -489,6 +489,7 @@ function mountWebShell(root, runtime, options = {}) {
       connecting: "\u8FDE\u63A5\u4E2D",
       open: "\u5DF2\u8FDE\u63A5",
       reconnecting: "\u91CD\u65B0\u8FDE\u63A5\u4E2D",
+      unauthorized: "\u767B\u5F55\u5DF2\u5931\u6548",
       closed: "\u5DF2\u65AD\u5F00"
     };
     const safeMode = !!runtime.session?.safe_mode;

@@ -1,4 +1,24 @@
-import { pluginDisplayName } from "@mutsuki/web-sdk";
+// Handwritten asset loaded without an import map: keep it free of bare imports.
+function pluginIdsOf(item) {
+  return [...new Set([item?.pluginId, ...(item?.pluginIds || [])].filter(Boolean))];
+}
+
+/** Mirrors `pluginDisplayName` in `@mutsuki/web-sdk`. */
+function pluginDisplayName(ctx, pluginId) {
+  const id = String(pluginId || "");
+  if (!id) return id;
+  const pages = ctx?.pages?.list?.() ?? [];
+  const navByPage = new Map((ctx?.navigation?.list?.() ?? []).map((item) => [item.pageId, item]));
+  const named = (value) => (value && value !== id ? value : undefined);
+  const hubNamed = named(navByPage.get(id)?.label) || named(pages.find((page) => page.id === id)?.title);
+  if (hubNamed) return hubNamed;
+  for (const page of pages) {
+    if (page.id === id || !pluginIdsOf(page).includes(id)) continue;
+    const extra = named(navByPage.get(page.id)?.label) || named(page.title);
+    if (extra) return extra;
+  }
+  return id;
+}
 
 const RECONCILE_MS = 60_000;
 const EVENT_DEBOUNCE_MS = 50;

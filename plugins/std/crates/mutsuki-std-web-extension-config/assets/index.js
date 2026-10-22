@@ -1234,54 +1234,6 @@ export function mountPluginHome(host, ctx, pluginId, providerId = pluginId) {
   return mountConfigPanel(host, ctx.rpc, ctx.events, providerId, ctx.slots, ctx, pluginId);
 }
 
-function createConsoleApp(rpc) {
-  const app = document.createElement("div");
-  app.className = "mutsuki-console lilia-workspace";
-  app.dataset.liliaSurfaceMode = "solid";
-  app.dataset.liliaSurfaceLevel = "base";
-  app.innerHTML = `
-    <aside class="lilia-workspace-region" data-region="navigation" data-region-separator="inline">
-      <div class="secondary-panel">
-        <div class="secondary-panel__top">
-          <div class="brand">Mutsuki</div>
-        </div>
-        <nav class="secondary-panel__body sb-section nav" aria-label="控制台">
-          <a class="sb-tree__row lilia-interactive-item" href="?page=overview"><span class="sb-tree__name">概览</span></a>
-          <button type="button" data-route="config" class="sb-tree__row lilia-interactive-item is-active" aria-current="page" data-lilia-selected="true"><span class="sb-tree__name">配置</span></button>
-        </nav>
-        <div class="secondary-panel__footer sidebar-footer">Bot 控制台</div>
-      </div>
-    </aside>
-    <main class="lilia-workspace-region" data-region="main">
-      <div class="lilia-workspace-region__content page-scroll">
-        <div class="page-header">
-          <div>
-            <h1>配置</h1>
-            <p>登录、模型与回复</p>
-          </div>
-        </div>
-        <section id="content" class="page-body"></section>
-      </div>
-    </main>
-  `;
-  mountConfigPanel(app.querySelector("#content"), rpc);
-  return app;
-}
-
-function ensureMutsukiUiStylesheet() {
-  if (document.querySelector('link[href$="mutsuki-ui.css"]')) return;
-  const link = document.createElement("link");
-  link.rel = "stylesheet";
-  link.href = "./mutsuki-ui.css";
-  document.head.appendChild(link);
-}
-
-export function mountConfigConsole(el, rpc) {
-  el.innerHTML = "";
-  ensureMutsukiUiStylesheet();
-  el.appendChild(createConsoleApp(rpc));
-}
-
 export default {
   id: "config",
   async setup(ctx) {

@@ -155,6 +155,8 @@ export interface EventClient {
     topic: string,
     handler: (payload: JsonValue) => void,
     requiredCapability?: string,
+    /** Called once when the server denies the subscription; it is then dropped. */
+    onError?: (error: WebBridgeError) => void,
   ): Disposable;
 }
 
@@ -174,6 +176,8 @@ export type BridgeConnectionState =
   | "connecting"
   | "open"
   | "reconnecting"
+  /** The server rejected the hello credentials; the client stops reconnecting. */
+  | "unauthorized"
   | "closed";
 
 export type BridgeErrorCode =
@@ -186,7 +190,11 @@ export type BridgeErrorCode =
   | "delivery_unknown"
   | "closed"
   | "protocol_error"
-  | "rpc_failed";
+  | "rpc_failed"
+  | "auth_failed";
+
+/** Pre-hello server error codes that mean the credentials were rejected. */
+const AUTH_REJECTION_CODES = new Set(["auth_failed", "unauthenticated"]);
 
 export class WebBridgeError extends Error {
   constructor(
@@ -222,6 +230,7 @@ interface LogicalSubscription {
   topic: string;
   handler: (payload: JsonValue) => void;
   requiredCapability?: string;
+  onError?: (error: WebBridgeError) => void;
 }
 
 /** Browser-side bridge client. Tokens never leave this module. */
@@ -266,7 +275,9 @@ export class WebBridgeClient implements RpcClient, EventClient {
   async connect(protocolVersion = "1.0.0"): Promise<BridgeHelloAck> {
     if (this.connectionState === "open" && this.helloAck) return this.helloAck;
     if (this.connectPromise) return this.connectPromise;
-    if (this.connectionState === "closed") this.setState("idle");
+    if (this.connectionState === "closed" || this.connectionState === "unauthorized") {
+      this.setState("idle");
+    }
     this.connectPromise = this.openGeneration(protocolVersion);
     return this.connectPromise;
   }
@@ -335,7 +346,7 @@ export class WebBridgeClient implements RpcClient, EventClient {
         void decodeWireMessage(event.data)
           .then((message) => {
             if (!this.isCurrent(generation, ws)) return;
-            const ack = this.dispatch(generation, message);
+            const ack = this.dispatch(generation, ws, message);
             if (ack) {
               this.clearHelloTimer();
               this.helloReject = null;
@@ -371,7 +382,15 @@ export class WebBridgeClient implements RpcClient, EventClient {
     });
   }
 
-  private dispatch(generation: number, message: Record<string, unknown>): BridgeHelloAck | null {
+  private dispatch(
+    generation: number,
+    ws: WebSocket,
+    message: Record<string, unknown>,
+  ): BridgeHelloAck | null {
+    if (message.type === "error") {
+      this.dispatchServerError(generation, ws, message);
+      return null;
+    }
     if (message.type === "hello_ack") {
       const ack = message as unknown as BridgeHelloAck;
       return {
@@ -404,6 +423,41 @@ export class WebBridgeClient implements RpcClient, EventClient {
       sub?.handler((message.payload ?? null) as JsonValue);
     }
     return null;
+  }
+
+  /**
+   * Server `error` frames. Before hello they reject the handshake and stop reconnecting:
+   * a rejected credential or incompatible protocol does not heal by retrying. After hello
+   * they fail the request or subscription they name.
+   */
+  private dispatchServerError(generation: number, ws: WebSocket, message: WireRecord): void {
+    const code = String(message.code ?? "protocol_error");
+    const error = new WebBridgeError(code, String(message.message ?? code));
+    if (!this.sessionId) {
+      this.failHello(generation, error);
+      this.setState(AUTH_REJECTION_CODES.has(code) ? "unauthorized" : "closed");
+      this.ws = null;
+      ws.close();
+      return;
+    }
+    if (message.request_id != null) {
+      const id = uuidKey(message.request_id);
+      const pending = this.pending.get(id);
+      if (pending && pending.generation === generation) {
+        this.pending.delete(id);
+        clearTimeout(pending.timer);
+        pending.reject(error);
+      }
+    }
+    if (message.subscription_id != null) {
+      const subscriptionId = uuidKey(message.subscription_id);
+      const subscription = this.subscriptions.get(subscriptionId);
+      if (subscription) {
+        // A denied subscription must not be replayed on every reconnect.
+        this.subscriptions.delete(subscriptionId);
+        subscription.onError?.(error);
+      }
+    }
   }
 
   async call(
@@ -465,9 +519,10 @@ export class WebBridgeClient implements RpcClient, EventClient {
     topic: string,
     handler: (payload: JsonValue) => void,
     requiredCapability?: string,
+    onError?: (error: WebBridgeError) => void,
   ): Disposable {
     const subscriptionId = this.nextId();
-    this.subscriptions.set(subscriptionId, { topic, handler, requiredCapability });
+    this.subscriptions.set(subscriptionId, { topic, handler, requiredCapability, onError });
     if (this.connectionState === "open") this.sendSubscription(subscriptionId);
     return {
       dispose: () => {
@@ -507,7 +562,7 @@ export class WebBridgeClient implements RpcClient, EventClient {
   }
 
   private handleDisconnect(generation: number, protocolVersion: string): void {
-    if (generation !== this.generation || this.connectionState === "closed") return;
+    if (generation !== this.generation || this.isTerminal()) return;
     this.clearHelloTimer();
     this.failHello(
       generation,
@@ -521,7 +576,7 @@ export class WebBridgeClient implements RpcClient, EventClient {
   }
 
   private scheduleReconnect(protocolVersion: string): void {
-    if (this.connectionState === "closed" || this.reconnectTimer) return;
+    if (this.isTerminal() || this.reconnectTimer) return;
     this.setState("reconnecting");
     this.reconnectAttempt += 1;
     const delay = Math.min(
@@ -530,7 +585,7 @@ export class WebBridgeClient implements RpcClient, EventClient {
     );
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      if (this.connectionState === "closed") return;
+      if (this.isTerminal()) return;
       this.connectPromise = this.openGeneration(protocolVersion);
       void this.connectPromise.catch(() => undefined);
     }, delay);
@@ -590,6 +645,10 @@ export class WebBridgeClient implements RpcClient, EventClient {
       throw new WebBridgeError("not_connected", "web bridge generation is not open");
     }
     this.ws.send(encodeWireMessage(payload));
+  }
+
+  private isTerminal(): boolean {
+    return this.connectionState === "closed" || this.connectionState === "unauthorized";
   }
 
   private isCurrent(generation: number, ws: WebSocket): boolean {

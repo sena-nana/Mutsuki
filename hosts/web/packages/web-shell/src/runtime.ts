@@ -601,7 +601,8 @@ export function mountWebShell(
   }
   const connection = runtime.bridge.onStateChange((value) => {
     const labels: Record<BridgeConnectionState, string> = {
-      idle: "未连接", connecting: "连接中", open: "已连接", reconnecting: "重新连接中", closed: "已断开",
+      idle: "未连接", connecting: "连接中", open: "已连接", reconnecting: "重新连接中",
+      unauthorized: "登录已失效", closed: "已断开",
     };
     const safeMode = !!runtime.session?.safe_mode;
     const quiet = value === "open" && !safeMode;

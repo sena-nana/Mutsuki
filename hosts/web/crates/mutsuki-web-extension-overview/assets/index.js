@@ -92,6 +92,18 @@ function mountOverview(host, ctx) {
     ])}`;
   };
 
+  const renderError = (error) => {
+    const message = error && typeof error === "object" && "message" in error ? String(error.message) : "";
+    body.innerHTML = `<div class="error-banner" role="alert">
+      <p>概览加载失败${message ? `：${escapeHtml(message)}` : ""}</p>
+      <button type="button" class="ghost" data-overview-retry>重试</button>
+    </div>`;
+    body.querySelector("[data-overview-retry]").onclick = () => {
+      body.innerHTML = '<div class="muted">加载中…</div>';
+      void refresh();
+    };
+  };
+
   const schedule = () => {
     clearTimeout(timer);
     if (!disposed && !document.hidden) timer = setTimeout(refresh, 60_000);
@@ -111,8 +123,11 @@ function mountOverview(host, ctx) {
         render();
         refreshButton.removeAttribute("title");
       })
-      .catch(() => {
-        if (!disposed) refreshButton.title = "更新失败，将自动重试";
+      .catch((error) => {
+        if (disposed) return;
+        refreshButton.title = "更新失败，将自动重试";
+        // A stale snapshot stays visible; only the first load shows the error state.
+        if (!snapshot) renderError(error);
       })
       .finally(() => {
         inFlight = null;

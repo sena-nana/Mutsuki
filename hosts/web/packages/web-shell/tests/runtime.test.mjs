@@ -306,7 +306,7 @@ test("finalizePluginActivity upgrades id hubs and keeps named hubs", () => {
 
 function configExtensionUrl() {
   return new URL(
-    "../../../../../plugins/std/plugins/mutsuki-plugin-config-web/assets/index.js",
+    "../../../../../plugins/std/crates/mutsuki-std-web-extension-config/assets/index.js",
     import.meta.url,
   ).href;
 }

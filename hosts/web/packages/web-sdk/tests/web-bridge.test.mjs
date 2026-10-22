@@ -203,3 +203,48 @@ test("disposable scope retries failed cleanup without repeating completed effect
   assert.equal(attempts, 2);
   assert.deepEqual(disposed, ["first", "second"]);
 });
+
+test("pre-hello auth rejection fails fast and stops reconnecting", async () => {
+  const h = harness({ helloTimeoutMs: 1_000 });
+  const connected = h.client.connect();
+  h.sockets[0].emit("open", {});
+  h.sockets[0].message({ type: "error", code: "auth_failed", message: "session not authenticated" });
+  await rejectsWithCode(connected, "auth_failed");
+  assert.equal(h.client.state, "unauthorized");
+  assert.equal(h.sockets[0].closed, true);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(h.sockets.length, 1, "a rejected credential must not reconnect");
+  h.client.close();
+});
+
+test("post-hello error frames fail the named request and drop denied subscriptions", async () => {
+  const h = harness({ requestTimeoutMs: 1_000 });
+  const socket = await connect(h);
+  let requestId;
+  socket.onSend = (message) => {
+    if (message.type === "rpc") requestId = message.id;
+  };
+  const read = h.client.read("test", "denied");
+  socket.message({ type: "error", code: "invalid_message", message: "bad", request_id: requestId });
+  await rejectsWithCode(read, "invalid_message");
+  assert.equal(h.client.pendingCount, 0);
+
+  const denied = [];
+  h.client.subscribe("secret", () => undefined, "secret.read", (error) => denied.push(error.code));
+  const subscribe = socket.sent.find((message) => message.type === "subscribe");
+  socket.message({
+    type: "error",
+    code: "capability_denied",
+    message: "missing secret.read",
+    subscription_id: subscribe.subscription_id,
+  });
+  await waitFor(() => denied.length === 1);
+  assert.deepEqual(denied, ["capability_denied"]);
+
+  socket.close();
+  await waitFor(() => h.sockets.length === 2);
+  h.sockets[1].open("session-2");
+  await waitFor(() => h.client.state === "open");
+  assert.equal(h.sockets[1].sent.filter((message) => message.type === "subscribe").length, 0);
+  h.client.close();
+});
