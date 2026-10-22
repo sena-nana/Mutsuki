@@ -11,9 +11,13 @@ Wrap published contracts and runtime operations; do not create a second schedule
 - Keep macros small and inspectable: typed metadata, descriptors, and compile-time validation only.
 - Keep native and binary adapters batch-first and wire-compatible. Resource clients expose descriptors and gateways, not provider storage.
 - Native async future construction must not block. Synchronous Host clients may bridge async providers only on caller workers.
-- `TaskSubmitter` is the one task interface (submit, cancel, outcome, wait). `RuntimeClient` is
-  `TaskSubmitter` plus an optional `register_waker` hook; implement `TaskSubmitter` and add an empty
-  `impl RuntimeClient`, never a second copy of the task methods.
+- `TaskSubmitter` is the one task interface (submit, cancel, outcome, wait, `register_waker`).
+  `RuntimeClient` is an empty marker sub-trait; implement `TaskSubmitter` and add an empty
+  `impl RuntimeClient`, never a second copy of the task methods. Wrapping submitters (gates,
+  status recorders, deferred clients) must forward `wait_outcome` and `register_waker`.
+- Host actor clients wake a parked `TaskHandleFuture` on the terminal transition (re-armed every
+  30 s), so top-level async callers await it directly; never move such a wait onto
+  `spawn_blocking`.
 - Never spin or sleep-poll `task_outcome`. Blocking callers use `TaskSubmitter::wait_outcome`
   (event-driven on Host actor clients, bounded backoff elsewhere);
   Runners waiting on a child prefer a `TaskAwait` continuation, which frees the worker slot.

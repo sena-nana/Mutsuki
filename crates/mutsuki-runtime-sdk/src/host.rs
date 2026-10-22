@@ -2,6 +2,7 @@ use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::task::Waker;
 use std::time::Duration;
 
 use mutsuki_runtime_contracts::{
@@ -55,6 +56,12 @@ pub trait TaskSubmitter: Send + Sync {
     ) -> RuntimeResult<Option<TaskOutcome>> {
         crate::poll_outcome_with_backoff(timeout, || self.task_outcome(handle))
     }
+    /// Asks the client to wake `waker` once `handle` may have an outcome.
+    ///
+    /// Host-actor clients park the waker with the actor and wake it on the terminal transition
+    /// (or a bounded re-arm slice, so a lost actor is noticed). Wrapping submitters must forward
+    /// this call; the default no-op leaves `TaskHandleFuture` to whoever polls it next.
+    fn register_waker(&self, _handle: &TaskHandle, _waker: &Waker) {}
 }
 
 #[derive(Clone)]
@@ -91,6 +98,10 @@ impl TaskSubmitter for TaskSubmitterRuntimeClient {
 
     fn cancel_task(&self, handle: &TaskHandle) -> RuntimeResult<()> {
         self.submitter.cancel_task(handle)
+    }
+
+    fn register_waker(&self, handle: &TaskHandle, waker: &Waker) {
+        self.submitter.register_waker(handle, waker);
     }
 }
 

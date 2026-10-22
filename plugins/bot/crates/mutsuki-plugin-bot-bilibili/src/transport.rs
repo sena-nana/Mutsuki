@@ -17,7 +17,7 @@ use mutsuki_protocol_http::{
 use mutsuki_runtime_contracts::{
     ResourceRef, RuntimeError, Task, TaskBatch, TaskHandle, TaskOutcome,
 };
-use mutsuki_runtime_sdk::{AsyncRunnerContext, RuntimeClientRef};
+use mutsuki_runtime_sdk::{AsyncRunnerContext, RuntimeClientRef, TaskHandleFuture};
 use serde_json::Value;
 use url::Url;
 
@@ -111,18 +111,16 @@ impl BilibiliHttp for RuntimeBilibiliHttp {
     }
 }
 
-/// Waits for a task submitted outside a runner. Host clients answer `wait_outcome` from the
-/// actor's completion notification but never wake a `TaskHandleFuture`, so the wait runs on
-/// the blocking pool instead of parking the caller's executor forever.
+/// Waits for a task submitted outside a runner (console RPC, polling). The Host client parks the
+/// future's waker with its actor, so the await holds no executor or blocking-pool thread.
 pub(crate) async fn await_top_level_task(
     client: RuntimeClientRef,
     handle: TaskHandle,
 ) -> Result<TaskOutcome, BilibiliError> {
-    tokio::task::spawn_blocking(move || client.wait_outcome(&handle, Some(TOP_LEVEL_TASK_WAIT)))
+    tokio::time::timeout(TOP_LEVEL_TASK_WAIT, TaskHandleFuture::new(client, handle))
         .await
-        .map_err(|error| BilibiliError::Transport(error.to_string()))?
-        .map_err(|failure| http_error(failure.error()))?
-        .ok_or_else(|| BilibiliError::Transport("task did not finish in time".into()))
+        .map_err(|_| BilibiliError::Transport("task did not finish in time".into()))?
+        .map_err(|failure| http_error(failure.error()))
 }
 
 fn decode_http_outcome(outcome: TaskOutcome) -> Result<HttpResponse, BilibiliError> {

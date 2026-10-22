@@ -18,7 +18,7 @@ use mutsuki_runtime_sdk::{
     HostServiceRegistry, HostTaskSnapshot, ResourceProviderGateway, RuntimeBootstrapperEffect,
 };
 
-use crate::actor::{ActorSender, CoreActorMsg, actor_channel, core_actor_loop};
+use crate::actor::{ActorSender, CoreActorMsg, TaskWaitReply, actor_channel, core_actor_loop};
 use crate::async_executor::{AsyncEventSink, AsyncExecutor};
 use crate::bootstrapper::{PluginScopeSet, PreparedRuntimeReload};
 use crate::capabilities::HostCapabilityRegistry;
@@ -1112,7 +1112,7 @@ impl HostRuntime {
             .send(CoreActorMsg::WaitTaskStates {
                 handles,
                 deadline,
-                reply: reply_tx,
+                reply: TaskWaitReply::States(reply_tx),
             })
             .map_err(|_| host_failure("host.actor.command", "actor mailbox closed"))?;
         reply_rx

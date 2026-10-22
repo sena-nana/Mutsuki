@@ -1,5 +1,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
+use std::task::Waker;
 use std::time::{Duration, Instant};
 
 use mutsuki_runtime_contracts::resource::experimental::{CommandBatch, SagaPlan};
@@ -16,7 +17,7 @@ use mutsuki_runtime_sdk::{
 };
 
 use crate::actor::ActorSender;
-use crate::actor::CoreActorMsg;
+use crate::actor::{CoreActorMsg, TaskWaitReply};
 use crate::bootstrapper::PluginScopeSet;
 use crate::capabilities::HostCapabilityRegistry;
 use crate::commands::{HostRuntimeCommand, HostRuntimeReply};
@@ -187,7 +188,7 @@ impl TaskSubmitter for ActorCommandClient {
                 .send(CoreActorMsg::WaitTaskStates {
                     handles: vec![handle.clone()],
                     deadline: slice_end,
-                    reply: reply_tx,
+                    reply: TaskWaitReply::States(reply_tx),
                 })
                 .map_err(|()| host_failure("host.actor.command", "actor mailbox closed"))?;
             let states = reply_rx
@@ -201,7 +202,23 @@ impl TaskSubmitter for ActorCommandClient {
             }
         }
     }
+
+    /// Parks the waker with the actor, which wakes it on the terminal transition or after one
+    /// re-arm slice; the re-polled future then reads its outcome through `task_outcome`.
+    fn register_waker(&self, handle: &TaskHandle, waker: &Waker) {
+        let sent = self.tx.send(CoreActorMsg::WaitTaskStates {
+            handles: vec![handle.clone()],
+            deadline: Instant::now() + WAKER_REARM_SLICE,
+            reply: TaskWaitReply::Wake(waker.clone()),
+        });
+        if sent.is_err() {
+            // A closed mailbox cannot wake anyone later: wake now so the poll observes the error.
+            waker.wake_by_ref();
+        }
+    }
 }
+
+const WAKER_REARM_SLICE: Duration = Duration::from_secs(30);
 
 impl ResourcePlanGateway for ActorCommandClient {
     fn collect_read_plan(&self, plan: &ReadPlan) -> RuntimeResult<Vec<u8>> {

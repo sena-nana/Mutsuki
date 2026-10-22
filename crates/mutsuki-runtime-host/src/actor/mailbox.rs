@@ -9,8 +9,9 @@ use tokio::sync::oneshot;
 use mutsuki_runtime_contracts::{TaskHandle, TaskStatus};
 use mutsuki_runtime_core::{RunnerCompletion, RuntimeResult};
 
+use super::lifecycle::TaskWaitReply;
 use crate::async_executor::AsyncExecutorEvent;
-use crate::commands::{HostRuntimeCommand, HostRuntimeReply, HostTaskState};
+use crate::commands::{HostRuntimeCommand, HostRuntimeReply};
 use crate::worker::{WorkerExited, WorkerStarted};
 
 // Mailbox messages own structured Host commands; boxing would add allocation to every command.
@@ -24,7 +25,7 @@ pub(crate) enum CoreActorMsg {
     WaitTaskStates {
         handles: Vec<TaskHandle>,
         deadline: Instant,
-        reply: mpsc::Sender<RuntimeResult<Vec<HostTaskState>>>,
+        reply: TaskWaitReply,
     },
     WorkerStarted(WorkerStarted),
     WorkerCompleted(RunnerCompletion),

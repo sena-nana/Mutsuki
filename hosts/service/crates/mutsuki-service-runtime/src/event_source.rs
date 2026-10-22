@@ -692,6 +692,18 @@ impl TaskSubmitter for SourceTaskSubmitter {
     fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
         self.inner.task_outcome(handle)
     }
+
+    fn wait_outcome(
+        &self,
+        handle: &TaskHandle,
+        timeout: Option<std::time::Duration>,
+    ) -> RuntimeResult<Option<TaskOutcome>> {
+        self.inner.wait_outcome(handle, timeout)
+    }
+
+    fn register_waker(&self, handle: &TaskHandle, waker: &std::task::Waker) {
+        self.inner.register_waker(handle, waker);
+    }
 }
 
 #[cfg(test)]

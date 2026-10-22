@@ -5,6 +5,7 @@ mod resources;
 mod scheduling;
 mod supervision;
 
+pub(crate) use lifecycle::TaskWaitReply;
 use lifecycle::*;
 use mailbox::{ActorMailboxes, ActorReceiver, receive_actor_message};
 pub(crate) use mailbox::{ActorSender, CoreActorMsg, actor_channel};
@@ -765,7 +766,7 @@ fn drain_worker_completions(
                 let _ = reply_tx.send(task_status(&actor.core, &task_id));
             }
             Ok(CoreActorMsg::WaitTaskStates { reply, .. }) => {
-                let _ = reply.send(Err(host_failure(
+                reply.resolve(Err(host_failure(
                     "host.actor.mailbox",
                     "task waits must use the control mailbox",
                 )));

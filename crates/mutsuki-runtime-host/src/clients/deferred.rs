@@ -1,6 +1,7 @@
 //! Host services handed out before the runtime that serves them exists.
 
 use std::sync::{Arc, OnceLock};
+use std::task::Waker;
 use std::time::Duration;
 
 use mutsuki_runtime_contracts::resource::experimental::{CommandBatch, SagaPlan};
@@ -85,6 +86,15 @@ impl TaskSubmitter for DeferredHostClient {
         timeout: Option<Duration>,
     ) -> RuntimeResult<Option<TaskOutcome>> {
         self.services()?.tasks.wait_outcome(handle, timeout)
+    }
+
+    /// Before binding there is no actor to park the waker with; waking now lets the poller
+    /// observe `runtime_client.not_bound` instead of hanging.
+    fn register_waker(&self, handle: &TaskHandle, waker: &Waker) {
+        match self.services() {
+            Ok(services) => services.tasks.register_waker(handle, waker),
+            Err(_) => waker.wake_by_ref(),
+        }
     }
 }
 

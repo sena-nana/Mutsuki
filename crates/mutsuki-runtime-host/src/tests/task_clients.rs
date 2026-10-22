@@ -274,3 +274,51 @@ fn deferred_host_client_fails_until_bound_then_forwards_through_the_actor() {
         Some(TaskOutcome::Cancelled { task_id, .. }) if task_id == "deferred-task"
     ));
 }
+
+#[test]
+fn task_handle_future_is_woken_by_the_host_actor_outside_a_runner() {
+    // A top-level await (console RPC, event source) runs on a current-thread executor with no
+    // runner continuation: only the actor's waker registration can resume it.
+    let runner_descriptor = super::helpers::descriptor("slow.runner", "slow.input");
+    let mut bootstrapper = crate::RuntimeBootstrapper::new();
+    bootstrapper.register_manifest(crate::runner_manifest(
+        "plugin-a",
+        vec![runner_descriptor.clone()],
+    ));
+    bootstrapper.register_runner(Box::new(crate::NativeRunner::new(
+        runner_descriptor,
+        |_ctx: mutsuki_runtime_core::RunnerContext, task| {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            Ok(RunnerResult::completed(task.task_id))
+        },
+    )));
+    let host = bootstrapper
+        .into_host_runtime_with_config(
+            runtime_profile(),
+            crate::HostRuntimeConfig {
+                event_driven: true,
+                ..crate::HostRuntimeConfig::default()
+            },
+        )
+        .unwrap();
+    let client = std::sync::Arc::new(crate::DeferredHostClient::new("test.host"));
+    client.bind(host.host_context()).unwrap();
+    let handle = client
+        .submit_task(Task::new("slow-task", "slow.input", json!({})))
+        .unwrap();
+    let future = mutsuki_runtime_sdk::TaskHandleFuture::new(client, handle);
+
+    let started = std::time::Instant::now();
+    let outcome = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap()
+        .block_on(async { tokio::time::timeout(std::time::Duration::from_secs(5), future).await })
+        .expect("actor wakes the parked future")
+        .unwrap();
+
+    assert!(matches!(outcome, TaskOutcome::Completed { task_id, .. } if task_id == "slow-task"));
+    // `Timeout` re-polls its inner future when the deadline fires, so only the elapsed time proves
+    // the completion woke the future rather than the timer.
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+}

@@ -97,12 +97,9 @@ pub trait SdkProtocol {
     const PROTOCOL_ID: &'static str;
 }
 
-/// The task client SDK futures and runners hold (`RuntimeClientRef`): a [`TaskSubmitter`] plus a
-/// hook for clients that can wake a future when its task completes. Submission, cancellation and
-/// outcomes all come from `TaskSubmitter`; there is one task interface.
-pub trait RuntimeClient: TaskSubmitter {
-    fn register_waker(&self, _handle: &TaskHandle, _waker: &Waker) {}
-}
+/// The task client SDK futures and runners hold (`RuntimeClientRef`). Submission, cancellation,
+/// outcomes and completion wakers all come from [`TaskSubmitter`]; there is one task interface.
+pub trait RuntimeClient: TaskSubmitter {}
 
 /// Bounded-backoff outcome polling for clients without a notification path:
 /// 50µs doubling to 5ms between probes, never a busy spin. `Ok(None)` means

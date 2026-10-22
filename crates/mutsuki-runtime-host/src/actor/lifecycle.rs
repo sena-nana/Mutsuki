@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, mpsc};
+use std::task::Waker;
 use std::time::{Duration, Instant};
 
 use mutsuki_runtime_contracts::{CompletionBatch, RunnerId, TaskHandle, TaskStatus, WorkBatch};
@@ -22,7 +23,25 @@ use super::supervision::{handle_worker_completion, mark_worker_started, task_sta
 pub(super) struct PendingTaskWait {
     pub(super) handles: Vec<TaskHandle>,
     pub(super) deadline: Instant,
-    pub(super) reply: mpsc::Sender<RuntimeResult<Vec<HostTaskState>>>,
+    pub(super) reply: TaskWaitReply,
+}
+
+/// How a resolved wait is delivered: a blocking caller receives the committed states, an async
+/// `TaskHandleFuture` is woken and re-reads its outcome through the normal command path.
+pub(crate) enum TaskWaitReply {
+    States(mpsc::Sender<RuntimeResult<Vec<HostTaskState>>>),
+    Wake(Waker),
+}
+
+impl TaskWaitReply {
+    pub(super) fn resolve(self, states: RuntimeResult<Vec<HostTaskState>>) {
+        match self {
+            Self::States(reply) => {
+                let _ = reply.send(states);
+            }
+            Self::Wake(waker) => waker.wake(),
+        }
+    }
 }
 
 pub(super) fn terminal_revision(core: &CoreRuntime) -> u64 {
@@ -56,7 +75,7 @@ pub(super) fn register_task_wait(
     pending_task_waits: &mut Vec<PendingTaskWait>,
     handles: Vec<TaskHandle>,
     deadline: Instant,
-    reply: mpsc::Sender<RuntimeResult<Vec<HostTaskState>>>,
+    reply: TaskWaitReply,
 ) {
     let states = task_states(core, &handles);
     let ready = match states.as_ref() {
@@ -64,7 +83,7 @@ pub(super) fn register_task_wait(
         Err(_) => true,
     };
     if ready {
-        let _ = reply.send(states);
+        reply.resolve(states);
     } else {
         pending_task_waits.push(PendingTaskWait {
             handles,
@@ -91,7 +110,7 @@ pub(super) fn resolve_pending_task_waits(
             };
         if ready {
             let pending = pending_task_waits.swap_remove(index);
-            let _ = pending.reply.send(states);
+            pending.reply.resolve(states);
         } else {
             index += 1;
         }
@@ -261,10 +280,22 @@ fn drain_for_reload(
             Ok(CoreActorMsg::TaskStatus(task_id, reply_tx)) => {
                 let _ = reply_tx.send(task_status(&actor.core, &task_id));
             }
+            // Async wakers stay parked across the drain; blocking waits keep failing fast.
+            Ok(CoreActorMsg::WaitTaskStates {
+                handles,
+                deadline,
+                reply: reply @ TaskWaitReply::Wake(_),
+            }) => register_task_wait(
+                &actor.core,
+                &mut actor.pending_task_waits,
+                handles,
+                deadline,
+                reply,
+            ),
             Ok(CoreActorMsg::WaitTaskStates { reply, .. }) => {
-                let _ = reply.send(Err(host_failure(
-                    "host.actor.mailbox",
-                    "task waits must use the control mailbox",
+                reply.resolve(Err(host_failure(
+                    "host.reload.busy",
+                    "runtime reload is draining active work",
                 )));
             }
             Ok(CoreActorMsg::Command(_, reply_tx)) => {
